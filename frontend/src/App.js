@@ -18,6 +18,7 @@ import CalendarView from '@/pages/CalendarView';
 import ContentLibrary from '@/pages/ContentLibrary';
 import ConnectedAccounts from '@/pages/ConnectedAccounts';
 import Billing from '@/pages/Billing';
+import PaymentPage from '@/pages/PaymentPage';
 import Settings from '@/pages/Settings';
 import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
@@ -156,6 +157,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <Billing />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/payment"
+              element={
+                <PrivateRoute>
+                  <PaymentPage />
                 </PrivateRoute>
               }
             />
