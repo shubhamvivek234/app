@@ -55,29 +55,39 @@ const OnboardingConnect = () => {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
-      // For now, we'll create a mock connection
-      // In production, this would trigger OAuth flow
-      await axios.post(
-        `${apiUrl}/api/social-accounts`,
-        {
-          platform: selectedPlatform.id,
-          username: `user_${selectedPlatform.id}`,
-          access_token: 'mock_token',
-        },
+      // Get OAuth authorization URL
+      const authResponse = await axios.get(
+        `${apiUrl}/api/oauth/${selectedPlatform.id}/authorize`,
         {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
         }
       );
 
-      toast.success(`${selectedPlatform.name} connected successfully!`);
-      setShowPlatformModal(false);
-      fetchConnectedAccounts();
+      const { authorization_url, code_verifier } = authResponse.data;
+
+      // Store code_verifier for Twitter if present
+      if (code_verifier) {
+        sessionStorage.setItem('twitter_code_verifier', code_verifier);
+      }
+
+      // Store platform info for callback
+      sessionStorage.setItem('oauth_platform', selectedPlatform.id);
+      sessionStorage.setItem('oauth_return_to', 'onboarding');
+
+      // Redirect to OAuth page
+      window.location.href = authorization_url;
+
     } catch (error) {
-      console.error('Error connecting platform:', error);
-      toast.error('Failed to connect platform');
+      console.error('Error initiating OAuth:', error);
+      if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
+        toast.error(`${selectedPlatform.name} API credentials not configured. Please contact administrator.`);
+      } else {
+        toast.error('Failed to connect platform');
+      }
     } finally {
       setLoading(false);
+      setShowPlatformModal(false);
     }
   };
 
