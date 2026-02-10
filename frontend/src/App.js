@@ -120,6 +120,14 @@ function App() {
               }
             />
             <Route
+              path="/create/:type"
+              element={
+                <PrivateRoute>
+                  <CreatePostForm />
+                </PrivateRoute>
+              }
+            />
+            <Route
               path="/calendar"
               element={
                 <PrivateRoute>
