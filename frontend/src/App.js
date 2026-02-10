@@ -8,6 +8,8 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import LandingPage from '@/pages/LandingPage';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import AuthCallback from '@/pages/AuthCallback';
+import VerifyEmail from '@/pages/VerifyEmail';
 import Dashboard from '@/pages/Dashboard';
 import CreatePost from '@/pages/CreatePost';
 import CalendarView from '@/pages/CalendarView';
@@ -15,6 +17,8 @@ import ContentLibrary from '@/pages/ContentLibrary';
 import ConnectedAccounts from '@/pages/ConnectedAccounts';
 import Billing from '@/pages/Billing';
 import Settings from '@/pages/Settings';
+import Terms from '@/pages/Terms';
+import Privacy from '@/pages/Privacy';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useAuth();
