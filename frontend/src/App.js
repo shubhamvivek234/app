@@ -33,8 +33,9 @@ const PrivateRoute = ({ children }) => {
     return <Navigate to="/login" />;
   }
   
-  // Allow access to onboarding pages
-  if (window.location.pathname.startsWith('/onboarding')) {
+  // Allow access to onboarding pages regardless of completion status
+  if (window.location.pathname.startsWith('/onboarding') || 
+      window.location.pathname.startsWith('/payment')) {
     return children;
   }
   
