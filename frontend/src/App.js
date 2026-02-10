@@ -25,7 +25,22 @@ import OnboardingConnect from '@/pages/OnboardingConnect';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useAuth();
-  return user ? children : <Navigate to="/login" />;
+  
+  if (!user) {
+    return <Navigate to="/login" />;
+  }
+  
+  // Allow access to onboarding pages
+  if (window.location.pathname.startsWith('/onboarding')) {
+    return children;
+  }
+  
+  // If onboarding not completed, redirect to onboarding
+  if (!user.onboarding_completed) {
+    return <Navigate to="/onboarding" />;
+  }
+  
+  return children;
 };
 
 const PublicRoute = ({ children }) => {
