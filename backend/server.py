@@ -472,6 +472,32 @@ async def login(credentials: UserLogin):
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+@api_router.patch("/auth/me", response_model=User)
+async def update_me(
+    update_data: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Update current user profile"""
+    # Filter allowed fields
+    allowed_fields = ['user_type', 'onboarding_completed', 'name']
+    update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
+    
+    if not update_fields:
+        return current_user
+    
+    # Update in database
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": update_fields}
+    )
+    
+    # Get updated user
+    updated_user = await db.users.find_one({"user_id": current_user.user_id})
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return User(**updated_user)
+
 @api_router.post("/auth/logout")
 async def logout(session_token: Optional[str] = Cookie(None)):
     if session_token:
