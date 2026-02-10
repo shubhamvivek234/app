@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
+import Footer from '@/components/Footer';
 
 const LandingPage = () => {
   const navigate = useNavigate();
