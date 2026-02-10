@@ -36,8 +36,14 @@ const AuthCallback = () => {
         setToken(session_token);
         setUser(user);
         
-        toast.success('Welcome back!');
-        navigate('/dashboard');
+        // Check if onboarding is completed
+        if (user.onboarding_completed) {
+          toast.success('Welcome back!');
+          navigate('/dashboard');
+        } else {
+          toast.success('Welcome! Let\'s get you set up.');
+          navigate('/onboarding');
+        }
       } catch (error) {
         console.error('Auth callback error:', error);
         toast.error('Authentication failed');
