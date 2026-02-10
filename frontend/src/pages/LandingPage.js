@@ -98,7 +98,7 @@ const LandingPage = () => {
       </nav>
 
       {/* Hero Section */}
-      <section className="py-20 lg:py-32">
+      <section id="hero" className="py-20 lg:py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className="space-y-8">
@@ -174,6 +174,7 @@ const LandingPage = () => {
       </section>
 
       {/* Features Section */}
+      <section id="features" className="py-20">
       <section className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-3 gap-8">
@@ -215,6 +216,7 @@ const LandingPage = () => {
       </section>
 
       {/* Pricing Section */}
+      <section id="pricing" className="py-20 bg-slate-50">
       <section className="py-20 bg-slate-50" id="pricing">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
