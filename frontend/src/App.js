@@ -30,7 +30,17 @@ const PrivateRoute = ({ children }) => {
 
 const PublicRoute = ({ children }) => {
   const { user } = useAuth();
-  return !user ? children : <Navigate to="/dashboard" />;
+  
+  if (!user) {
+    return children;
+  }
+  
+  // If user is authenticated, check if onboarding is completed
+  if (user.onboarding_completed) {
+    return <Navigate to="/dashboard" />;
+  } else {
+    return <Navigate to="/onboarding" />;
+  }
 };
 
 function App() {
