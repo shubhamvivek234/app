@@ -632,6 +632,416 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
 
 # ==================== SOCIAL ACCOUNTS ====================
 
+# ==================== OAUTH ENDPOINTS ====================
+
+@api_router.get("/oauth/instagram/authorize")
+async def instagram_authorize():
+    """Initiate Instagram OAuth flow"""
+    app_id = os.environ.get('INSTAGRAM_APP_ID')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not app_id:
+        raise HTTPException(status_code=500, detail="Instagram App ID not configured")
+    
+    auth_url = (
+        f"https://api.instagram.com/oauth/authorize"
+        f"?client_id={app_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=user_profile,user_media"
+        f"&response_type=code"
+        f"&state=instagram"
+    )
+    
+    return {"authorization_url": auth_url}
+
+@api_router.post("/oauth/instagram/callback")
+async def instagram_callback(request: Request, current_user: dict = Depends(get_current_user)):
+    """Handle Instagram OAuth callback"""
+    body = await request.json()
+    code = body.get('code')
+    
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code provided")
+    
+    app_id = os.environ.get('INSTAGRAM_APP_ID')
+    app_secret = os.environ.get('INSTAGRAM_APP_SECRET')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not all([app_id, app_secret]):
+        raise HTTPException(status_code=500, detail="Instagram credentials not configured")
+    
+    try:
+        # Exchange code for short-lived token
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://api.instagram.com/oauth/access_token",
+                data={
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri,
+                    "code": code
+                }
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+            
+            token_data = token_response.json()
+            access_token = token_data.get('access_token')
+            user_id = token_data.get('user_id')
+            
+            # Get user profile
+            profile_response = await client.get(
+                f"https://graph.instagram.com/me",
+                params={
+                    "fields": "id,username",
+                    "access_token": access_token
+                }
+            )
+            
+            if profile_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch Instagram profile")
+            
+            profile = profile_response.json()
+            
+            # Save to database
+            account = {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user['user_id'],
+                "platform": "instagram",
+                "platform_user_id": user_id,
+                "username": profile.get('username'),
+                "access_token": access_token,
+                "token_expires_at": (datetime.now(timezone.utc) + timedelta(days=60)).isoformat(),
+                "connected_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.social_accounts.insert_one(account)
+            
+            return {
+                "success": True,
+                "platform": "instagram",
+                "username": profile.get('username')
+            }
+            
+    except Exception as e:
+        logging.error(f"Instagram OAuth error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+
+@api_router.get("/oauth/youtube/authorize")
+async def youtube_authorize():
+    """Initiate YouTube OAuth flow"""
+    client_id = os.environ.get('YOUTUBE_CLIENT_ID')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not client_id:
+        raise HTTPException(status_code=500, detail="YouTube Client ID not configured")
+    
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope=https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+        f"&access_type=offline"
+        f"&state=youtube"
+    )
+    
+    return {"authorization_url": auth_url}
+
+@api_router.post("/oauth/youtube/callback")
+async def youtube_callback(request: Request, current_user: dict = Depends(get_current_user)):
+    """Handle YouTube OAuth callback"""
+    body = await request.json()
+    code = body.get('code')
+    
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code provided")
+    
+    client_id = os.environ.get('YOUTUBE_CLIENT_ID')
+    client_secret = os.environ.get('YOUTUBE_CLIENT_SECRET')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not all([client_id, client_secret]):
+        raise HTTPException(status_code=500, detail="YouTube credentials not configured")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri
+                }
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+            
+            token_data = token_response.json()
+            access_token = token_data.get('access_token')
+            refresh_token = token_data.get('refresh_token')
+            
+            # Get channel info
+            channel_response = await client.get(
+                "https://www.googleapis.com/youtube/v3/channels",
+                params={
+                    "part": "snippet",
+                    "mine": "true"
+                },
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            
+            if channel_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch YouTube channel")
+            
+            channel_data = channel_response.json()
+            if not channel_data.get('items'):
+                raise HTTPException(status_code=404, detail="No YouTube channel found")
+            
+            channel = channel_data['items'][0]
+            channel_id = channel['id']
+            channel_title = channel['snippet']['title']
+            
+            # Save to database
+            account = {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user['user_id'],
+                "platform": "youtube",
+                "platform_user_id": channel_id,
+                "username": channel_title,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+                "connected_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.social_accounts.insert_one(account)
+            
+            return {
+                "success": True,
+                "platform": "youtube",
+                "username": channel_title
+            }
+            
+    except Exception as e:
+        logging.error(f"YouTube OAuth error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+
+@api_router.get("/oauth/facebook/authorize")
+async def facebook_authorize():
+    """Initiate Facebook OAuth flow"""
+    app_id = os.environ.get('FACEBOOK_APP_ID')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not app_id:
+        raise HTTPException(status_code=500, detail="Facebook App ID not configured")
+    
+    auth_url = (
+        f"https://www.facebook.com/v18.0/dialog/oauth"
+        f"?client_id={app_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=pages_show_list,pages_read_engagement,pages_manage_posts"
+        f"&response_type=code"
+        f"&state=facebook"
+    )
+    
+    return {"authorization_url": auth_url}
+
+@api_router.post("/oauth/facebook/callback")
+async def facebook_callback(request: Request, current_user: dict = Depends(get_current_user)):
+    """Handle Facebook OAuth callback"""
+    body = await request.json()
+    code = body.get('code')
+    
+    if not code:
+        raise HTTPException(status_code=400, detail="No authorization code provided")
+    
+    app_id = os.environ.get('FACEBOOK_APP_ID')
+    app_secret = os.environ.get('FACEBOOK_APP_SECRET')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not all([app_id, app_secret]):
+        raise HTTPException(status_code=500, detail="Facebook credentials not configured")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            token_response = await client.get(
+                "https://graph.facebook.com/v18.0/oauth/access_token",
+                params={
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "redirect_uri": redirect_uri,
+                    "code": code
+                }
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+            
+            token_data = token_response.json()
+            access_token = token_data.get('access_token')
+            
+            # Get user's Facebook pages
+            pages_response = await client.get(
+                "https://graph.facebook.com/v18.0/me/accounts",
+                params={"access_token": access_token}
+            )
+            
+            if pages_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch Facebook pages")
+            
+            pages_data = pages_response.json()
+            pages = pages_data.get('data', [])
+            
+            if not pages:
+                raise HTTPException(status_code=404, detail="No Facebook pages found")
+            
+            # Use first page
+            page = pages[0]
+            
+            # Save to database
+            account = {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user['user_id'],
+                "platform": "facebook",
+                "platform_user_id": page['id'],
+                "username": page['name'],
+                "access_token": page['access_token'],  # Page access token
+                "token_expires_at": (datetime.now(timezone.utc) + timedelta(days=60)).isoformat(),
+                "connected_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.social_accounts.insert_one(account)
+            
+            return {
+                "success": True,
+                "platform": "facebook",
+                "username": page['name']
+            }
+            
+    except Exception as e:
+        logging.error(f"Facebook OAuth error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+
+@api_router.get("/oauth/twitter/authorize")
+async def twitter_authorize():
+    """Initiate Twitter OAuth 2.0 flow"""
+    client_id = os.environ.get('TWITTER_CLIENT_ID')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not client_id:
+        raise HTTPException(status_code=500, detail="Twitter Client ID not configured")
+    
+    # Generate PKCE code challenge
+    import secrets
+    import hashlib
+    import base64
+    
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).decode('utf-8').rstrip('=')
+    
+    auth_url = (
+        f"https://twitter.com/i/oauth2/authorize"
+        f"?response_type=code"
+        f"&client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope=tweet.read tweet.write users.read offline.access"
+        f"&state=twitter"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
+    )
+    
+    # Store code_verifier in session or return it
+    return {
+        "authorization_url": auth_url,
+        "code_verifier": code_verifier  # Frontend should store this temporarily
+    }
+
+@api_router.post("/oauth/twitter/callback")
+async def twitter_callback(request: Request, current_user: dict = Depends(get_current_user)):
+    """Handle Twitter OAuth callback"""
+    body = await request.json()
+    code = body.get('code')
+    code_verifier = body.get('code_verifier')
+    
+    if not code or not code_verifier:
+        raise HTTPException(status_code=400, detail="Missing code or code_verifier")
+    
+    client_id = os.environ.get('TWITTER_CLIENT_ID')
+    client_secret = os.environ.get('TWITTER_CLIENT_SECRET')
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI')
+    
+    if not all([client_id, client_secret]):
+        raise HTTPException(status_code=500, detail="Twitter credentials not configured")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            # Exchange code for token
+            token_response = await client.post(
+                "https://api.twitter.com/2/oauth2/token",
+                data={
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": code_verifier
+                },
+                auth=(client_id, client_secret)
+            )
+            
+            if token_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange code for token")
+            
+            token_data = token_response.json()
+            access_token = token_data.get('access_token')
+            refresh_token = token_data.get('refresh_token')
+            
+            # Get user info
+            user_response = await client.get(
+                "https://api.twitter.com/2/users/me",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            
+            if user_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch Twitter user")
+            
+            user_data = user_response.json()
+            twitter_user = user_data['data']
+            
+            # Save to database
+            account = {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user['user_id'],
+                "platform": "twitter",
+                "platform_user_id": twitter_user['id'],
+                "username": twitter_user['username'],
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+                "connected_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.social_accounts.insert_one(account)
+            
+            return {
+                "success": True,
+                "platform": "twitter",
+                "username": twitter_user['username']
+            }
+            
+    except Exception as e:
+        logging.error(f"Twitter OAuth error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+
+# ==================== SOCIAL ACCOUNTS ====================
+
 @api_router.post("/social-accounts", response_model=SocialAccount)
 async def connect_social_account(account_data: SocialAccountConnect, current_user: User = Depends(get_current_user)):
     existing = await db.social_accounts.find_one({
