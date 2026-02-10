@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { FaGoogle } from 'react-icons/fa';
 
 const Signup = () => {
   const navigate = useNavigate();
@@ -22,13 +23,19 @@ const Signup = () => {
 
     try {
       await signup(formData.email, formData.password, formData.name);
-      toast.success('Account created successfully!');
+      toast.success('Account created! Please check your email to verify your account.');
       navigate('/dashboard');
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Signup failed');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleSignup = () => {
+    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    const redirectUrl = window.location.origin + '/auth/callback';
+    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
   return (
@@ -38,7 +45,28 @@ const Signup = () => {
           <h2 className="text-3xl font-semibold tracking-tight text-slate-900">Create your account</h2>
           <p className="mt-2 text-sm text-slate-600">Start scheduling your content today</p>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+
+        {/* Google Sign Up */}
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={handleGoogleSignup}
+          data-testid="google-signup-button"
+        >
+          <FaGoogle className="mr-2" />
+          Sign up with Google
+        </Button>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-white px-2 text-slate-500">Or continue with email</span>
+          </div>
+        </div>
+
+        <form className="space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div>
               <Label htmlFor="name">Full Name</Label>
