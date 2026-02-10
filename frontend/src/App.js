@@ -13,6 +13,7 @@ import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';
 import Dashboard from '@/pages/Dashboard';
 import CreatePost from '@/pages/CreatePost';
+import CreatePostForm from '@/pages/CreatePostForm';
 import CalendarView from '@/pages/CalendarView';
 import ContentLibrary from '@/pages/ContentLibrary';
 import ConnectedAccounts from '@/pages/ConnectedAccounts';
