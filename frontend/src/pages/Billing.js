@@ -219,6 +219,15 @@ const Billing = () => {
                 >
                   Pay with Razorpay
                 </Button>
+                <Button
+                  variant="outline"
+                  className="w-full border-white text-white hover:bg-indigo-700"
+                  onClick={() => handleSubscribe('yearly', 'paypal')}
+                  disabled={loading || user?.subscription_status === 'active'}
+                  data-testid="subscribe-yearly-paypal"
+                >
+                  Pay with PayPal
+                </Button>
               </div>
             </div>
           </div>
