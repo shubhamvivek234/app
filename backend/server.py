@@ -98,6 +98,8 @@ class User(BaseModel):
     subscription_status: str = "free"
     subscription_plan: Optional[str] = None
     subscription_end_date: Optional[datetime] = None
+    user_type: Optional[str] = None  # founder, creator, agency, enterprise, small_business, personal
+    onboarding_completed: bool = False
 
 class Token(BaseModel):
     access_token: str
