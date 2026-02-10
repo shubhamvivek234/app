@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
+import Cookies from 'js-cookie';
 
 const AuthContext = createContext();
 
@@ -9,7 +10,7 @@ const API = `${BACKEND_URL}/api`;
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(localStorage.getItem('token') || Cookies.get('session_token'));
 
   useEffect(() => {
     if (token) {
@@ -21,10 +22,14 @@ export const AuthProvider = ({ children }) => {
 
   const fetchUser = async () => {
     try {
+      const sessionToken = Cookies.get('session_token');
+      const headers = sessionToken
+        ? {} // Cookie will be sent automatically
+        : { Authorization: `Bearer ${token}` };
+      
       const response = await axios.get(`${API}/auth/me`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
+        withCredentials: true
       });
       setUser(response.data);
     } catch (error) {
@@ -53,8 +58,14 @@ export const AuthProvider = ({ children }) => {
     return userData;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
     localStorage.removeItem('token');
+    Cookies.remove('session_token');
     setToken(null);
     setUser(null);
   };
@@ -66,7 +77,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, token, refreshUser }}>
+    <AuthContext.Provider value={{ user, setUser, loading, login, signup, logout, token, setToken, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
