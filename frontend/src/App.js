@@ -19,6 +19,8 @@ import Billing from '@/pages/Billing';
 import Settings from '@/pages/Settings';
 import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
+import Onboarding from '@/pages/Onboarding';
+import OnboardingConnect from '@/pages/OnboardingConnect';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useAuth();
@@ -41,6 +43,22 @@ function App() {
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route
+              path="/onboarding"
+              element={
+                <PrivateRoute>
+                  <Onboarding />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/onboarding/connect"
+              element={
+                <PrivateRoute>
+                  <OnboardingConnect />
+                </PrivateRoute>
+              }
+            />
             <Route
               path="/login"
               element={
