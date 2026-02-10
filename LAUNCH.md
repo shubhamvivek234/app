@@ -11,8 +11,8 @@
 
 ### Production App
 ```
-Frontend: https://social-queue-3.preview.emergentagent.com
-Backend API: https://social-queue-3.preview.emergentagent.com/api
+Frontend: https://postflow-25.preview.emergentagent.com
+Backend API: https://postflow-25.preview.emergentagent.com/api
 ```
 
 ### Development (Local)
@@ -39,7 +39,7 @@ Backend: http://localhost:8001
 ## 🎯 Quick Start Guide for Users
 
 ### Step 1: Sign Up
-1. Go to: https://social-queue-3.preview.emergentagent.com
+1. Go to: https://postflow-25.preview.emergentagent.com
 2. Click "Get Started" or "Sign Up"
 3. Enter email, password, and name
 4. Account created instantly!
@@ -151,7 +151,7 @@ RAZORPAY_KEY_SECRET=your_razorpay_secret
 ### Health Check
 ```bash
 # Backend API
-curl https://social-queue-3.preview.emergentagent.com/api/pages/terms
+curl https://postflow-25.preview.emergentagent.com/api/pages/terms
 
 # Should return: {"content": "Terms of Service..."}
 ```
@@ -192,7 +192,7 @@ Use these test cards:
 ### Quick Test Scenario
 
 1. **Create Account** (2 min)
-   - Visit: https://social-queue-3.preview.emergentagent.com/signup
+   - Visit: https://postflow-25.preview.emergentagent.com/signup
    - Sign up with test email
 
 2. **Generate AI Content** (1 min)
@@ -256,7 +256,7 @@ sudo supervisorctl status
 tail -n 50 /var/log/supervisor/backend.err.log
 
 # 3. Verify API responding
-curl https://social-queue-3.preview.emergentagent.com/api/pages/terms
+curl https://postflow-25.preview.emergentagent.com/api/pages/terms
 ```
 
 ### Weekly Tasks
@@ -395,8 +395,8 @@ Your **SocialSync** app is now live and ready to:
 
 ## 🔗 Quick Links
 
-- **Live App**: https://social-queue-3.preview.emergentagent.com
-- **API Base**: https://social-queue-3.preview.emergentagent.com/api
+- **Live App**: https://postflow-25.preview.emergentagent.com
+- **API Base**: https://postflow-25.preview.emergentagent.com/api
 - **API Docs**: `/app/API_DOCUMENTATION.md`
 - **Integration Guide**: `/app/FRONTEND_INTEGRATION_GUIDE.md`
 

@@ -1416,7 +1416,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["http://localhost:3000", "https://code-repair-98.preview.emergentagent.com"],
+    allow_origins=["http://localhost:3000", "https://postflow-25.preview.emergentagent.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

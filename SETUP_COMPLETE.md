@@ -182,7 +182,7 @@ CORS_ORIGINS="*"
 
 ### Frontend (.env)
 ```bash
-REACT_APP_BACKEND_URL=https://code-repair-98.preview.emergentagent.com
+REACT_APP_BACKEND_URL=https://postflow-25.preview.emergentagent.com
 WDS_SOCKET_PORT=443
 ENABLE_HEALTH_CHECK=false
 ```
