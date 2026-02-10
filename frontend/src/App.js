@@ -24,6 +24,7 @@ import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
 import Onboarding from '@/pages/Onboarding';
 import OnboardingConnect from '@/pages/OnboardingConnect';
+import OnboardingPricing from '@/pages/OnboardingPricing';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useAuth();
@@ -85,6 +86,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <OnboardingConnect />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/onboarding/pricing"
+              element={
+                <PrivateRoute>
+                  <OnboardingPricing />
                 </PrivateRoute>
               }
             />
