@@ -262,8 +262,13 @@ const LandingPage = () => {
       {/* Footer */}
       <footer className="border-t border-border py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center text-slate-600">
-            <p>© 2026 SocialSync. All rights reserved.</p>
+          <div className="text-center space-y-4">
+            <div className="flex justify-center gap-6 text-sm text-slate-600">
+              <Link to="/terms" className="hover:text-slate-900">Terms of Service</Link>
+              <Link to="/privacy" className="hover:text-slate-900">Privacy Policy</Link>
+              <a href="mailto:support@socialsync.com" className="hover:text-slate-900">Contact</a>
+            </div>
+            <p className="text-slate-600">© 2026 SocialSync. All rights reserved.</p>
           </div>
         </div>
       </footer>
