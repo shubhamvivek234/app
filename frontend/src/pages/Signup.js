@@ -42,6 +42,12 @@ const Signup = () => {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-lg border border-border shadow-sm">
         <div className="text-center">
+          <button
+            onClick={() => navigate('/')}
+            className="text-sm text-slate-600 hover:text-slate-900 mb-4 inline-flex items-center"
+          >
+            ← Back to home
+          </button>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-900">Create your account</h2>
           <p className="mt-2 text-sm text-slate-600">Start scheduling your content today</p>
         </div>
