@@ -18,25 +18,79 @@ const LandingPage = () => {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Navigation */}
-      <nav className="border-b border-border backdrop-blur-md bg-white/80 sticky top-0 z-50">
+      {/* New Navigation Header */}
+      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="text-2xl font-semibold text-slate-900">SocialSync</div>
-            <div className="flex gap-3">
-              <Button
-                variant="ghost"
-                onClick={() => navigate('/login')}
-                data-testid="login-button"
-              >
-                Login
-              </Button>
-              <Button
-                onClick={() => navigate('/signup')}
-                data-testid="signup-button"
-              >
-                Get Started
-              </Button>
+          <div className="flex justify-between h-16">
+            {/* Logo */}
+            <div className="flex items-center">
+              <div className="flex items-center space-x-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+                <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">P</span>
+                </div>
+                <span className="text-xl font-semibold text-gray-900">post bridge</span>
+              </div>
+            </div>
+
+            {/* Navigation Menu */}
+            <div className="hidden md:flex items-center space-x-8">
+              <button onClick={() => scrollToSection('pricing')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                Pricing
+              </button>
+              <button onClick={() => scrollToSection('reviews')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                Reviews
+              </button>
+              <button onClick={() => scrollToSection('features')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                Features
+              </button>
+              <button onClick={() => scrollToSection('platforms')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                Platforms
+              </button>
+              <button onClick={() => scrollToSection('faq')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                FAQ
+              </button>
+              <button onClick={() => navigate('/blog')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                Blog
+              </button>
+              <div className="relative">
+                <button 
+                  onClick={() => setShowToolsDropdown(!showToolsDropdown)}
+                  className="text-gray-600 hover:text-gray-900 text-sm font-medium flex items-center"
+                >
+                  Tools <FaChevronDown className="ml-1 text-xs" />
+                </button>
+                {showToolsDropdown && (
+                  <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-2">
+                    <Link to="/tools/instagram-grid" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Instagram Grid Maker</Link>
+                    <Link to="/tools/caption-generator" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Caption Generator</Link>
+                    <Link to="/tools/hashtag-generator" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Hashtag Generator</Link>
+                  </div>
+                )}
+              </div>
+              <button onClick={() => navigate('/api')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
+                API
+              </button>
+            </div>
+
+            {/* User Profile or Auth Buttons */}
+            <div className="flex items-center space-x-4">
+              {user ? (
+                <div className="flex items-center space-x-3 bg-gray-100 rounded-full px-4 py-2 cursor-pointer" onClick={() => navigate('/dashboard')}>
+                  <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                    <span className="text-white text-sm font-semibold">{user.name?.charAt(0) || 'U'}</span>
+                  </div>
+                  <span className="text-sm font-medium text-gray-900">{user.name}</span>
+                </div>
+              ) : (
+                <>
+                  <Button variant="ghost" onClick={() => navigate('/login')} className="text-gray-600">
+                    Login
+                  </Button>
+                  <Button onClick={() => navigate('/signup')} className="bg-green-500 hover:bg-green-600">
+                    Get Started
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
