@@ -9,6 +9,7 @@ import LandingPage from '@/pages/LandingPage';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import AuthCallback from '@/pages/AuthCallback';
+import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';
 import Dashboard from '@/pages/Dashboard';
 import CreatePost from '@/pages/CreatePost';
@@ -40,6 +41,7 @@ function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
