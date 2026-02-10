@@ -92,25 +92,8 @@ const OnboardingConnect = () => {
   };
 
   const handleNext = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-      
-      await axios.patch(
-        `${apiUrl}/api/auth/me`,
-        { onboarding_completed: true },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          withCredentials: true,
-        }
-      );
-
-      navigate('/dashboard');
-      toast.success('Welcome to Post Bridge!');
-    } catch (error) {
-      console.error('Error completing onboarding:', error);
-      navigate('/dashboard');
-    }
+    // Allow proceeding to pricing without connections
+    navigate('/onboarding/pricing');
   };
 
   const handleBack = () => {
