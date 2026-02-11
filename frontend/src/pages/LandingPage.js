@@ -4,6 +4,7 @@ import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, F
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import Footer from '@/components/Footer';
+import SocialSyncLogo from '@/components/SocialSyncLogo';
 
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -24,13 +25,8 @@ const LandingPage = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             {/* Logo */}
-            <div className="flex items-center">
-              <div className="flex items-center space-x-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-                <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                  <span className="text-white font-bold text-lg">P</span>
-                </div>
-                <span className="text-xl font-semibold text-gray-900">post bridge</span>
-              </div>
+            <div className="flex items-center cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+              <SocialSyncLogo size="large" />
             </div>
 
             {/* Navigation Menu */}
