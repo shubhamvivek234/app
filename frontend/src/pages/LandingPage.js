@@ -1,15 +1,28 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import Footer from '@/components/Footer';
-import SocialSyncLogo from '@/components/SocialSyncLogo';
+import CrossPostLogo from '@/components/CrossPostLogo';
 
 const LandingPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [showToolsDropdown, setShowToolsDropdown] = useState(false);
+
+  useEffect(() => {
+    if (location.hash) {
+      const sectionId = location.hash.replace('#', '');
+      const element = document.getElementById(sectionId);
+      if (element) {
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+      }
+    }
+  }, [location]);
 
   const scrollToSection = (sectionId) => {
     const element = document.getElementById(sectionId);
@@ -26,7 +39,7 @@ const LandingPage = () => {
           <div className="flex justify-between h-16">
             {/* Logo */}
             <div className="flex items-center cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-              <SocialSyncLogo size="large" />
+              <CrossPostLogo size="large" />
             </div>
 
             {/* Navigation Menu */}
@@ -50,7 +63,7 @@ const LandingPage = () => {
                 Blog
               </button>
               <div className="relative">
-                <button 
+                <button
                   onClick={() => setShowToolsDropdown(!showToolsDropdown)}
                   className="text-gray-600 hover:text-gray-900 text-sm font-medium flex items-center"
                 >
@@ -192,7 +205,7 @@ const LandingPage = () => {
                 Schedule posts effortlessly
               </h3>
               <p className="text-base leading-relaxed text-slate-600">
-                Plan your content strategy ahead of time. Queue up your posts and let SocialSync handle the rest.
+                Plan your content strategy ahead of time. Queue up your posts and let CrossPost handle the rest.
               </p>
             </div>
             <div className="space-y-4">
@@ -205,6 +218,84 @@ const LandingPage = () => {
               <p className="text-base leading-relaxed text-slate-600">
                 Generate engaging posts with AI assistance. Get suggestions optimized for each platform.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Reviews Section */}
+      <section id="reviews" className="py-20 bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
+              Loved by creators worldwide
+            </h2>
+            <p className="text-lg text-slate-600">
+              Join thousands of users who trust CrossPost to manage their social presence
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-8">
+            {/* Review 1 */}
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-1 text-yellow-400 mb-4">
+                {[...Array(5)].map((_, i) => (
+                  <FaRocket key={i} className="text-sm" />
+                ))}
+              </div>
+              <p className="text-slate-700 mb-6 leading-relaxed">
+                "CrossPost has completely transformed how I manage my social media. I used to spend hours copy-pasting content, now it takes seconds."
+              </p>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+                  JS
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900">James Smith</h4>
+                  <p className="text-sm text-slate-500">Content Creator</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Review 2 */}
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-1 text-yellow-400 mb-4">
+                {[...Array(5)].map((_, i) => (
+                  <FaRocket key={i} className="text-sm" />
+                ))}
+              </div>
+              <p className="text-slate-700 mb-6 leading-relaxed">
+                "The AI content generation is a game changer. It helps me come up with captions that actually convert. Highly recommended!"
+              </p>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 font-bold">
+                  SJ
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900">Sarah Johnson</h4>
+                  <p className="text-sm text-slate-500">Digital Marketer</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Review 3 */}
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-1 text-yellow-400 mb-4">
+                {[...Array(5)].map((_, i) => (
+                  <FaRocket key={i} className="text-sm" />
+                ))}
+              </div>
+              <p className="text-slate-700 mb-6 leading-relaxed">
+                "Best value for money in the market. The ability to schedule months of content in advance is incredible."
+              </p>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center text-green-600 font-bold">
+                  MR
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900">Mike Ross</h4>
+                  <p className="text-sm text-slate-500">Agency Owner</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -298,6 +389,38 @@ const LandingPage = () => {
         </div>
       </section>
 
+      {/* FAQ Section */}
+      <section id="faq" className="py-20">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
+              Frequently asked questions
+            </h2>
+            <p className="text-lg text-slate-600">
+              Everything you need to know about CrossPost
+            </p>
+          </div>
+          <div className="space-y-6">
+            <div className="border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Can I cancel my subscription anytime?</h3>
+              <p className="text-slate-600">Yes, you can cancel your subscription at any time. You will continue to have access until the end of your billing period.</p>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Do you offer a free trial?</h3>
+              <p className="text-slate-600">Yes, we offer a 7-day free trial on all paid plans. No credit card required to start.</p>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">What platforms do you support?</h3>
+              <p className="text-slate-600">We currently support Twitter/X, Instagram, and LinkedIn. We are working on adding more platforms soon.</p>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Can I manage multiple accounts?</h3>
+              <p className="text-slate-600">Yes, depending on your plan you can manage multiple accounts for each platform.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* CTA Section */}
       <section className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -306,7 +429,7 @@ const LandingPage = () => {
               Ready to get started?
             </h2>
             <p className="text-lg text-white/90 mb-8 max-w-2xl mx-auto">
-              Join thousands of content creators who save hours every week with SocialSync
+              Join thousands of content creators who save hours every week with CrossPost
             </p>
             <Button
               size="lg"
@@ -320,19 +443,7 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-border py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center space-y-4">
-            <div className="flex justify-center gap-6 text-sm text-slate-600">
-              <Link to="/terms" className="hover:text-slate-900">Terms of Service</Link>
-              <Link to="/privacy" className="hover:text-slate-900">Privacy Policy</Link>
-              <a href="mailto:support@socialsync.com" className="hover:text-slate-900">Contact</a>
-            </div>
-            <p className="text-slate-600">© 2026 SocialSync. All rights reserved.</p>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 };

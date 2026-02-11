@@ -105,10 +105,38 @@ export const getPaymentStatus = async (sessionId) => {
   return response.data;
 };
 
+export const verifyRazorpay = async (data) => {
+  const response = await axios.post(`${API}/payments/verify-razorpay`, data, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const capturePaypal = async (orderId) => {
+  const response = await axios.post(
+    `${API}/payments/capture-paypal`,
+    { order_id: orderId },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
 // Stats
 export const getStats = async () => {
   const response = await axios.get(`${API}/stats`, {
     headers: getAuthHeaders(),
   });
+  return response.data;
+};
+
+export const completeOnboarding = async () => {
+  const response = await axios.patch(`${API}/auth/me`,
+    { onboarding_completed: true },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
   return response.data;
 };

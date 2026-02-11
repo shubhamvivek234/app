@@ -9,13 +9,13 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import axios from 'axios';
 import { getSocialAccounts } from '@/lib/api';
-import { 
-  FaTwitter, 
-  FaInstagram, 
-  FaLinkedin, 
-  FaFacebook, 
-  FaTiktok, 
-  FaYoutube, 
+import {
+  FaTwitter,
+  FaInstagram,
+  FaLinkedin,
+  FaFacebook,
+  FaTiktok,
+  FaYoutube,
   FaPinterest,
   FaUpload,
   FaImage,
@@ -34,7 +34,7 @@ const CreatePostForm = () => {
   const { type } = useParams();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
-  
+
   // State
   const [content, setContent] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState([]);
@@ -46,11 +46,11 @@ const CreatePostForm = () => {
   const [uploadedMedia, setUploadedMedia] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
   const [videoTitle, setVideoTitle] = useState('');
-  
+
   // Platform-specific captions
   const [platformCaptions, setPlatformCaptions] = useState({});
   const [editingPlatform, setEditingPlatform] = useState(null);
-  
+
   // Expanded sections
   const [expandedSections, setExpandedSections] = useState({
     platformCaptions: true,
@@ -81,7 +81,7 @@ const CreatePostForm = () => {
     { id: '4', platform: 'facebook', platform_username: 'Scroll less', avatar: null },
     { id: '5', platform: 'instagram', platform_username: 'jackfriks', avatar: null },
     { id: '6', platform: 'instagram', platform_username: 'curiosity.quench', avatar: null },
-    { id: '7', platform: 'linkedin', platform_username: 'post bridge', avatar: null },
+    { id: '7', platform: 'linkedin', platform_username: 'CrossPost', avatar: null },
     { id: '8', platform: 'linkedin', platform_username: 'jack friks', avatar: null },
     { id: '9', platform: 'pinterest', platform_username: 'jackfriks', avatar: null },
     { id: '10', platform: 'threads', platform_username: 'curiosity.quench', avatar: null },
@@ -112,8 +112,8 @@ const CreatePostForm = () => {
   };
 
   const toggleAccountSelection = (accountId) => {
-    setSelectedAccounts(prev => 
-      prev.includes(accountId) 
+    setSelectedAccounts(prev =>
+      prev.includes(accountId)
         ? prev.filter(id => id !== accountId)
         : [...prev, accountId]
     );
@@ -154,7 +154,7 @@ const CreatePostForm = () => {
 
   const getAvatarColor = (name) => {
     const colors = [
-      'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 
+      'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
       'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'
     ];
     const index = (name?.charCodeAt(0) || 0) % colors.length;
@@ -288,14 +288,14 @@ const CreatePostForm = () => {
                   <span>Remember</span>
                 </div>
               </div>
-              
+
               {/* Account Avatars */}
               <div className="flex flex-wrap gap-1 pb-4 border-b border-gray-200">
                 {availableAccounts.map((account) => {
                   const platformInfo = platformIcons[account.platform] || {};
                   const Icon = platformInfo.icon || FaFacebook;
                   const isSelected = selectedAccounts.includes(account.id);
-                  
+
                   return (
                     <button
                       key={account.id}
@@ -322,7 +322,7 @@ const CreatePostForm = () => {
             </div>
 
             {/* Media Upload Area */}
-            <div 
+            <div
               className="border-2 border-dashed border-gray-200 rounded-lg p-8 mb-4 bg-[#f5f7f5] cursor-pointer hover:border-green-400 transition-colors"
               onClick={() => fileInputRef.current?.click()}
               onDrop={handleDrop}
@@ -336,25 +336,25 @@ const CreatePostForm = () => {
                 onChange={handleFileUpload}
                 className="hidden"
               />
-              
+
               {uploadedMedia ? (
                 <div className="flex flex-col items-center">
                   {uploadedMedia.type === 'video' ? (
-                    <video 
-                      src={uploadedMedia.url} 
+                    <video
+                      src={uploadedMedia.url}
                       className="max-h-40 rounded mb-2"
                       controls
                     />
                   ) : (
-                    <img 
-                      src={uploadedMedia.url} 
-                      alt="Uploaded" 
+                    <img
+                      src={uploadedMedia.url}
+                      alt="Uploaded"
                       className="max-h-40 rounded mb-2"
                     />
                   )}
                   <div className="flex gap-2 mt-2">
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -363,8 +363,8 @@ const CreatePostForm = () => {
                     >
                       <FaUpload className="mr-1" /> Replace Media
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -388,7 +388,7 @@ const CreatePostForm = () => {
                   </p>
                 </div>
               )}
-              
+
               <div className="absolute right-4 top-4 text-gray-400 text-sm flex items-center gap-1 cursor-pointer hover:text-gray-600">
                 <FaUpload /> Import
               </div>
@@ -417,7 +417,7 @@ const CreatePostForm = () => {
             <div className="mb-4">
               <p className="text-xs text-gray-500 mb-2">Post configurations & tools</p>
               <div className="flex flex-wrap gap-2">
-                <Button 
+                <Button
                   variant={expandedSections.platformCaptions ? "default" : "outline"}
                   size="sm"
                   onClick={() => toggleSection('platformCaptions')}
@@ -426,7 +426,7 @@ const CreatePostForm = () => {
                   Platform Captions
                   <FaChevronDown className={`ml-1 transition-transform ${expandedSections.platformCaptions ? 'rotate-180' : ''}`} />
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   size="sm"
                   onClick={() => toggleSection('pastCaptions')}
@@ -434,7 +434,7 @@ const CreatePostForm = () => {
                   <FaEdit className="mr-1" /> Past Captions
                   <FaChevronDown className="ml-1" />
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   size="sm"
                   onClick={() => toggleSection('processing')}
@@ -444,7 +444,7 @@ const CreatePostForm = () => {
                 </Button>
                 {type === 'video' && (
                   <>
-                    <Button 
+                    <Button
                       variant="outline"
                       size="sm"
                       onClick={() => toggleSection('youtubeTitle')}
@@ -452,7 +452,7 @@ const CreatePostForm = () => {
                       <FaYoutube className="mr-1 text-red-500" /> YouTube Title
                       <FaChevronDown className="ml-1" />
                     </Button>
-                    <Button 
+                    <Button
                       variant="outline"
                       size="sm"
                       onClick={() => toggleSection('tiktokConfig')}
@@ -474,7 +474,7 @@ const CreatePostForm = () => {
                   const hasCustomCaption = platformCaptions[platform];
                   const charLimit = getCharLimit(platform);
                   const currentLength = (hasCustomCaption || content).length;
-                  
+
                   return (
                     <div key={platform} className="space-y-2">
                       <div className="flex items-center gap-2">
@@ -484,7 +484,7 @@ const CreatePostForm = () => {
                             <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">
                               Edited caption
                             </span>
-                            <button 
+                            <button
                               onClick={() => clearPlatformCaption(platform)}
                               className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
                             >
@@ -494,7 +494,7 @@ const CreatePostForm = () => {
                         ) : (
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-400">Using main caption</span>
-                            <button 
+                            <button
                               onClick={() => setEditingPlatform(platform)}
                               className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
                             >
@@ -503,7 +503,7 @@ const CreatePostForm = () => {
                           </div>
                         )}
                       </div>
-                      
+
                       {(hasCustomCaption || editingPlatform === platform) && (
                         <div>
                           <Textarea
@@ -524,7 +524,7 @@ const CreatePostForm = () => {
                     </div>
                   );
                 })}
-                
+
                 {getSelectedPlatforms().length === 0 && (
                   <p className="text-sm text-gray-500 italic">Select accounts above to customize platform-specific captions</p>
                 )}
@@ -601,15 +601,15 @@ const CreatePostForm = () => {
               {uploadedMedia && (
                 <div className="mb-4">
                   {uploadedMedia.type === 'video' ? (
-                    <video 
-                      src={uploadedMedia.url} 
+                    <video
+                      src={uploadedMedia.url}
                       className="w-full rounded-lg"
                       controls
                     />
                   ) : (
-                    <img 
-                      src={uploadedMedia.url} 
-                      alt="Preview" 
+                    <img
+                      src={uploadedMedia.url}
+                      alt="Preview"
                       className="w-full rounded-lg"
                     />
                   )}
@@ -627,7 +627,7 @@ const CreatePostForm = () => {
                   <FaCalendarAlt className="mr-2" />
                   {loading ? 'Processing...' : 'Schedule'}
                 </Button>
-                
+
                 <Button
                   variant="outline"
                   onClick={() => handleSubmit('draft')}

@@ -25,35 +25,57 @@ import Privacy from '@/pages/Privacy';
 import Onboarding from '@/pages/Onboarding';
 import OnboardingConnect from '@/pages/OnboardingConnect';
 import OnboardingPricing from '@/pages/OnboardingPricing';
+import SubscriptionExpired from '@/pages/SubscriptionExpired';
 
 const PrivateRoute = ({ children }) => {
-  const { user } = useAuth();
-  
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  }
+
   if (!user) {
     return <Navigate to="/login" />;
   }
-  
-  // Allow access to onboarding pages regardless of completion status
-  if (window.location.pathname.startsWith('/onboarding') || 
-      window.location.pathname.startsWith('/payment')) {
+
+  // Allow access to onboarding, payment, billing, and subscription-expired pages
+  const path = window.location.pathname;
+  if (path.startsWith('/onboarding') ||
+    path.startsWith('/payment') ||
+    path.startsWith('/billing') ||
+    path === '/subscription-expired') {
     return children;
   }
-  
+
+  // Check subscription status
+  if (user.subscription_status === 'expired') {
+    return <Navigate to="/subscription-expired" />;
+  }
+
+  // Redirect free users to pricing if they somehow bypassed onboarding
+  if (user.subscription_status === 'free' && user.onboarding_completed) {
+    return <Navigate to="/onboarding/pricing" />;
+  }
+
   // If onboarding not completed, redirect to onboarding
   if (!user.onboarding_completed) {
     return <Navigate to="/onboarding" />;
   }
-  
+
   return children;
 };
 
 const PublicRoute = ({ children }) => {
-  const { user } = useAuth();
-  
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  }
+
   if (!user) {
     return children;
   }
-  
+
   // If user is authenticated, check if onboarding is completed
   if (user.onboarding_completed) {
     return <Navigate to="/dashboard" />;
@@ -167,6 +189,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <Billing />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/subscription-expired"
+              element={
+                <PrivateRoute>
+                  <SubscriptionExpired />
                 </PrivateRoute>
               }
             />

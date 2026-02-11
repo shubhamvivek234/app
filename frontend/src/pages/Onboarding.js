@@ -28,7 +28,7 @@ const Onboarding = () => {
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-      
+
       await axios.patch(
         `${apiUrl}/api/auth/me`,
         { user_type: selectedType, onboarding_completed: false },
@@ -76,7 +76,7 @@ const Onboarding = () => {
 
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">post bridge</h1>
+          <h1 className="text-2xl font-bold text-slate-900">CrossPost</h1>
         </div>
 
         {/* Content */}
@@ -89,19 +89,17 @@ const Onboarding = () => {
               <button
                 key={type.id}
                 onClick={() => setSelectedType(type.id)}
-                className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                  selectedType === type.id
+                className={`w-full text-left p-4 rounded-lg border-2 transition-all ${selectedType === type.id
                     ? 'border-green-500 bg-green-50'
                     : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
+                  }`}
               >
                 <div className="flex items-center">
                   <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mr-4 ${
-                      selectedType === type.id
+                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mr-4 ${selectedType === type.id
                         ? 'border-green-500 bg-green-500'
                         : 'border-gray-300'
-                    }`}
+                      }`}
                   >
                     {selectedType === type.id && (
                       <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">

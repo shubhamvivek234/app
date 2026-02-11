@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import SocialSyncLogo from '@/components/SocialSyncLogo';
+import CrossPostLogo from '@/components/CrossPostLogo';
 
 const Footer = () => {
   return (
@@ -10,7 +10,7 @@ const Footer = () => {
           {/* Column 1: Logo & Description */}
           <div className="md:col-span-1">
             <div className="mb-4">
-              <SocialSyncLogo size="large" />
+              <CrossPostLogo size="large" />
             </div>
             <p className="text-sm text-gray-600 mb-4">
               Post content to multiple social media platforms at the same time, all-in one place. Cross posting made easy.
@@ -25,7 +25,7 @@ const Footer = () => {
             <h3 className="text-sm font-semibold text-gray-900 mb-4 uppercase">Links</h3>
             <ul className="space-y-2">
               <li><Link to="/support" className="text-sm text-gray-600 hover:text-gray-900">Support</Link></li>
-              <li><Link to="/pricing" className="text-sm text-gray-600 hover:text-gray-900">Pricing</Link></li>
+              <li><Link to="/#pricing" className="text-sm text-gray-600 hover:text-gray-900">Pricing</Link></li>
               <li><Link to="/blog" className="text-sm text-gray-600 hover:text-gray-900">Blog</Link></li>
               <li><Link to="/affiliates" className="text-sm text-gray-600 hover:text-gray-900">Affiliates</Link></li>
             </ul>

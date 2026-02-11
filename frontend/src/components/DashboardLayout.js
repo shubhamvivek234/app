@@ -1,14 +1,14 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { 
-  FaPlus, 
-  FaCalendarAlt, 
-  FaList, 
-  FaClock, 
-  FaCheckCircle, 
-  FaFileAlt, 
-  FaUsers, 
+import {
+  FaPlus,
+  FaCalendarAlt,
+  FaList,
+  FaClock,
+  FaCheckCircle,
+  FaFileAlt,
+  FaUsers,
   FaCog,
   FaKey,
   FaQuestionCircle,
@@ -17,7 +17,7 @@ import {
   FaLayerGroup
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
-import SocialSyncLogo from '@/components/SocialSyncLogo';
+import CrossPostLogo from '@/components/CrossPostLogo';
 
 const DashboardLayout = ({ children }) => {
   const location = useLocation();
@@ -69,7 +69,7 @@ const DashboardLayout = ({ children }) => {
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="p-4 border-b border-gray-100">
-            <SocialSyncLogo size="default" />
+            <CrossPostLogo size="default" />
           </div>
 
           {/* Workspace */}
@@ -114,11 +114,10 @@ const DashboardLayout = ({ children }) => {
                     key={item.path}
                     to={item.path}
                     data-testid={`nav-${item.name.toLowerCase().replace(' ', '-')}`}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${
-                      active
-                        ? 'bg-green-50 text-green-700'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${active
+                      ? 'bg-green-50 text-green-700'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
                   >
                     <Icon className="text-sm" />
                     {item.name}
@@ -140,11 +139,10 @@ const DashboardLayout = ({ children }) => {
                     key={item.path}
                     to={item.path}
                     data-testid={`nav-${item.name.toLowerCase().replace(' ', '-')}`}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${
-                      active
-                        ? 'bg-green-50 text-green-700'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${active
+                      ? 'bg-green-50 text-green-700'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
                   >
                     <Icon className="text-sm" />
                     {item.name}
@@ -166,11 +164,10 @@ const DashboardLayout = ({ children }) => {
                     key={item.path}
                     to={item.path}
                     data-testid={`nav-${item.name.toLowerCase().replace(' ', '-')}`}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${
-                      active
-                        ? 'bg-green-50 text-green-700'
-                        : 'text-gray-600 hover:bg-gray-50'
-                    }`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${active
+                      ? 'bg-green-50 text-green-700'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
                   >
                     <Icon className="text-sm" />
                     {item.name}

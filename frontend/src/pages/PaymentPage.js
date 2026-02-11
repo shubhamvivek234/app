@@ -7,11 +7,14 @@ import { toast } from 'sonner';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
 
+import { useAuth } from '@/context/AuthContext';
+
 const PaymentPage = () => {
   const navigate = useNavigate();
+  const { user } = useAuth(); // Get user from context
   const [searchParams] = useSearchParams();
-  const plan = searchParams.get('plan') || 'creator';
-  const [paymentMethod, setPaymentMethod] = useState('stripe');
+  const plan = searchParams.get('plan') || 'monthly';
+  const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [cardNumber, setCardNumber] = useState('');
@@ -25,14 +28,16 @@ const PaymentPage = () => {
   const [showPromo, setShowPromo] = useState(false);
 
   const plans = {
-    creator: {
-      name: 'Creator',
-      price: 29,
+    monthly: {
+      name: 'Monthly',
+      price: 500,
+      currency: '₹',
       trialDays: 7,
     },
-    pro: {
-      name: 'Pro',
-      price: 49,
+    yearly: {
+      name: 'Yearly',
+      price: 3000,
+      currency: '₹',
       trialDays: 7,
     },
   };
@@ -47,7 +52,10 @@ const PaymentPage = () => {
     if (!token) {
       navigate('/login');
     }
-  }, [navigate]);
+    if (user && user.email) {
+      setEmail(user.email);
+    }
+  }, [navigate, user]);
 
   const handleStripePayment = async () => {
     setLoading(true);
@@ -101,28 +109,87 @@ const PaymentPage = () => {
           key: response.data.razorpay_key,
           amount: selectedPlan.price * 100,
           currency: 'INR',
-          name: 'post bridge',
+          name: 'CrossPost',
           description: `${selectedPlan.name} Plan`,
           order_id: response.data.order_id,
-          handler: function (response) {
-            toast.success('Payment successful!');
-            navigate('/dashboard');
+          handler: async function (response) {
+            try {
+              setLoading(true);
+              // Verify payment on backend
+              const verifyResponse = await axios.post(
+                `${apiUrl}/api/payments/verify-razorpay`,
+                {
+                  order_id: response.razorpay_order_id,
+                  payment_id: response.razorpay_payment_id,
+                  signature: response.razorpay_signature,
+                },
+                {
+                  headers: { Authorization: `Bearer ${token}` },
+                }
+              );
+
+              if (verifyResponse.data.status === 'success') {
+                // Update onboarding status
+                await axios.patch(
+                  `${apiUrl}/api/auth/me`,
+                  { onboarding_completed: true },
+                  {
+                    headers: { Authorization: `Bearer ${token}` },
+                    withCredentials: true,
+                  }
+                );
+
+                toast.success('Payment successful!');
+                navigate('/dashboard');
+              }
+            } catch (error) {
+              console.error('Verification error:', error);
+              toast.error('Payment verification failed');
+            } finally {
+              setLoading(false);
+            }
           },
           prefill: {
             email: email,
             name: cardholderName,
           },
           theme: {
-            color: '#10b981',
+            color: '#6569f0',
+          },
+          modal: {
+            ondismiss: function () {
+              setLoading(false);
+              toast('Payment cancelled');
+            },
           },
         };
 
+        if (!window.Razorpay) {
+          console.error('Razorpay SDK not loaded');
+          toast.error('Payment system not loaded. Please refresh.');
+          return;
+        }
+
         const rzp = new window.Razorpay(options);
+
+        rzp.on('payment.failed', function (response) {
+          console.error('Payment Failed:', response.error);
+          toast.error(`Payment Failed: ${response.error.description || 'Reason unknown'}`);
+          // You can also log this to your backend
+        });
+
         rzp.open();
       }
     } catch (error) {
-      console.error('Payment error:', error);
-      toast.error('Failed to initiate payment');
+      console.error('Payment error full details:', error);
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+        toast.error(`Payment failed: ${error.response.data.detail || 'Unknown server error'}`);
+      } else {
+        console.error('Error:', error.message);
+        toast.error('Failed to initiate payment. Check console for details.');
+      }
     } finally {
       setLoading(false);
     }
@@ -176,33 +243,33 @@ const PaymentPage = () => {
           {/* Left Column - Trial Details */}
           <div className="bg-white rounded-lg p-8 border border-gray-200 h-fit">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">
-              Try post bridge {selectedPlan.name.toLowerCase()}
+              Try CrossPost {selectedPlan.name.toLowerCase()}
             </h2>
 
             <div className="space-y-4">
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-green-800 font-semibold text-lg">{selectedPlan.trialDays} days free</p>
                 <p className="text-green-600 text-sm mt-1">
-                  Then US${selectedPlan.price}.00 per month starting {trialEndDate}
+                  Then ₹{selectedPlan.price}.00 per month starting {trialEndDate}
                 </p>
               </div>
 
               <div className="border-t border-gray-200 pt-4 space-y-3">
                 <div className="flex justify-between text-gray-700">
                   <span>Subtotal</span>
-                  <span>${selectedPlan.price}.00</span>
+                  <span>₹{selectedPlan.price}.00</span>
                 </div>
                 <div className="flex justify-between text-gray-700">
                   <span>Tax</span>
-                  <span>${tax}</span>
+                  <span>₹{tax}</span>
                 </div>
                 <div className="flex justify-between text-lg font-semibold text-gray-900 border-t border-gray-200 pt-3">
                   <span>Total due today</span>
-                  <span>$0.00</span>
+                  <span>₹0.00</span>
                 </div>
                 <div className="flex justify-between text-sm text-gray-600">
                   <span>Total after trial</span>
-                  <span>${total}</span>
+                  <span>₹{total}</span>
                 </div>
               </div>
 
@@ -239,10 +306,11 @@ const PaymentPage = () => {
                   id="email"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  readOnly
+                  disabled
                   placeholder="you@example.com"
                   required
-                  className="mt-1"
+                  className="mt-1 bg-gray-100 cursor-not-allowed"
                 />
               </div>
 
@@ -252,46 +320,11 @@ const PaymentPage = () => {
                 <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={() => setPaymentMethod('stripe')}
-                    className={`w-full text-left px-4 py-3 border-2 rounded-lg transition-all ${
-                      paymentMethod === 'stripe'
-                        ? 'border-green-500 bg-green-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">Credit / Debit Card</span>
-                      <span className="text-sm text-gray-500">Stripe</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('razorpay')}
-                    className={`w-full text-left px-4 py-3 border-2 rounded-lg transition-all ${
-                      paymentMethod === 'razorpay'
-                        ? 'border-green-500 bg-green-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
+                    className="w-full text-left px-4 py-3 border-2 rounded-lg transition-all border-green-500 bg-green-50"
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">UPI / Cards / Net Banking</span>
                       <span className="text-sm text-gray-500">Razorpay</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod('paypal')}
-                    className={`w-full text-left px-4 py-3 border-2 rounded-lg transition-all ${
-                      paymentMethod === 'paypal'
-                        ? 'border-green-500 bg-green-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">PayPal</span>
-                      <span className="text-sm text-gray-500">PayPal</span>
                     </div>
                   </button>
                 </div>
@@ -396,12 +429,17 @@ const PaymentPage = () => {
                 disabled={loading}
                 className="w-full bg-green-500 hover:bg-green-600 text-white py-3 text-base font-semibold"
               >
-                {loading ? 'Processing...' : 'Start trial'}
+                {loading ? 'Processing...' : 'Initiate Payment'}
               </Button>
 
+              <div className="mt-6 text-center">
+                <p className="text-sm text-gray-400 mb-2">Trusted by 10,000+ creators</p>
+                <span className="font-bold text-lg text-gray-600">CrossPost</span>
+              </div>
+
               {/* Footer Links */}
-              <div className="text-center text-xs text-gray-500 space-x-2">
-                <span>Powered by {paymentMethod === 'stripe' ? 'Stripe' : paymentMethod === 'razorpay' ? 'Razorpay' : 'PayPal'}</span>
+              <div className="text-center text-xs text-gray-500 space-x-2 mt-4">
+                <span>Powered by Razorpay</span>
                 <span>•</span>
                 <a href="/terms" className="hover:text-gray-700">Terms</a>
                 <span>•</span>

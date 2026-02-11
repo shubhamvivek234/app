@@ -29,12 +29,12 @@ const OnboardingConnect = () => {
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-      
+
       const response = await axios.get(`${apiUrl}/api/social-accounts`, {
         headers: { Authorization: `Bearer ${token}` },
         withCredentials: true,
       });
-      
+
       setConnectedAccounts(response.data);
     } catch (error) {
       console.error('Error fetching accounts:', error);
@@ -130,7 +130,7 @@ const OnboardingConnect = () => {
 
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">post bridge</h1>
+          <h1 className="text-2xl font-bold text-slate-900">CrossPost</h1>
         </div>
 
         {/* Content */}
@@ -206,7 +206,7 @@ const OnboardingConnect = () => {
           <DialogHeader>
             <DialogTitle className="text-2xl">Add all your accounts</DialogTitle>
             <p className="text-sm text-slate-600 mt-2">
-              Connect your social media accounts to post bridge and post to all of them at once
+              Connect your social media accounts to CrossPost and post to all of them at once
             </p>
           </DialogHeader>
 

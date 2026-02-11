@@ -183,6 +183,14 @@ class CheckoutRequest(BaseModel):
     plan: str
     payment_method: str
 
+class RazorpayVerifyRequest(BaseModel):
+    order_id: str
+    payment_id: str
+    signature: str
+
+class PayPalCaptureBody(BaseModel):
+    order_id: str
+
 class UserSession(BaseModel):
     user_id: str
     session_token: str
@@ -238,7 +246,30 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+    if user_doc.get('subscription_status') == 'active' and user_doc.get('subscription_end_date'):
+        end_date = user_doc['subscription_end_date']
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        
+        if end_date < datetime.now(timezone.utc):
+            await db.users.update_one(
+                {"user_id": user_doc["user_id"]},
+                {"$set": {"subscription_status": "expired"}}
+            )
+            user_doc['subscription_status'] = "expired"
+
+    if user_doc.get('subscription_status') == 'active' and user_doc.get('subscription_end_date'):
+        end_date = user_doc['subscription_end_date']
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        
+        if end_date < datetime.now(timezone.utc):
+            await db.users.update_one(
+                {"user_id": user_doc["user_id"]},
+                {"$set": {"subscription_status": "expired"}}
+            )
+            user_doc['subscription_status'] = "expired"
+
     return User(**user_doc)
 
 async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
@@ -270,6 +301,18 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
     
+    if user_doc.get('subscription_status') == 'active' and user_doc.get('subscription_end_date'):
+        end_date = user_doc['subscription_end_date']
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        
+        if end_date < datetime.now(timezone.utc):
+            await db.users.update_one(
+                {"user_id": user_doc["user_id"]},
+                {"$set": {"subscription_status": "expired"}}
+            )
+            user_doc['subscription_status'] = "expired"
+
     return User(**user_doc)
 
 async def send_verification_email(email: str, verification_token: str):
@@ -305,7 +348,7 @@ async def send_verification_email(email: str, verification_token: str):
     params = {
         "from": SENDER_EMAIL,
         "to": [email],
-        "subject": "Verify your email - SocialSync",
+        "subject": "Verify your email - CrossPost",
         "html": html_content
     }
     
@@ -1113,10 +1156,20 @@ async def disconnect_social_account(account_id: str, current_user: User = Depend
 
 PRICING = {
     "monthly": {"amount": 500.0, "currency": "INR", "duration": 30},
-    "yearly": {"amount": 3000.0, "currency": "INR", "duration": 365}
+    "yearly": {"amount": 3000.0, "currency": "INR", "duration": 365},
+    "creator": {"amount": 2400.0, "currency": "INR", "duration": 30},
+    "pro": {"amount": 4100.0, "currency": "INR", "duration": 30}
 }
 
-@api_router.post("/payments/checkout", response_model=CheckoutSessionResponse)
+class PaymentCheckoutResponse(BaseModel):
+    session_id: str
+    url: Optional[str] = None
+    order_id: Optional[str] = None
+    razorpay_key: Optional[str] = None
+    approval_url: Optional[str] = None
+    checkout_url: Optional[str] = None
+
+@api_router.post("/payments/checkout", response_model=PaymentCheckoutResponse)
 async def create_checkout(checkout_req: CheckoutRequest, request: Request, current_user: User = Depends(get_current_user)):
     if checkout_req.plan not in PRICING:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -1162,7 +1215,11 @@ async def create_checkout(checkout_req: CheckoutRequest, request: Request, curre
             
             await db.payment_transactions.insert_one(trans_dict)
             
-            return session
+            return PaymentCheckoutResponse(
+                session_id=session.session_id,
+                checkout_url=session.checkout_url,
+                url=session.checkout_url
+            )
         except Exception as e:
             logging.error(f"Stripe checkout error: {e}")
             raise HTTPException(status_code=500, detail=f"Checkout failed: {str(e)}")
@@ -1197,9 +1254,10 @@ async def create_checkout(checkout_req: CheckoutRequest, request: Request, curre
             
             await db.payment_transactions.insert_one(trans_dict)
             
-            return CheckoutSessionResponse(
-                url=f"{origin_url}/razorpay-checkout?order_id={order['id']}",
-                session_id=order['id']
+            return PaymentCheckoutResponse(
+                session_id=order['id'],
+                order_id=order['id'],
+                razorpay_key=razorpay_key_id
             )
         except Exception as e:
             logging.error(f"Razorpay order error: {e}")
@@ -1252,7 +1310,11 @@ async def create_checkout(checkout_req: CheckoutRequest, request: Request, curre
             
             await db.payment_transactions.insert_one(trans_dict)
             
-            return CheckoutSessionResponse(url=approve_url, session_id=order_id)
+            return PaymentCheckoutResponse(
+                session_id=order_id,
+                approval_url=approve_url,
+                url=approve_url
+            )
         except Exception as e:
             logging.error(f"PayPal checkout error: {e}")
             raise HTTPException(status_code=500, detail=f"Checkout failed: {str(e)}")
@@ -1304,6 +1366,92 @@ async def get_payment_status(session_id: str, current_user: User = Depends(get_c
         currency=transaction['currency'],
         metadata=transaction.get('metadata', {})
     )
+
+@api_router.post("/payments/verify-razorpay")
+async def verify_razorpay_payment(verify_req: RazorpayVerifyRequest, current_user: User = Depends(get_current_user)):
+    if not razorpay_client:
+        raise HTTPException(status_code=400, detail="Razorpay not configured")
+        
+    try:
+        # Verify signature
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_order_id': verify_req.order_id,
+            'razorpay_payment_id': verify_req.payment_id,
+            'razorpay_signature': verify_req.signature
+        })
+        
+        # Update transaction
+        transaction = await db.payment_transactions.find_one({"session_id": verify_req.order_id})
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+            
+        if transaction['payment_status'] != "paid":
+            plan_info = PRICING[transaction['plan']]
+            end_date = datetime.now(timezone.utc) + timedelta(days=plan_info['duration'])
+            
+            await db.users.update_one(
+                {"user_id": current_user.user_id},
+                {"$set": {
+                    "subscription_status": "active",
+                    "subscription_plan": transaction['plan'],
+                    "subscription_end_date": end_date.isoformat()
+                }}
+            )
+            
+            await db.payment_transactions.update_one(
+                {"session_id": verify_req.order_id},
+                {"$set": {
+                    "payment_status": "paid",
+                    "payment_id": verify_req.payment_id,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            
+        return {"status": "success"}
+    except razorpay.errors.SignatureVerificationError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        logging.error(f"Razorpay verification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/payments/capture-paypal")
+async def capture_paypal_payment(capture_req: PayPalCaptureBody, current_user: User = Depends(get_current_user)):
+    if not paypal_client:
+        raise HTTPException(status_code=400, detail="PayPal not configured")
+        
+    try:
+        request = OrdersCaptureRequest(capture_req.order_id)
+        response = await asyncio.to_thread(paypal_client.execute, request)
+        
+        if response.result.status == "COMPLETED":
+            transaction = await db.payment_transactions.find_one({"session_id": capture_req.order_id})
+            if transaction and transaction['payment_status'] != "paid":
+                plan_info = PRICING[transaction['plan']]
+                end_date = datetime.now(timezone.utc) + timedelta(days=plan_info['duration'])
+                
+                await db.users.update_one(
+                    {"user_id": current_user.user_id},
+                    {"$set": {
+                        "subscription_status": "active",
+                        "subscription_plan": transaction['plan'],
+                        "subscription_end_date": end_date.isoformat()
+                    }}
+                )
+                
+                await db.payment_transactions.update_one(
+                    {"session_id": capture_req.order_id},
+                    {"$set": {
+                        "payment_status": "paid",
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }}
+                )
+            return {"status": "success"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Payment not completed. Status: {response.result.status}")
+            
+    except Exception as e:
+        logging.error(f"PayPal capture error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -1366,7 +1514,7 @@ async def get_stats(current_user: User = Depends(get_current_user)):
 
 @api_router.get("/pages/terms")
 async def get_terms():
-    return {"content": "Terms of Service - SocialSync provides social media scheduling services..."}
+    return {"content": "Terms of Service - CrossPost provides social media scheduling services..."}
 
 @api_router.get("/pages/privacy")
 async def get_privacy():
@@ -1413,10 +1561,20 @@ async def shutdown_event():
 # Include router
 app.include_router(api_router)
 
+origins = [
+    "http://localhost:3000", 
+    "http://localhost:9500",
+    "https://postflow-25.preview.emergentagent.com"
+]
+
+# Add origins from environment variable
+if os.environ.get("CORS_ORIGINS"):
+    origins.extend(os.environ.get("CORS_ORIGINS").split(","))
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["http://localhost:3000", "https://postflow-25.preview.emergentagent.com"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

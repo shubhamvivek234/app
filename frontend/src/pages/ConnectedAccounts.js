@@ -3,13 +3,13 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { getSocialAccounts, connectSocialAccount, disconnectSocialAccount } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { 
-  FaTwitter, 
-  FaLinkedin, 
-  FaInstagram, 
-  FaFacebook, 
-  FaYoutube, 
-  FaTiktok, 
+import {
+  FaTwitter,
+  FaLinkedin,
+  FaInstagram,
+  FaFacebook,
+  FaYoutube,
+  FaTiktok,
   FaPinterest,
   FaTimes,
   FaFilter
@@ -23,75 +23,75 @@ const ConnectedAccounts = () => {
 
   // Platform definitions
   const platforms = [
-    { 
-      id: 'bluesky', 
-      name: 'Bluesky', 
-      icon: SiBluesky, 
-      color: 'text-blue-500', 
+    {
+      id: 'bluesky',
+      name: 'Bluesky',
+      icon: SiBluesky,
+      color: 'text-blue-500',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
       mockAccounts: ['jack friks']
     },
-    { 
-      id: 'facebook', 
-      name: 'Facebook', 
-      icon: FaFacebook, 
-      color: 'text-blue-600', 
+    {
+      id: 'facebook',
+      name: 'Facebook',
+      icon: FaFacebook,
+      color: 'text-blue-600',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['Jack friks', 'Curiosity Quench', 'Scroll less', 'Post bridge', 'Post bridge 2', 'Doof - food diary app']
+      mockAccounts: ['Jack friks', 'Curiosity Quench', 'Scroll less', 'CrossPost', 'CrossPost 2', 'Doof - food diary app']
     },
-    { 
-      id: 'instagram', 
-      name: 'Instagram', 
-      icon: FaInstagram, 
-      color: 'text-pink-500', 
+    {
+      id: 'instagram',
+      name: 'Instagram',
+      icon: FaInstagram,
+      color: 'text-pink-500',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jackfriks', 'curiosity.quench', 'scroll_less_live_more', 'postbridge', 'doof.app']
+      mockAccounts: ['jackfriks', 'curiosity.quench', 'scroll_less_live_more', 'crosspost', 'doof.app']
     },
-    { 
-      id: 'linkedin', 
-      name: 'LinkedIn', 
-      icon: FaLinkedin, 
-      color: 'text-blue-700', 
+    {
+      id: 'linkedin',
+      name: 'LinkedIn',
+      icon: FaLinkedin,
+      color: 'text-blue-700',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['post bridge', 'jack friks']
+      mockAccounts: ['CrossPost', 'jack friks']
     },
-    { 
-      id: 'pinterest', 
-      name: 'Pinterest', 
-      icon: FaPinterest, 
-      color: 'text-red-600', 
+    {
+      id: 'pinterest',
+      name: 'Pinterest',
+      icon: FaPinterest,
+      color: 'text-red-600',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jackfriks', 'postbridge']
+      mockAccounts: ['jackfriks', 'crosspost']
     },
-    { 
-      id: 'threads', 
-      name: 'Threads', 
-      icon: SiThreads, 
-      color: 'text-gray-900', 
+    {
+      id: 'threads',
+      name: 'Threads',
+      icon: SiThreads,
+      color: 'text-gray-900',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
       mockAccounts: ['curiosity.quench', 'jackfriks']
     },
-    { 
-      id: 'tiktok', 
-      name: 'TikTok', 
-      icon: FaTiktok, 
-      color: 'text-gray-900', 
+    {
+      id: 'tiktok',
+      name: 'TikTok',
+      icon: FaTiktok,
+      color: 'text-gray-900',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
       mockAccounts: ['jack friks', 'Curiosity Quench', 'jack friks', 'doof - food diary app', 'post.bridge']
     },
-    { 
-      id: 'twitter', 
-      name: 'Twitter', 
-      icon: FaTwitter, 
-      color: 'text-blue-400', 
+    {
+      id: 'twitter',
+      name: 'Twitter',
+      icon: FaTwitter,
+      color: 'text-blue-400',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['doofapp', 'jackfriks', 'curiousquench', 'postbridge_']
+      mockAccounts: ['doofapp', 'jackfriks', 'curiousquench', 'crosspost_']
     },
-    { 
-      id: 'youtube', 
-      name: 'Youtube', 
-      icon: FaYoutube, 
-      color: 'text-red-600', 
+    {
+      id: 'youtube',
+      name: 'Youtube',
+      icon: FaYoutube,
+      color: 'text-red-600',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
       mockAccounts: ['jack friks', 'jack friks shorts']
     },
@@ -118,7 +118,7 @@ const ConnectedAccounts = () => {
       // Generate a mock username for demo
       const platform = platforms.find(p => p.id === platformId);
       const mockUsername = `@user_${Date.now().toString(36)}`;
-      
+
       await connectSocialAccount(platformId, mockUsername);
       toast.success(`${platform.name} connected! (Note: Real OAuth integration required for production)`);
       fetchAccounts();
@@ -151,7 +151,7 @@ const ConnectedAccounts = () => {
   // Generate avatar colors based on username
   const getAvatarColor = (username) => {
     const colors = [
-      'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 
+      'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
       'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'
     ];
     const index = username.charCodeAt(0) % colors.length;
@@ -186,22 +186,22 @@ const ConnectedAccounts = () => {
             const Icon = platform.icon;
             const connectedAccounts = getAccountsByPlatform(platform.id);
             // Combine real accounts with mock data for display
-            const displayAccounts = connectedAccounts.length > 0 
-              ? connectedAccounts 
+            const displayAccounts = connectedAccounts.length > 0
+              ? connectedAccounts
               : platform.mockAccounts.map((name, idx) => ({
-                  id: `mock-${platform.id}-${idx}`,
-                  platform: platform.id,
-                  platform_username: name,
-                  isMock: true
-                }));
-            
+                id: `mock-${platform.id}-${idx}`,
+                platform: platform.id,
+                platform_username: name,
+                isMock: true
+              }));
+
             return (
               <div key={platform.id} className="flex items-center gap-4 py-2">
                 {/* Platform Icon */}
                 <div className="w-8 h-8 flex items-center justify-center">
                   <Icon className={`text-2xl ${platform.color}`} />
                 </div>
-                
+
                 {/* Connect Button */}
                 <Button
                   onClick={() => handleConnect(platform.id)}
@@ -211,7 +211,7 @@ const ConnectedAccounts = () => {
                 >
                   {connecting === platform.id ? 'Connecting...' : `Connect ${platform.name}`}
                 </Button>
-                
+
                 {/* Connected Account Tags */}
                 <div className="flex flex-wrap items-center gap-2">
                   {displayAccounts.map((account, idx) => (
@@ -228,8 +228,8 @@ const ConnectedAccounts = () => {
                       <span className="text-gray-700">{account.platform_username}</span>
                       {/* Close Button */}
                       <button
-                        onClick={() => account.isMock 
-                          ? toast.info('This is a demo account') 
+                        onClick={() => account.isMock
+                          ? toast.info('This is a demo account')
                           : handleDisconnect(account.id, platform.name)
                         }
                         className="text-red-400 hover:text-red-600 ml-1"
@@ -264,8 +264,8 @@ const ConnectedAccounts = () => {
 
         {/* Help Link */}
         <div className="mt-6">
-          <a 
-            href="/support" 
+          <a
+            href="/support"
             className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
           >
             <span className="w-4 h-4 rounded-full border border-gray-400 flex items-center justify-center text-xs">i</span>

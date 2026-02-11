@@ -1,4 +1,4 @@
-# SocialSync - Social Media Scheduler
+# CrossPost - Social Media Scheduler
 
 A production-ready social media scheduling platform inspired by Post-Bridge. Schedule and publish content across Twitter/X, Instagram, and LinkedIn with AI-powered content generation.
 
