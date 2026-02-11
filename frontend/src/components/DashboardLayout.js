@@ -17,6 +17,7 @@ import {
   FaLayerGroup
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
+import SocialSyncLogo from '@/components/SocialSyncLogo';
 
 const DashboardLayout = ({ children }) => {
   const location = useLocation();
@@ -68,12 +69,7 @@ const DashboardLayout = ({ children }) => {
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="p-4 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-xs font-bold">P</span>
-              </div>
-              <span className="text-lg font-semibold text-gray-900">post bridge</span>
-            </div>
+            <SocialSyncLogo size="default" />
           </div>
 
           {/* Workspace */}
