@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import SocialSyncLogo from '@/components/SocialSyncLogo';
 
 const Footer = () => {
   return (
@@ -8,11 +9,8 @@ const Footer = () => {
         <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
           {/* Column 1: Logo & Description */}
           <div className="md:col-span-1">
-            <div className="flex items-center space-x-2 mb-4">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-lg">P</span>
-              </div>
-              <span className="text-xl font-semibold text-gray-900">post bridge</span>
+            <div className="mb-4">
+              <SocialSyncLogo size="large" />
             </div>
             <p className="text-sm text-gray-600 mb-4">
               Post content to multiple social media platforms at the same time, all-in one place. Cross posting made easy.
