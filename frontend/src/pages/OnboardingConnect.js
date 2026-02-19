@@ -6,6 +6,8 @@ import { toast } from 'sonner';
 import axios from 'axios';
 import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus } from 'react-icons/fa';
 
+import OnboardingHeader from '@/components/OnboardingHeader';
+
 const OnboardingConnect = () => {
   const navigate = useNavigate();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -13,6 +15,8 @@ const OnboardingConnect = () => {
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [connectedAccounts, setConnectedAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // ... (rest of logic same)
 
   const platforms = [
     { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: '#E4405F' },
@@ -103,36 +107,10 @@ const OnboardingConnect = () => {
   const PlatformIcon = selectedPlatform?.icon;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-slate-50 pt-20 flex items-center justify-center px-4">
+      <OnboardingHeader step={2} />
+
       <div className="max-w-3xl w-full">
-        {/* Progress Indicator */}
-        <div className="flex items-center justify-center mb-12">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-semibold">
-                ✓
-              </div>
-            </div>
-            <div className="w-16 h-1 bg-green-500"></div>
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-semibold">
-                2
-              </div>
-            </div>
-            <div className="w-16 h-1 bg-gray-300"></div>
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center font-semibold">
-                3
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">CrossPost</h1>
-        </div>
-
         {/* Content */}
         <div className="bg-white rounded-xl shadow-sm border border-border p-8">
           <h2 className="text-3xl font-bold text-slate-900 mb-2">Connect your accounts</h2>
@@ -206,7 +184,7 @@ const OnboardingConnect = () => {
           <DialogHeader>
             <DialogTitle className="text-2xl">Add all your accounts</DialogTitle>
             <p className="text-sm text-slate-600 mt-2">
-              Connect your social media accounts to CrossPost and post to all of them at once
+              Connect your social media accounts to SocialEntangler and post to all of them at once
             </p>
           </DialogHeader>
 

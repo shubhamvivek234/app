@@ -81,7 +81,7 @@ const CreatePostForm = () => {
     { id: '4', platform: 'facebook', platform_username: 'Scroll less', avatar: null },
     { id: '5', platform: 'instagram', platform_username: 'jackfriks', avatar: null },
     { id: '6', platform: 'instagram', platform_username: 'curiosity.quench', avatar: null },
-    { id: '7', platform: 'linkedin', platform_username: 'CrossPost', avatar: null },
+    { id: '7', platform: 'linkedin', platform_username: 'SocialEntangler', avatar: null },
     { id: '8', platform: 'linkedin', platform_username: 'jack friks', avatar: null },
     { id: '9', platform: 'pinterest', platform_username: 'jackfriks', avatar: null },
     { id: '10', platform: 'threads', platform_username: 'curiosity.quench', avatar: null },

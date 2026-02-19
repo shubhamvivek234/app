@@ -26,16 +26,26 @@ const Signup = () => {
       toast.success('Account created! Please check your email to verify your account.');
       navigate('/onboarding');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Signup failed');
+      let errorMessage = 'Signup failed';
+      if (error.response?.data?.detail) {
+        if (typeof error.response.data.detail === 'string') {
+          errorMessage = error.response.data.detail;
+        } else if (Array.isArray(error.response.data.detail)) {
+          errorMessage = error.response.data.detail.map(e => e.msg).join(', ');
+        } else {
+          errorMessage = JSON.stringify(error.response.data.detail);
+        }
+      }
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleSignup = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + '/auth/callback';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    // Direct Google OAuth via Backend
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+    window.location.href = `${backendUrl}/api/auth/google/login`;
   };
 
   return (

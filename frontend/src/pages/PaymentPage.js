@@ -11,7 +11,7 @@ import { useAuth } from '@/context/AuthContext';
 
 const PaymentPage = () => {
   const navigate = useNavigate();
-  const { user } = useAuth(); // Get user from context
+  const { user, token } = useAuth(); // Get user and token from context
   const [searchParams] = useSearchParams();
   const plan = searchParams.get('plan') || 'monthly';
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
@@ -48,14 +48,13 @@ const PaymentPage = () => {
   const trialEndDate = new Date(Date.now() + selectedPlan.trialDays * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
     if (!token) {
       navigate('/login');
     }
     if (user && user.email) {
       setEmail(user.email);
     }
-  }, [navigate, user]);
+  }, [navigate, user, token]);
 
   const handleStripePayment = async () => {
     setLoading(true);
@@ -109,7 +108,7 @@ const PaymentPage = () => {
           key: response.data.razorpay_key,
           amount: selectedPlan.price * 100,
           currency: 'INR',
-          name: 'CrossPost',
+          name: 'SocialEntangler',
           description: `${selectedPlan.name} Plan`,
           order_id: response.data.order_id,
           handler: async function (response) {
@@ -243,7 +242,7 @@ const PaymentPage = () => {
           {/* Left Column - Trial Details */}
           <div className="bg-white rounded-lg p-8 border border-gray-200 h-fit">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">
-              Try CrossPost {selectedPlan.name.toLowerCase()}
+              Try SocialEntangler {selectedPlan.name.toLowerCase()}
             </h2>
 
             <div className="space-y-4">
@@ -434,7 +433,7 @@ const PaymentPage = () => {
 
               <div className="mt-6 text-center">
                 <p className="text-sm text-gray-400 mb-2">Trusted by 10,000+ creators</p>
-                <span className="font-bold text-lg text-gray-600">CrossPost</span>
+                <span className="font-bold text-lg text-gray-600">SocialEntangler</span>
               </div>
 
               {/* Footer Links */}

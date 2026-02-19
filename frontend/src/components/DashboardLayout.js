@@ -17,7 +17,7 @@ import {
   FaLayerGroup
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
-import CrossPostLogo from '@/components/CrossPostLogo';
+import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
 
 const DashboardLayout = ({ children }) => {
   const location = useLocation();
@@ -69,7 +69,7 @@ const DashboardLayout = ({ children }) => {
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="p-4 border-b border-gray-100">
-            <CrossPostLogo size="default" />
+            <SocialEntanglerLogo size="default" />
           </div>
 
           {/* Workspace */}

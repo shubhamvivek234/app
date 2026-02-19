@@ -27,7 +27,7 @@ const SubscriptionExpired = () => {
 
                     <h2 className="text-2xl font-bold text-gray-900 mb-2">Subscription Expired</h2>
                     <p className="text-gray-600 mb-6">
-                        Your subscription has ended. To continue using CrossPost and accessing your dashboard, please renew your subscription.
+                        Your subscription has ended. To continue using SocialEntangler and accessing your dashboard, please renew your subscription.
                     </p>
 
                     <div className="space-y-4">

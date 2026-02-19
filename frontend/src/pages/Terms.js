@@ -12,35 +12,35 @@ const Terms = () => {
               <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
                 <span className="text-white font-bold text-lg">C</span>
               </div>
-              <span className="text-xl font-semibold text-gray-900">CrossPost</span>
+              <span className="text-xl font-semibold text-gray-900">SocialEntangler</span>
             </Link>
           </div>
         </div>
       </nav>
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-8">Terms and Conditions for CrossPost</h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-8">Terms and Conditions for SocialEntangler</h1>
 
         <div className="prose prose-slate max-w-none">
           <p className="text-gray-600 mb-6">Last Updated: 2026-02-11</p>
 
-          <p className="text-gray-700 leading-relaxed mb-6">Welcome to CrossPost!</p>
+          <p className="text-gray-700 leading-relaxed mb-6">Welcome to SocialEntangler!</p>
 
           <p className="text-gray-700 leading-relaxed mb-6">
-            These Terms of Service ("Terms") govern your use of the CrossPost website at https://crosspost.com ("Website") and the services provided by CrossPost. By using our Website and services, you agree to these Terms.
+            These Terms of Service ("Terms") govern your use of the SocialEntangler website at https://crosspost.com ("Website") and the services provided by SocialEntangler. By using our Website and services, you agree to these Terms.
           </p>
 
           <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">1. Description of CrossPost</h2>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-4">1. Description of SocialEntangler</h2>
             <p className="text-gray-700 leading-relaxed">
-              CrossPost is a tool that allows users to cross-post and upload content to all social media platforms from one place.
+              SocialEntangler is a tool that allows users to cross-post and upload content to all social media platforms from one place.
             </p>
           </section>
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">2. YouTube Terms of Service</h2>
             <p className="text-gray-700 leading-relaxed">
-              By using CrossPost to interact with YouTube services, you also agree to be bound by the YouTube Terms of Service (https://www.youtube.com/t/terms). This includes any use of the YouTube API services through our platform.
+              By using SocialEntangler to interact with YouTube services, you also agree to be bound by the YouTube Terms of Service (https://www.youtube.com/t/terms). This includes any use of the YouTube API services through our platform.
             </p>
           </section>
 
@@ -61,7 +61,7 @@ const Terms = () => {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">5. Ownership and Usage Rights</h2>
             <p className="text-gray-700 leading-relaxed">
-              When you purchase a package from CrossPost, you can sign in to your social media accounts and authorize access to your data to post to the platforms connected to the CrossPost app. You retain ownership of your content, but grant us the necessary rights to post on your behalf.
+              When you purchase a package from SocialEntangler, you can sign in to your social media accounts and authorize access to your data to post to the platforms connected to the SocialEntangler app. You retain ownership of your content, but grant us the necessary rights to post on your behalf.
             </p>
           </section>
 
@@ -75,7 +75,7 @@ const Terms = () => {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">7. Children's Privacy</h2>
             <p className="text-gray-700 leading-relaxed">
-              CrossPost is not intended for use by children, and we do not knowingly collect any data from children.
+              SocialEntangler is not intended for use by children, and we do not knowingly collect any data from children.
             </p>
           </section>
 
@@ -101,7 +101,7 @@ const Terms = () => {
           </section>
 
           <p className="text-gray-700 leading-relaxed mt-8 font-semibold">
-            Thank you for using CrossPost!
+            Thank you for using SocialEntangler!
           </p>
         </div>
       </div>

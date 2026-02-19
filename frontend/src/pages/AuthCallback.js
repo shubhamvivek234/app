@@ -15,7 +15,46 @@ const AuthCallback = () => {
   useEffect(() => {
     const processCallback = async () => {
       const sessionId = searchParams.get('session_id');
-      
+      const tokenParam = searchParams.get('token');
+
+      if (tokenParam) {
+        // Direct OAuth Flow
+        try {
+          // Set cookie and localStorage
+          Cookies.set('session_token', tokenParam, { expires: 7 });
+          localStorage.setItem('token', tokenParam);
+
+          // Set in axios default headers for immediate use
+          axios.defaults.headers.common['Authorization'] = `Bearer ${tokenParam}`;
+
+          // Fetch user details
+          const userResponse = await axios.get(`${BACKEND_URL}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${tokenParam}` }
+          });
+
+          const user = userResponse.data;
+
+          // Update auth context
+          setToken(tokenParam);
+          setUser(user);
+
+          // Check if onboarding is completed
+          if (user.onboarding_completed) {
+            toast.success('Welcome back!');
+            navigate('/dashboard');
+          } else {
+            toast.success('Welcome! Let\'s get you set up.');
+            navigate('/onboarding');
+          }
+        } catch (error) {
+          console.error('Auth callback error:', error);
+          toast.error('Authentication failed');
+          navigate('/login');
+        }
+        return;
+      }
+
+      // Legacy Proxy Flow (Fallback)
       if (!sessionId) {
         toast.error('Invalid authentication response');
         navigate('/login');
@@ -28,14 +67,14 @@ const AuthCallback = () => {
         });
 
         const { session_token, user } = response.data;
-        
+
         // Set cookie
         Cookies.set('session_token', session_token, { expires: 7 });
-        
+
         // Update auth context
         setToken(session_token);
         setUser(user);
-        
+
         // Check if onboarding is completed
         if (user.onboarding_completed) {
           toast.success('Welcome back!');

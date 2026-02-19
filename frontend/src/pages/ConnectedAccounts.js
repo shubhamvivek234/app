@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getSocialAccounts, connectSocialAccount, disconnectSocialAccount } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,7 @@ const ConnectedAccounts = () => {
       icon: FaFacebook,
       color: 'text-blue-600',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['Jack friks', 'Curiosity Quench', 'Scroll less', 'CrossPost', 'CrossPost 2', 'Doof - food diary app']
+      mockAccounts: ['Jack friks', 'Curiosity Quench', 'Scroll less', 'SocialEntangler', 'SocialEntangler 2', 'Doof - food diary app']
     },
     {
       id: 'instagram',
@@ -53,7 +54,7 @@ const ConnectedAccounts = () => {
       icon: FaLinkedin,
       color: 'text-blue-700',
       buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['CrossPost', 'jack friks']
+      mockAccounts: ['SocialEntangler', 'jack friks']
     },
     {
       id: 'pinterest',
@@ -115,7 +116,21 @@ const ConnectedAccounts = () => {
   const handleConnect = async (platformId) => {
     setConnecting(platformId);
     try {
-      // Generate a mock username for demo
+      if (platformId === 'facebook' || platformId === 'instagram') {
+        const token = localStorage.getItem('token');
+        const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+
+        // 1. Get Auth URL from backend
+        const response = await axios.get(`${apiUrl}/api/oauth/facebook/authorize`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        // 2. Redirect user
+        window.location.href = response.data.authorization_url;
+        return;
+      }
+
+      // Generate a mock username for demo (for other platforms)
       const platform = platforms.find(p => p.id === platformId);
       const mockUsername = `@user_${Date.now().toString(36)}`;
 
@@ -123,9 +138,12 @@ const ConnectedAccounts = () => {
       toast.success(`${platform.name} connected! (Note: Real OAuth integration required for production)`);
       fetchAccounts();
     } catch (error) {
+      console.error('Connect error:', error);
       toast.error(error.response?.data?.detail || 'Failed to connect account');
     } finally {
-      setConnecting(null);
+      if (platformId !== 'facebook' && platformId !== 'instagram') {
+        setConnecting(null);
+      }
     }
   };
 

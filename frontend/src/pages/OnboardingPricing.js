@@ -3,10 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { useAuth } from '@/context/AuthContext';
 import { FaCheck } from 'react-icons/fa';
+
+import OnboardingHeader from '@/components/OnboardingHeader';
 
 const OnboardingPricing = () => {
   const navigate = useNavigate();
+  const { token } = useAuth();
   const [billingCycle, setBillingCycle] = useState('monthly');
   const [showFreeTrial, setShowFreeTrial] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -53,11 +57,12 @@ const OnboardingPricing = () => {
   const handleSelectPlan = async (planId) => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
       // Navigate to payment page with selected plan
+      console.log(`Navigating to payment page with plan: ${planId}`);
       navigate(`/payment?plan=${planId}`);
+      console.log('Navigation called');
     } catch (error) {
       console.error('Error:', error);
       toast.error('Something went wrong');
@@ -75,37 +80,11 @@ const OnboardingPricing = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-gray-50 pt-20 flex items-center justify-center px-4 py-12">
+      <OnboardingHeader step={3} />
+
       <div className="max-w-6xl w-full">
-        {/* Progress Indicator */}
-        <div className="flex items-center justify-center mb-12">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-semibold">
-                ✓
-              </div>
-            </div>
-            <div className="w-16 h-1 bg-indigo-500"></div>
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-semibold">
-                ✓
-              </div>
-            </div>
-            <div className="w-16 h-1 bg-indigo-500"></div>
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-semibold">
-                3
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">CrossPost</h1>
-        </div>
-
-        {/* Header */}
+        {/* Content */}
         <div className="text-center mb-8">
           <h2 className="text-4xl font-bold text-gray-900 mb-3">Choose your plan</h2>
           <p className="text-gray-600 text-lg">Try for free for 7 days - cancel anytime</p>

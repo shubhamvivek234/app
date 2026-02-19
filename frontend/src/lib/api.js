@@ -140,3 +140,14 @@ export const completeOnboarding = async () => {
   );
   return response.data;
 };
+
+// Support
+export const sendSupportRequest = async (formData) => {
+  const response = await axios.post(`${API}/support`, formData, {
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};

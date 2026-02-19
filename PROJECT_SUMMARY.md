@@ -1,4 +1,4 @@
-# CrossPost - Production Ready Social Media Scheduler
+# SocialEntangler - Production Ready Social Media Scheduler
 
 **Version:** 2.0 Enhanced Edition  
 **Status:** Production Ready (MVP + Enhanced Backend)  
