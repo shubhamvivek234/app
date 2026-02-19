@@ -24,28 +24,14 @@ const AuthCallback = () => {
           Cookies.set('session_token', tokenParam, { expires: 7 });
           localStorage.setItem('token', tokenParam);
 
-          // Set in axios default headers for immediate use
-          axios.defaults.headers.common['Authorization'] = `Bearer ${tokenParam}`;
-
-          // Fetch user details
-          const userResponse = await axios.get(`${BACKEND_URL}/api/auth/me`, {
-            headers: { Authorization: `Bearer ${tokenParam}` }
-          });
-
-          const user = userResponse.data;
-
           // Update auth context
+          // This will trigger the AuthContext to fetch the user profile
           setToken(tokenParam);
-          setUser(user);
 
-          // Check if onboarding is completed
-          if (user.onboarding_completed) {
-            toast.success('Welcome back!');
-            navigate('/dashboard');
-          } else {
-            toast.success('Welcome! Let\'s get you set up.');
-            navigate('/onboarding');
-          }
+          // Navigate to dashboard - PrivateRoute will redirect to /onboarding if needed
+          // based on the user's fetched profile (onboarding_completed status)
+          toast.success('Successfully logged in!');
+          navigate('/dashboard');
         } catch (error) {
           console.error('Auth callback error:', error);
           toast.error('Authentication failed');
