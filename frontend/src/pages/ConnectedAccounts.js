@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getSocialAccounts, connectSocialAccount, disconnectSocialAccount } from '@/lib/api';
@@ -11,11 +12,9 @@ import {
   FaFacebook,
   FaYoutube,
   FaTiktok,
-  FaPinterest,
   FaTimes,
   FaFilter
 } from 'react-icons/fa';
-import { SiBluesky, SiThreads } from 'react-icons/si';
 
 const ConnectedAccounts = () => {
   const [accounts, setAccounts] = useState([]);
@@ -25,82 +24,66 @@ const ConnectedAccounts = () => {
   // Platform definitions
   const platforms = [
     {
-      id: 'bluesky',
-      name: 'Bluesky',
-      icon: SiBluesky,
-      color: 'text-blue-500',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jack friks']
-    },
-    {
       id: 'facebook',
       name: 'Facebook',
       icon: FaFacebook,
       color: 'text-blue-600',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['Jack friks', 'Curiosity Quench', 'Scroll less', 'SocialEntangler', 'SocialEntangler 2', 'Doof - food diary app']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
     {
       id: 'instagram',
       name: 'Instagram',
       icon: FaInstagram,
       color: 'text-pink-500',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jackfriks', 'curiosity.quench', 'scroll_less_live_more', 'crosspost', 'doof.app']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
     {
       id: 'linkedin',
       name: 'LinkedIn',
       icon: FaLinkedin,
       color: 'text-blue-700',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['SocialEntangler', 'jack friks']
-    },
-    {
-      id: 'pinterest',
-      name: 'Pinterest',
-      icon: FaPinterest,
-      color: 'text-red-600',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jackfriks', 'crosspost']
-    },
-    {
-      id: 'threads',
-      name: 'Threads',
-      icon: SiThreads,
-      color: 'text-gray-900',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['curiosity.quench', 'jackfriks']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
     {
       id: 'tiktok',
       name: 'TikTok',
       icon: FaTiktok,
       color: 'text-gray-900',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jack friks', 'Curiosity Quench', 'jack friks', 'doof - food diary app', 'post.bridge']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
     {
       id: 'twitter',
       name: 'Twitter',
       icon: FaTwitter,
       color: 'text-blue-400',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['doofapp', 'jackfriks', 'curiousquench', 'crosspost_']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
     {
       id: 'youtube',
       name: 'Youtube',
       icon: FaYoutube,
       color: 'text-red-600',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800',
-      mockAccounts: ['jack friks', 'jack friks shorts']
+      buttonBg: 'bg-gray-900 hover:bg-gray-800'
     },
   ];
+
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     fetchAccounts();
   }, []);
+
+  // After OAuth redirect, refresh accounts and show success message
+  useEffect(() => {
+    if (searchParams.get('connected') === 'true') {
+      const platforms = searchParams.get('platforms') || 'account';
+      toast.success(`Successfully connected: ${platforms}`);
+      fetchAccounts();
+    }
+    if (searchParams.get('error')) {
+      toast.error(`Connection failed: ${searchParams.get('message') || searchParams.get('error')}`);
+    }
+  }, [searchParams]);
 
   const fetchAccounts = async () => {
     try {
@@ -116,34 +99,51 @@ const ConnectedAccounts = () => {
   const handleConnect = async (platformId) => {
     setConnecting(platformId);
     try {
-      if (platformId === 'facebook' || platformId === 'instagram') {
-        const token = localStorage.getItem('token');
-        const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const token = localStorage.getItem('token');
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
+      // Use real OAuth for integrated platforms
+      if (['facebook', 'instagram', 'youtube', 'twitter', 'linkedin'].includes(platformId)) {
         // 1. Get Auth URL from backend
-        const response = await axios.get(`${apiUrl}/api/oauth/facebook/authorize`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const authResponse = await axios.get(
+          `${apiUrl}/api/oauth/${platformId}/authorize`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            withCredentials: true,
+          }
+        );
 
-        // 2. Redirect user
-        window.location.href = response.data.authorization_url;
+        const { authorization_url, code_verifier } = authResponse.data;
+
+        if (code_verifier) {
+          sessionStorage.setItem('twitter_code_verifier', code_verifier);
+        }
+
+        // Store platform info for callback so it redirects back here
+        sessionStorage.setItem('oauth_platform', platformId);
+        sessionStorage.setItem('oauth_return_to', 'accounts');
+
+        // 2. Redirect user to authorization page
+        window.location.href = authorization_url;
         return;
       }
 
-      // Generate a mock username for demo (for other platforms)
+      // Generate a mock username for demo (for other non-integrated platforms like tiktok/linkedin)
       const platform = platforms.find(p => p.id === platformId);
       const mockUsername = `@user_${Date.now().toString(36)}`;
 
       await connectSocialAccount(platformId, mockUsername);
-      toast.success(`${platform.name} connected! (Note: Real OAuth integration required for production)`);
+      toast.success(`${platform.name} mock account connected!`);
       fetchAccounts();
     } catch (error) {
       console.error('Connect error:', error);
-      toast.error(error.response?.data?.detail || 'Failed to connect account');
-    } finally {
-      if (platformId !== 'facebook' && platformId !== 'instagram') {
-        setConnecting(null);
+      if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
+        toast.error(`API credentials not configured for this platform.`);
+      } else {
+        toast.error(error.response?.data?.detail || 'Failed to connect account');
       }
+    } finally {
+      setConnecting(null);
     }
   };
 
@@ -203,15 +203,6 @@ const ConnectedAccounts = () => {
           {platforms.map((platform) => {
             const Icon = platform.icon;
             const connectedAccounts = getAccountsByPlatform(platform.id);
-            // Combine real accounts with mock data for display
-            const displayAccounts = connectedAccounts.length > 0
-              ? connectedAccounts
-              : platform.mockAccounts.map((name, idx) => ({
-                id: `mock-${platform.id}-${idx}`,
-                platform: platform.id,
-                platform_username: name,
-                isMock: true
-              }));
 
             return (
               <div key={platform.id} className="flex items-center gap-4 py-2">
@@ -232,24 +223,29 @@ const ConnectedAccounts = () => {
 
                 {/* Connected Account Tags */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {displayAccounts.map((account, idx) => (
+                  {connectedAccounts.map((account) => (
                     <div
                       key={account.id}
-                      className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-full px-2 py-1 text-sm"
+                      className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-full px-2 py-1 text-sm shadow-sm"
                       data-testid={`account-tag-${account.id}`}
                     >
                       {/* Avatar */}
-                      <div className={`w-5 h-5 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-xs`}>
-                        {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
-                      </div>
+                      {account.picture_url ? (
+                        <img
+                          src={account.picture_url}
+                          alt={account.platform_username}
+                          className="w-5 h-5 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className={`w-5 h-5 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-xs`}>
+                          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
+                        </div>
+                      )}
                       {/* Username */}
-                      <span className="text-gray-700">{account.platform_username}</span>
+                      <span className="text-gray-800 font-medium">{account.platform_username}</span>
                       {/* Close Button */}
                       <button
-                        onClick={() => account.isMock
-                          ? toast.info('This is a demo account')
-                          : handleDisconnect(account.id, platform.name)
-                        }
+                        onClick={() => handleDisconnect(account.id, platform.name)}
                         className="text-red-400 hover:text-red-600 ml-1"
                         data-testid={`disconnect-${account.id}`}
                       >

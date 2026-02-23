@@ -95,3 +95,9 @@ frontend/node_modules/.cache/default-development/6.pack
 # Environment files
 *.env
 *.env.*
+
+# Project specific ignores
+backend/serviceAccountKey.json
+*.log
+backend/uploads/
+

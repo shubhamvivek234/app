@@ -1,6 +1,14 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
-import Cookies from 'js-cookie';
+import { auth, googleProvider } from '@/firebase';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut
+} from 'firebase/auth';
+import { toast } from 'sonner';
 
 const AuthContext = createContext();
 
@@ -8,76 +16,145 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(null); // Backend User Profile (MongoDB)
+  const [firebaseUser, setFirebaseUser] = useState(null); // Firebase User Object
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem('token') || Cookies.get('session_token'));
+  const [token, setToken] = useState(null);
 
+  // 1. Listen for Firebase Auth Changes
   useEffect(() => {
-    if (token) {
-      fetchUser();
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setLoading(true);
+      if (currentUser) {
+        setFirebaseUser(currentUser);
+        try {
+          // Get ID Token
+          const idToken = await currentUser.getIdToken();
+          setToken(idToken);
+          localStorage.setItem('token', idToken);
 
-  const fetchUser = async () => {
-    try {
-      const sessionToken = Cookies.get('session_token');
-      const headers = sessionToken
-        ? {} // Cookie will be sent automatically
-        : { Authorization: `Bearer ${token}` };
-      
+          // Set Axios Default
+          axios.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
+
+          // Sync with Backend (Get detailed profile)
+          await fetchBackendProfile(idToken);
+        } catch (error) {
+          console.error("Error syncing user:", error);
+          toast.error("Failed to sync user profile");
+        }
+      } else {
+        setFirebaseUser(null);
+        setToken(null);
+        setUser(null);
+        localStorage.removeItem('token');
+        delete axios.defaults.headers.common['Authorization'];
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Fetch User Profile from MongoDB (Backend)
+  const fetchBackendProfile = async (idToken) => {
+    const attempt = async () => {
       const response = await axios.get(`${API}/auth/me`, {
-        headers,
-        withCredentials: true
+        headers: { Authorization: `Bearer ${idToken}` },
+        timeout: 8000,
       });
       setUser(response.data);
+    };
+
+    try {
+      await attempt();
+    } catch (firstError) {
+      console.warn('Backend profile fetch failed, retrying in 2s...', firstError?.message);
+      // Retry once after 2 seconds (backend may still be warming up)
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        await attempt();
+      } catch (secondError) {
+        console.error('Failed to fetch backend profile after retry:', secondError);
+        if (secondError?.code === 'ERR_NETWORK' || secondError?.code === 'ECONNREFUSED') {
+          toast.error('Cannot reach server. Please make sure the backend is running.');
+        } else {
+          toast.error('Failed to load your profile. Please refresh the page.');
+        }
+        // Don't setUser — force PrivateRoute to show clear feedback
+      }
+    }
+  };
+
+  // 3. Login Actions
+  const loginWithGoogle = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+      return true;
     } catch (error) {
-      console.error('Failed to fetch user:', error);
-      logout();
-    } finally {
-      setLoading(false);
+      console.error("Google login error:", error);
+      toast.error(error.message);
+      throw error;
     }
   };
 
   const login = async (email, password) => {
-    const response = await axios.post(`${API}/auth/login`, { email, password });
-    const { access_token, user: userData } = response.data;
-    localStorage.setItem('token', access_token);
-    setToken(access_token);
-    setUser(userData);
-    return userData;
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return true;
+    } catch (error) {
+      console.error("Login error:", error);
+      toast.error("Invalid email or password");
+      throw error;
+    }
   };
 
   const signup = async (email, password, name) => {
-    const response = await axios.post(`${API}/auth/signup`, { email, password, name });
-    const { access_token, user: userData } = response.data;
-    localStorage.setItem('token', access_token);
-    setToken(access_token);
-    setUser(userData);
-    return userData;
+    try {
+      // Create user in Firebase
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Optionally update Firebase Profile Display Name immediately
+      // await updateProfile(result.user, { displayName: name });
+      // The backend sync will happen automatically on auth state change listener
+
+      return true;
+    } catch (error) {
+      console.error("Signup error:", error);
+      toast.error(error.message);
+      throw error;
+    }
   };
 
   const logout = async () => {
     try {
-      await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
+      await signOut(auth);
+      // State cleanup handled by onAuthStateChanged
     } catch (error) {
       console.error('Logout error:', error);
     }
-    localStorage.removeItem('token');
-    Cookies.remove('session_token');
-    setToken(null);
-    setUser(null);
   };
 
+  // Helper to force token refresh if needed
   const refreshUser = async () => {
-    if (token) {
-      await fetchUser();
+    if (firebaseUser) {
+      const idToken = await firebaseUser.getIdToken(true);
+      setToken(idToken);
+      await fetchBackendProfile(idToken);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ user, setUser, loading, login, signup, logout, token, setToken, refreshUser }}>
+    <AuthContext.Provider value={{
+      user, // MongoDB Profile
+      firebaseUser, // Firebase User
+      loading,
+      login,
+      signup,
+      loginWithGoogle,
+      logout,
+      token,
+      refreshUser
+    }}>
       {children}
     </AuthContext.Provider>
   );

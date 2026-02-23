@@ -58,6 +58,9 @@ const LandingPage = () => {
               <button onClick={() => scrollToSection('platforms')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
                 Platforms
               </button>
+              <button onClick={() => navigate('/agent-docs')} className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold">
+                Connect with AI Agent
+              </button>
               <button onClick={() => scrollToSection('faq')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
                 FAQ
               </button>

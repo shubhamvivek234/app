@@ -32,7 +32,7 @@ const OnboardingConnect = () => {
   const fetchConnectedAccounts = async () => {
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       const response = await axios.get(`${apiUrl}/api/social-accounts`, {
         headers: { Authorization: `Bearer ${token}` },

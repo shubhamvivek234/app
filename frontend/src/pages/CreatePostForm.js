@@ -8,7 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import axios from 'axios';
-import { getSocialAccounts } from '@/lib/api';
+import Cropper from 'react-easy-crop';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { getSocialAccounts, uploadMedia } from '@/lib/api';
 import {
   FaTwitter,
   FaInstagram,
@@ -30,10 +32,12 @@ import {
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
+
 const CreatePostForm = () => {
   const { type } = useParams();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const coverImageInputRef = useRef(null);
 
   // State
   const [content, setContent] = useState('');
@@ -43,9 +47,29 @@ const CreatePostForm = () => {
   const [scheduledTime, setScheduledTime] = useState('14:00');
   const [isScheduleEnabled, setIsScheduleEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadedMedia, setUploadedMedia] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
+  const [coverImageUploading, setCoverImageUploading] = useState(false);
+  const [coverImageProgress, setCoverImageProgress] = useState(0);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState(null);
+  const [mediaRawAspectRatio, setMediaRawAspectRatio] = useState(null);
+
+  // YouTube Specific State
   const [videoTitle, setVideoTitle] = useState('');
+  const [showYoutubeTitle, setShowYoutubeTitle] = useState(false);
+  const [youtubePrivacy, setYoutubePrivacy] = useState('public');
+
+  // Sync state
+  const [syncCaptions, setSyncCaptions] = useState(false);
+
+  // Cropper State
+  const [showCropper, setShowCropper] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
 
   // Platform-specific captions
   const [platformCaptions, setPlatformCaptions] = useState({});
@@ -73,26 +97,6 @@ const CreatePostForm = () => {
     threads: { icon: SiThreads, color: 'text-gray-900' },
   };
 
-  // Mock accounts for demo purposes
-  const mockAccounts = [
-    { id: '1', platform: 'bluesky', platform_username: 'jack friks', avatar: null },
-    { id: '2', platform: 'facebook', platform_username: 'Jack friks', avatar: null },
-    { id: '3', platform: 'facebook', platform_username: 'Curiosity Quench', avatar: null },
-    { id: '4', platform: 'facebook', platform_username: 'Scroll less', avatar: null },
-    { id: '5', platform: 'instagram', platform_username: 'jackfriks', avatar: null },
-    { id: '6', platform: 'instagram', platform_username: 'curiosity.quench', avatar: null },
-    { id: '7', platform: 'linkedin', platform_username: 'SocialEntangler', avatar: null },
-    { id: '8', platform: 'linkedin', platform_username: 'jack friks', avatar: null },
-    { id: '9', platform: 'pinterest', platform_username: 'jackfriks', avatar: null },
-    { id: '10', platform: 'threads', platform_username: 'curiosity.quench', avatar: null },
-    { id: '11', platform: 'tiktok', platform_username: 'jack friks', avatar: null },
-    { id: '12', platform: 'tiktok', platform_username: 'Curiosity Quench', avatar: null },
-    { id: '13', platform: 'twitter', platform_username: 'jackfriks', avatar: null },
-    { id: '14', platform: 'twitter', platform_username: 'doofapp', avatar: null },
-    { id: '15', platform: 'youtube', platform_username: 'jack friks', avatar: null },
-    { id: '16', platform: 'youtube', platform_username: 'jack friks shorts', avatar: null },
-  ];
-
   useEffect(() => {
     loadAccounts();
     // Set default date to today
@@ -103,11 +107,10 @@ const CreatePostForm = () => {
   const loadAccounts = async () => {
     try {
       const accounts = await getSocialAccounts();
-      // Use real accounts if available, otherwise use mock data
-      setAvailableAccounts(accounts.length > 0 ? accounts : mockAccounts);
+      setAvailableAccounts(accounts);
     } catch (error) {
       console.error('Failed to load accounts:', error);
-      setAvailableAccounts(mockAccounts);
+      setAvailableAccounts([]);
     }
   };
 
@@ -119,17 +122,158 @@ const CreatePostForm = () => {
     );
   };
 
+  const uploadToBackend = async (file) => {
+    if (!file) return;
+
+    setUploading(true);
+    setUploadProgress(0);
+    setMediaAspectRatio(null); // Reset ratio when a new upload starts
+
+    try {
+      const response = await uploadMedia(file, (progressEvent) => {
+        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        setUploadProgress(progress);
+      });
+
+      if (response.success) {
+        // Backend returns a relative url like /uploads/filename.ext
+        const backendUrl = process.env.REACT_APP_BACKEND_URL || '';
+        const fullUrl = `${backendUrl}${response.url}`;
+
+        setUploadedMedia({
+          file,
+          url: fullUrl,
+          type: file.type.startsWith('video/') ? 'video' : 'image',
+          name: file.name
+        });
+        toast.success('Media uploaded successfully');
+      } else {
+        throw new Error('Upload failed on server');
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast.error("Failed to upload media");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const uploadCoverImageToBackend = async (file) => {
+    if (!file) return;
+
+    setCoverImageUploading(true);
+    setCoverImageProgress(0);
+
+    try {
+      const response = await uploadMedia(file, (progressEvent) => {
+        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        setCoverImageProgress(progress);
+      });
+
+      if (response.success) {
+        const backendUrl = process.env.REACT_APP_BACKEND_URL || '';
+        const fullUrl = `${backendUrl}${response.url}`;
+
+        setCoverImage(fullUrl);
+        toast.success('Cover image uploaded successfully');
+      } else {
+        throw new Error('Upload failed on server');
+      }
+    } catch (error) {
+      console.error("Cover image upload error:", error);
+      toast.error("Failed to upload cover image");
+    } finally {
+      setCoverImageUploading(false);
+    }
+  };
+
+  const onCropComplete = (croppedArea, croppedAreaPixels) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  };
+
+  const createImage = (url) =>
+    new Promise((resolve, reject) => {
+      const image = new Image();
+      image.addEventListener('load', () => resolve(image));
+      image.addEventListener('error', (error) => reject(error));
+      image.setAttribute('crossOrigin', 'anonymous'); // needed to avoid cross-origin issues on CodeSandbox
+      image.src = url;
+    });
+
+  const getCroppedImg = async (imageSrc, pixelCrop) => {
+    const image = await createImage(imageSrc);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      return null;
+    }
+
+    // set canvas size to match the bounding box
+    canvas.width = image.width;
+    canvas.height = image.height;
+
+    // draw image
+    ctx.drawImage(image, 0, 0);
+
+    const croppedCanvas = document.createElement('canvas');
+    const croppedCtx = croppedCanvas.getContext('2d');
+
+    if (!croppedCtx) {
+      return null;
+    }
+
+    // Set the size of the cropped canvas
+    croppedCanvas.width = pixelCrop.width;
+    croppedCanvas.height = pixelCrop.height;
+
+    // Draw the cropped image onto the new canvas
+    croppedCtx.drawImage(
+      canvas,
+      pixelCrop.x,
+      pixelCrop.y,
+      pixelCrop.width,
+      pixelCrop.height,
+      0,
+      0,
+      pixelCrop.width,
+      pixelCrop.height
+    );
+
+    // As Base64 string
+    // return croppedCanvas.toDataURL('image/jpeg');
+
+    // As a blob
+    return new Promise((resolve, reject) => {
+      croppedCanvas.toBlob((file) => {
+        if (file) {
+          file.name = 'cropped_cover.jpg';
+          resolve(file);
+        } else {
+          reject(new Error('Canvas is empty'));
+        }
+      }, 'image/jpeg');
+    });
+  };
+
+  const handleApplyCrop = async () => {
+    try {
+      const croppedBlob = await getCroppedImg(cropImageSrc, croppedAreaPixels);
+      setShowCropper(false);
+      setCropImageSrc(null);
+      // Create a file object from blob
+      const file = new File([croppedBlob], "cover_image.jpg", { type: "image/jpeg" });
+      uploadCoverImageToBackend(file);
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to crop image');
+    }
+  };
+
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      setUploadedMedia({
-        file,
-        url,
-        type: file.type.startsWith('video/') ? 'video' : 'image',
-        name: file.name
-      });
-      toast.success('Media uploaded successfully');
+      uploadToBackend(file);
     }
   };
 
@@ -137,14 +281,7 @@ const CreatePostForm = () => {
     event.preventDefault();
     const file = event.dataTransfer.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      setUploadedMedia({
-        file,
-        url,
-        type: file.type.startsWith('video/') ? 'video' : 'image',
-        name: file.name
-      });
-      toast.success('Media uploaded successfully');
+      uploadToBackend(file);
     }
   };
 
@@ -213,7 +350,7 @@ const CreatePostForm = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       // Get unique platforms from selected accounts
       const platforms = [...new Set(
@@ -227,16 +364,32 @@ const CreatePostForm = () => {
         scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
       }
 
+      const postData = {
+        content: content,
+        platforms,
+        accounts: selectedAccounts,
+        scheduled_time: scheduledDateTime,
+        status: status === 'published' ? 'scheduled' : (status || 'draft'),
+        post_type: type,
+        cover_image: coverImage,
+        media_urls: uploadedMedia ? [uploadedMedia.url] : [],
+        youtube_title: videoTitle,
+        youtube_privacy: youtubePrivacy,
+      };
+
+      if (!syncCaptions && Object.keys(platformCaptions).length > 0) {
+        postData.platform_specific_content = platformCaptions;
+      }
+
+      // Ensure immediate publishing works by setting time to now if 'published'
+      if (status === 'published') {
+        postData.scheduled_time = new Date().toISOString();
+        postData.status = 'scheduled'; // The scheduler picks it up immediately
+      }
+
       await axios.post(
         `${apiUrl}/api/posts`,
-        {
-          content: content || videoTitle,
-          platforms,
-          scheduled_time: scheduledDateTime,
-          status: status || 'draft',
-          post_type: type,
-          video_title: videoTitle,
-        },
+        postData,
         {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
@@ -260,6 +413,23 @@ const CreatePostForm = () => {
         .filter(a => selectedAccounts.includes(a.id))
         .map(a => a.platform)
     )];
+  };
+
+  // Display Aspect Ratio helper
+  const calculateAspectRatio = (width, height) => {
+    const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+    const divisor = gcd(width, height);
+    if (divisor === 0) return `${width}x${height}`;
+    const ratioX = width / divisor;
+    const ratioY = height / divisor;
+
+    // For common resolutions that don't divide cleanly to standard ratios
+    if (ratioX > 50 || ratioY > 50) {
+      const floatRatio = (width / height).toFixed(2);
+      return `${width}x${height} (${floatRatio}:1)`;
+    }
+
+    return `${width}x${height} (${ratioX}:${ratioY})`;
   };
 
   return (
@@ -304,9 +474,17 @@ const CreatePostForm = () => {
                       data-testid={`account-${account.id}`}
                       title={`${account.platform_username} (${account.platform})`}
                     >
-                      <div className={`w-10 h-10 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-sm font-medium border-2 ${isSelected ? 'border-green-500' : 'border-transparent'}`}>
-                        {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
-                      </div>
+                      {account.picture_url ? (
+                        <img
+                          src={account.picture_url}
+                          alt={account.platform_username}
+                          className={`w-10 h-10 rounded-full object-cover border-2 ${isSelected ? 'border-green-500' : 'border-transparent'}`}
+                        />
+                      ) : (
+                        <div className={`w-10 h-10 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-sm font-medium border-2 ${isSelected ? 'border-green-500' : 'border-transparent'}`}>
+                          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
+                        </div>
+                      )}
                       <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border border-gray-200 flex items-center justify-center`}>
                         <Icon className={`text-[10px] ${platformInfo.color}`} />
                       </div>
@@ -324,7 +502,7 @@ const CreatePostForm = () => {
             {/* Media Upload Area */}
             <div
               className="border-2 border-dashed border-gray-200 rounded-lg p-8 mb-4 bg-[#f5f7f5] cursor-pointer hover:border-green-400 transition-colors"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !uploading && fileInputRef.current?.click()}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               data-testid="media-upload-area"
@@ -336,21 +514,79 @@ const CreatePostForm = () => {
                 onChange={handleFileUpload}
                 className="hidden"
               />
+              <input
+                ref={coverImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    // check if we have the video ratio
+                    if (type === 'video' && mediaRawAspectRatio) {
+                      // read file to data url to pass to cropper
+                      const reader = new FileReader();
+                      reader.addEventListener('load', () => {
+                        setCropImageSrc(reader.result);
+                        setShowCropper(true);
+                      });
+                      reader.readAsDataURL(file);
+                    } else {
+                      // Fallback or not a video post
+                      uploadCoverImageToBackend(file);
+                    }
+                    e.target.value = null; // reset so same file can be selected again
+                  }
+                }}
+                className="hidden"
+              />
 
-              {uploadedMedia ? (
+              {uploading ? (
+                <div className="flex flex-col items-center">
+                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3 animate-pulse">
+                    <FaUpload className="text-green-500 text-xl" />
+                  </div>
+                  <p className="text-gray-900 font-medium mb-2">Uploading...</p>
+                  <div className="w-64 bg-gray-200 rounded-full h-2.5 mb-1 relative overflow-hidden">
+                    <div
+                      className="bg-green-500 h-2.5 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    ></div>
+                  </div>
+                  <span className="text-xs text-gray-500">{Math.round(uploadProgress)}%</span>
+                </div>
+              ) : uploadedMedia ? (
                 <div className="flex flex-col items-center">
                   {uploadedMedia.type === 'video' ? (
                     <video
                       src={uploadedMedia.url}
-                      className="max-h-40 rounded mb-2"
+                      className="max-h-64 rounded mb-2"
                       controls
+                      onLoadedMetadata={(e) => {
+                        const { videoWidth, videoHeight } = e.target;
+                        if (videoWidth && videoHeight) {
+                          setMediaAspectRatio(calculateAspectRatio(videoWidth, videoHeight));
+                          setMediaRawAspectRatio(videoWidth / videoHeight);
+                        }
+                      }}
                     />
                   ) : (
                     <img
                       src={uploadedMedia.url}
                       alt="Uploaded"
-                      className="max-h-40 rounded mb-2"
+                      className="max-h-64 rounded mb-2"
+                      onLoad={(e) => {
+                        const { naturalWidth, naturalHeight } = e.target;
+                        if (naturalWidth && naturalHeight) {
+                          setMediaAspectRatio(calculateAspectRatio(naturalWidth, naturalHeight));
+                          setMediaRawAspectRatio(naturalWidth / naturalHeight);
+                        }
+                      }}
                     />
+                  )}
+                  {mediaAspectRatio && (
+                    <div className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-md mb-2">
+                      Dimensions: {mediaAspectRatio}
+                    </div>
                   )}
                   <div className="flex gap-2 mt-2">
                     <Button
@@ -363,21 +599,26 @@ const CreatePostForm = () => {
                     >
                       <FaUpload className="mr-1" /> Replace Media
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toast.info('Cover image selection coming soon');
-                      }}
-                    >
-                      <FaImage className="mr-1" /> Set Cover Image
-                    </Button>
+                    {type === 'video' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          coverImageInputRef.current?.click();
+                        }}
+                        disabled={coverImageUploading || !mediaRawAspectRatio}
+                        title={!mediaRawAspectRatio ? "Upload video first to set aspect ratio" : "Upload Cover Image"}
+                      >
+                        <FaImage className="mr-1" />
+                        {coverImageUploading ? `Uploading ${coverImageProgress}%` : coverImage ? 'Change Cover' : 'Upload Cover'}
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : (
                 <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3">
+                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
                     <FaImage className="text-green-500 text-xl" />
                   </div>
                   <p className="text-gray-900 font-medium mb-1">Click to upload or drag and drop</p>
@@ -389,21 +630,42 @@ const CreatePostForm = () => {
                 </div>
               )}
 
-              <div className="absolute right-4 top-4 text-gray-400 text-sm flex items-center gap-1 cursor-pointer hover:text-gray-600">
-                <FaUpload /> Import
-              </div>
+              {!uploadedMedia && !uploading && (
+                <div className="absolute right-4 top-4 text-gray-400 text-sm flex items-center gap-1 cursor-pointer hover:text-gray-600">
+                  <FaUpload /> Import
+                </div>
+              )}
             </div>
 
             {/* Main Caption */}
             <div className="mb-4">
-              <div className="flex items-center gap-1 mb-2">
-                <Label className="text-sm text-gray-600">Main Caption</Label>
-                <FaInfoCircle className="text-gray-400 text-xs" />
+              <div className="relative flex items-center mb-2">
+                <div className="flex items-center gap-1">
+                  <Label className="text-sm text-gray-600 font-bold">Main Caption / Description</Label>
+                  <FaInfoCircle className="text-gray-400 text-xs" title="This will be used as the default description or caption across platforms" />
+                </div>
+                <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="syncCaptions"
+                    checked={syncCaptions}
+                    onChange={(e) => {
+                      setSyncCaptions(e.target.checked);
+                      if (e.target.checked && expandedSections.platformCaptions) {
+                        toggleSection('platformCaptions');
+                      }
+                    }}
+                    className="rounded border-gray-300 text-green-500 focus:ring-green-500"
+                  />
+                  <Label htmlFor="syncCaptions" className="text-sm text-gray-600 cursor-pointer font-medium">
+                    Apply to all selected platforms
+                  </Label>
+                </div>
               </div>
               <Textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="Start writing your post here..."
+                placeholder="Start writing your description here..."
                 rows={4}
                 className="resize-none bg-white border-gray-200"
                 data-testid="main-caption"
@@ -420,8 +682,10 @@ const CreatePostForm = () => {
                 <Button
                   variant={expandedSections.platformCaptions ? "default" : "outline"}
                   size="sm"
-                  onClick={() => toggleSection('platformCaptions')}
+                  onClick={() => !syncCaptions && toggleSection('platformCaptions')}
                   className={expandedSections.platformCaptions ? "bg-green-500 hover:bg-green-600" : ""}
+                  disabled={syncCaptions}
+                  title={syncCaptions ? "Disable 'Apply to all' to edit platform captions" : ""}
                 >
                   Platform Captions
                   <FaChevronDown className={`ml-1 transition-transform ${expandedSections.platformCaptions ? 'rotate-180' : ''}`} />
@@ -447,14 +711,6 @@ const CreatePostForm = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => toggleSection('youtubeTitle')}
-                    >
-                      <FaYoutube className="mr-1 text-red-500" /> YouTube Title
-                      <FaChevronDown className="ml-1" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
                       onClick={() => toggleSection('tiktokConfig')}
                     >
                       <FaTiktok className="mr-1" /> TikTok Config
@@ -467,90 +723,149 @@ const CreatePostForm = () => {
 
             {/* Platform-specific captions */}
             {expandedSections.platformCaptions && (
-              <div className="space-y-4 border-t border-gray-200 pt-4">
+              <div className="space-y-6 border-t border-gray-200 pt-4 mt-6">
                 {getSelectedPlatforms().map((platform) => {
                   const platformInfo = platformIcons[platform] || {};
                   const Icon = platformInfo.icon || FaFacebook;
-                  const hasCustomCaption = platformCaptions[platform];
+                  const hasCustomCaption = platformCaptions.hasOwnProperty(platform);
                   const charLimit = getCharLimit(platform);
-                  const currentLength = (hasCustomCaption || content).length;
+                  const currentText = hasCustomCaption ? platformCaptions[platform] : content;
+                  const currentLength = currentText.length;
+
+                  const platformLabels = {
+                    youtube: "YouTube Description",
+                    instagram: "Instagram Caption",
+                    facebook: "Facebook Caption",
+                    twitter: "X (Twitter) Post",
+                    linkedin: "LinkedIn Post",
+                    tiktok: "TikTok Caption",
+                    pinterest: "Pinterest Description",
+                  };
+                  const label = platformLabels[platform] || `${platform} Caption`;
 
                   return (
-                    <div key={platform} className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="capitalize font-medium text-sm">{platform}</span>
-                        {hasCustomCaption ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">
-                              Edited caption
-                            </span>
+                    <div key={platform} className="mb-4">
+                      <div className="flex items-center gap-1 mb-2">
+                        <Icon className={`text-md ${platformInfo.color} mr-1`} />
+                        <Label className="text-sm font-medium text-gray-700 capitalize">{label}</Label>
+                        <FaInfoCircle className="text-gray-400 text-xs ml-1" />
+                      </div>
+                      <Textarea
+                        value={currentText}
+                        onChange={(e) => handlePlatformCaptionChange(platform, e.target.value)}
+                        placeholder={`Start writing your ${label.toLowerCase()} here...`}
+                        rows={4}
+                        className="resize-none bg-white border-gray-200"
+                        data-testid={`caption-${platform}`}
+                      />
+                      <div className="flex justify-between items-center mt-1">
+                        <div>
+                          {hasCustomCaption ? (
                             <button
                               onClick={() => clearPlatformCaption(platform)}
                               className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
                             >
-                              <FaTimes /> Clear
+                              <FaTimes /> Reset to Main Caption
                             </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400">Using main caption</span>
-                            <button
-                              onClick={() => setEditingPlatform(platform)}
-                              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                            >
-                              <FaEdit /> Edit
-                            </button>
-                          </div>
-                        )}
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">Syncing with Main Caption</span>
+                          )}
+                        </div>
+                        <span className={`text-xs ${currentLength > charLimit ? 'text-red-500' : 'text-gray-400'}`}>
+                          {currentLength}/{charLimit}
+                        </span>
                       </div>
 
-                      {(hasCustomCaption || editingPlatform === platform) && (
-                        <div>
-                          <Textarea
-                            value={platformCaptions[platform] || content}
-                            onChange={(e) => handlePlatformCaptionChange(platform, e.target.value)}
-                            placeholder={`Caption for ${platform}...`}
-                            rows={3}
-                            className="resize-none bg-white border-gray-200"
-                            data-testid={`caption-${platform}`}
-                          />
-                          <div className="flex justify-end mt-1">
-                            <span className={`text-xs ${currentLength > charLimit ? 'text-red-500' : 'text-gray-400'}`}>
-                              {currentLength}/{charLimit}
-                            </span>
+                      {/* YouTube Specific Settings */}
+                      {platform === 'youtube' && type === 'video' && (
+                        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setShowYoutubeTitle(!showYoutubeTitle)}
+                                  className="bg-white"
+                                >
+                                  <FaYoutube className="mr-2 text-red-500" />
+                                  {showYoutubeTitle ? 'Hide Video Title' : 'Add Video Title'}
+                                  <FaChevronDown className={`ml-2 transition-transform ${showYoutubeTitle ? 'rotate-180' : ''}`} />
+                                </Button>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm text-gray-600 font-medium whitespace-nowrap">Privacy:</Label>
+                                  <select
+                                    value={youtubePrivacy}
+                                    onChange={(e) => setYoutubePrivacy(e.target.value)}
+                                    className="text-sm border border-gray-200 rounded-md bg-white p-1.5 focus:ring-green-500 focus:border-green-500"
+                                  >
+                                    <option value="public">Public</option>
+                                    <option value="private">Private</option>
+                                    <option value="unlisted">Unlisted</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {showYoutubeTitle && (
+                                <div className="mt-4">
+                                  <Label className="text-sm text-gray-600 mb-1 block">Title (Required)</Label>
+                                  <Input
+                                    value={videoTitle}
+                                    onChange={(e) => setVideoTitle(e.target.value)}
+                                    placeholder="We Tried the World's Spiciest Pepper!"
+                                    className="bg-white"
+                                  />
+                                  <div className="flex justify-end mt-1">
+                                    <span className={`text-xs ${videoTitle.length > 100 ? 'text-red-500' : 'text-gray-400'}`}>
+                                      {videoTitle.length}/100
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}
+
                     </div>
                   );
                 })}
 
                 {getSelectedPlatforms().length === 0 && (
-                  <p className="text-sm text-gray-500 italic">Select accounts above to customize platform-specific captions</p>
+                  <p className="text-sm text-gray-500 italic pb-2">Select accounts above to customize platform-specific captions.</p>
                 )}
               </div>
             )}
 
-            {/* YouTube Title (for video posts) */}
-            {expandedSections.youtubeTitle && type === 'video' && (
-              <div className="mt-4 pt-4 border-t border-gray-200">
-                <Label className="text-sm text-gray-600 mb-2 block">YouTube Video Title</Label>
-                <Input
-                  value={videoTitle}
-                  onChange={(e) => setVideoTitle(e.target.value)}
-                  placeholder="Enter video title for YouTube..."
-                  className="bg-white"
-                  data-testid="youtube-title"
-                />
-              </div>
-            )}
+
           </div>
 
-          {/* Right Sidebar - Schedule */}
+          {/* Right Sidebar */}
           <div className="w-72 flex-shrink-0">
             <div className="bg-white rounded-lg border border-gray-200 p-4 sticky top-6">
+
+              {/* Cover Image Display */}
+              {coverImage && (
+                <div className="mb-4">
+                  <h3 className="font-medium text-gray-900 mb-2">Cover Image</h3>
+                  <div className="relative rounded-lg overflow-hidden border border-gray-200 group">
+                    <img
+                      src={coverImage}
+                      alt="Video Cover"
+                      className="w-full aspect-video object-cover"
+                    />
+                    <button
+                      onClick={() => setCoverImage(null)}
+                      className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <FaTimes className="text-xs" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Schedule Toggle */}
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-4 border-t border-gray-200 pt-4">
                 <h3 className="font-medium text-gray-900">Schedule post</h3>
                 <Switch
                   checked={isScheduleEnabled}
@@ -597,24 +912,7 @@ const CreatePostForm = () => {
                 </>
               )}
 
-              {/* Video Preview (if uploaded) */}
-              {uploadedMedia && (
-                <div className="mb-4">
-                  {uploadedMedia.type === 'video' ? (
-                    <video
-                      src={uploadedMedia.url}
-                      className="w-full rounded-lg"
-                      controls
-                    />
-                  ) : (
-                    <img
-                      src={uploadedMedia.url}
-                      alt="Preview"
-                      className="w-full rounded-lg"
-                    />
-                  )}
-                </div>
-              )}
+              {/* End of Schedule Section */}
 
               {/* Action Buttons */}
               <div className="space-y-2">
@@ -642,8 +940,50 @@ const CreatePostForm = () => {
             </div>
           </div>
         </div>
+
+        {/* Cropping Modal */}
+        <Dialog open={showCropper} onOpenChange={setShowCropper}>
+          <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>Crop Cover Image to match Video</DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 relative bg-gray-900 rounded-md overflow-hidden min-h-0">
+              {cropImageSrc && (
+                <Cropper
+                  image={cropImageSrc}
+                  crop={crop}
+                  zoom={zoom}
+                  aspect={mediaRawAspectRatio || 16 / 9}
+                  onCropChange={setCrop}
+                  onCropComplete={onCropComplete}
+                  onZoomChange={setZoom}
+                  objectFit="contain"
+                />
+              )}
+            </div>
+            <div className="pt-4 flex justify-between items-center shrink-0 border-t mt-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">Zoom:</span>
+                <input
+                  type="range"
+                  value={zoom}
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  aria-labelledby="Zoom"
+                  onChange={(e) => setZoom(e.target.value)}
+                  className="w-32"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowCropper(false)}>Cancel</Button>
+                <Button onClick={handleApplyCrop} className="bg-green-500 hover:bg-green-600">Crop & Upload</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
-    </DashboardLayout>
+    </DashboardLayout >
   );
 };
 

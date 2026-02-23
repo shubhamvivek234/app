@@ -60,7 +60,7 @@ const PaymentPage = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       const response = await axios.post(
         `${apiUrl}/api/payments/checkout`,
@@ -89,7 +89,7 @@ const PaymentPage = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       const response = await axios.post(
         `${apiUrl}/api/payments/checkout`,

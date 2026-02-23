@@ -29,7 +29,7 @@ const Onboarding = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       await axios.patch(
         `${apiUrl}/api/auth/me`,

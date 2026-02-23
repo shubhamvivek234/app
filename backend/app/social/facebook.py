@@ -19,7 +19,7 @@ class FacebookAuth:
         if not self.app_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Facebook credentials not configured")
             
-        scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
+        scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management"
         
         return (
             f"https://www.facebook.com/v19.0/dialog/oauth"
@@ -42,6 +42,9 @@ class FacebookAuth:
                     "code": code
                 }
             )
+            
+            logging.info(f"[Facebook] Token exchange status: {response.status_code}")
+            logging.info(f"[Facebook] Token exchange response: {response.text[:500]}")
             
             if response.status_code != 200:
                 logging.error(f"Facebook Token Error: {response.text}")
@@ -88,20 +91,25 @@ class FacebookAuth:
     async def get_accounts(self, access_token: str) -> list:
         """Get connected Pages and Instagram Business Accounts"""
         async with httpx.AsyncClient() as client:
-            # First get Pages
             response = await client.get(
                 f"{self.BASE_URL}/me/accounts",
                 params={
-                    "fields": "id,name,access_token,instagram_business_account{id,username,profile_picture_url}",
+                    "fields": "id,name,access_token,picture{url},instagram_business_account{id,username,profile_picture_url}",
                     "access_token": access_token
                 }
             )
             
+            logging.info(f"[Facebook] /me/accounts status: {response.status_code}")
+            logging.info(f"[Facebook] /me/accounts response: {response.text[:2000]}")
+            
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to fetch pages")
+                logging.error(f"[Facebook] /me/accounts failed: {response.text}")
+                raise HTTPException(status_code=400, detail=f"Failed to fetch pages: {response.text}")
                 
             data = response.json()
-            return data.get('data', [])
+            pages = data.get('data', [])
+            logging.info(f"[Facebook] Found {len(pages)} page(s): {[p.get('name') for p in pages]}")
+            return pages
 
     async def publish_to_instagram(self, access_token: str, ig_user_id: str, media_url: str, caption: str = "", media_type: str = "IMAGE") -> str:
         """
@@ -110,7 +118,7 @@ class FacebookAuth:
         2. Publish Media Container
         """
         async with httpx.AsyncClient() as client:
-            # 1. Create Container
+            # 1. Create Media Container
             container_url = f"{self.BASE_URL}/{ig_user_id}/media"
             params = {
                 "access_token": access_token,
@@ -118,27 +126,42 @@ class FacebookAuth:
             }
             
             if media_type == "VIDEO":
-                params["media_type"] = "REELS" # or VIDEO
+                params["media_type"] = "REELS" 
                 params["video_url"] = media_url
             else:
                 params["image_url"] = media_url
             
-            # Wait for video upload status if needed? API is async usually.
-            # For now implemented simple flow.
-            
             response = await client.post(container_url, params=params)
             
             if response.status_code != 200:
-                logging.error(f"IG Container Create Error: {response.text}")
-                raise Exception(f"Failed to create IG media container: {response.text}")
+                error_msg = response.text
+                logging.error(f"IG Container Create Error: {error_msg}")
+                raise Exception(f"Failed to create IG media container: {error_msg}")
                 
             container_id = response.json().get("id")
             
-            # If video, we might need to wait until status is FINISHED. 
-            # For simplicity in this iteration, we assume it's ready or we might need a delay/check loop.
-            # But the 'media_publish' endpoint will fail if not ready.
+            # 2. If VIDEO, wait for status to be FINISHED
+            if media_type == "VIDEO":
+                import asyncio
+                status_url = f"{self.BASE_URL}/{container_id}"
+                status_params = {
+                    "fields": "status_code",
+                    "access_token": access_token
+                }
+                
+                max_retries = 30 # 30 * 5s = 2.5 minutes timeout
+                for _ in range(max_retries):
+                    status_response = await client.get(status_url, params=status_params)
+                    if status_response.status_code == 200:
+                        status_code = status_response.json().get("status_code")
+                        if status_code == "FINISHED":
+                            break
+                        elif status_code == "ERROR":
+                            raise Exception("Instagram video processing failed")
+                    
+                    await asyncio.sleep(5) # Wait 5 seconds
             
-            # 2. Publish Container
+            # 3. Publish Container
             publish_url = f"{self.BASE_URL}/{ig_user_id}/media_publish"
             publish_params = {
                 "access_token": access_token,
@@ -148,8 +171,9 @@ class FacebookAuth:
             publish_response = await client.post(publish_url, params=publish_params)
             
             if publish_response.status_code != 200:
-                logging.error(f"IG Publish Error: {publish_response.text}")
-                raise Exception(f"Failed to publish to IG: {publish_response.text}")
+                error_msg = publish_response.text
+                logging.error(f"IG Publish Error: {error_msg}")
+                raise Exception(f"Failed to publish to IG: {error_msg}")
                 
             return publish_response.json().get("id")
 

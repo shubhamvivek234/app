@@ -14,23 +14,25 @@ const OAuthCallback = () => {
       const state = searchParams.get('state');
       const error = searchParams.get('error');
 
+      const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
+
       if (error) {
         setStatus('error');
         toast.error(`OAuth error: ${error}`);
-        setTimeout(() => navigate('/onboarding/connect'), 2000);
+        setTimeout(() => navigate(fallbackUrl), 2000);
         return;
       }
 
       if (!code || !state) {
         setStatus('error');
         toast.error('Invalid OAuth callback');
-        setTimeout(() => navigate('/onboarding/connect'), 2000);
+        setTimeout(() => navigate(fallbackUrl), 2000);
         return;
       }
 
       try {
         const token = localStorage.getItem('token');
-        const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+        const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
         const platform = sessionStorage.getItem('oauth_platform');
         const returnTo = sessionStorage.getItem('oauth_return_to');
 
@@ -63,14 +65,16 @@ const OAuthCallback = () => {
         if (response.data.success) {
           setStatus('success');
           toast.success(`${response.data.platform} connected successfully!`);
-          
+
           // Clean up session storage
           sessionStorage.removeItem('oauth_platform');
           sessionStorage.removeItem('oauth_return_to');
 
-          // Redirect based on return destination
+          // Redirect based on return destination securely provided by backend or fallback to session
+          const finalReturnTo = response.data.return_to || returnTo;
+
           setTimeout(() => {
-            if (returnTo === 'onboarding') {
+            if (finalReturnTo === 'onboarding') {
               navigate('/onboarding/connect');
             } else {
               navigate('/accounts');
@@ -80,14 +84,15 @@ const OAuthCallback = () => {
       } catch (error) {
         console.error('OAuth callback error:', error);
         setStatus('error');
-        
+
         if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
           toast.error('API credentials not configured. Please contact administrator.');
         } else {
           toast.error(error.response?.data?.detail || 'Failed to connect account');
         }
-        
-        setTimeout(() => navigate('/onboarding/connect'), 2000);
+
+        const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
+        setTimeout(() => navigate(fallbackUrl), 2000);
       }
     };
 

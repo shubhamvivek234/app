@@ -9,7 +9,7 @@ import { FaGoogle } from 'react-icons/fa';
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -23,28 +23,43 @@ const Login = () => {
     try {
       await login(formData.email, formData.password);
       toast.success('Welcome back!');
-      navigate('/onboarding');
+      // Navigation handled by PublicRoute/AuthContext state change
     } catch (error) {
+      // Firebase throws errors with codes, we can map them or just show message
       let errorMessage = 'Login failed';
-      if (error.response?.data?.detail) {
-        if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        } else if (Array.isArray(error.response.data.detail)) {
-          errorMessage = error.response.data.detail.map(e => e.msg).join(', ');
-        } else {
-          errorMessage = JSON.stringify(error.response.data.detail);
+      if (error.code) {
+        switch (error.code) {
+          case 'auth/invalid-email':
+            errorMessage = 'Invalid email address.';
+            break;
+          case 'auth/user-disabled':
+            errorMessage = 'User account is disabled.';
+            break;
+          case 'auth/user-not-found':
+            errorMessage = 'No user found with this email.';
+            break;
+          case 'auth/wrong-password':
+            errorMessage = 'Incorrect password.';
+            break;
+          default:
+            errorMessage = error.message;
         }
       }
       toast.error(errorMessage);
-    } finally {
-      setLoading(false);
+      setLoading(false); // Only stop loading on error, let success transition naturally
     }
   };
 
-  const handleGoogleLogin = () => {
-    // Direct Google OAuth via Backend
-    const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-    window.location.href = `${backendUrl}/api/auth/google/login`;
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true); // Show loading state while popup/auth resolves
+      await loginWithGoogle();
+      toast.success('Welcome back!');
+      // Navigation handled by PublicRoute/AuthContext state change
+    } catch (error) {
+      setLoading(false);
+      // Toast already handled in context for general errors, but we can be specific here
+    }
   };
 
   return (

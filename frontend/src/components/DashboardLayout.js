@@ -18,6 +18,7 @@ import {
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import NotificationCenter from '@/components/NotificationCenter';
 
 const DashboardLayout = ({ children }) => {
   const location = useLocation();
@@ -214,6 +215,18 @@ const DashboardLayout = ({ children }) => {
 
       {/* Main Content */}
       <div className="ml-56">
+        {/* Top Header Bar */}
+        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-end px-6 sticky top-0 z-40">
+          <div className="flex items-center gap-4">
+            <NotificationCenter />
+            <div className="flex items-center gap-2 border-l pl-4 border-gray-200">
+              <div className="w-8 h-8 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold text-sm">
+                {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+              </div>
+              <span className="text-sm font-medium text-gray-700 hidden sm:block">{user?.name}</span>
+            </div>
+          </div>
+        </header>
         <main className="p-6">{children}</main>
       </div>
     </div>

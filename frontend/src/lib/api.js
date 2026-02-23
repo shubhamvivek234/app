@@ -57,6 +57,21 @@ export const generateContent = async (prompt, platform = null) => {
   return response.data;
 };
 
+// Media Upload
+export const uploadMedia = async (file, onUploadProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await axios.post(`${API}/upload`, formData, {
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress,
+  });
+  return response.data;
+};
+
 // Social Accounts
 export const connectSocialAccount = async (platform, platformUsername) => {
   const response = await axios.post(
@@ -148,6 +163,36 @@ export const sendSupportRequest = async (formData) => {
       ...getAuthHeaders(),
       'Content-Type': 'multipart/form-data',
     },
+  });
+  return response.data;
+};
+
+// API Keys
+export const getApiKeys = async () => {
+  const response = await axios.get(`${API}/keys`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const createApiKey = async (name) => {
+  const response = await axios.post(`${API}/keys`, { name }, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const deleteApiKey = async (keyId) => {
+  const response = await axios.delete(`${API}/keys/${keyId}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+// Agent API (Front-end only for testing/demo if needed)
+export const getAgentChannels = async (apiKey) => {
+  const response = await axios.get(`${API}/agent/channels`, {
+    headers: { 'X-API-KEY': apiKey },
   });
   return response.data;
 };

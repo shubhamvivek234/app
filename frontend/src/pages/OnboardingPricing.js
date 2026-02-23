@@ -57,7 +57,7 @@ const OnboardingPricing = () => {
   const handleSelectPlan = async (planId) => {
     setLoading(true);
     try {
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       // Navigate to payment page with selected plan
       console.log(`Navigating to payment page with plan: ${planId}`);

@@ -26,6 +26,8 @@ import Onboarding from '@/pages/Onboarding';
 import OnboardingConnect from '@/pages/OnboardingConnect';
 import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
+import ApiKeys from '@/pages/ApiKeys';
+import AgentDocs from '@/pages/AgentDocs';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -52,8 +54,21 @@ const PrivateRoute = ({ children }) => {
     return <Navigate to="/subscription-expired" />;
   }
 
-  // Redirect free users to pricing if they somehow bypassed onboarding
+  // If onboarding not completed, redirect to main onboarding flow first
+  if (!user.onboarding_completed) {
+    // Allow them to be on onboarding pages
+    if (path.startsWith('/onboarding')) {
+      return children;
+    }
+    return <Navigate to="/onboarding" />;
+  }
+
+  // Redirect free users to pricing if they have completed onboarding but are still 'free'
+  // and NOT already on the pricing or payment page
   if (user.subscription_status === 'free' && user.onboarding_completed) {
+    if (path.startsWith('/onboarding/pricing') || path.startsWith('/payment')) {
+      return children;
+    }
     return <Navigate to="/onboarding/pricing" />;
   }
 
@@ -76,12 +91,19 @@ const PublicRoute = ({ children }) => {
     return children;
   }
 
-  // If user is authenticated, check if onboarding is completed
-  if (user.onboarding_completed) {
-    return <Navigate to="/dashboard" />;
-  } else {
-    return <Navigate to="/onboarding" />;
+  // If user is authenticated
+  if (user) {
+    if (user.onboarding_completed) {
+      if (user.subscription_status === 'free') {
+        return <Navigate to="/onboarding/pricing" />;
+      }
+      return <Navigate to="/dashboard" />;
+    } else {
+      return <Navigate to="/onboarding" />;
+    }
   }
+
+  return children;
 };
 
 function App() {
@@ -91,6 +113,7 @@ function App() {
         <div className="App">
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            <Route path="/agent-docs" element={<AgentDocs />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
@@ -213,6 +236,14 @@ function App() {
               element={
                 <PrivateRoute>
                   <Settings />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/api-keys"
+              element={
+                <PrivateRoute>
+                  <ApiKeys />
                 </PrivateRoute>
               }
             />
