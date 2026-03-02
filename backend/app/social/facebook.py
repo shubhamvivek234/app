@@ -3,6 +3,7 @@ import os
 from fastapi import HTTPException
 from datetime import datetime, timedelta, timezone
 import logging
+import urllib.parse
 
 class FacebookAuth:
     """Helper class for Facebook/Instagram OAuth and Graph API"""
@@ -12,7 +13,13 @@ class FacebookAuth:
     def __init__(self):
         self.app_id = os.environ.get('FACEBOOK_APP_ID')
         self.app_secret = os.environ.get('FACEBOOK_APP_SECRET')
-        self.redirect_uri = os.environ.get('FACEBOOK_REDIRECT_URI')
+        
+        raw_uri = os.environ.get('FACEBOOK_REDIRECT_URI', 'http://localhost:8001/api/oauth/facebook/callback')
+        # Postiz Bypass: If running on local HTTP, wrap the URI in the redirectmeto.com HTTPS proxy
+        if raw_uri.startswith('http://'):
+            self.redirect_uri = f"https://redirectmeto.com/{raw_uri}"
+        else:
+            self.redirect_uri = raw_uri
         
     def get_auth_url(self, state: str) -> str:
         """Generate Facebook Login URL"""
@@ -21,14 +28,17 @@ class FacebookAuth:
             
         scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management"
         
-        return (
-            f"https://www.facebook.com/v19.0/dialog/oauth"
-            f"?client_id={self.app_id}"
-            f"&redirect_uri={self.redirect_uri}"
-            f"&state={state}"
-            f"&scope={scope}"
-            f"&response_type=code"
-        )
+        params = {
+            "client_id": self.app_id,
+            "redirect_uri": self.redirect_uri,
+            "state": state,
+            "scope": scope,
+            "response_type": "code"
+        }
+        
+        auth_url = f"https://www.facebook.com/v19.0/dialog/oauth?{urllib.parse.urlencode(params)}"
+        logging.info(f"[Facebook] Generated Auth URL: {auth_url}")
+        return auth_url
         
     async def exchange_code_for_token(self, code: str) -> dict:
         """Exchange authorization code for access token"""

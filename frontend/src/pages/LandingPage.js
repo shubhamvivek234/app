@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok } from 'react-icons/fa';
+import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok, FaPinterest, FaEllipsisH } from 'react-icons/fa';
+import { FaXTwitter, FaThreads } from 'react-icons/fa6';
+import { SiBluesky } from 'react-icons/si';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import Footer from '@/components/Footer';
@@ -104,7 +106,7 @@ const LandingPage = () => {
                 </h1>
               </div>
               <p className="text-lg leading-relaxed text-slate-600">
-                Schedule and publish content across Twitter, Instagram, and LinkedIn simultaneously. Save hours every week with AI-powered content creation.
+                Join thousands of creators using SocialEntangler to write highly engaging content, schedule posts across Twitter, Instagram, and LinkedIn, and grow their audience at scale.
               </p>
               <div className="flex gap-4">
                 <Button
@@ -187,7 +189,7 @@ const LandingPage = () => {
                 <span className="text-3xl font-bold text-indigo-600">1</span>
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-2">Connect</h3>
-              <p className="text-slate-600">Link your social media profiles. We support all major platforms including Instagram, TikTok, and YouTube.</p>
+              <p className="text-slate-600">Link your social media profiles. We support all major platforms including Instagram, TikTok, LinkedIn, and YouTube.</p>
             </div>
 
             {/* Step 2 */}
@@ -196,7 +198,7 @@ const LandingPage = () => {
                 <span className="text-3xl font-bold text-purple-600">2</span>
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-2">Create</h3>
-              <p className="text-slate-600">Upload your videos or images. Use our AI tools to generate engaging captions and hashtags instantly.</p>
+              <p className="text-slate-600">Write the posts you need to grow. Use our AI tools to outline, write, and polish 100% of your posts tailored for each platform.</p>
             </div>
 
             {/* Step 3 */}
@@ -205,49 +207,92 @@ const LandingPage = () => {
                 <span className="text-3xl font-bold text-pink-600">3</span>
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-2">Schedule</h3>
-              <p className="text-slate-600">Choose a time or let us pick the best time to post. Sit back and watch your engagement grow.</p>
+              <p className="text-slate-600">Post to all platforms instantly. Connect your accounts and hit publish everywhere with a single click.</p>
             </div>
           </div>
         </div>
       </section>
 
       {/* Platforms Section */}
-      <section id="platforms" className="py-16 bg-slate-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
-              Post to all platforms instantly
+      <section id="platforms" className="py-20 bg-white">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="mb-12">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 mb-2">
+              Supported Platforms
             </h2>
-            <p className="text-base leading-relaxed text-slate-600">
-              Connect your social media accounts and publish everywhere with a single click
+            <p className="text-sm text-slate-500">
+              These are all the platforms you can post to from within SocialEntangler.
             </p>
           </div>
-          <div className="flex justify-center items-center gap-8 flex-wrap">
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaTwitter className="text-3xl text-blue-400" />
-              <span className="font-medium text-slate-900">Twitter/X</span>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+            {/* Row 1 */}
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <div className="w-10 h-10 flex items-center justify-center bg-black rounded-lg">
+                <FaXTwitter className="text-2xl text-white" />
+              </div>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Twitter/X</span>
             </div>
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaInstagram className="text-3xl text-pink-500" />
-              <span className="font-medium text-slate-900">Instagram</span>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <FaInstagram className="text-4xl" style={{ fill: 'url(#instagram-gradient)' }} />
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Instagram</span>
             </div>
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaLinkedin className="text-3xl text-blue-600" />
-              <span className="font-medium text-slate-900">LinkedIn</span>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <svg viewBox="0 0 24 24" className="w-10 h-10 text-[#0A66C2]" fill="currentColor">
+                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+              </svg>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">LinkedIn</span>
             </div>
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaFacebook className="text-3xl text-blue-600" />
-              <span className="font-medium text-slate-900">Facebook</span>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <svg viewBox="0 0 24 24" className="w-10 h-10 text-[#1877F2]" fill="currentColor">
+                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+              </svg>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Facebook</span>
             </div>
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaYoutube className="text-3xl text-red-600" />
-              <span className="font-medium text-slate-900">YouTube</span>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <div className="w-10 h-10 flex items-center justify-center rounded-lg">
+                <FaTiktok className="text-3xl text-black" />
+              </div>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">TikTok</span>
             </div>
-            <div className="flex items-center gap-3 px-6 py-4 bg-white rounded-lg border border-border shadow-sm">
-              <FaTiktok className="text-3xl text-black" />
-              <span className="font-medium text-slate-900">TikTok</span>
+
+            {/* Row 2 */}
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-red-600">
+                <FaYoutube className="text-2xl text-white" />
+              </div>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">YouTube</span>
+            </div>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <SiBluesky className="text-4xl text-[#0085FF]" />
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Bluesky</span>
+            </div>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <FaThreads className="text-4xl text-black" />
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Threads</span>
+            </div>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+              <div className="w-10 h-10 flex items-center justify-center rounded-full bg-[#E60023]">
+                <FaPinterest className="text-2xl text-white" />
+              </div>
+              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Pinterest</span>
+            </div>
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 rounded-2xl border border-gray-200 border-dashed">
+              <FaEllipsisH className="text-3xl text-slate-300" />
+              <span className="text-[10px] font-semibold text-slate-400 capitalize tracking-widest shadow-none">More to come</span>
             </div>
           </div>
+
+          {/* SVG Gradient definition for Instagram */}
+          <svg width="0" height="0">
+            <linearGradient id="instagram-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#f09433" />
+              <stop offset="25%" stopColor="#e6683c" />
+              <stop offset="50%" stopColor="#dc2743" />
+              <stop offset="75%" stopColor="#cc2366" />
+              <stop offset="100%" stopColor="#bc1888" />
+            </linearGradient>
+          </svg>
         </div>
       </section>
 
@@ -265,8 +310,8 @@ const LandingPage = () => {
                 Manage everything in one place
               </h3>
               <p className="text-lg text-slate-600 leading-relaxed">
-                Stop switching between tabs. View, edit, and schedule posts for all your accounts from a single, intuitive dashboard.
-                Streamline your workflow and save hours of manual work every week.
+                Centralize your social growth. Stop switching between tabs and use a single dashboard to view, edit, and schedule posts across all your active platforms.
+                Streamline your workflow so you can spend less time managing and more time growing.
               </p>
               <ul className="space-y-3">
                 {['Single Upload Interface', 'Unified Content Calendar', 'Drag & Drop Scheduling'].map((item, i) => (
@@ -377,10 +422,10 @@ const LandingPage = () => {
                 <FaMagic className="text-2xl text-purple-600" />
               </div>
               <h3 className="text-3xl font-bold tracking-tight text-slate-900">
-                AI that writes like you
+                AI that helps you go viral
               </h3>
               <p className="text-lg text-slate-600 leading-relaxed">
-                Struggling with writer's block? Our AI analyzes your content and suggests engaging captions and trending hashtags tailored to each platform's audience.
+                Struggling with writer's block? Use our AI to outline, write, and refine 100% of your posts. Generate highly engaging captions and trending hashtags tailored perfectly to each platform's audience algorithm.
               </p>
               <ul className="space-y-3">
                 {['Smart Caption Generator', 'Hashtag Recommendations', 'Tone of Voice Customization'].map((item, i) => (

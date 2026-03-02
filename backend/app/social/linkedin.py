@@ -15,7 +15,9 @@ class LinkedInAuth:
     def __init__(self):
         self.client_id = os.environ.get('LINKEDIN_CLIENT_ID')
         self.client_secret = os.environ.get('LINKEDIN_CLIENT_SECRET')
-        self.redirect_uri = os.environ.get('LINKEDIN_REDIRECT_URI')
+        raw_uri = os.environ.get('LINKEDIN_REDIRECT_URI')
+        # User requested exact localhost URL. Removing redirectmeto.com proxy
+        self.redirect_uri = raw_uri
 
     def get_auth_url(self, state: str) -> str:
         """Generate LinkedIn OAuth URL"""
@@ -64,9 +66,68 @@ class LinkedInAuth:
                 
             return response.json()
 
-    async def publish_post(self, access_token: str, person_urn: str, text: str, media_urls: list = None) -> str:
+    async def publish_post(self, access_token: str, person_urn: str, text: str, media_urls: list = None, local_file_path: str = None) -> str:
         """Publish a post to LinkedIn member profile"""
         async with httpx.AsyncClient() as client:
+            asset_urn = None
+            
+            # Step 1 & 2: Register upload and PUT binary if we have a local file
+            if local_file_path and os.path.exists(local_file_path):
+                # Standardize on feedshare-image for MVP
+                recipe = "urn:li:digitalmediaRecipe:feedshare-image"
+                if local_file_path.lower().endswith(('.mp4', '.mov')):
+                    recipe = "urn:li:digitalmediaRecipe:feedshare-video"
+
+                register_url = "https://api.linkedin.com/v2/assets?action=registerUpload"
+                register_payload = {
+                    "registerUploadRequest": {
+                        "recipes": [recipe],
+                        "owner": f"urn:li:person:{person_urn}",
+                        "serviceRelationships": [
+                            {
+                                "relationshipType": "OWNER",
+                                "identifier": "urn:li:userGeneratedContent"
+                            }
+                        ]
+                    }
+                }
+                
+                try:
+                    reg_res = await client.post(
+                        register_url,
+                        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "X-Restli-Protocol-Version": "2.0.0"},
+                        json=register_payload
+                    )
+                    
+                    if reg_res.status_code in [200, 201]:
+                        reg_data = reg_res.json()
+                        upload_mechanism = reg_data.get("value", {}).get("uploadMechanism", {})
+                        upload_req = upload_mechanism.get("com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest", {})
+                        upload_url = upload_req.get("uploadUrl")
+                        asset_urn = reg_data.get("value", {}).get("asset")
+                        
+                        if upload_url and asset_urn:
+                            # Upload the binary file
+                            with open(local_file_path, "rb") as f:
+                                file_data = f.read()
+                                
+                            upload_headers = {
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "application/octet-stream",
+                                "X-Restli-Protocol-Version": "2.0.0"
+                            }
+                            
+                            upload_res = await client.put(upload_url, headers=upload_headers, content=file_data)
+                            
+                            if upload_res.status_code not in [200, 201]:
+                                logging.error(f"LinkedIn Media Upload Error: {upload_res.status_code} - {upload_res.text}")
+                                asset_urn = None
+                    else:
+                        logging.error(f"LinkedIn Register Upload Error: {reg_res.status_code} - {reg_res.text}")
+                except Exception as e:
+                    logging.error(f"LinkedIn Native Media Error exception: {str(e)}")
+                    asset_urn = None
+
             # LinkedIn UGC Post structure
             payload = {
                 "author": f"urn:li:person:{person_urn}",
@@ -84,7 +145,17 @@ class LinkedInAuth:
                 }
             }
             
-            if media_urls:
+            if asset_urn:
+                payload["specificContent"]["com.linkedin.ugc.ShareContent"]["shareMediaCategory"] = "VIDEO" if "video" in recipe else "IMAGE"
+                payload["specificContent"]["com.linkedin.ugc.ShareContent"]["media"] = [
+                    {
+                        "status": "READY",
+                        "description": {"text": ""},
+                        "media": asset_urn,
+                        "title": {"text": "Media attachment"}
+                    }
+                ]
+            elif media_urls:
                 # For simplicity in MVP, we just append URL if it's there
                 # Proper image/video upload requires multi-step process
                 payload["specificContent"]["com.linkedin.ugc.ShareContent"]["shareCommentary"]["text"] = f"{text}\n\n{media_urls[0]}"

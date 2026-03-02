@@ -134,11 +134,20 @@ app.add_middleware(
 # Initialize Firebase Admin
 try:
     cred = credentials.Certificate(os.path.join(ROOT_DIR, 'serviceAccountKey.json'))
-    firebase_admin.initialize_app(cred)
+    
+    fb_options = None
+    bucket_env = os.environ.get('FIREBASE_STORAGE_BUCKET')
+    if bucket_env:
+        fb_options = {'storageBucket': bucket_env}
+        
+    if fb_options:
+        firebase_admin.initialize_app(cred, fb_options)
+    else:
+        firebase_admin.initialize_app(cred)
+        
     logging.info("Firebase Admin initialized successfully")
 except Exception as e:
     logging.error(f"Failed to initialize Firebase Admin: {e}")
-    # In production, this should probably crash the app if auth is critical
 
 
 # ==================== MODELS ====================
@@ -191,6 +200,11 @@ class Post(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     published_at: Optional[datetime] = None
     ai_generated: bool = False
+    # Instagram specific fields
+    instagram_post_format: Optional[str] = "Post"
+    instagram_first_comment: Optional[str] = None
+    instagram_location: Optional[str] = None
+    instagram_shop_grid_link: Optional[str] = None
 
 class PostCreate(BaseModel):
     content: str
@@ -205,6 +219,11 @@ class PostCreate(BaseModel):
     youtube_privacy: Optional[str] = "public"
     cover_image: Optional[str] = None
     scheduled_time: Optional[str] = None
+    # Instagram specific fields
+    instagram_post_format: Optional[str] = "Post"
+    instagram_first_comment: Optional[str] = None
+    instagram_location: Optional[str] = None
+    instagram_shop_grid_link: Optional[str] = None
 
 class PostUpdate(BaseModel):
     content: Optional[str] = None
@@ -219,6 +238,11 @@ class PostUpdate(BaseModel):
     cover_image: Optional[str] = None
     scheduled_time: Optional[str] = None
     status: Optional[str] = None
+    # Instagram specific fields
+    instagram_post_format: Optional[str] = None
+    instagram_first_comment: Optional[str] = None
+    instagram_location: Optional[str] = None
+    instagram_shop_grid_link: Optional[str] = None
 
 class ApiKey(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -704,7 +728,7 @@ async def google_auth_callback(code: str, state: Optional[str] = None):
 @api_router.post("/auth/login", response_model=Token)
 async def login(credentials: UserLogin):
     user_doc = await db.users.find_one({"email": credentials.email})
-    if not user_doc:
+    if not user_doc or 'password' not in user_doc:
         raise HTTPException(status_code=400, detail="Invalid email or password")
     
     if not verify_password(credentials.password, user_doc['password']):
@@ -787,7 +811,12 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
         youtube_title=post_data.youtube_title,
         youtube_privacy=post_data.youtube_privacy,
         scheduled_time=scheduled_time,
-        status=status
+        status=status,
+        # Instagram specific fields
+        instagram_post_format=post_data.instagram_post_format,
+        instagram_first_comment=post_data.instagram_first_comment,
+        instagram_location=post_data.instagram_location,
+        instagram_shop_grid_link=post_data.instagram_shop_grid_link
     )
     
     post_dict = post.model_dump()
@@ -903,108 +932,6 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
 
 # ==================== OAUTH ENDPOINTS ====================
 
-@api_router.get("/oauth/facebook/authorize")
-async def facebook_authorize():
-    """Initiate Facebook OAuth flow (for both FB Pages and Instagram)"""
-    fb_auth = FacebookAuth()
-    
-    # Generate random state
-    state = str(uuid.uuid4())
-    
-    # Store state in cookie or DB? For now just return URL
-    auth_url = fb_auth.get_auth_url(state)
-    
-    return {"authorization_url": auth_url}
-
-@api_router.post("/oauth/facebook/callback")
-async def facebook_callback(request: Request, current_user: User = Depends(get_current_user)):
-    """Handle Facebook OAuth callback"""
-    body = await request.json()
-    code = body.get('code')
-    
-    if not code:
-        raise HTTPException(status_code=400, detail="No authorization code provided")
-    
-    fb_auth = FacebookAuth()
-    
-    try:
-        # 1. Exchange code for short-lived token
-        token_data = await fb_auth.exchange_code_for_token(code)
-        short_token = token_data.get('access_token')
-        
-        # 2. Exchange for long-lived token (60 days)
-        long_token_data = await fb_auth.get_long_lived_token(short_token)
-        access_token = long_token_data.get('access_token')
-        expires_in = long_token_data.get('expires_in', 5184000) # Default 60 days
-        
-        # 3. Get User Profile (optional, for logging)
-        # user_profile = await fb_auth.get_user_profile(access_token)
-        
-        # 4. Get Accounts (Pages and Instagram)
-        accounts_data = await fb_auth.get_accounts(access_token)
-        
-        connected_accounts = []
-        
-        for item in accounts_data:
-            # Facebook Page
-            page_id = item.get('id')
-            page_name = item.get('name')
-            page_token = item.get('access_token')
-            
-            # Save Facebook Page
-            fb_account = {
-                "id": str(uuid.uuid4()),
-                "user_id": current_user.user_id,
-                "platform": "facebook",
-                "platform_user_id": page_id,
-                "username": page_name,
-                "access_token": page_token, # Page access token
-                "token_expires_at": None, # Page tokens last indefinitely if user token is valid?
-                "connected_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            # Upsert (update if exists)
-            await db.social_accounts.update_one(
-                {"user_id": current_user.user_id, "platform": "facebook", "platform_user_id": page_id},
-                {"$set": fb_account},
-                upsert=True
-            )
-            connected_accounts.append({"platform": "facebook", "name": page_name})
-            
-            # Instagram Business Account (if linked)
-            ig_data = item.get('instagram_business_account')
-            if ig_data:
-                ig_id = ig_data.get('id')
-                ig_username = ig_data.get('username')
-                
-                ig_account = {
-                    "id": str(uuid.uuid4()),
-                    "user_id": current_user.user_id,
-                    "platform": "instagram",
-                    "platform_user_id": ig_id,
-                    "username": ig_username,
-                    "access_token": page_token, # IG Graph API uses the Page Token!
-                    "token_expires_at": None,
-                    "connected_at": datetime.now(timezone.utc).isoformat()
-                }
-                
-                await db.social_accounts.update_one(
-                    {"user_id": current_user.user_id, "platform": "instagram", "platform_user_id": ig_id},
-                    {"$set": ig_account},
-                    upsert=True
-                )
-                connected_accounts.append({"platform": "instagram", "name": ig_username})
-
-        return {
-            "success": True,
-            "connected_accounts": connected_accounts
-        }
-            
-    except Exception as e:
-        logging.error(f"Facebook OAuth error: {e}")
-        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
-
-
 
 @api_router.get("/oauth/twitter/authorize")
 async def twitter_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
@@ -1087,73 +1014,17 @@ async def twitter_callback(request: Request, code: Optional[str] = None, state: 
         )
 
         logging.info(f"[Twitter] Connected: {tw_profile.get('username')} for user {user_id_from_state}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platform=twitter")
+        
+        # Twitter requires 127.0.0.1 to match Developer Portal settings.
+        # We enforce redirecting back to the 127.0.0.1 frontend to avoid CORS/session domain issues.
+        twitter_frontend_url = FRONTEND_URL.replace("localhost", "127.0.0.1")
+        return RedirectResponse(url=f"{twitter_frontend_url}/{return_to}?connected=true&platform=twitter")
 
     except Exception as e:
         logging.error(f"Twitter OAuth error: {e}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed")
+        twitter_frontend_url = FRONTEND_URL.replace("localhost", "127.0.0.1")
+        return RedirectResponse(url=f"{twitter_frontend_url}/accounts?error=oauth_failed")
 
-@api_router.get("/oauth/linkedin/authorize")
-async def linkedin_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
-    """Initiate LinkedIn OAuth flow"""
-    li_auth = LinkedInAuth()
-    state = _make_oauth_state(current_user.user_id, returnTo)
-    auth_url = li_auth.get_auth_url(state)
-    logging.info(f"[LinkedIn] Authorize for user {current_user.user_id}, state={state[:20]}...")
-    return {"authorization_url": auth_url, "state": state}
-
-@api_router.get("/oauth/linkedin/callback")
-async def linkedin_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
-    """Handle LinkedIn OAuth callback"""
-    if error or not code:
-        error_msg = error or "No authorization code provided"
-        logging.error(f"LinkedIn OAuth error: {error_msg}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
-
-    user_id_from_state, return_to = _parse_oauth_state(state or "")
-    if not user_id_from_state:
-        logging.error("LinkedIn OAuth callback: Invalid state")
-        return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
-
-    try:
-        li_auth = LinkedInAuth()
-        token_data = await li_auth.exchange_code_for_token(code)
-        access_token = token_data.get('access_token')
-        expires_in = token_data.get('expires_in', 5184000) # Default 60 days
-
-        # Get profile
-        li_profile = await li_auth.get_user_profile(access_token)
-        
-        # OIDC info returns 'sub' as ID
-        platform_user_id = li_profile.get('sub')
-        
-        li_account = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id_from_state,
-            "platform": "linkedin",
-            "platform_user_id": platform_user_id,
-            "username": li_profile.get('name', 'LinkedIn User'),
-            "platform_username": li_profile.get('given_name', 'linkedin_user'),
-            "access_token": access_token,
-            "refresh_token": None, # LinkedIn doesn't always return refresh token for member tokens
-            "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
-            "connected_at": datetime.now(timezone.utc).isoformat(),
-            "picture_url": li_profile.get('picture'),
-            "is_active": True
-        }
-
-        await db.social_accounts.update_one(
-            {"user_id": user_id_from_state, "platform": "linkedin", "platform_user_id": platform_user_id},
-            {"$set": li_account},
-            upsert=True
-        )
-
-        logging.info(f"[LinkedIn] Connected: {li_profile.get('name')} for user {user_id_from_state}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platform=linkedin")
-
-    except Exception as e:
-        logging.error(f"LinkedIn OAuth error: {e}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed")
 
 # ==================== SOCIAL ACCOUNTS ====================
 
@@ -1789,7 +1660,7 @@ async def get_privacy():
     return {"content": "Privacy Policy - We respect your privacy and protect your data..."}
 
 @api_router.get("/oauth/youtube/authorize")
-async def youtube_authorize(returnTo: Optional[str] = "accounts"):
+async def youtube_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
     """Initiate YouTube OAuth flow"""
     google_auth = GoogleAuth()
     
@@ -1804,30 +1675,40 @@ async def youtube_authorize(returnTo: Optional[str] = "accounts"):
 @api_router.post("/oauth/youtube/callback")
 async def youtube_callback(request: Request, current_user: User = Depends(get_current_user)):
     """Handle YouTube OAuth callback"""
-    body = await request.json()
-    code = body.get('code')
-    
-    if not code:
-        raise HTTPException(status_code=400, detail="No authorization code provided")
-    
-    google_auth = GoogleAuth()
-    
     try:
+        body = await request.json()
+        code = body.get('code')
+        state = body.get('state')
+        
+        logging.info(f"[YouTube] Callback received for user {current_user.user_id}, state={state}")
+        
+        if not code:
+            raise HTTPException(status_code=400, detail="No authorization code provided")
+        
+        google_auth = GoogleAuth()
+        
         # 1. Exchange code for token
-        # IMPORTANT: Use the YOUTUBE redirect URI, not the default login one
+        logging.info(f"[YouTube] Exchanging code for token...")
         token_data = await google_auth.exchange_code_for_token(code, redirect_uri=google_auth.youtube_redirect_uri)
         access_token = token_data.get('access_token')
-        refresh_token = token_data.get('refresh_token') # Important for offline access
+        refresh_token = token_data.get('refresh_token')
         expires_in = token_data.get('expires_in', 3600)
         
+        if not access_token:
+            logging.error(f"[YouTube] No access token returned from Google")
+            raise HTTPException(status_code=400, detail="Failed to get access token from Google")
+            
         # 2. Get Channel Info
+        logging.info(f"[YouTube] Fetching channel info for user {current_user.user_id}...")
         channel_info = await google_auth.get_channel_info(access_token)
         channel_id = channel_info['id']
         snippet = channel_info['snippet']
         channel_title = snippet['title']
+        picture_url = snippet.get('thumbnails', {}).get('default', {}).get('url')
+        
+        logging.info(f"[YouTube] Successfully fetched channel: {channel_title} ({channel_id})")
         
         # 3. Save to database
-        picture_url = snippet.get('thumbnails', {}).get('default', {}).get('url')
         account = {
             "id": str(uuid.uuid4()),
             "user_id": current_user.user_id,
@@ -1841,7 +1722,6 @@ async def youtube_callback(request: Request, current_user: User = Depends(get_cu
             "connected_at": datetime.now(timezone.utc).isoformat()
         }
         
-        # Upsert
         await db.social_accounts.update_one(
             {"user_id": current_user.user_id, "platform": "youtube", "platform_user_id": channel_id},
             {"$set": account},
@@ -1851,11 +1731,13 @@ async def youtube_callback(request: Request, current_user: User = Depends(get_cu
         return {
             "success": True,
             "connected_accounts": [{"platform": "youtube", "name": channel_title}],
-            "return_to": body.get('state', '').split(':')[-1] if ':' in body.get('state', '') else 'accounts'
+            "return_to": state.split(':')[-1] if state and ':' in state else 'accounts'
         }
             
     except Exception as e:
-        logging.error(f"YouTube OAuth error: {e}")
+        logging.error(f"[YouTube] OAuth error: {e}")
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
 
 # ==================== FACEBOOK & INSTAGRAM OAUTH ====================
@@ -1933,21 +1815,27 @@ async def facebook_callback(request: Request, code: Optional[str] = None, state:
     fb_auth = FacebookAuth()
     
     try:
+        logging.info(f"[Facebook] Exchanging code for token... Code length: {len(code)}")
         # 1. Exchange code for short-lived token
         token_data = await fb_auth.exchange_code_for_token(code)
         access_token = token_data.get('access_token')
         
         if not access_token:
-            logging.error(f"No access token returned from Meta: {token_data}")
+            logging.error(f"[Facebook] No access token returned from Meta: {token_data}")
             return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=no_token")
         
+        logging.info(f"[Facebook] Exchanging for long-lived token...")
         # 2. Get Long-Lived User Token (60 days)
         long_lived_data = await fb_auth.get_long_lived_token(access_token)
         long_lived_token = long_lived_data.get('access_token', access_token)
         
+        logging.info(f"[Facebook] Fetching user profile...")
         # 3. Get personal Facebook profile (always saved as connected account)
         fb_profile = await fb_auth.get_user_profile(long_lived_token)
         fb_picture = fb_profile.get('picture', {}).get('data', {}).get('url') if isinstance(fb_profile.get('picture'), dict) else fb_profile.get('picture')
+        
+        logging.info(f"[Facebook] User profile fetched: {fb_profile.get('name')} (ID: {fb_profile.get('id')})")
+        
         personal_account = {
             "id": str(uuid.uuid4()),
             "user_id": current_user.user_id,
@@ -1969,7 +1857,7 @@ async def facebook_callback(request: Request, code: Optional[str] = None, state:
             upsert=True
         )
         connected_accounts = [{"platform": "facebook", "name": fb_profile.get('name', 'Facebook User')}]
-        logging.info(f"[Facebook] Saved personal profile: {fb_profile.get('name')} (ID: {fb_profile['id']})")
+        logging.info(f"[Facebook] Saved personal profile. Fetching pages...")
 
         # 4. Also get Pages and linked Instagram Business Accounts
         accounts_data = await fb_auth.get_accounts(long_lived_token)
@@ -2097,7 +1985,8 @@ async def instagram_callback(request: Request, code: Optional[str] = None, state
             "token_expires_at": None,
             "connected_at": datetime.now(timezone.utc).isoformat(),
             "picture_url": picture_url,
-            "is_active": True
+            "is_active": True,
+            "account_type": "standalone"
         }
         
         await db.social_accounts.update_one(
@@ -2132,72 +2021,73 @@ async def linkedin_authorize(returnTo: Optional[str] = "accounts", current_user:
 @api_router.get("/oauth/linkedin/callback")
 async def linkedin_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     """Handle LinkedIn OAuth callback"""
-    if error or not code:
-        error_msg = error or "No authorization code provided"
-        logging.error(f"LinkedIn OAuth error: {error_msg}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
-
-    # Identify user directly from state string
-    current_user = None
-    user_id_from_state, return_to = _parse_oauth_state(state or "")
-    logging.info(f"[LinkedIn] Callback state parsed: user_id={user_id_from_state}, return_to={return_to}")
-    
-    if user_id_from_state:
-        user_doc = await db.users.find_one({"user_id": user_id_from_state}, {"_id": 0})
-        if user_doc:
-            if isinstance(user_doc.get("created_at"), str):
-                user_doc["created_at"] = datetime.fromisoformat(user_doc["created_at"])
-            if user_doc.get("subscription_end_date") and isinstance(user_doc["subscription_end_date"], str):
-                user_doc["subscription_end_date"] = datetime.fromisoformat(user_doc["subscription_end_date"])
-            try:
-                current_user = User(**{k: v for k, v in user_doc.items() if k not in ["password", "_id"]})
-            except Exception as e:
-                logging.error(f"User model error in LinkedIn callback: {e}")
-
-    if not current_user:
-        logging.error(f"LinkedIn OAuth callback: No authenticated user found for state={state}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
-    
-    li_auth = LinkedInAuth()
-    
     try:
+        if error or not code:
+            error_msg = error or "No authorization code provided"
+            logging.error(f"[LinkedIn] OAuth error: {error_msg}")
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        # Identify user directly from state string
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        logging.info(f"[LinkedIn] Callback received, user_id={user_id_from_state}, return_to={return_to}")
+        
+        if not user_id_from_state:
+            logging.error(f"[LinkedIn] No user found in state: {state}")
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+            
+        li_auth = LinkedInAuth()
+        
         # 1. Exchange code for token
+        logging.info(f"[LinkedIn] Exchanging code for token...")
         token_data = await li_auth.exchange_code_for_token(code)
         access_token = token_data.get('access_token')
         
         if not access_token:
-            logging.error(f"No access token returned from LinkedIn: {token_data}")
+            logging.error(f"[LinkedIn] No access token returned from LinkedIn: {token_data}")
             return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=no_token")
         
         # 2. Get User Profile
+        logging.info(f"[LinkedIn] Fetching profile for user {user_id_from_state}...")
         profile = await li_auth.get_user_profile(access_token)
         
+        # Handle profile data (LinkedIn returns 'sub' for OIDC, 'id' for legacy)
+        li_user_id = profile.get('sub') or profile.get('id')
+        if not li_user_id:
+            logging.error(f"[LinkedIn] Profile missing ID: {profile}")
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=invalid_profile")
+            
+        user_name = profile.get('name') or f"{profile.get('given_name', '')} {profile.get('family_name', '')}".strip() or "LinkedIn User"
+        picture_url = profile.get('picture')
+        
+        logging.info(f"[LinkedIn] Successfully fetched profile for: {user_name} ({li_user_id})")
+
         # 3. Save Account
         li_account = {
             "id": str(uuid.uuid4()),
             "user_id": user_id_from_state,
             "platform": "linkedin",
-            "platform_user_id": profile['sub'], # OIDC 'sub' is the unique ID
-            "username": profile.get('name', 'LinkedIn User'),
-            "platform_username": profile.get('name', 'LinkedIn User'),
+            "platform_user_id": li_user_id,
+            "username": user_name,
+            "platform_username": user_name,
             "access_token": access_token,
             "refresh_token": token_data.get('refresh_token'),
             "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600))).isoformat(),
             "connected_at": datetime.now(timezone.utc).isoformat(),
-            "picture_url": profile.get('picture'),
+            "picture_url": picture_url,
             "is_active": True
         }
+        
         await db.social_accounts.update_one(
-            {"user_id": user_id_from_state, "platform": "linkedin", "platform_user_id": profile['sub']},
+            {"user_id": user_id_from_state, "platform": "linkedin", "platform_user_id": li_user_id},
             {"$set": li_account},
             upsert=True
         )
         
-        logging.info(f"LinkedIn OAuth success for user {user_id_from_state}: {profile.get('name')}")
+        logging.info(f"[LinkedIn] Save success for user {user_id_from_state}")
         return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=linkedin")
             
     except Exception as e:
-        logging.error(f"LinkedIn OAuth error: {e}")
+        logging.error(f"[LinkedIn] Callback general error: {e}")
         return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
 
 # ==================== SCHEDULED POST PROCESSOR ====================
@@ -2261,26 +2151,30 @@ async def process_scheduled_posts():
                 platform_user_id = account['platform_user_id']
                 
                 try:
-                    # Download file locally if it's a remote URL (Firebase) and we need to upload FILE (YouTube)
+                    # Download file locally if it's a remote URL (Firebase) and we need to upload FILE (YouTube/LinkedIn)
                     temp_file_path = None
                     cover_temp_path = None
                     local_cover_path = None
-                    if media_url.startswith("http") and platform == 'youtube':
-                         import tempfile
-                         
-                         if "localhost:" in media_url or "127.0.0.1:" in media_url:
-                             from urllib.parse import urlparse
-                             parsed_url = urlparse(media_url)
-                             local_file_path = os.path.join(ROOT_DIR, parsed_url.path.lstrip("/"))
+                    local_file_path = None
+                    if media_url and platform in ['youtube', 'linkedin']:
+                         if media_url.startswith("http"):
+                             import tempfile
+                             
+                             if "localhost:" in media_url or "127.0.0.1:" in media_url:
+                                 from urllib.parse import urlparse
+                                 parsed_url = urlparse(media_url)
+                                 local_file_path = os.path.join(ROOT_DIR, parsed_url.path.lstrip("/"))
+                             else:
+                                 import httpx
+                                 # Download to temp file asynchronously
+                                 with tempfile.NamedTemporaryFile(delete=False, suffix=f".{media_url.split('?')[0].split('.')[-1]}") as tmp:
+                                     async with httpx.AsyncClient() as client:
+                                         response = await client.get(media_url)
+                                         tmp.write(response.content)
+                                     temp_file_path = tmp.name
+                                     local_file_path = tmp.name
                          else:
-                             import httpx
-                             # Download to temp file asynchronously
-                             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{media_url.split('?')[0].split('.')[-1]}") as tmp:
-                                 async with httpx.AsyncClient() as client:
-                                     response = await client.get(media_url)
-                                     tmp.write(response.content)
-                                 temp_file_path = tmp.name
-                                 local_file_path = tmp.name
+                             local_file_path = os.path.join(ROOT_DIR, media_url.lstrip("/"))
                          
                          # Download cover image if present
                          cover_url = post_doc.get("cover_image_url")
@@ -2298,31 +2192,59 @@ async def process_scheduled_posts():
                                      cover_temp_path = img_tmp.name
                                      local_cover_path = img_tmp.name
                     if platform == 'facebook':
+                        fb_caption = post_doc.get('platform_specific_content', {}).get('facebook', post_doc.get('content', ''))
+                        logging.info(f"Publishing to FB: {platform_user_id} with url {public_url}")
                         await fb_auth.publish_to_facebook(
                             access_token=token,
                             page_id=platform_user_id,
-                            media_url=media_url, # Now using direct Firebase URL (Public)
-                            message=post_doc.get('caption', ''),
+                            media_url=public_url,
+                            message=fb_caption,
                             media_type="VIDEO" if "video" in post_doc.get('post_type', 'text') else "IMAGE"
                         )
                     elif platform == 'instagram':
-                        await fb_auth.publish_to_instagram(
-                            access_token=token,
-                            ig_user_id=platform_user_id,
-                            media_url=media_url, # Now using direct Firebase URL (Public)
-                            caption=post_doc.get('caption', ''),
-                            media_type="VIDEO" if "video" in post_doc.get('post_type', 'text') else "IMAGE"
-                        )
+                        ig_caption = post_doc.get('platform_specific_content', {}).get('instagram', post_doc.get('content', ''))
+                        logging.info(f"Publishing to IG: {platform_user_id} with url {public_url}")
+                        
+                        if account.get('account_type') == 'standalone':
+                            from app.social.instagram import InstagramAuth
+                            ig_auth = InstagramAuth()
+                            await ig_auth.publish_to_instagram(
+                                access_token=token,
+                                ig_user_id=platform_user_id,
+                                media_url=public_url,
+                                caption=ig_caption,
+                                media_type="VIDEO" if "video" in post_doc.get('post_type', 'text') else "IMAGE"
+                            )
+                        else:
+                            try:
+                                await fb_auth.publish_to_instagram(
+                                    access_token=token,
+                                    ig_user_id=platform_user_id,
+                                    media_url=public_url,
+                                    caption=ig_caption,
+                                    media_type="VIDEO" if "video" in post_doc.get('post_type', 'text') else "IMAGE"
+                                )
+                            except Exception as e:
+                                logging.info(f"Fallback to standalone IG API: {e}")
+                                from app.social.instagram import InstagramAuth
+                                ig_auth = InstagramAuth()
+                                await ig_auth.publish_to_instagram(
+                                    access_token=token,
+                                    ig_user_id=platform_user_id,
+                                    media_url=public_url,
+                                    caption=ig_caption,
+                                    media_type="VIDEO" if "video" in post_doc.get('post_type', 'text') else "IMAGE"
+                                )
                     elif platform == 'youtube':
                         if local_file_path and os.path.exists(local_file_path):
                             try:
-                                raw_title = post_doc.get('youtube_title') or post_doc.get('video_title') or post_doc.get('caption') or 'New Video'
+                                raw_title = post_doc.get('youtube_title') or post_doc.get('video_title') or post_doc.get('content') or 'New Video'
                                 safe_title = raw_title[:100] if isinstance(raw_title, str) else 'New Video'
                                 await google_auth.upload_video(
                                     access_token=token,
                                     file_path=local_file_path,
                                     title=safe_title,
-                                    description=post_doc.get('caption') or '',
+                                    description=post_doc.get('content') or '',
                                     privacy_status=post_doc.get('youtube_privacy') or 'public',
                                     cover_image_path=local_cover_path
                                 )
@@ -2345,7 +2267,7 @@ async def process_scheduled_posts():
                                             access_token=new_access_token,
                                             file_path=local_file_path,
                                             title=safe_title,
-                                            description=post_doc.get('caption') or '',
+                                            description=post_doc.get('content') or '',
                                             privacy_status=post_doc.get('youtube_privacy') or 'public',
                                             cover_image_path=local_cover_path
                                         )
@@ -2361,17 +2283,20 @@ async def process_scheduled_posts():
                         else:
                             logging.error(f"Cannot upload to YouTube: Local file not found {local_file_path}")
                     elif platform == 'twitter':
+                        tw_caption = post_doc.get('platform_specific_content', {}).get('twitter', post_doc.get('content', ''))
                         await tw_auth.publish_tweet(
                             access_token=token,
-                            text=post_doc.get('caption', ''),
-                            media_urls=[media_url] if media_url else None
+                            text=tw_caption,
+                            media_urls=[public_url] if media_url else None
                         )
                     elif platform == 'linkedin':
+                        li_caption = post_doc.get('platform_specific_content', {}).get('linkedin', post_doc.get('content', ''))
                         await li_auth.publish_post(
                             access_token=token,
                             person_urn=platform_user_id,
-                            text=post_doc.get('caption', ''),
-                            media_urls=[media_url] if media_url else None
+                            text=li_caption,
+                            media_urls=[public_url] if media_url else None,
+                            local_file_path=local_file_path if media_url else None
                         )
 
                             
@@ -2496,7 +2421,7 @@ async def upload_file(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Upload a media file (image/video) to the local server
+    Upload a media file (image/video) to Firebase Cloud Storage (or fallback to local server)
     Returns the public URL to access the file
     """
     try:
@@ -2504,15 +2429,29 @@ async def upload_file(
         file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
         unique_filename = f"{uuid.uuid4()}.{file_ext}"
         
-        # Save file to uploads directory
-        file_path = UPLOADS_DIR / unique_filename
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+        firebase_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET')
+        
+        if firebase_bucket:
+            from firebase_admin import storage
+            bucket = storage.bucket()
+            blob = bucket.blob(f"uploads/{unique_filename}")
             
-        # Return URL (assuming backend is running on 8001 or using NGROK)
-        # Using a relative path that the frontend can prefix with the backend URL
-        file_url = f"/uploads/{unique_filename}"
+            content = await file.read()
+            blob.upload_from_string(content, content_type=file.content_type)
+            blob.make_public()
+            
+            file_url = blob.public_url
+            logging.info(f"Uploaded file to Firebase: {file_url}")
+        else:
+            # Fallback: Save file to local uploads directory
+            file_path = UPLOADS_DIR / unique_filename
+            with open(file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+                
+            # Using a relative path that the frontend can prefix
+            file_url = f"/uploads/{unique_filename}"
+            logging.info(f"Uploaded file to local disk: {file_url}")
         
         return {
             "success": True,
@@ -2534,6 +2473,10 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 origins = [
     "http://localhost:3000", 
     "http://localhost:9500",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:9500",
+    "http://localhost:8001",
+    "http://127.0.0.1:8001",
     "https://postflow-25.preview.emergentagent.com"
 ]
 

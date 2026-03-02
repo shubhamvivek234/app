@@ -4,6 +4,7 @@ import logging
 import base64
 import hashlib
 import secrets
+import urllib.parse
 from fastapi import HTTPException
 from datetime import datetime, timedelta, timezone
 
@@ -18,13 +19,18 @@ class TwitterAuth:
     def __init__(self):
         self.client_id = os.environ.get('TWITTER_CLIENT_ID')
         self.client_secret = os.environ.get('TWITTER_CLIENT_SECRET')
-        self.redirect_uri = os.environ.get('TWITTER_REDIRECT_URI') or os.environ.get('OAUTH_REDIRECT_URI')
+        raw_uri = os.environ.get('TWITTER_REDIRECT_URI') or os.environ.get('OAUTH_REDIRECT_URI')
         
-        # Fallback for local development if env is not loading correctly
-        if not self.redirect_uri or 'localhost' in self.redirect_uri:
-             # Check if we should prefer 127.0.0.1 based on user settings
-             self.redirect_uri = "http://127.0.0.1:8001/api/oauth/twitter/callback"
-             logging.info(f"[TwitterAuth] Using fallback redirect_uri: {self.redirect_uri}")
+        # Reverting bypass for Twitter because X portal rejects the redirectmeto.com format.
+        # X allows http://127.0.0.1 and http://localhost directly for development.
+        if raw_uri and 'localhost' in raw_uri:
+            # Force replace localhost with 127.0.0.1 if that's what's working in the portal
+            self.redirect_uri = raw_uri.replace('localhost', '127.0.0.1')
+            logging.info(f"[TwitterAuth] Local development detected. Using direct IP: {self.redirect_uri}")
+        else:
+            self.redirect_uri = raw_uri
+            
+        logging.info(f"[TwitterAuth] Using redirect_uri: {self.redirect_uri}")
 
     def generate_pkce(self):
         """Generate verifier and challenge for PKCE"""
@@ -38,16 +44,18 @@ class TwitterAuth:
             raise HTTPException(status_code=500, detail="Twitter credentials not configured")
         
         scopes = "tweet.read tweet.write users.read offline.access"
-        return (
-            f"{self.AUTH_URL}"
-            f"?response_type=code"
-            f"&client_id={self.client_id}"
-            f"&redirect_uri={self.redirect_uri}"
-            f"&scope={scopes}"
-            f"&state={state}"
-            f"&code_challenge={code_challenge}"
-            f"&code_challenge_method=S256"
-        )
+        params = {
+            "response_type": "code",
+            "client_id": self.client_id,
+            "redirect_uri": self.redirect_uri,
+            "scope": scopes,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256"
+        }
+        auth_url = f"{self.AUTH_URL}?{urllib.parse.urlencode(params)}"
+        logging.info(f"[TwitterAuth] Generated Auth URL: {auth_url}")
+        return auth_url
 
     async def exchange_code_for_token(self, code: str, code_verifier: str) -> dict:
         """Exchange code for access token using code_verifier"""
@@ -61,7 +69,11 @@ class TwitterAuth:
             }
             # Twitter requires Basic Auth with client_id:client_secret for confidential clients
             auth = (self.client_id, self.client_secret)
+            logging.info(f"[TwitterAuth] Exchanging code for token... redirect_uri={self.redirect_uri}")
             response = await client.post(self.TOKEN_URL, data=data, auth=auth)
+            
+            logging.info(f"[TwitterAuth] Token exchange status: {response.status_code}")
+            logging.info(f"[TwitterAuth] Token exchange response: {response.text[:500]}")
             
             if response.status_code != 200:
                 logging.error(f"Twitter Token Exchange Error: {response.text}")

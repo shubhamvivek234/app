@@ -7,6 +7,7 @@ import httpx
 import os
 import logging
 from fastapi import HTTPException
+import urllib.parse
 
 
 class InstagramAuth:
@@ -19,9 +20,16 @@ class InstagramAuth:
     def __init__(self):
         self.app_id = os.environ.get("INSTAGRAM_APP_ID") or os.environ.get("FACEBOOK_APP_ID")
         self.app_secret = os.environ.get("INSTAGRAM_APP_SECRET") or os.environ.get("FACEBOOK_APP_SECRET")
-        self.redirect_uri = os.environ.get("INSTAGRAM_REDIRECT_URI") or os.environ.get("FACEBOOK_REDIRECT_URI", "").replace(
+        
+        raw_uri = os.environ.get("INSTAGRAM_REDIRECT_URI") or os.environ.get("FACEBOOK_REDIRECT_URI", "").replace(
             "/oauth/facebook/callback", "/oauth/instagram/callback"
         )
+        
+        # Postiz Bypass: Wrap local HTTP URLs in the redirectmeto HTTPS proxy for Meta API
+        if raw_uri.startswith('http://'):
+            self.redirect_uri = f"https://redirectmeto.com/{raw_uri}"
+        else:
+            self.redirect_uri = raw_uri
 
     def get_auth_url(self, state: str) -> str:
         """Generate Instagram Business Login authorization URL"""
@@ -30,14 +38,17 @@ class InstagramAuth:
 
         scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights"
 
-        return (
-            f"{self.OAUTH_URL}"
-            f"?client_id={self.app_id}"
-            f"&redirect_uri={self.redirect_uri}"
-            f"&scope={scope}"
-            f"&response_type=code"
-            f"&state={state}"
-        )
+        params = {
+            "client_id": self.app_id,
+            "redirect_uri": self.redirect_uri,
+            "scope": scope,
+            "response_type": "code",
+            "state": state
+        }
+        
+        auth_url = f"{self.OAUTH_URL}?{urllib.parse.urlencode(params)}"
+        logging.info(f"[Instagram] Generated Auth URL: {auth_url}")
+        return auth_url
 
     async def exchange_code_for_token(self, code: str) -> dict:
         """Exchange authorization code for short-lived access token"""
@@ -100,3 +111,70 @@ class InstagramAuth:
                 raise HTTPException(status_code=400, detail=f"Failed to fetch Instagram profile: {response.text}")
 
             return response.json()
+
+    async def publish_to_instagram(self, access_token: str, ig_user_id: str, media_url: str, caption: str = "", media_type: str = "IMAGE") -> str:
+        """
+        Publish media to Instagram using the Standalone API
+        1. Create Media Container
+        2. Check Status (if video)
+        3. Publish Media Container
+        """
+        async with httpx.AsyncClient() as client:
+            # 1. Create Media Container
+            container_url = f"{self.GRAPH_URL}/{ig_user_id}/media"
+            params = {
+                "access_token": access_token,
+                "caption": caption
+            }
+            
+            if media_type == "VIDEO":
+                params["media_type"] = "REELS" 
+                params["video_url"] = media_url
+            else:
+                params["image_url"] = media_url
+            
+            response = await client.post(container_url, params=params)
+            
+            if response.status_code != 200:
+                error_msg = response.text
+                logging.error(f"[Standalone IG] Container Create Error: {error_msg}")
+                raise Exception(f"Failed to create standalone IG media container: {error_msg}")
+                
+            container_id = response.json().get("id")
+            
+            # 2. If VIDEO, wait for status to be FINISHED
+            if media_type == "VIDEO":
+                import asyncio
+                status_url = f"{self.GRAPH_URL}/{container_id}"
+                status_params = {
+                    "fields": "status_code",
+                    "access_token": access_token
+                }
+                
+                max_retries = 30 # 30 * 5s = 2.5 minutes timeout
+                for _ in range(max_retries):
+                    status_response = await client.get(status_url, params=status_params)
+                    if status_response.status_code == 200:
+                        status_code = status_response.json().get("status_code")
+                        if status_code == "FINISHED":
+                            break
+                        elif status_code == "ERROR":
+                            raise Exception("Standalone IG video processing failed")
+                    
+                    await asyncio.sleep(5)
+            
+            # 3. Publish Container
+            publish_url = f"{self.GRAPH_URL}/{ig_user_id}/media_publish"
+            publish_params = {
+                "access_token": access_token,
+                "creation_id": container_id
+            }
+            
+            publish_response = await client.post(publish_url, params=publish_params)
+            
+            if publish_response.status_code != 200:
+                error_msg = publish_response.text
+                logging.error(f"[Standalone IG] Publish Error: {error_msg}")
+                raise Exception(f"Failed to publish to standalone IG: {error_msg}")
+                
+            return publish_response.json().get("id")

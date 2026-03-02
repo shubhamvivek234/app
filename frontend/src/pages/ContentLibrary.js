@@ -1,25 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getPosts, deletePost, getSocialAccounts } from '@/lib/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
 import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser } from 'react-icons/fa';
+import { FaXTwitter } from 'react-icons/fa6';
 
 const platformIcons = {
   youtube: <FaYoutube className="text-red-500" />,
   instagram: <FaInstagram className="text-pink-500" />,
   facebook: <FaFacebook className="text-blue-500" />,
   tiktok: <FaTiktok className="text-black" />,
+  twitter: <FaXTwitter className="text-black" />
 };
 
 const ContentLibrary = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const initialStatus = queryParams.get('status') || 'all';
+
   const [posts, setPosts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); // all, draft, scheduled, published
+
+  // Filters state
+  const [sortOrder, setSortOrder] = useState('newest'); // newest, oldest
+  const [selectedPlatform, setSelectedPlatform] = useState('all');
+  const [selectedTime, setSelectedTime] = useState('all'); // all, today, tomorrow, this_week, this_month
+  const [selectedAccount, setSelectedAccount] = useState('all');
 
   useEffect(() => {
     fetchAll();
@@ -37,7 +48,6 @@ const ContentLibrary = () => {
     }
   };
 
-  // Build a lookup map from account id -> account object
   const accountMap = accounts.reduce((acc, a) => {
     acc[a.id] = a;
     return acc;
@@ -45,7 +55,6 @@ const ContentLibrary = () => {
 
   const handleDelete = async (postId) => {
     if (!window.confirm('Are you sure you want to delete this post?')) return;
-
     try {
       await deletePost(postId);
       setPosts(posts.filter((p) => p.id !== postId));
@@ -55,10 +64,47 @@ const ContentLibrary = () => {
     }
   };
 
-  const filteredPosts = posts.filter((post) => {
-    if (filter === 'all') return true;
-    return post.status === filter;
-  });
+  const filteredPosts = useMemo(() => {
+    let result = [...posts];
+
+    // Filter by Tab Status (from URL query param or default 'all')
+    if (initialStatus !== 'all') {
+      result = result.filter(p => p.status === initialStatus);
+    }
+
+    // Filter by Platform
+    if (selectedPlatform !== 'all') {
+      result = result.filter(p => p.platforms && p.platforms.includes(selectedPlatform));
+    }
+
+    // Filter by Account
+    if (selectedAccount !== 'all') {
+      result = result.filter(p => p.accounts && p.accounts.includes(selectedAccount));
+    }
+
+    // Filter by Time
+    if (selectedTime !== 'all') {
+      result = result.filter(p => {
+        const d = p.scheduled_time ? new Date(p.scheduled_time) : new Date(p.created_at);
+        if (selectedTime === 'today') return isToday(d);
+        if (selectedTime === 'tomorrow') return isTomorrow(d);
+        if (selectedTime === 'this_week') return isThisWeek(d);
+        if (selectedTime === 'this_month') return isThisMonth(d);
+        return true;
+      });
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      const dateA = a.scheduled_time ? new Date(a.scheduled_time) : new Date(a.created_at);
+      const dateB = b.scheduled_time ? new Date(b.scheduled_time) : new Date(b.created_at);
+      return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+    });
+
+    return result;
+  }, [posts, initialStatus, selectedPlatform, selectedAccount, selectedTime, sortOrder]);
+
+  const uniquePlatforms = [...new Set(posts.flatMap(p => p.platforms || []))];
 
   if (loading) {
     return (
@@ -70,157 +116,177 @@ const ContentLibrary = () => {
     );
   }
 
+  const pageTitle = initialStatus === 'scheduled' ? 'Scheduled Posts' : 
+                    initialStatus === 'published' ? 'Published Posts' : 
+                    'All Posts';
+
   return (
     <DashboardLayout>
-      <div className="space-y-8">
-        {/* Header */}
+      <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Content Library
-            </h1>
-            <p className="text-base text-slate-600 mt-1">Manage all your posts in one place</p>
-          </div>
-          <Button onClick={() => navigate('/create')} data-testid="create-post-button">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 flex items-center gap-2">
+            {pageTitle} <span className="text-slate-400 text-lg font-normal cursor-help" title="These are all your created posts">ⓘ</span>
+          </h1>
+          <Button onClick={() => navigate('/create')} size="sm">
             <FaPlus className="mr-2" />
-            Create Post
+            Create
           </Button>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="flex gap-2 border-b border-border">
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'draft', label: 'Drafts' },
-            { id: 'scheduled', label: 'Scheduled' },
-            { id: 'published', label: 'Published' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              data-testid={`filter-${tab.id}`}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${filter === tab.id
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-                }`}
+        {/* Filters Row */}
+        <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-slate-600">Sort by:</label>
+            <select 
+              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}
             >
-              {tab.label}
-            </button>
-          ))}
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+            </select>
+          </div>
+
+          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-slate-600">Platform:</label>
+            <select 
+              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              value={selectedPlatform} onChange={(e) => setSelectedPlatform(e.target.value)}
+            >
+              <option value="all">All Platforms</option>
+              {uniquePlatforms.map(p => (
+                <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-slate-600">Time:</label>
+            <select 
+              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}
+            >
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="tomorrow">Tomorrow</option>
+              <option value="this_week">This Week</option>
+              <option value="this_month">This Month</option>
+            </select>
+          </div>
+
+          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-slate-600">Accounts:</label>
+            <select 
+              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)}
+            >
+              <option value="all">All Accounts</option>
+              {accounts.map(a => (
+                <option key={a.id} value={a.id}>{a.platform_username || a.platform}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Posts List */}
-        <div className="space-y-4">
+        {/* Posts Grid Layout */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredPosts.length === 0 ? (
-            <div className="bg-white rounded-lg border border-border p-12 text-center">
-              <p className="text-slate-600 mb-4">No posts found</p>
-              <Button onClick={() => navigate('/create')} data-testid="empty-create-button">
-                <FaPlus className="mr-2" />
-                Create Your First Post
-              </Button>
+            <div className="col-span-full border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-500">
+              No posts match your filters.
             </div>
           ) : (
             filteredPosts.map((post) => {
               const videoTitle = post.youtube_title || post.video_title || null;
               const postAccounts = (post.accounts || []).map((id) => accountMap[id]).filter(Boolean);
+              const postDate = post.scheduled_time ? new Date(post.scheduled_time) : new Date(post.created_at);
+              
+              // Only taking the first associated platform to represent the pill if we want, or map them all
+              const primaryPlatform = post.platforms?.[0] || 'unknown';
 
               return (
                 <div
                   key={post.id}
-                  className="bg-white rounded-lg border border-border p-6 hover:shadow-sm transition-shadow"
-                  data-testid={`post-${post.id}`}
+                  className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
                 >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 space-y-3">
-                      {/* Status + Scheduled Time */}
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <span
-                          className={`text-xs px-2 py-1 rounded-full font-medium ${post.status === 'published'
-                            ? 'bg-green-100 text-green-700'
-                            : post.status === 'scheduled'
-                              ? 'bg-amber-100 text-amber-700'
-                              : post.status === 'failed'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                        >
-                          {post.status}
-                        </span>
-                        <span className="text-sm text-slate-500">
-                          {post.scheduled_time
-                            ? `Scheduled for ${format(new Date(post.scheduled_time), 'MMM d, yyyy h:mm a')}`
-                            : `Created ${format(new Date(post.created_at), 'MMM d, yyyy')}`}
-                        </span>
+                  {/* Action Dropdown Hover (Top Right) */}
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 rounded border border-slate-100 px-1 py-1 backdrop-blur-sm shadow-sm">
+                    <button onClick={() => navigate(`/create?edit=${post.id}`)} className="p-1 px-2 text-slate-500 hover:text-indigo-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
+                      Edit
+                    </button>
+                    <button onClick={() => handleDelete(post.id)} className="p-1 px-2 text-slate-500 hover:text-red-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
+                      Delete
+                    </button>
+                  </div>
+
+                  {/* Top Bar: Platform Name & Date */}
+                  <div className="px-4 py-3 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-slate-100 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
+                      {platformIcons[primaryPlatform]} {primaryPlatform}
+                    </div>
+                    <div className="text-slate-500 font-medium">
+                      {format(postDate, 'MM/dd/yyyy')} • {format(postDate, 'h:mm a')}
+                    </div>
+                  </div>
+
+                  {/* Body Sub-content */}
+                  <div className="p-4 flex-1 flex flex-col text-sm">
+                    {/* Caption Preview */}
+                    <div className="text-slate-700 leading-relaxed line-clamp-4 whitespace-pre-wrap mb-4 flex-1">
+                      {videoTitle ? <div className="font-semibold mb-1">{videoTitle}</div> : null}
+                      {post.content || <span className="text-slate-400 italic">No caption</span>}
+                    </div>
+
+                    {/* Media Preview Thumbnail (If Image/Video provided) */}
+                    {post.media_urls && post.media_urls.length > 0 && (
+                      <div className="mb-4 h-32 bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                         <img src={post.cover_image || post.media_urls[0]} alt="Media Thumbnail" className="w-full h-full object-cover" />
                       </div>
+                    )}
+                  </div>
 
-                      {/* Video Title (if present) */}
-                      {videoTitle && (
-                        <p className="text-slate-900 font-semibold text-base">
-                          🎬 {videoTitle}
-                        </p>
-                      )}
-
-                      {/* Main Caption */}
-                      {post.content && (
-                        <p className="text-slate-700 text-sm line-clamp-2">{post.content}</p>
-                      )}
-
-                      {/* Platforms */}
-                      <div className="flex gap-2 flex-wrap items-center">
-                        {post.platforms.map((platform) => (
-                          <span
-                            key={platform}
-                            className="flex items-center gap-1 text-xs px-2 py-1 bg-indigo-50 text-indigo-700 rounded"
-                          >
-                            {platformIcons[platform] || null}
-                            <span className="capitalize">{platform}</span>
-                          </span>
-                        ))}
-                      </div>
-
-                      {/* Posted Accounts - same style as ConnectedAccounts page */}
-                      {postAccounts.length > 0 && (
-                        <div className="flex gap-2 flex-wrap items-center">
-                          {postAccounts.map((acc) => {
-                            const initial = (acc.platform_username || acc.display_name || 'U').charAt(0).toUpperCase();
-                            const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'];
-                            const bgColor = colors[(acc.platform_username || 'U').charCodeAt(0) % colors.length];
-                            return (
-                              <div
-                                key={acc.id}
-                                className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-full px-2 py-1 text-sm shadow-sm"
-                              >
-                                {acc.picture_url ? (
-                                  <img src={acc.picture_url} alt={acc.platform_username} className="w-5 h-5 rounded-full object-cover" />
-                                ) : (
-                                  <div className={`w-5 h-5 rounded-full ${bgColor} flex items-center justify-center text-white text-xs`}>{initial}</div>
-                                )}
-                                <span className="text-gray-800 font-medium">{acc.platform_username || acc.display_name}</span>
-                              </div>
-                            );
-                          })}
+                  {/* Bottom Bar: Accounts and Status Pill */}
+                  <div className="px-4 py-3 border-t border-slate-100 flex justify-between items-center bg-white">
+                    {/* Avatars Stack */}
+                    <div className="flex -space-x-2">
+                      {postAccounts.slice(0, 4).map((acc, idx) => {
+                        const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500'];
+                        const bgColor = colors[(acc.platform_username || 'U').charCodeAt(0) % colors.length];
+                        const zIndex = 10 - idx;
+                        return (
+                          <div key={acc.id} className="relative rounded-full border-2 border-white bg-slate-50" style={{ zIndex }}>
+                             {acc.picture_url ? (
+                                <img src={acc.picture_url} className="w-7 h-7 rounded-full object-cover" title={acc.platform_username} alt="avatar" />
+                             ) : (
+                                <div className={`w-7 h-7 rounded-full ${bgColor} flex items-center justify-center text-[10px] text-white font-bold`} title={acc.platform_username}>
+                                  {(acc.platform_username || 'U').charAt(0).toUpperCase()}
+                                </div>
+                             )}
+                             <div className="absolute -bottom-0.5 -right-0.5 bg-white rounded-full p-[1px]">
+                               {platformIcons[acc.platform] ? React.cloneElement(platformIcons[acc.platform], { className: "w-[8px] h-[8px]" }) : null}
+                             </div>
+                          </div>
+                        )
+                      })}
+                      {postAccounts.length > 4 && (
+                        <div className="w-7 h-7 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] text-slate-600 font-bold z-0">
+                          +{postAccounts.length - 4}
                         </div>
                       )}
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex gap-2 ml-4 shrink-0">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigate(`/create?edit=${post.id}`)}
-                        data-testid={`edit-${post.id}`}
-                      >
-                        <FaEdit />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleDelete(post.id)}
-                        data-testid={`delete-${post.id}`}
-                      >
-                        <FaTrash className="text-red-600" />
-                      </Button>
+                    {/* Status Pill */}
+                    <div className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-full ${
+                      post.status === 'scheduled' ? 'bg-[#00A3FF] text-white' : 
+                      post.status === 'published' ? 'bg-emerald-500 text-white' : 
+                      post.status === 'failed' ? 'bg-red-500 text-white' :
+                      'bg-slate-200 text-slate-700'
+                    }`}>
+                      {post.status}
                     </div>
                   </div>
                 </div>

@@ -43,6 +43,11 @@ const OAuthCallback = () => {
         // Prepare callback data
         const callbackData = { code };
 
+        // For YouTube and others, include state if available
+        if (platform === 'youtube' && state) {
+          callbackData.state = state;
+        }
+
         // For Twitter, include code_verifier
         if (platform === 'twitter') {
           const codeVerifier = sessionStorage.getItem('twitter_code_verifier');
@@ -53,6 +58,7 @@ const OAuthCallback = () => {
         }
 
         // Send callback to backend
+        console.log(`[OAuthCallback] Sending payload to ${apiUrl}/api/oauth/${platform}/callback:`, callbackData);
         const response = await axios.post(
           `${apiUrl}/api/oauth/${platform}/callback`,
           callbackData,
@@ -61,6 +67,7 @@ const OAuthCallback = () => {
             withCredentials: true,
           }
         );
+        console.log(`[OAuthCallback] Response received:`, response.data);
 
         if (response.data.success) {
           setStatus('success');

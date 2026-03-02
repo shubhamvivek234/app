@@ -28,7 +28,13 @@ import {
   FaEdit,
   FaTimes,
   FaInfoCircle,
-  FaSearch
+  FaSearch,
+  FaSmile,
+  FaClipboardList,
+  FaMusic,
+  FaShoppingBag,
+  FaMapMarkerAlt,
+  FaLink,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -83,6 +89,12 @@ const CreatePostForm = () => {
     youtubeTitle: false,
     tiktokConfig: false
   });
+
+  // Instagram specific state
+  const [postFormat, setPostFormat] = useState('Post'); // Post, Reel, Story
+  const [firstComment, setFirstComment] = useState('');
+  const [location, setLocation] = useState('');
+  const [shopGridLink, setShopGridLink] = useState('');
 
   // Platform icons mapping
   const platformIcons = {
@@ -350,7 +362,7 @@ const CreatePostForm = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
+      const apiUrl = 'http://localhost:8001';
 
       // Get unique platforms from selected accounts
       const platforms = [...new Set(
@@ -361,7 +373,21 @@ const CreatePostForm = () => {
 
       let scheduledDateTime = null;
       if (isScheduleEnabled && scheduledDate && scheduledTime) {
-        scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+        try {
+          // Use a more robust date construction
+          const [year, month, day] = scheduledDate.split('-').map(Number);
+          const [hours, minutes] = scheduledTime.split(':').map(Number);
+          const date = new Date(year, month - 1, day, hours, minutes);
+          if (isNaN(date.getTime())) {
+            throw new Error("Invalid date/time selected");
+          }
+          scheduledDateTime = date.toISOString();
+        } catch (e) {
+          console.error("Date construction error:", e);
+          toast.error("Invalid date or time format");
+          setLoading(false);
+          return;
+        }
       }
 
       const postData = {
@@ -375,6 +401,10 @@ const CreatePostForm = () => {
         media_urls: uploadedMedia ? [uploadedMedia.url] : [],
         youtube_title: videoTitle,
         youtube_privacy: youtubePrivacy,
+        instagram_post_format: postFormat,
+        instagram_first_comment: firstComment,
+        instagram_location: location,
+        instagram_shop_grid_link: shopGridLink,
       };
 
       if (!syncCaptions && Object.keys(platformCaptions).length > 0) {
@@ -393,6 +423,7 @@ const CreatePostForm = () => {
         {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
+          timeout: 15000,
         }
       );
 
@@ -445,404 +476,324 @@ const CreatePostForm = () => {
         <div className="flex gap-6">
           {/* Main Content Area */}
           <div className="flex-1">
-            {/* Account Selection */}
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <FaSearch className="text-xs" />
-                  <span>Search & Filter</span>
-                  <FaChevronDown className="text-xs" />
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <input type="checkbox" className="rounded" />
-                  <span>Remember</span>
-                </div>
-              </div>
-
-              {/* Account Avatars */}
-              <div className="flex flex-wrap gap-1 pb-4 border-b border-gray-200">
-                {availableAccounts.map((account) => {
-                  const platformInfo = platformIcons[account.platform] || {};
-                  const Icon = platformInfo.icon || FaFacebook;
-                  const isSelected = selectedAccounts.includes(account.id);
-
-                  return (
-                    <button
-                      key={account.id}
-                      onClick={() => toggleAccountSelection(account.id)}
-                      className={`relative group ${isSelected ? '' : 'opacity-40'}`}
-                      data-testid={`account-${account.id}`}
-                      title={`${account.platform_username} (${account.platform})`}
-                    >
-                      {account.picture_url ? (
-                        <img
-                          src={account.picture_url}
-                          alt={account.platform_username}
-                          className={`w-10 h-10 rounded-full object-cover border-2 ${isSelected ? 'border-green-500' : 'border-transparent'}`}
-                        />
-                      ) : (
-                        <div className={`w-10 h-10 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-sm font-medium border-2 ${isSelected ? 'border-green-500' : 'border-transparent'}`}>
-                          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
-                        </div>
-                      )}
-                      <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border border-gray-200 flex items-center justify-center`}>
-                        <Icon className={`text-[10px] ${platformInfo.color}`} />
-                      </div>
-                      {isSelected && account === availableAccounts.find(a => selectedAccounts[0] === a.id) && (
-                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap">
-                          {account.platform_username}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Media Upload Area */}
-            <div
-              className="border-2 border-dashed border-gray-200 rounded-lg p-8 mb-4 bg-[#f5f7f5] cursor-pointer hover:border-green-400 transition-colors"
-              onClick={() => !uploading && fileInputRef.current?.click()}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              data-testid="media-upload-area"
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={type === 'video' ? 'video/*' : type === 'image' ? 'image/*' : 'image/*,video/*'}
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <input
-                ref={coverImageInputRef}
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    // check if we have the video ratio
-                    if (type === 'video' && mediaRawAspectRatio) {
-                      // read file to data url to pass to cropper
-                      const reader = new FileReader();
-                      reader.addEventListener('load', () => {
-                        setCropImageSrc(reader.result);
-                        setShowCropper(true);
-                      });
-                      reader.readAsDataURL(file);
-                    } else {
-                      // Fallback or not a video post
-                      uploadCoverImageToBackend(file);
-                    }
-                    e.target.value = null; // reset so same file can be selected again
-                  }
-                }}
-                className="hidden"
-              />
-
-              {uploading ? (
-                <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3 animate-pulse">
-                    <FaUpload className="text-green-500 text-xl" />
-                  </div>
-                  <p className="text-gray-900 font-medium mb-2">Uploading...</p>
-                  <div className="w-64 bg-gray-200 rounded-full h-2.5 mb-1 relative overflow-hidden">
-                    <div
-                      className="bg-green-500 h-2.5 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress}%` }}
-                    ></div>
-                  </div>
-                  <span className="text-xs text-gray-500">{Math.round(uploadProgress)}%</span>
-                </div>
-              ) : uploadedMedia ? (
-                <div className="flex flex-col items-center">
-                  {uploadedMedia.type === 'video' ? (
-                    <video
-                      src={uploadedMedia.url}
-                      className="max-h-64 rounded mb-2"
-                      controls
-                      onLoadedMetadata={(e) => {
-                        const { videoWidth, videoHeight } = e.target;
-                        if (videoWidth && videoHeight) {
-                          setMediaAspectRatio(calculateAspectRatio(videoWidth, videoHeight));
-                          setMediaRawAspectRatio(videoWidth / videoHeight);
-                        }
-                      }}
-                    />
-                  ) : (
-                    <img
-                      src={uploadedMedia.url}
-                      alt="Uploaded"
-                      className="max-h-64 rounded mb-2"
-                      onLoad={(e) => {
-                        const { naturalWidth, naturalHeight } = e.target;
-                        if (naturalWidth && naturalHeight) {
-                          setMediaAspectRatio(calculateAspectRatio(naturalWidth, naturalHeight));
-                          setMediaRawAspectRatio(naturalWidth / naturalHeight);
-                        }
-                      }}
-                    />
-                  )}
-                  {mediaAspectRatio && (
-                    <div className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded-md mb-2">
-                      Dimensions: {mediaAspectRatio}
-                    </div>
-                  )}
-                  <div className="flex gap-2 mt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        fileInputRef.current?.click();
-                      }}
-                    >
-                      <FaUpload className="mr-1" /> Replace Media
-                    </Button>
-                    {type === 'video' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          coverImageInputRef.current?.click();
-                        }}
-                        disabled={coverImageUploading || !mediaRawAspectRatio}
-                        title={!mediaRawAspectRatio ? "Upload video first to set aspect ratio" : "Upload Cover Image"}
-                      >
-                        <FaImage className="mr-1" />
-                        {coverImageUploading ? `Uploading ${coverImageProgress}%` : coverImage ? 'Change Cover' : 'Upload Cover'}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center">
-                  <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
-                    <FaImage className="text-green-500 text-xl" />
-                  </div>
-                  <p className="text-gray-900 font-medium mb-1">Click to upload or drag and drop</p>
-                  <p className="text-gray-500 text-sm mb-2">or hover and paste from clipboard</p>
-                  <p className="text-gray-400 text-xs flex items-center gap-1">
-                    {type === 'video' ? 'Video' : type === 'image' ? 'Image' : 'Media'}
-                    <FaInfoCircle />
-                  </p>
-                </div>
-              )}
-
-              {!uploadedMedia && !uploading && (
-                <div className="absolute right-4 top-4 text-gray-400 text-sm flex items-center gap-1 cursor-pointer hover:text-gray-600">
-                  <FaUpload /> Import
-                </div>
-              )}
-            </div>
-
-            {/* Main Caption */}
-            <div className="mb-4">
-              <div className="relative flex items-center mb-2">
-                <div className="flex items-center gap-1">
-                  <Label className="text-sm text-gray-600 font-bold">Main Caption / Description</Label>
-                  <FaInfoCircle className="text-gray-400 text-xs" title="This will be used as the default description or caption across platforms" />
-                </div>
-                <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="syncCaptions"
-                    checked={syncCaptions}
-                    onChange={(e) => {
-                      setSyncCaptions(e.target.checked);
-                      if (e.target.checked && expandedSections.platformCaptions) {
-                        toggleSection('platformCaptions');
-                      }
-                    }}
-                    className="rounded border-gray-300 text-green-500 focus:ring-green-500"
-                  />
-                  <Label htmlFor="syncCaptions" className="text-sm text-gray-600 cursor-pointer font-medium">
-                    Apply to all selected platforms
-                  </Label>
-                </div>
-              </div>
-              <Textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Start writing your description here..."
-                rows={4}
-                className="resize-none bg-white border-gray-200"
-                data-testid="main-caption"
-              />
-              <div className="flex justify-end mt-1">
-                <span className="text-xs text-gray-400">{content.length}/400</span>
-              </div>
-            </div>
-
-            {/* Post configurations & tools */}
-            <div className="mb-4">
-              <p className="text-xs text-gray-500 mb-2">Post configurations & tools</p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant={expandedSections.platformCaptions ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => !syncCaptions && toggleSection('platformCaptions')}
-                  className={expandedSections.platformCaptions ? "bg-green-500 hover:bg-green-600" : ""}
-                  disabled={syncCaptions}
-                  title={syncCaptions ? "Disable 'Apply to all' to edit platform captions" : ""}
-                >
-                  Platform Captions
-                  <FaChevronDown className={`ml-1 transition-transform ${expandedSections.platformCaptions ? 'rotate-180' : ''}`} />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleSection('pastCaptions')}
-                >
-                  <FaEdit className="mr-1" /> Past Captions
-                  <FaChevronDown className="ml-1" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleSection('processing')}
-                >
-                  ⚙️ Processing
-                  <FaChevronDown className="ml-1" />
-                </Button>
-                {type === 'video' && (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => toggleSection('tiktokConfig')}
-                    >
-                      <FaTiktok className="mr-1" /> TikTok Config
-                      <FaChevronDown className="ml-1" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Platform-specific captions */}
-            {expandedSections.platformCaptions && (
-              <div className="space-y-6 border-t border-gray-200 pt-4 mt-6">
-                {getSelectedPlatforms().map((platform) => {
-                  const platformInfo = platformIcons[platform] || {};
-                  const Icon = platformInfo.icon || FaFacebook;
-                  const hasCustomCaption = platformCaptions.hasOwnProperty(platform);
-                  const charLimit = getCharLimit(platform);
-                  const currentText = hasCustomCaption ? platformCaptions[platform] : content;
-                  const currentLength = currentText.length;
-
-                  const platformLabels = {
-                    youtube: "YouTube Description",
-                    instagram: "Instagram Caption",
-                    facebook: "Facebook Caption",
-                    twitter: "X (Twitter) Post",
-                    linkedin: "LinkedIn Post",
-                    tiktok: "TikTok Caption",
-                    pinterest: "Pinterest Description",
-                  };
-                  const label = platformLabels[platform] || `${platform} Caption`;
-
-                  return (
-                    <div key={platform} className="mb-4">
-                      <div className="flex items-center gap-1 mb-2">
-                        <Icon className={`text-md ${platformInfo.color} mr-1`} />
-                        <Label className="text-sm font-medium text-gray-700 capitalize">{label}</Label>
-                        <FaInfoCircle className="text-gray-400 text-xs ml-1" />
-                      </div>
-                      <Textarea
-                        value={currentText}
-                        onChange={(e) => handlePlatformCaptionChange(platform, e.target.value)}
-                        placeholder={`Start writing your ${label.toLowerCase()} here...`}
-                        rows={4}
-                        className="resize-none bg-white border-gray-200"
-                        data-testid={`caption-${platform}`}
-                      />
-                      <div className="flex justify-between items-center mt-1">
-                        <div>
-                          {hasCustomCaption ? (
-                            <button
-                              onClick={() => clearPlatformCaption(platform)}
-                              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                            >
-                              <FaTimes /> Reset to Main Caption
-                            </button>
+            {/* Instagram Composer Area */}
+            <div className="bg-white rounded-lg border border-gray-200 p-6 mb-4">
+              {/* Account Avatars & Platform Icons Header */}
+              <div className="flex items-center gap-4 mb-6">
+                <div className="flex -space-x-2">
+                  {availableAccounts
+                    .filter(a => selectedAccounts.includes(a.id) && a.platform === 'instagram')
+                    .map((account) => {
+                      const platformInfo = platformIcons[account.platform] || {};
+                      const Icon = platformInfo.icon || FaFacebook;
+                      return (
+                        <div key={account.id} className="relative">
+                          {account.picture_url ? (
+                            <img
+                              src={account.picture_url}
+                              alt={account.platform_username}
+                              className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm"
+                            />
                           ) : (
-                            <span className="text-xs text-gray-400 italic">Syncing with Main Caption</span>
-                          )}
-                        </div>
-                        <span className={`text-xs ${currentLength > charLimit ? 'text-red-500' : 'text-gray-400'}`}>
-                          {currentLength}/{charLimit}
-                        </span>
-                      </div>
-
-                      {/* YouTube Specific Settings */}
-                      {platform === 'youtube' && type === 'video' && (
-                        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                          <div className="flex flex-col gap-4">
-                            <div>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setShowYoutubeTitle(!showYoutubeTitle)}
-                                  className="bg-white"
-                                >
-                                  <FaYoutube className="mr-2 text-red-500" />
-                                  {showYoutubeTitle ? 'Hide Video Title' : 'Add Video Title'}
-                                  <FaChevronDown className={`ml-2 transition-transform ${showYoutubeTitle ? 'rotate-180' : ''}`} />
-                                </Button>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-sm text-gray-600 font-medium whitespace-nowrap">Privacy:</Label>
-                                  <select
-                                    value={youtubePrivacy}
-                                    onChange={(e) => setYoutubePrivacy(e.target.value)}
-                                    className="text-sm border border-gray-200 rounded-md bg-white p-1.5 focus:ring-green-500 focus:border-green-500"
-                                  >
-                                    <option value="public">Public</option>
-                                    <option value="private">Private</option>
-                                    <option value="unlisted">Unlisted</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              {showYoutubeTitle && (
-                                <div className="mt-4">
-                                  <Label className="text-sm text-gray-600 mb-1 block">Title (Required)</Label>
-                                  <Input
-                                    value={videoTitle}
-                                    onChange={(e) => setVideoTitle(e.target.value)}
-                                    placeholder="We Tried the World's Spiciest Pepper!"
-                                    className="bg-white"
-                                  />
-                                  <div className="flex justify-end mt-1">
-                                    <span className={`text-xs ${videoTitle.length > 100 ? 'text-red-500' : 'text-gray-400'}`}>
-                                      {videoTitle.length}/100
-                                    </span>
-                                  </div>
-                                </div>
-                              )}
+                            <div className={`w-10 h-10 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-sm font-medium border-2 border-white shadow-sm`}>
+                              {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
                             </div>
+                          )}
+                          <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white border border-gray-100 flex items-center justify-center shadow-sm">
+                            <Icon className={`text-[10px] ${platformInfo.color}`} />
                           </div>
                         </div>
-                      )}
-
+                      );
+                    })}
+                  {availableAccounts.filter(a => selectedAccounts.includes(a.id) && a.platform === 'instagram').length === 0 && (
+                    <div className="w-10 h-10 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400">
+                      ?
                     </div>
-                  );
-                })}
-
-                {getSelectedPlatforms().length === 0 && (
-                  <p className="text-sm text-gray-500 italic pb-2">Select accounts above to customize platform-specific captions.</p>
-                )}
+                  )}
+                </div>
+                <span className="text-sm font-medium text-gray-500">Selected Instagram Accounts</span>
               </div>
-            )}
 
+              {type === 'video' && getSelectedPlatforms().includes('instagram') ? (
+                // INSTAGRAM SPECIFIC UI
+                <>
+                  {/* Post Type Selection */}
+                  <div className="flex items-center gap-6 mb-6">
+                    <FaInstagram className="text-pink-500 text-xl" />
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="postFormat"
+                          value="Post"
+                          checked={postFormat === 'Post'}
+                          onChange={(e) => setPostFormat(e.target.value)}
+                          className="text-pink-500 focus:ring-pink-500 w-4 h-4"
+                        />
+                        <span className="text-sm font-medium text-gray-900">Post</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="postFormat"
+                          value="Reel"
+                          checked={postFormat === 'Reel'}
+                          onChange={(e) => setPostFormat(e.target.value)}
+                          className="text-pink-500 focus:ring-pink-500 w-4 h-4"
+                        />
+                        <span className="text-sm font-medium text-gray-900">Reel</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="postFormat"
+                          value="Story"
+                          checked={postFormat === 'Story'}
+                          onChange={(e) => setPostFormat(e.target.value)}
+                          className="text-pink-500 focus:ring-pink-500 w-4 h-4"
+                        />
+                        <span className="text-sm font-medium text-gray-900">Story</span>
+                      </label>
+                    </div>
+                  </div>
 
+                  {/* Caption Textarea */}
+                  <Textarea
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    placeholder="What would you like to share?"
+                    rows={1}
+                    className="resize-none bg-transparent border-none focus-visible:ring-0 px-0 text-base placeholder:text-gray-400 min-h-[40px] mb-4"
+                    maxLength={2200}
+                  />
+
+                  {/* Inline Media Upload (only show if no media uploaded) */}
+                  {!uploadedMedia && (
+                    <div
+                      className="border border-dashed border-gray-300 rounded-lg p-8 mb-6 bg-transparent transition-colors hover:border-gray-400 hover:bg-gray-50 cursor-pointer flex flex-col items-center justify-center min-h-[200px] max-w-sm"
+                      onClick={(e) => {
+                        if (!uploading && !uploadedMedia) {
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                      onDrop={handleDrop}
+                      onDragOver={handleDragOver}
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={type === 'video' ? 'video/*' : type === 'image' ? 'image/*' : 'image/*,video/*'}
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                      <input
+                        ref={coverImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (type === 'video' && mediaRawAspectRatio) {
+                              const reader = new FileReader();
+                              reader.addEventListener('load', () => {
+                                setCropImageSrc(reader.result);
+                                setShowCropper(true);
+                              });
+                              reader.readAsDataURL(file);
+                            } else {
+                              uploadCoverImageToBackend(file);
+                            }
+                            e.target.value = null;
+                          }
+                        }}
+                        className="hidden"
+                      />
+
+                      {uploading ? (
+                        <div className="flex flex-col items-center">
+                          <p className="text-gray-900 font-medium mb-2 text-sm">Uploading...</p>
+                          <div className="w-48 bg-gray-200 rounded-full h-1.5 mb-1 relative overflow-hidden">
+                            <div
+                              className="bg-gray-800 h-1.5 rounded-full transition-all duration-300"
+                              style={{ width: `${uploadProgress}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="w-10 h-10 rounded flex items-center justify-center mb-3 text-gray-400 group-hover:text-gray-500 transition-colors">
+                            <FaImage className="text-2xl" />
+                          </div>
+                          <p className="text-gray-900 font-medium text-sm text-center">Drag & drop or<br /><span className="text-blue-600 font-normal">select a file</span></p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {uploadedMedia && (
+                    // Hidden inputs still needed when media is uploaded so cover image can be triggered from right sidebar
+                    <div className="hidden">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={type === 'video' ? 'video/*' : type === 'image' ? 'image/*' : 'image/*,video/*'}
+                        onChange={handleFileUpload}
+                      />
+                      <input
+                        ref={coverImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (type === 'video' && mediaRawAspectRatio) {
+                              const reader = new FileReader();
+                              reader.addEventListener('load', () => {
+                                setCropImageSrc(reader.result);
+                                setShowCropper(true);
+                              });
+                              reader.readAsDataURL(file);
+                            } else {
+                              uploadCoverImageToBackend(file);
+                            }
+                            e.target.value = null;
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Actions Toolbar */}
+                  <div className="flex items-center justify-between border-y border-gray-100 py-3 mb-6">
+                    <div className="flex items-center gap-4">
+                      <button
+                        className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold font-serif italic hover:opacity-80 transition-opacity"
+                        title="Canva"
+                      >
+                        C
+                      </button>
+                      <button
+                        className="text-gray-500 hover:text-gray-700 transition-colors"
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Select Media"
+                      >
+                        <FaImage className="text-lg" />
+                      </button>
+                      <button
+                        className="text-gray-500 hover:text-gray-700 transition-colors"
+                        title="Emoji"
+                      >
+                        <FaSmile className="text-lg" />
+                      </button>
+                      <button
+                        className="text-gray-500 hover:text-gray-700 transition-colors"
+                        title="Clipboard"
+                      >
+                        <FaClipboardList className="text-lg" />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-400 font-medium bg-gray-50 px-2 py-1 rounded">
+                      {2200 - content.length}
+                    </span>
+                  </div>
+
+                  {/* Advanced Inputs */}
+                  <div className="space-y-4 max-w-2xl">
+                    <div className="grid grid-cols-[120px_1fr] items-center gap-4">
+                      <Label className="text-sm font-semibold text-gray-900">Add Stickers</Label>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" size="sm" className="h-8 rounded-full px-4 text-xs font-medium border-gray-300 text-gray-700">
+                          <FaMusic className="mr-2 text-gray-400" /> Music
+                        </Button>
+                        <Button variant="outline" size="sm" className="h-8 rounded-full px-4 text-xs font-medium border-gray-300 text-gray-700">
+                          <FaShoppingBag className="mr-2 text-gray-400" /> Tag Products
+                        </Button>
+                        <div className="ml-auto text-blue-600 text-sm font-medium flex items-center gap-1 cursor-pointer">
+                          <span className="text-xl leading-none -mt-1">⚙</span> Automatic <FaChevronDown className="text-[10px]" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[120px_1fr] items-center gap-4">
+                      <Label className="text-sm font-semibold text-gray-900">First Comment</Label>
+                      <Input
+                        placeholder="Your comment"
+                        value={firstComment}
+                        onChange={(e) => setFirstComment(e.target.value)}
+                        className="bg-white border-gray-200"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-[120px_1fr] items-center gap-4">
+                      <Label className="text-sm font-semibold text-gray-900">Location</Label>
+                      <div className="relative">
+                        <Input
+                          placeholder="Type the location"
+                          value={location}
+                          onChange={(e) => setLocation(e.target.value)}
+                          className="bg-white border-gray-200"
+                        />
+                        <FaChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[120px_1fr] items-center gap-4">
+                      <div className="flex items-center gap-1">
+                        <Label className="text-sm font-semibold text-gray-900">Shop Grid Link</Label>
+                        <FaInfoCircle className="text-gray-400 text-xs" />
+                      </div>
+                      <Input
+                        placeholder="Website or Product URL"
+                        value={shopGridLink}
+                        onChange={(e) => setShopGridLink(e.target.value)}
+                        className="bg-white border-gray-200"
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                // GENERIC UI for non-video or non-instagram posts
+                <div className="p-8 text-center border-2 border-dashed border-gray-200 rounded-lg text-gray-500">
+                  <p>Select an Instagram account to see the Composer.</p>
+                  <p className="text-sm mt-2">Currently, only the Instagram Video/Reel composer interface is fully customized.</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Right Sidebar */}
           <div className="w-72 flex-shrink-0">
             <div className="bg-white rounded-lg border border-gray-200 p-4 sticky top-6">
+              {/* Media Preview */}
+              {uploadedMedia && (
+                <div className="mb-4">
+                  <h3 className="font-medium text-gray-900 mb-2">
+                    {type === 'video' ? 'Video' : 'Image'} Preview
+                  </h3>
+                  <div className="relative rounded-lg overflow-hidden border border-gray-200 group bg-black">
+                    {type === 'video' ? (
+                      <video
+                        src={uploadedMedia.url}
+                        controls
+                        className="w-full"
+                        style={{ maxHeight: '300px' }}
+                      />
+                    ) : (
+                      <img
+                        src={uploadedMedia.url}
+                        alt="Preview"
+                        className="w-full object-contain"
+                        style={{ maxHeight: '300px' }}
+                      />
+                    )}
+                    <button
+                      onClick={() => setUploadedMedia(null)}
+                      className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <FaTimes className="text-xs" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Cover Image Display */}
               {coverImage && (
@@ -852,7 +803,8 @@ const CreatePostForm = () => {
                     <img
                       src={coverImage}
                       alt="Video Cover"
-                      className="w-full aspect-video object-cover"
+                      className="w-full object-cover"
+                      style={{ aspectRatio: mediaRawAspectRatio || '16/9' }}
                     />
                     <button
                       onClick={() => setCoverImage(null)}
@@ -884,6 +836,7 @@ const CreatePostForm = () => {
                       <Input
                         type="date"
                         value={scheduledDate}
+                        min={new Date().toISOString().split('T')[0]}
                         onChange={(e) => setScheduledDate(e.target.value)}
                         className="border-0 bg-transparent p-0 h-auto text-sm focus-visible:ring-0"
                         data-testid="schedule-date"
@@ -911,8 +864,6 @@ const CreatePostForm = () => {
                   </p>
                 </>
               )}
-
-              {/* End of Schedule Section */}
 
               {/* Action Buttons */}
               <div className="space-y-2">
@@ -983,8 +934,9 @@ const CreatePostForm = () => {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout >
+    </DashboardLayout>
   );
 };
 
 export default CreatePostForm;
+
