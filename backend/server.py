@@ -2090,6 +2090,282 @@ async def linkedin_callback(request: Request, code: Optional[str] = None, state:
         logging.error(f"[LinkedIn] Callback general error: {e}")
         return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
 
+# ==================== ANALYTICS & ENGAGEMENT ====================
+
+DEMOGRAPHICS_PLATFORMS = {"instagram", "facebook"}
+COMMENT_PLATFORMS = {"instagram", "facebook", "youtube"}
+REPLY_PLATFORMS = {"instagram", "facebook"}
+DM_PLATFORMS = {"instagram", "facebook"}
+
+@api_router.get("/analytics/engagement")
+async def get_engagement(platform: Optional[str] = None, current_user: User = Depends(get_current_user)):
+    """Fetch engagement metrics for connected accounts"""
+    accounts = await db.social_accounts.find({"user_id": current_user.user_id}).to_list(100)
+    if platform:
+        accounts = [a for a in accounts if a["platform"] == platform]
+
+    results = []
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+    google_auth = GoogleAuth()
+    tw_auth = TwitterAuth()
+    li_auth = LinkedInAuth()
+
+    for account in accounts:
+        p = account["platform"]
+        token = account.get("access_token")
+        pid = account.get("platform_user_id")
+        if not token or not pid:
+            continue
+        try:
+            if p == "instagram":
+                data = await ig_auth.fetch_engagement(token, pid)
+            elif p == "facebook":
+                data = await fb_auth.fetch_page_engagement(token, pid)
+            elif p == "youtube":
+                data = await google_auth.fetch_youtube_engagement(token, pid)
+            elif p == "twitter":
+                data = await tw_auth.fetch_engagement(token, pid)
+            elif p == "linkedin":
+                data = await li_auth.fetch_engagement(token, pid)
+            else:
+                continue
+            data["account_id"] = account.get("id")
+            data["account_name"] = account.get("platform_username", account.get("username", ""))
+            results.append(data)
+        except Exception as e:
+            logging.warning(f"Engagement fetch failed for {p}/{pid}: {e}")
+
+    return {"engagement": results}
+
+@api_router.get("/analytics/feed")
+async def get_feed(platform: Optional[str] = None, limit: int = 25, current_user: User = Depends(get_current_user)):
+    """Fetch recent posts/feed from connected accounts"""
+    accounts = await db.social_accounts.find({"user_id": current_user.user_id}).to_list(100)
+    if platform:
+        accounts = [a for a in accounts if a["platform"] == platform]
+
+    all_posts = []
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+    google_auth = GoogleAuth()
+    tw_auth = TwitterAuth()
+
+    for account in accounts:
+        p = account["platform"]
+        token = account.get("access_token")
+        pid = account.get("platform_user_id")
+        if not token or not pid:
+            continue
+        try:
+            if p == "instagram":
+                posts = await ig_auth.fetch_feed(token, pid, limit)
+            elif p == "facebook":
+                posts = await fb_auth.fetch_page_feed(token, pid, limit)
+            elif p == "youtube":
+                posts = await google_auth.fetch_youtube_feed(token, pid, limit)
+            elif p == "twitter":
+                posts = await tw_auth.fetch_tweets(token, pid, limit)
+            else:
+                continue
+            for post in posts:
+                post["account_id"] = account.get("id")
+                post["account_name"] = account.get("platform_username", account.get("username", ""))
+            all_posts.extend(posts)
+        except Exception as e:
+            logging.warning(f"Feed fetch failed for {p}/{pid}: {e}")
+
+    # Sort by timestamp descending
+    all_posts.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return {"posts": all_posts[:limit]}
+
+@api_router.get("/analytics/demographics")
+async def get_demographics(platform: Optional[str] = None, current_user: User = Depends(get_current_user)):
+    """Fetch follower demographics (Instagram, Facebook only)"""
+    accounts = await db.social_accounts.find({"user_id": current_user.user_id}).to_list(100)
+    if platform:
+        accounts = [a for a in accounts if a["platform"] == platform]
+
+    # Filter to demographics-supporting platforms
+    accounts = [a for a in accounts if a["platform"] in DEMOGRAPHICS_PLATFORMS]
+
+    if not accounts:
+        return {"supported": False, "demographics": None, "accounts_used": []}
+
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+
+    # Aggregate demographics from all relevant accounts
+    combined = {"age": [], "gender": [], "cities": [], "countries": [], "supported": True}
+    accounts_used = []
+
+    for account in accounts:
+        p = account["platform"]
+        token = account.get("access_token")
+        pid = account.get("platform_user_id")
+        if not token or not pid:
+            continue
+        try:
+            if p == "instagram":
+                demo = await ig_auth.fetch_demographics(token, pid)
+            elif p == "facebook":
+                demo = await fb_auth.fetch_page_demographics(token, pid)
+            else:
+                continue
+
+            if demo.get("supported"):
+                accounts_used.append({"platform": p, "name": account.get("platform_username", "")})
+                for key in ["age", "gender", "cities", "countries"]:
+                    combined[key].extend(demo.get(key, []))
+        except Exception as e:
+            logging.warning(f"Demographics fetch failed for {p}/{pid}: {e}")
+
+    return {"supported": bool(accounts_used), "demographics": combined, "accounts_used": accounts_used}
+
+@api_router.get("/comments/{platform}/{post_id:path}")
+async def get_comments(platform: str, post_id: str, current_user: User = Depends(get_current_user)):
+    """Fetch comments for a specific post"""
+    if platform not in COMMENT_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Comments not supported for {platform}")
+
+    # Find account for this platform
+    account = await db.social_accounts.find_one({
+        "user_id": current_user.user_id,
+        "platform": platform,
+    })
+    if not account:
+        raise HTTPException(status_code=404, detail=f"No {platform} account connected")
+
+    token = account.get("access_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="No access token")
+
+    try:
+        if platform == "instagram":
+            ig_auth = InstagramAuth()
+            comments = await ig_auth.fetch_comments(token, post_id)
+        elif platform == "facebook":
+            fb_auth = FacebookAuth()
+            comments = await fb_auth.fetch_comments(token, post_id)
+        elif platform == "youtube":
+            google_auth = GoogleAuth()
+            comments = await google_auth.fetch_youtube_comments(token, post_id)
+        else:
+            comments = []
+    except Exception as e:
+        logging.error(f"Comments fetch error for {platform}/{post_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"comments": comments}
+
+class CommentReplyRequest(BaseModel):
+    text: str
+    account_id: Optional[str] = None
+
+@api_router.post("/comments/{platform}/{comment_id:path}/reply")
+async def reply_to_comment(platform: str, comment_id: str, body: CommentReplyRequest, current_user: User = Depends(get_current_user)):
+    """Reply to a comment on a platform"""
+    if platform not in REPLY_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Replies not supported for {platform}")
+
+    query = {"user_id": current_user.user_id, "platform": platform}
+    if body.account_id:
+        query["id"] = body.account_id
+    account = await db.social_accounts.find_one(query)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"No {platform} account connected")
+
+    token = account.get("access_token")
+
+    try:
+        if platform == "instagram":
+            ig_auth = InstagramAuth()
+            result = await ig_auth.reply_to_comment(token, comment_id, body.text)
+        elif platform == "facebook":
+            fb_auth = FacebookAuth()
+            result = await fb_auth.reply_to_comment(token, comment_id, body.text)
+        else:
+            raise HTTPException(status_code=400, detail="Platform not supported for replies")
+    except Exception as e:
+        logging.error(f"Reply error for {platform}/{comment_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"success": True, "result": result}
+
+@api_router.get("/messages/{platform}")
+async def get_messages(platform: str, current_user: User = Depends(get_current_user)):
+    """Fetch DM conversations for a platform"""
+    if platform not in DM_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"DMs not supported for {platform}")
+
+    accounts = await db.social_accounts.find({
+        "user_id": current_user.user_id,
+        "platform": platform,
+    }).to_list(10)
+
+    if not accounts:
+        raise HTTPException(status_code=404, detail=f"No {platform} account connected")
+
+    all_conversations = []
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+
+    for account in accounts:
+        token = account.get("access_token")
+        pid = account.get("platform_user_id")
+        if not token or not pid:
+            continue
+        try:
+            if platform == "instagram":
+                convs = await ig_auth.fetch_conversations(token, pid)
+            elif platform == "facebook":
+                convs = await fb_auth.fetch_page_conversations(token, pid)
+            else:
+                continue
+            for c in convs:
+                c["account_id"] = account.get("id")
+                c["account_name"] = account.get("platform_username", "")
+            all_conversations.extend(convs)
+        except Exception as e:
+            logging.warning(f"DM fetch failed for {platform}/{pid}: {e}")
+
+    return {"conversations": all_conversations}
+
+class DmReplyRequest(BaseModel):
+    text: str
+    account_id: Optional[str] = None
+
+@api_router.post("/messages/{platform}/{conversation_id}/reply")
+async def send_dm_reply(platform: str, conversation_id: str, body: DmReplyRequest, current_user: User = Depends(get_current_user)):
+    """Send a DM reply"""
+    if platform not in DM_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"DMs not supported for {platform}")
+
+    query = {"user_id": current_user.user_id, "platform": platform}
+    if body.account_id:
+        query["id"] = body.account_id
+    account = await db.social_accounts.find_one(query)
+    if not account:
+        raise HTTPException(status_code=404, detail=f"No {platform} account connected")
+
+    token = account.get("access_token")
+    pid = account.get("platform_user_id")
+
+    try:
+        if platform == "instagram":
+            ig_auth = InstagramAuth()
+            result = await ig_auth.send_message(token, conversation_id, body.text)
+        elif platform == "facebook":
+            fb_auth = FacebookAuth()
+            result = await fb_auth.send_page_message(token, pid, conversation_id, body.text)
+        else:
+            raise HTTPException(status_code=400, detail="Not supported")
+    except Exception as e:
+        logging.error(f"DM send error for {platform}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"success": True, "result": result}
+
 # ==================== SCHEDULED POST PROCESSOR ====================
 
 async def process_scheduled_posts():

@@ -28,6 +28,8 @@ import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
 import ApiKeys from '@/pages/ApiKeys';
 import AgentDocs from '@/pages/AgentDocs';
+import Analytics from '@/pages/Analytics';
+import Publish from '@/pages/Publish';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -244,6 +246,22 @@ function App() {
               element={
                 <PrivateRoute>
                   <ApiKeys />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <PrivateRoute>
+                  <Analytics />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/publish"
+              element={
+                <PrivateRoute>
+                  <Publish />
                 </PrivateRoute>
               }
             />

@@ -175,3 +175,11 @@ class LinkedInAuth:
                 raise Exception(f"Failed to publish to LinkedIn: {response.text}")
                 
             return response.headers.get('x-restli-id')
+
+    async def fetch_engagement(self, access_token: str, person_urn: str) -> dict:
+        """Fetch LinkedIn profile engagement (limited)"""
+        # LinkedIn API is restrictive for analytics
+        return {
+            "platform": "linkedin",
+            "note": "LinkedIn analytics require Marketing Developer Platform approval",
+        }

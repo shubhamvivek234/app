@@ -36,7 +36,7 @@ class InstagramAuth:
         if not self.app_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Instagram credentials not configured")
 
-        scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights"
+        scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages"
 
         params = {
             "client_id": self.app_id,
@@ -178,3 +178,209 @@ class InstagramAuth:
                 raise Exception(f"Failed to publish to standalone IG: {error_msg}")
                 
             return publish_response.json().get("id")
+
+    async def fetch_feed(self, access_token: str, user_id: str, limit: int = 25) -> list:
+        """Fetch recent media from Instagram"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.GRAPH_URL}/{user_id}/media",
+                params={
+                    "fields": "id,caption,media_type,media_url,thumbnail_url,timestamp,like_count,comments_count,permalink",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Instagram] Feed fetch failed: {response.text}")
+                return []
+            posts = response.json().get("data", [])
+            result = []
+            for post in posts:
+                media_type = post.get("media_type", "IMAGE")
+                if media_type in ("VIDEO", "REELS"):
+                    display_url = post.get("thumbnail_url") or post.get("media_url")
+                    video_url = post.get("media_url")
+                else:
+                    display_url = post.get("media_url") or post.get("thumbnail_url")
+                    video_url = None
+                result.append({
+                    "id": post.get("id"),
+                    "content": post.get("caption", ""),
+                    "media_url": display_url,
+                    "video_url": video_url,
+                    "media_type": media_type,
+                    "timestamp": post.get("timestamp"),
+                    "likes": post.get("like_count", 0),
+                    "comments_count": post.get("comments_count", 0),
+                    "permalink": post.get("permalink"),
+                    "platform": "instagram",
+                })
+            return result
+
+    async def fetch_engagement(self, access_token: str, user_id: str) -> dict:
+        """Fetch Instagram account engagement metrics"""
+        async with httpx.AsyncClient() as client:
+            # Get user profile stats
+            response = await client.get(
+                f"{self.GRAPH_URL}/{user_id}",
+                params={
+                    "fields": "id,username,followers_count,follows_count,media_count",
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                return {}
+            profile = response.json()
+
+            # Get insights
+            insights = {}
+            try:
+                insights_resp = await client.get(
+                    f"{self.GRAPH_URL}/{user_id}/insights",
+                    params={
+                        "metric": "impressions,reach,profile_views",
+                        "period": "day",
+                        "metric_type": "total_value",
+                        "access_token": access_token,
+                    },
+                )
+                if insights_resp.status_code == 200:
+                    for item in insights_resp.json().get("data", []):
+                        name = item.get("name")
+                        val = item.get("total_value", {}).get("value", 0)
+                        insights[name] = val
+            except Exception as e:
+                logging.warning(f"[Instagram] Insights fetch failed: {e}")
+
+            return {
+                "followers": profile.get("followers_count", 0),
+                "following": profile.get("follows_count", 0),
+                "posts_count": profile.get("media_count", 0),
+                "impressions": insights.get("impressions", 0),
+                "reach": insights.get("reach", 0),
+                "profile_views": insights.get("profile_views", 0),
+                "platform": "instagram",
+            }
+
+    async def fetch_demographics(self, access_token: str, user_id: str) -> dict:
+        """Fetch follower demographics (requires 100+ followers)"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.GRAPH_URL}/{user_id}/insights",
+                params={
+                    "metric": "follower_demographics",
+                    "period": "lifetime",
+                    "metric_type": "total_value",
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Instagram] Demographics fetch failed: {response.text}")
+                return {"supported": False, "error": "Could not fetch demographics"}
+
+            data = response.json().get("data", [])
+            result = {"age": [], "gender": [], "cities": [], "countries": [], "supported": True}
+
+            for metric in data:
+                breakdowns = metric.get("total_value", {}).get("breakdowns", [])
+                for breakdown in breakdowns:
+                    dimension = breakdown.get("dimension_keys", [""])[0]
+                    results = breakdown.get("results", [])
+
+                    if dimension == "age":
+                        for r in results:
+                            result["age"].append({"range": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
+                    elif dimension == "city":
+                        for r in sorted(results, key=lambda x: x.get("value", 0), reverse=True)[:10]:
+                            result["cities"].append({"name": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
+                    elif dimension == "country":
+                        for r in sorted(results, key=lambda x: x.get("value", 0), reverse=True)[:10]:
+                            result["countries"].append({"name": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
+                    elif dimension == "gender":
+                        for r in results:
+                            result["gender"].append({"label": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
+
+            return result
+
+    async def fetch_comments(self, access_token: str, media_id: str, limit: int = 50) -> list:
+        """Fetch comments on a media post"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.GRAPH_URL}/{media_id}/comments",
+                params={
+                    "fields": "id,text,username,timestamp,like_count",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Instagram] Comments fetch failed: {response.text}")
+                return []
+            comments = []
+            for c in response.json().get("data", []):
+                comments.append({
+                    "id": c.get("id"),
+                    "author_name": c.get("username", "Unknown"),
+                    "author_avatar": None,
+                    "content": c.get("text", ""),
+                    "timestamp": c.get("timestamp"),
+                    "likes": c.get("like_count", 0),
+                    "can_reply": True,
+                    "platform": "instagram",
+                })
+            return comments
+
+    async def reply_to_comment(self, access_token: str, comment_id: str, text: str) -> dict:
+        """Reply to a comment on Instagram"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.GRAPH_URL}/{comment_id}/replies",
+                params={
+                    "message": text,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.error(f"[Instagram] Reply failed: {response.text}")
+                raise Exception(f"Failed to reply: {response.text}")
+            return response.json()
+
+    async def fetch_conversations(self, access_token: str, user_id: str, limit: int = 20) -> list:
+        """Fetch Instagram DM conversations"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.GRAPH_URL}/{user_id}/conversations",
+                params={
+                    "fields": "id,participants,messages{id,message,from,created_time}",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Instagram] DM fetch failed: {response.text}")
+                return []
+            conversations = []
+            for conv in response.json().get("data", []):
+                messages = conv.get("messages", {}).get("data", [])
+                latest = messages[0] if messages else {}
+                conversations.append({
+                    "id": conv.get("id"),
+                    "participants": [p.get("name", "Unknown") for p in conv.get("participants", {}).get("data", [])],
+                    "last_message": latest.get("message", ""),
+                    "last_message_time": latest.get("created_time"),
+                    "platform": "instagram",
+                })
+            return conversations
+
+    async def send_message(self, access_token: str, recipient_id: str, text: str) -> dict:
+        """Send a DM on Instagram"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.GRAPH_URL}/me/messages",
+                params={"access_token": access_token},
+                json={"recipient": {"id": recipient_id}, "message": {"text": text}},
+            )
+            if response.status_code != 200:
+                logging.error(f"[Instagram] DM send failed: {response.text}")
+                raise Exception(f"Failed to send message: {response.text}")
+            return response.json()

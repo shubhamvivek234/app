@@ -189,6 +189,68 @@ export const deleteApiKey = async (keyId) => {
   return response.data;
 };
 
+// Analytics
+export const getAnalyticsEngagement = async (platform = null) => {
+  const params = platform ? `?platform=${platform}` : '';
+  const response = await axios.get(`${API}/analytics/engagement${params}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const getAnalyticsFeed = async (platform = null, limit = 25) => {
+  const params = new URLSearchParams();
+  if (platform) params.set('platform', platform);
+  if (limit) params.set('limit', limit);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const response = await axios.get(`${API}/analytics/feed${qs}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const getAnalyticsDemographics = async (platform = null) => {
+  const params = platform ? `?platform=${platform}` : '';
+  const response = await axios.get(`${API}/analytics/demographics${params}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+// Comments
+export const getPostComments = async (platform, postId) => {
+  const response = await axios.get(`${API}/comments/${platform}/${encodeURIComponent(postId)}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const replyToComment = async (platform, commentId, { text, accountId }) => {
+  const response = await axios.post(
+    `${API}/comments/${platform}/${encodeURIComponent(commentId)}/reply`,
+    { text, account_id: accountId },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+// DMs / Messages
+export const getConversations = async (platform) => {
+  const response = await axios.get(`${API}/messages/${platform}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const sendDmReply = async (platform, conversationId, { text, accountId }) => {
+  const response = await axios.post(
+    `${API}/messages/${platform}/${conversationId}/reply`,
+    { text, account_id: accountId },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
 // Agent API (Front-end only for testing/demo if needed)
 export const getAgentChannels = async (apiKey) => {
   const response = await axios.get(`${API}/agent/channels`, {

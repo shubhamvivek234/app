@@ -14,7 +14,9 @@ import {
   FaQuestionCircle,
   FaSignOutAlt,
   FaMagic,
-  FaLayerGroup
+  FaLayerGroup,
+  FaChartBar,
+  FaPaperPlane
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
@@ -40,6 +42,10 @@ const DashboardLayout = ({ children }) => {
       { name: 'Scheduled', path: '/content?status=scheduled', icon: FaClock },
       { name: 'Posted', path: '/content?status=published', icon: FaCheckCircle },
       { name: 'Drafts', path: '/content?status=draft', icon: FaFileAlt },
+      { name: 'Publish', path: '/publish', icon: FaPaperPlane },
+    ],
+    analytics: [
+      { name: 'Analytics', path: '/analytics', icon: FaChartBar },
     ],
     configuration: [
       { name: 'Connections', path: '/accounts', icon: FaUsers },
@@ -133,6 +139,31 @@ const DashboardLayout = ({ children }) => {
             <p className="text-xs text-gray-500 px-2 mb-1">Posts</p>
             <nav className="space-y-0.5">
               {navigation.posts.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.path);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    data-testid={`nav-${item.name.toLowerCase().replace(' ', '-')}`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors ${active
+                      ? 'bg-green-50 text-green-700'
+                      : 'text-gray-600 hover:bg-gray-50'
+                      }`}
+                  >
+                    <Icon className="text-sm" />
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Analytics Section */}
+          <div className="px-3 py-2">
+            <p className="text-xs text-gray-500 px-2 mb-1">Analytics</p>
+            <nav className="space-y-0.5">
+              {navigation.analytics.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.path);
                 return (

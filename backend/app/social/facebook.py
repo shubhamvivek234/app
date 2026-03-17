@@ -26,7 +26,7 @@ class FacebookAuth:
         if not self.app_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Facebook credentials not configured")
             
-        scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management"
+        scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management,pages_messaging"
         
         params = {
             "client_id": self.app_id,
@@ -216,3 +216,198 @@ class FacebookAuth:
                 raise Exception(f"Failed to publish to FB: {response.text}")
                 
             return response.json().get("id")
+
+    async def fetch_page_feed(self, access_token: str, page_id: str, limit: int = 25) -> list:
+        """Fetch recent posts from a Facebook Page"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/{page_id}/posts",
+                params={
+                    "fields": "id,message,created_time,full_picture,type,permalink_url,likes.summary(true),comments.summary(true),shares",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Facebook] Feed fetch failed: {response.text}")
+                return []
+            posts = []
+            for p in response.json().get("data", []):
+                posts.append({
+                    "id": p.get("id"),
+                    "content": p.get("message", ""),
+                    "media_url": p.get("full_picture"),
+                    "media_type": p.get("type", "status").upper(),
+                    "timestamp": p.get("created_time"),
+                    "likes": p.get("likes", {}).get("summary", {}).get("total_count", 0),
+                    "comments_count": p.get("comments", {}).get("summary", {}).get("total_count", 0),
+                    "shares": p.get("shares", {}).get("count", 0),
+                    "permalink": p.get("permalink_url"),
+                    "platform": "facebook",
+                })
+            return posts
+
+    async def fetch_page_engagement(self, access_token: str, page_id: str) -> dict:
+        """Fetch Facebook Page engagement metrics"""
+        async with httpx.AsyncClient() as client:
+            # Page fans (total likes)
+            response = await client.get(
+                f"{self.BASE_URL}/{page_id}",
+                params={
+                    "fields": "id,name,fan_count,followers_count",
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                return {}
+            page = response.json()
+
+            # Page insights
+            insights = {}
+            try:
+                ins_resp = await client.get(
+                    f"{self.BASE_URL}/{page_id}/insights",
+                    params={
+                        "metric": "page_impressions,page_engaged_users,page_post_engagements",
+                        "period": "day",
+                        "access_token": access_token,
+                    },
+                )
+                if ins_resp.status_code == 200:
+                    for item in ins_resp.json().get("data", []):
+                        values = item.get("values", [])
+                        if values:
+                            insights[item["name"]] = values[-1].get("value", 0)
+            except Exception as e:
+                logging.warning(f"[Facebook] Insights failed: {e}")
+
+            return {
+                "fans": page.get("fan_count", 0),
+                "followers": page.get("followers_count", 0),
+                "impressions": insights.get("page_impressions", 0),
+                "engaged_users": insights.get("page_engaged_users", 0),
+                "post_engagements": insights.get("page_post_engagements", 0),
+                "platform": "facebook",
+            }
+
+    async def fetch_page_demographics(self, access_token: str, page_id: str) -> dict:
+        """Fetch Facebook Page fan demographics"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/{page_id}/insights",
+                params={
+                    "metric": "page_fans_city,page_fans_country,page_fans_gender_age",
+                    "period": "lifetime",
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Facebook] Demographics failed: {response.text}")
+                return {"supported": False}
+
+            result = {"age": [], "gender": [], "cities": [], "countries": [], "supported": True}
+
+            for metric in response.json().get("data", []):
+                name = metric.get("name")
+                values = metric.get("values", [])
+                data_map = values[-1].get("value", {}) if values else {}
+
+                if name == "page_fans_gender_age":
+                    age_map = {}
+                    gender_map = {}
+                    for key, count in data_map.items():
+                        parts = key.split(".")
+                        if len(parts) == 2:
+                            g, a = parts
+                            gender_label = {"M": "Male", "F": "Female", "U": "Unknown"}.get(g, g)
+                            gender_map[gender_label] = gender_map.get(gender_label, 0) + count
+                            age_map[a] = age_map.get(a, 0) + count
+                    result["age"] = [{"range": k, "count": v} for k, v in sorted(age_map.items())]
+                    result["gender"] = [{"label": k, "count": v} for k, v in gender_map.items()]
+                elif name == "page_fans_city":
+                    sorted_cities = sorted(data_map.items(), key=lambda x: x[1], reverse=True)[:10]
+                    result["cities"] = [{"name": k, "count": v} for k, v in sorted_cities]
+                elif name == "page_fans_country":
+                    sorted_countries = sorted(data_map.items(), key=lambda x: x[1], reverse=True)[:10]
+                    result["countries"] = [{"name": k, "count": v} for k, v in sorted_countries]
+
+            return result
+
+    async def fetch_comments(self, access_token: str, post_id: str, limit: int = 50) -> list:
+        """Fetch comments on a Facebook post"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/{post_id}/comments",
+                params={
+                    "fields": "id,message,from,created_time,like_count",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                return []
+            comments = []
+            for c in response.json().get("data", []):
+                from_data = c.get("from", {})
+                comments.append({
+                    "id": c.get("id"),
+                    "author_name": from_data.get("name", "Unknown"),
+                    "author_avatar": None,
+                    "content": c.get("message", ""),
+                    "timestamp": c.get("created_time"),
+                    "likes": c.get("like_count", 0),
+                    "can_reply": True,
+                    "platform": "facebook",
+                })
+            return comments
+
+    async def reply_to_comment(self, access_token: str, comment_id: str, text: str) -> dict:
+        """Reply to a comment on Facebook"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.BASE_URL}/{comment_id}/comments",
+                params={"access_token": access_token},
+                json={"message": text},
+            )
+            if response.status_code != 200:
+                raise Exception(f"Failed to reply: {response.text}")
+            return response.json()
+
+    async def fetch_page_conversations(self, access_token: str, page_id: str, limit: int = 20) -> list:
+        """Fetch Facebook Page conversations"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.BASE_URL}/{page_id}/conversations",
+                params={
+                    "fields": "id,participants,messages{id,message,from,created_time}",
+                    "limit": limit,
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Facebook] Conversations fetch failed: {response.text}")
+                return []
+            conversations = []
+            for conv in response.json().get("data", []):
+                messages = conv.get("messages", {}).get("data", [])
+                latest = messages[0] if messages else {}
+                conversations.append({
+                    "id": conv.get("id"),
+                    "participants": [p.get("name", "Unknown") for p in conv.get("participants", {}).get("data", [])],
+                    "last_message": latest.get("message", ""),
+                    "last_message_time": latest.get("created_time"),
+                    "platform": "facebook",
+                })
+            return conversations
+
+    async def send_page_message(self, access_token: str, page_id: str, recipient_id: str, text: str) -> dict:
+        """Send a message from a Facebook Page"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.BASE_URL}/{page_id}/messages",
+                params={"access_token": access_token},
+                json={"recipient": {"id": recipient_id}, "message": {"text": text}},
+            )
+            if response.status_code != 200:
+                raise Exception(f"Failed to send message: {response.text}")
+            return response.json()

@@ -138,3 +138,62 @@ class TwitterAuth:
                 raise Exception(f"Failed to publish tweet: {response.text}")
                 
             return response.json().get('data', {}).get('id')
+
+    async def fetch_tweets(self, access_token: str, user_id: str, limit: int = 25) -> list:
+        """Fetch recent tweets"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.twitter.com/2/users/{}/tweets".format(user_id),
+                params={
+                    "max_results": min(limit, 100),
+                    "tweet.fields": "created_at,public_metrics,entities",
+                    "expansions": "attachments.media_keys",
+                    "media.fields": "url,preview_image_url,type",
+                },
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Twitter] Feed fetch failed: {response.text}")
+                return []
+
+            media_map = {}
+            for m in response.json().get("includes", {}).get("media", []):
+                media_map[m.get("media_key")] = m.get("url") or m.get("preview_image_url")
+
+            posts = []
+            for t in response.json().get("data", []):
+                metrics = t.get("public_metrics", {})
+                media_keys = t.get("attachments", {}).get("media_keys", [])
+                media_url = media_map.get(media_keys[0]) if media_keys else None
+                posts.append({
+                    "id": t.get("id"),
+                    "content": t.get("text", ""),
+                    "media_url": media_url,
+                    "media_type": "IMAGE",
+                    "timestamp": t.get("created_at"),
+                    "likes": metrics.get("like_count", 0),
+                    "comments_count": metrics.get("reply_count", 0),
+                    "retweets": metrics.get("retweet_count", 0),
+                    "permalink": f"https://twitter.com/i/status/{t['id']}",
+                    "platform": "twitter",
+                })
+            return posts
+
+    async def fetch_engagement(self, access_token: str, user_id: str) -> dict:
+        """Fetch Twitter user engagement metrics"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.twitter.com/2/users/{user_id}",
+                params={"user.fields": "public_metrics"},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if response.status_code != 200:
+                return {}
+            data = response.json().get("data", {})
+            metrics = data.get("public_metrics", {})
+            return {
+                "followers": metrics.get("followers_count", 0),
+                "following": metrics.get("following_count", 0),
+                "tweet_count": metrics.get("tweet_count", 0),
+                "platform": "twitter",
+            }
