@@ -19,11 +19,18 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null); // Backend User Profile (MongoDB)
   const [firebaseUser, setFirebaseUser] = useState(null); // Firebase User Object
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(() => {
+    // Initialize from localStorage if available
+    const savedToken = localStorage.getItem('token');
+    return savedToken || null;
+  });
 
   // 1. Listen for Firebase Auth Changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      // Always set loading=true at the start of an auth state change.
+      // This prevents PrivateRoute from seeing (user=null, loading=false)
+      // during the async fetchBackendProfile call on a fresh login.
       setLoading(true);
       if (currentUser) {
         setFirebaseUser(currentUser);
@@ -44,16 +51,28 @@ export const AuthProvider = ({ children }) => {
         }
       } else {
         setFirebaseUser(null);
-        setToken(null);
-        setUser(null);
-        localStorage.removeItem('token');
-        delete axios.defaults.headers.common['Authorization'];
+        // Don't clear token/user here if token exists in localStorage (backend OAuth flow)
+        if (!localStorage.getItem('token')) {
+          setToken(null);
+          setUser(null);
+          localStorage.removeItem('token');
+          delete axios.defaults.headers.common['Authorization'];
+        }
       }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
+
+  // 2. If token exists but user doesn't, fetch user profile (handles backend OAuth)
+  useEffect(() => {
+    if (token && !user && !firebaseUser) {
+      fetchBackendProfile(token).catch(err => {
+        console.warn('Failed to fetch profile with existing token:', err);
+      });
+    }
+  }, [token, user, firebaseUser]);
 
   // 2. Fetch User Profile from MongoDB (Backend)
   const fetchBackendProfile = async (idToken) => {
@@ -88,11 +107,15 @@ export const AuthProvider = ({ children }) => {
   // 3. Login Actions
   const loginWithGoogle = async () => {
     try {
+      // Use Firebase signInWithPopup — onAuthStateChanged will handle the rest
+      // (token storage, backend sync, user state)
       await signInWithPopup(auth, googleProvider);
       return true;
     } catch (error) {
       console.error("Google login error:", error);
-      toast.error(error.message);
+      if (error.code !== 'auth/popup-closed-by-user') {
+        toast.error(error.message);
+      }
       throw error;
     }
   };
@@ -127,19 +150,36 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      // Clear state and storage BEFORE signOut so onAuthStateChanged
+      // doesn't skip cleanup due to the localStorage token check
+      localStorage.removeItem('token');
+      delete axios.defaults.headers.common['Authorization'];
+      setToken(null);
+      setUser(null);
+      setFirebaseUser(null);
       await signOut(auth);
-      // State cleanup handled by onAuthStateChanged
     } catch (error) {
       console.error('Logout error:', error);
+      // Even if signOut fails, ensure local state is cleared
+      localStorage.removeItem('token');
+      delete axios.defaults.headers.common['Authorization'];
+      setToken(null);
+      setUser(null);
+      setFirebaseUser(null);
     }
   };
 
-  // Helper to force token refresh if needed
+  // Helper to force token refresh if needed.
+  // Works for both Firebase users (refreshes Firebase token) and
+  // plain JWT users (re-fetches backend profile with the existing token).
   const refreshUser = async () => {
     if (firebaseUser) {
       const idToken = await firebaseUser.getIdToken(true);
       setToken(idToken);
+      localStorage.setItem('token', idToken);
       await fetchBackendProfile(idToken);
+    } else if (token) {
+      await fetchBackendProfile(token);
     }
   };
 
@@ -153,6 +193,8 @@ export const AuthProvider = ({ children }) => {
       loginWithGoogle,
       logout,
       token,
+      setToken,
+      setUser,
       refreshUser
     }}>
       {children}

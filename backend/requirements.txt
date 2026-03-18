@@ -9,6 +9,7 @@ bcrypt
 black
 boto3
 botocore
+celery
 certifi
 cffi
 charset-normalizer
@@ -92,6 +93,7 @@ python-multipart
 pytokens
 PyYAML
 razorpay
+redis
 referencing
 regex
 requests
@@ -107,6 +109,7 @@ six
 sniffio
 starlette
 stripe
+structlog
 tenacity
 tiktoken
 tqdm
