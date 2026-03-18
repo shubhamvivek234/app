@@ -1,19 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
-import { 
-  FaTwitter, 
-  FaInstagram, 
-  FaLinkedin, 
-  FaFacebook, 
-  FaTiktok, 
-  FaYoutube, 
-  FaPinterest 
+import CreatePostForm from '@/pages/CreatePostForm';
+import {
+  FaTwitter,
+  FaInstagram,
+  FaLinkedin,
+  FaFacebook,
+  FaTiktok,
+  FaYoutube,
+  FaPinterest
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
 const CreatePost = () => {
   const navigate = useNavigate();
+
+  // null = closed, 'text' | 'image' | 'video' = composer open for that type
+  const [composerType, setComposerType] = useState(null);
 
   const postTypes = [
     {
@@ -53,19 +57,15 @@ const CreatePost = () => {
   ];
 
   const platformIcons = {
-    facebook: <FaFacebook className="text-gray-500" />,
-    twitter: <FaTwitter className="text-gray-500" />,
-    linkedin: <FaLinkedin className="text-gray-500" />,
+    facebook:  <FaFacebook  className="text-gray-500" />,
+    twitter:   <FaTwitter   className="text-gray-500" />,
+    linkedin:  <FaLinkedin  className="text-gray-500" />,
     instagram: <FaInstagram className="text-gray-500" />,
     pinterest: <FaPinterest className="text-gray-500" />,
-    youtube: <FaYoutube className="text-gray-500" />,
-    tiktok: <FaTiktok className="text-gray-500" />,
-    bluesky: <SiBluesky className="text-gray-500" />,
-    threads: <SiThreads className="text-gray-500" />,
-  };
-
-  const handleSelectType = (type) => {
-    navigate(`/create/${type}`);
+    youtube:   <FaYoutube   className="text-gray-500" />,
+    tiktok:    <FaTiktok    className="text-gray-500" />,
+    bluesky:   <SiBluesky   className="text-gray-500" />,
+    threads:   <SiThreads   className="text-gray-500" />,
   };
 
   return (
@@ -78,26 +78,26 @@ const CreatePost = () => {
 
         {/* Post Type Selection Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {postTypes.map((type) => (
+          {postTypes.map((postType) => (
             <div
-              key={type.id}
-              onClick={() => handleSelectType(type.id)}
-              data-testid={`post-type-${type.id}`}
-              className="bg-[#f5f7f5] border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-green-400 hover:bg-green-50/30 transition-all cursor-pointer group min-h-[200px] flex flex-col items-center justify-center"
+              key={postType.id}
+              onClick={() => setComposerType(postType.id)}
+              data-testid={`post-type-${postType.id}`}
+              className="bg-white border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-green-400 hover:bg-green-50/30 transition-all cursor-pointer group min-h-[200px] flex flex-col items-center justify-center"
             >
               {/* Icon */}
               <div className="flex justify-center mb-4 group-hover:scale-105 transition-transform">
-                {type.icon}
+                {postType.icon}
               </div>
 
               {/* Title */}
               <h3 className="text-lg font-medium text-gray-900 text-center mb-6">
-                {type.title}
+                {postType.title}
               </h3>
 
               {/* Platform Icons */}
               <div className="flex justify-center items-center gap-2 flex-wrap">
-                {type.platforms.map((platform) => (
+                {postType.platforms.map((platform) => (
                   <div key={platform} className="text-lg">
                     {platformIcons[platform]}
                   </div>
@@ -122,6 +122,15 @@ const CreatePost = () => {
           </p>
         </div>
       </div>
+
+      {/* ── Composer modal (88% of screen) ──────────────────────────────────── */}
+      {composerType && (
+        <CreatePostForm
+          postTypeOverride={composerType}
+          asModal={true}
+          onClose={() => setComposerType(null)}
+        />
+      )}
     </DashboardLayout>
   );
 };

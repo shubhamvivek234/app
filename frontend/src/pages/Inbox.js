@@ -6,16 +6,16 @@ import { format, parseISO } from 'date-fns';
 import {
   FaInbox, FaComment, FaEnvelope, FaReply, FaTrash,
   FaCheck, FaCheckDouble, FaFilter,
-  FaInstagram, FaFacebook, FaYoutube, FaTiktok, FaReddit,
+  FaInstagram, FaFacebook, FaYoutube, FaTiktok, FaReddit, FaLinkedin,
 } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
-import { SiThreads, SiBluesky, SiLinkedin } from 'react-icons/si';
+import { SiThreads, SiBluesky } from 'react-icons/si';
 
 const PLATFORM_ICONS = {
   twitter:   <FaXTwitter   className="text-black" />,
   instagram: <FaInstagram  className="text-pink-500" />,
   facebook:  <FaFacebook   className="text-blue-600" />,
-  linkedin:  <SiLinkedin   className="text-blue-700" />,
+  linkedin:  <FaLinkedin   className="text-blue-700" />,
   youtube:   <FaYoutube    className="text-red-600" />,
   tiktok:    <FaTiktok     className="text-black" />,
   threads:   <SiThreads    className="text-gray-800" />,

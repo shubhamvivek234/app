@@ -145,7 +145,7 @@ const Dashboard = () => {
                             ? 'bg-green-100 text-green-700'
                             : post.status === 'scheduled'
                             ? 'bg-amber-100 text-amber-700'
-                            : 'bg-slate-100 text-slate-700'
+                            : 'bg-white border border-slate-200 text-slate-700'
                         }`}>
                           {post.status}
                         </span>

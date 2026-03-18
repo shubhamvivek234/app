@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok, FaPinterest, FaEllipsisH } from 'react-icons/fa';
+import { FaTwitter, FaLinkedin, FaInstagram, FaCalendarAlt, FaRocket, FaMagic, FaChevronDown, FaYoutube, FaFacebook, FaTiktok, FaPinterest, FaEllipsisH, FaCode, FaGlobe, FaKey, FaCheck, FaImage } from 'react-icons/fa';
 import { FaXTwitter, FaThreads } from 'react-icons/fa6';
 import { SiBluesky } from 'react-icons/si';
 import { Button } from '@/components/ui/button';
@@ -60,7 +60,7 @@ const LandingPage = () => {
               <button onClick={() => scrollToSection('platforms')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
                 Platforms
               </button>
-              <button onClick={() => navigate('/agent-docs')} className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold">
+              <button onClick={() => scrollToSection('agent')} className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold">
                 Connect with AI Agent
               </button>
               <button onClick={() => scrollToSection('faq')} className="text-gray-600 hover:text-gray-900 text-sm font-medium">
@@ -74,7 +74,7 @@ const LandingPage = () => {
             {/* User Profile or Auth Buttons */}
             <div className="flex items-center space-x-4">
               {user ? (
-                <div className="flex items-center space-x-3 bg-gray-100 rounded-full px-4 py-2 cursor-pointer" onClick={() => navigate('/dashboard')}>
+                <div className="flex items-center space-x-3 bg-white border border-gray-200 rounded-full px-4 py-2 cursor-pointer" onClick={() => navigate('/dashboard')}>
                   <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-semibold">{user.name?.charAt(0) || 'U'}</span>
                   </div>
@@ -277,7 +277,7 @@ const LandingPage = () => {
               </div>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Pinterest</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 rounded-2xl border border-gray-200 border-dashed">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 border-dashed">
               <FaEllipsisH className="text-3xl text-slate-300" />
               <span className="text-[10px] font-semibold text-slate-400 capitalize tracking-widest shadow-none">More to come</span>
             </div>
@@ -324,7 +324,7 @@ const LandingPage = () => {
             </div>
             <div className="relative">
               <div
-                className="rounded-2xl overflow-hidden shadow-xl border border-gray-100 bg-slate-50 relative aspect-square flex items-center justify-center p-8"
+                className="rounded-2xl overflow-hidden shadow-xl border border-gray-100 bg-white relative aspect-square flex items-center justify-center p-8"
               >
                 {/* Central Dashboard Hub */}
                 <div className="w-full max-w-sm bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-10 relative">
@@ -334,12 +334,12 @@ const LandingPage = () => {
                     <div className="w-3 h-3 rounded-full bg-green-400"></div>
                   </div>
                   <div className="space-y-3">
-                    <div className="h-4 bg-gray-100 rounded w-3/4"></div>
+                    <div className="h-4 bg-gray-50 rounded w-3/4"></div>
                     <div className="h-24 bg-indigo-50 rounded-lg flex items-center justify-center border-2 border-dashed border-indigo-200">
                       <span className="text-xs text-indigo-400 font-medium">Drag & Drop Content</span>
                     </div>
                     <div className="flex gap-2">
-                      <div className="h-8 bg-gray-100 rounded w-1/3"></div>
+                      <div className="h-8 bg-gray-50 rounded w-1/3"></div>
                       <div className="h-8 bg-indigo-600 rounded w-1/3"></div>
                     </div>
                   </div>
@@ -392,9 +392,9 @@ const LandingPage = () => {
 
                   {/* Typed Text Simulation */}
                   <div className="space-y-3">
-                    <div className="h-2 bg-gray-100 rounded w-full"></div>
-                    <div className="h-2 bg-gray-100 rounded w-5/6"></div>
-                    <div className="h-2 bg-gray-100 rounded w-4/6"></div>
+                    <div className="h-2 bg-gray-50 rounded w-full"></div>
+                    <div className="h-2 bg-gray-50 rounded w-5/6"></div>
+                    <div className="h-2 bg-gray-50 rounded w-4/6"></div>
                   </div>
 
                   {/* Magic Transformation Effect */}
@@ -442,7 +442,7 @@ const LandingPage = () => {
       </section>
 
       {/* Reviews Section */}
-      <section id="reviews" className="py-20 bg-gray-50">
+      <section id="reviews" className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
@@ -520,7 +520,7 @@ const LandingPage = () => {
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-20 bg-slate-50">
+      <section id="pricing" className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
@@ -603,6 +603,98 @@ const LandingPage = () => {
                 Get Started
               </Button>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Connects with Agents Section */}
+      <section id="agent" className="py-24 bg-slate-900 overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Section Header */}
+          <div className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-xs font-semibold uppercase tracking-wider mb-6">
+              <FaCode className="text-xs" />
+              REST API for AI Agents
+            </div>
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-white mb-4">
+              Connects with AI Agents
+            </h2>
+            <p className="text-lg text-slate-400 max-w-2xl mx-auto">
+              Give your agents the power to post, schedule, and manage social media — with one clean REST API. Works with any AI framework or HTTP client.
+            </p>
+          </div>
+
+          {/* Terminal + Feature Cards */}
+          <div className="grid lg:grid-cols-2 gap-10 mb-16 items-start">
+            {/* Terminal */}
+            <div className="rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
+              <div className="bg-slate-800 px-4 py-3 flex items-center gap-2 border-b border-slate-700">
+                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+                <span className="ml-3 text-xs text-slate-400 font-mono">SocialEntangler Public API</span>
+              </div>
+              <div className="bg-slate-950 p-6 font-mono text-sm overflow-x-auto">
+                {/* Example 1 */}
+                <p className="text-slate-500 text-xs"># List all connected social accounts</p>
+                <p className="mt-1 mb-5">
+                  <span className="text-emerald-400 font-semibold">GET</span>
+                  <span className="text-slate-300"> /api/public/v1/integrations</span>
+                </p>
+
+                {/* Example 2 */}
+                <p className="text-slate-500 text-xs"># Upload media, get back a URL</p>
+                <p className="mt-1 mb-1">
+                  <span className="text-blue-400 font-semibold">POST</span>
+                  <span className="text-slate-300"> /api/public/v1/upload</span>
+                </p>
+                <p className="text-slate-400 text-xs pl-2 mb-5">Content-Type: multipart/form-data  |  field: file</p>
+
+                {/* Example 3 */}
+                <p className="text-slate-500 text-xs"># Schedule a post across platforms</p>
+                <p className="mt-1">
+                  <span className="text-blue-400 font-semibold">POST</span>
+                  <span className="text-slate-300"> /api/public/v1/posts</span>
+                </p>
+                <pre className="text-yellow-300/80 text-xs pl-2 mt-2 whitespace-pre">{`{
+  "content": "Hello from my AI agent!",
+  "integrationIds": ["abc123"],
+  "scheduledAt": "2025-01-15T10:00:00Z"
+}`}</pre>
+              </div>
+            </div>
+
+            {/* Feature Cards */}
+            <div className="grid grid-cols-2 gap-4">
+              {[
+                { icon: FaCode, title: 'API-First Design', desc: 'Clean REST endpoints, JSON in/out. Integrates with any agent framework.', color: 'text-indigo-400' },
+                { icon: FaGlobe, title: '11+ Platforms', desc: 'Post to Instagram, LinkedIn, Twitter, TikTok, YouTube, and more.', color: 'text-blue-400' },
+                { icon: FaCalendarAlt, title: 'Scheduled Posting', desc: 'ISO-8601 datetime support for future-scheduled posts.', color: 'text-purple-400' },
+                { icon: FaImage, title: 'Rich Media Support', desc: 'Upload images and videos via multipart, then attach to any post.', color: 'text-pink-400' },
+                { icon: FaCheck, title: 'Approve & Publish', desc: 'Create drafts or publish instantly — fully controlled through the API.', color: 'text-green-400' },
+                { icon: FaKey, title: 'Secure API Keys', desc: 'Bearer-token auth with revocable keys, managed from your dashboard.', color: 'text-yellow-400' },
+              ].map(({ icon: Icon, title, desc, color }, i) => (
+                <div key={i} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 hover:bg-slate-800 transition-colors">
+                  <Icon className={`text-xl mb-3 ${color}`} />
+                  <h4 className="text-white font-semibold text-sm mb-1">{title}</h4>
+                  <p className="text-slate-400 text-xs leading-relaxed">{desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* CTA */}
+          <div className="text-center">
+            <Button
+              size="lg"
+              onClick={() => navigate('/agent-docs')}
+              className="bg-indigo-500 hover:bg-indigo-400 text-white px-10 font-semibold"
+            >
+              View Full API Docs →
+            </Button>
+            <p className="text-slate-500 text-sm mt-4">
+              Compatible with LangChain, AutoGPT, OpenClaw, and any HTTP client
+            </p>
           </div>
         </div>
       </section>

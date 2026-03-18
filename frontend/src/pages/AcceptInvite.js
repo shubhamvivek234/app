@@ -2,16 +2,20 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { checkInviteToken, acceptInviteToken } from '@/lib/api';
+import { getWorkspaceInviteDetails, acceptWorkspaceInvite } from '@/lib/api';
 
 const ROLE_LABELS = {
+  owner:  'Owner',
   admin:  'Admin',
+  editor: 'Editor',
   member: 'Member',
   viewer: 'Viewer',
 };
 
 const ROLE_CAPABILITIES = {
+  owner:  'full access to everything in the workspace',
   admin:  'manage team members, connect social accounts, create and publish posts',
+  editor: 'create, edit, and publish posts',
   member: 'create, edit, and schedule posts for publication',
   viewer: 'view scheduled posts and analytics',
 };
@@ -83,10 +87,10 @@ const AcceptInvite = () => {
       setPageState('error');
       return;
     }
-    checkInviteToken(token)
+    getWorkspaceInviteDetails(token)
       .then((data) => {
         setInvite(data);
-        setFormData((prev) => ({ ...prev, email: data.email }));
+        setFormData((prev) => ({ ...prev, email: data.invited_email || data.email || '' }));
         // Default form shown based on whether user already has an account
         setShowForm(data.user_exists ? 'login' : 'signup');
         setPageState('preview');
@@ -100,7 +104,7 @@ const AcceptInvite = () => {
   // ── Step 2: Accept invite once user is authenticated ─────────────────────
   const handleAccept = useCallback(async () => {
     try {
-      await acceptInviteToken(token);
+      await acceptWorkspaceInvite(token);
       setPageState('accepted');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Failed to accept invite.');
@@ -110,13 +114,14 @@ const AcceptInvite = () => {
   useEffect(() => {
     if (pageState !== 'preview' || !user || !invite) return;
 
-    if (user.email.toLowerCase() === invite.email.toLowerCase()) {
+    const inviteEmail = (invite.invited_email || invite.email || '').toLowerCase();
+    if (user.email.toLowerCase() === inviteEmail) {
       // Logged-in user matches invite → auto-accept
       handleAccept();
     } else {
       // Email mismatch
       setErrorMsg(
-        `You're logged in as ${user.email}, but this invite is for ${invite.email}. Please log out and use the correct account.`
+        `You're logged in as ${user.email}, but this invite is for ${inviteEmail}. Please log out and use the correct account.`
       );
       setPageState('error');
     }
@@ -187,10 +192,10 @@ const AcceptInvite = () => {
         </div>
         <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#1a1a2e', textAlign: 'center', marginBottom: '8px' }}>You're in!</h2>
         <p style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center', marginBottom: '28px' }}>
-          You've joined <strong>{invite?.owner_name}'s</strong> workspace as{' '}
+          You've joined <strong>{invite?.workspace_name || invite?.owner_name + "'s workspace"}</strong> as{' '}
           <strong>{ROLE_LABELS[invite?.role] || invite?.role}</strong>.
         </p>
-        <button onClick={() => navigate('/publish')} style={ctaStyle}>
+        <button onClick={() => navigate('/dashboard')} style={ctaStyle}>
           Go to Dashboard
         </button>
       </CenteredCard>
@@ -218,7 +223,8 @@ const AcceptInvite = () => {
             You've been invited
           </h1>
           <p style={{ fontSize: '14px', color: '#6b7280', marginBottom: '20px', lineHeight: 1.6 }}>
-            <strong>{invite?.owner_name}</strong> has invited you to collaborate on their workspace.
+            <strong>{invite?.invited_by_name || invite?.owner_name}</strong> has invited you to join{' '}
+            <strong>{invite?.workspace_name || 'their workspace'}</strong>.
           </p>
 
           {/* Role badge */}

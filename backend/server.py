@@ -27,6 +27,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import resend
 import httpx
 import html as _html
+import html as _html_module
+import re as _re
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.social.facebook import FacebookAuth
 from app.social.instagram import InstagramAuth
 from app.social.google import GoogleAuth
@@ -38,8 +43,76 @@ from app.social.pinterest import PinterestAuth
 from app.social.snapchat import SnapchatAuth
 from app.social.tiktok import TikTokAuth
 from app.social.bluesky import BlueskyAuth
+from app.media_validator import validate_upload, MediaValidationError
+from app.dlq import get_dlq_items, retry_from_dlq
+from app.errors import ErrorCode as StructuredErrorCode, api_error, structured_error_response, classify_platform_error as classify_platform_error_structured
 # from paypal_checkout_sdk.core import PayPalHttpClient, SandboxEnvironment
 # from paypal_checkout_sdk.orders import OrdersCreateRequest, OrdersCaptureRequest
+
+# ── Error Classification (Stage 3.5) ───────────────────────────────────────────
+# Error codes from Architecture Blueprint v2.8
+class ErrorCode:
+    # Publishing errors
+    EC1  = "EC1:NETWORK_FAILURE"         # Network error during platform API call
+    EC2  = "EC2:AUTH_EXPIRED"            # Platform OAuth token expired
+    EC3  = "EC3:RATE_LIMITED"            # Hit platform rate limit
+    EC4  = "EC4:MEDIA_TOO_LARGE"        # File exceeds platform size limit
+    EC5  = "EC5:INVALID_MEDIA_FORMAT"   # Unsupported file format
+    EC6  = "EC6:CAPTION_TOO_LONG"       # Caption exceeds platform character limit
+    EC7  = "EC7:ACCOUNT_SUSPENDED"      # Platform account suspended
+    EC8  = "EC8:PERMISSION_DENIED"      # Missing required API permission
+    EC9  = "EC9:DUPLICATE_POST"         # Idempotency key collision detected
+    EC10 = "EC10:MEDIA_PROCESSING_TIMEOUT"  # Video processing exceeded 2.5 min
+    # System errors
+    EC17 = "EC17:DB_WRITE_FAILURE"      # MongoDB write failed after publish
+    EC20 = "EC20:QUEUE_OVERFLOW"        # Upload queue depth exceeded
+    EC26 = "EC26:REDIS_UNAVAILABLE"     # Redis connection failed
+    # Auth errors
+    EC30 = "EC30:SUBSCRIPTION_REQUIRED" # Feature requires active subscription
+
+
+def classify_platform_error(error: Exception, platform: str) -> str:
+    """Classify an exception into an EC error code."""
+    msg = str(error).lower()
+    if "token" in msg and ("expired" in msg or "invalid" in msg or "auth" in msg):
+        return ErrorCode.EC2
+    if "rate" in msg and "limit" in msg:
+        return ErrorCode.EC3
+    if "size" in msg or "too large" in msg or "file size" in msg:
+        return ErrorCode.EC4
+    if "format" in msg or "unsupported" in msg or "codec" in msg:
+        return ErrorCode.EC5
+    if "caption" in msg or "text" in msg and "long" in msg:
+        return ErrorCode.EC6
+    if "suspended" in msg or "disabled" in msg or "banned" in msg:
+        return ErrorCode.EC7
+    if "permission" in msg or "scope" in msg or "access" in msg:
+        return ErrorCode.EC8
+    if "timeout" in msg or "timed out" in msg:
+        return ErrorCode.EC10
+    if "network" in msg or "connection" in msg or "connect" in msg:
+        return ErrorCode.EC1
+    return ErrorCode.EC1  # Default to network failure
+
+
+def sanitize_text_input(text: str, max_length: int = 5000) -> str:
+    """
+    Sanitize user text input:
+    - Strip leading/trailing whitespace
+    - Remove null bytes
+    - Truncate to max_length
+    - HTML-escape for display contexts
+    """
+    if not text:
+        return ""
+    # Remove null bytes and control characters
+    text = "".join(ch for ch in text if ord(ch) >= 32 or ch in "\n\r\t")
+    # Normalize unicode whitespace — collapse 3+ newlines to 2
+    text = _re.sub(r"\n{3,}", "\n\n", text)
+    # Truncate
+    text = text[:max_length]
+    return text.strip()
+
 
 ROOT_DIR = Path(__file__).parent.resolve()
 env_path = ROOT_DIR / '.env'
@@ -169,21 +242,36 @@ scheduler = AsyncIOScheduler()
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
-# CORS Configuration
-origins = [
-    "http://localhost:3000",
-    "http://localhost:9500",
-    "http://127.0.0.1:9500",
-    "http://127.0.0.1:3000",
-    "http://0.0.0.0:9500",
-    "http://0.0.0.0:3000",
-    "null", # Logic sometimes sends null origin for local files or redirects
-    FRONTEND_URL,
-]
+# ── Rate Limiting (Stage 3) ────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── Security Headers (Stage 3.6) ─────────────────────────────────────────────
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Only add HSTS in production
+    if os.environ.get("ENV") == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# CORS Configuration (Stage 3 — environment-aware)
+_cors_origins_raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:9500,http://127.0.0.1:3000,http://127.0.0.1:9500")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+# Always include FRONTEND_URL if not already present
+if FRONTEND_URL and FRONTEND_URL not in _cors_origins:
+    _cors_origins.append(FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow ALL for development to eliminate CORS as a variable
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -348,6 +436,17 @@ class Post(BaseModel):
     tiktok_allow_duet: Optional[bool] = True
     tiktok_allow_stitch: Optional[bool] = True
     tiktok_allow_comments: Optional[bool] = True
+
+    # Per-platform publish results (Stage 1.6 — independent execution)
+    platform_results: Optional[Dict[str, Any]] = None
+    # e.g. {"instagram": {"status": "published", "post_id": "123", "published_at": "..."},
+    #        "facebook": {"status": "failed", "error": "...", "retry_count": 0}}
+
+    # Status history for audit trail
+    # status values include: draft, scheduled, processing, published, partial, failed
+    status_history: Optional[List[Dict[str, Any]]] = None
+    # e.g. [{"status": "scheduled", "at": "...", "note": "..."},
+    #        {"status": "published", "at": "...", "note": "Published to instagram, facebook"}]
 
 class PostCreate(BaseModel):
     content: str
@@ -1014,8 +1113,9 @@ async def send_mention_email(mentioned_email: str, mentioned_name: str, author_n
 
 # ==================== AUTH ROUTES ====================
 
+@limiter.limit("5/minute")
 @api_router.post("/auth/signup", response_model=Token)
-async def signup(user_data: UserSignup):
+async def signup(request: Request, user_data: UserSignup):
     existing_user = await db.users.find_one({"email": user_data.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -1156,8 +1256,9 @@ async def google_auth_callback(code: str, state: Optional[str] = None):
         return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_failed")
 
 
+@limiter.limit("10/minute")
 @api_router.post("/auth/login", response_model=Token)
-async def login(credentials: UserLogin):
+async def login(request: Request, credentials: UserLogin):
     user_doc = await db.users.find_one({"email": credentials.email})
     if not user_doc or 'password' not in user_doc:
         raise HTTPException(status_code=400, detail="Invalid email or password")
@@ -1194,23 +1295,31 @@ async def update_me(
 ):
     """Update current user profile"""
     # Filter allowed fields
-    allowed_fields = ['user_type', 'onboarding_completed', 'name', 'picture']
+    allowed_fields = ['user_type', 'onboarding_completed', 'name', 'picture', 'timezone']
     update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
-    
+
     if not update_fields:
         return current_user
-    
+
+    # Validate timezone if provided
+    if "timezone" in update_fields:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(update_fields["timezone"])
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid timezone: {update_fields['timezone']}")
+
     # Update in database
     await db.users.update_one(
         {"user_id": current_user.user_id},
         {"$set": update_fields}
     )
-    
+
     # Get updated user
     updated_user = await db.users.find_one({"user_id": current_user.user_id})
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     return User(**updated_user)
 
 @api_router.post("/auth/profile-photo")
@@ -1285,10 +1394,14 @@ async def logout(session_token: Optional[str] = Cookie(None)):
 
 # ==================== POST ROUTES ====================
 
+@limiter.limit("60/minute")
 @api_router.post("/posts", response_model=Post)
-async def create_post(post_data: PostCreate, current_user: User = Depends(get_current_user)):
+async def create_post(request: Request, post_data: PostCreate, current_user: User = Depends(get_current_user)):
     if post_data.scheduled_time and current_user.subscription_status != "active":
-        raise HTTPException(status_code=403, detail="Scheduling requires active subscription")
+        raise api_error(
+            403, StructuredErrorCode.POST_SCHEDULE_REQUIRES_SUB,
+            "Active subscription required to schedule posts. Free users can save drafts only."
+        )
     
     scheduled_time = None
     status = "draft"
@@ -1466,6 +1579,182 @@ async def delete_internal_note(post_id: str, note_id: str, current_user: User = 
         {"$pull": {"internal_notes": {"id": note_id}}}
     )
     return {"ok": True}
+
+# ==================== DEAD LETTER QUEUE ====================
+
+@api_router.get("/dlq")
+async def get_dead_letter_queue(current_user: User = Depends(get_current_user)):
+    """Get permanently failed posts for manual review."""
+    items = await get_dlq_items(db, current_user.user_id)
+    return {"items": items, "count": len(items)}
+
+
+@api_router.post("/dlq/{post_id}/retry")
+async def retry_dead_letter_post(post_id: str, current_user: User = Depends(get_current_user)):
+    """Re-queue a DLQ post for retry."""
+    result = await retry_from_dlq(db, post_id, current_user.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="DLQ item not found")
+    return {"success": True, "message": "Post re-queued for publishing"}
+
+# ==================== WORKSPACE / TEAMS (Stage 5.9) ====================
+from app.models.workspace import Workspace, WorkspaceMember, WorkspaceInvite, ROLE_PERMISSIONS, has_permission
+import re as _workspace_re
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str
+
+class WorkspaceInviteRequest(BaseModel):
+    email: str
+    role: str = "viewer"
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    role: str
+
+@api_router.get("/workspace")
+async def get_my_workspace(current_user: User = Depends(get_current_user)):
+    """Get the current user's primary workspace."""
+    workspace = await db.workspaces.find_one(
+        {"owner_id": current_user.user_id}, {"_id": 0}
+    )
+    if not workspace:
+        # Auto-create personal workspace if missing
+        import re as _re2, uuid as _uuid2
+        slug_base = _re2.sub(r"[^a-z0-9]", "-", (current_user.name or "workspace").lower())[:20]
+        slug = f"{slug_base}-{current_user.user_id[:8]}"
+        workspace = {
+            "id": str(_uuid2.uuid4()),
+            "name": f"{current_user.name} Workspace",
+            "slug": slug,
+            "owner_id": current_user.user_id,
+            "members": [{"user_id": current_user.user_id, "email": current_user.email,
+                         "name": current_user.name, "role": "owner",
+                         "joined_at": datetime.now(timezone.utc).isoformat()}],
+            "plan": "starter",
+            "subscription_status": current_user.subscription_status,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "settings": {},
+            "max_members": 1,
+            "max_accounts": 5,
+            "max_scheduled_posts": 30,
+        }
+        await db.workspaces.insert_one(workspace)
+        workspace.pop("_id", None)
+    return workspace
+
+
+@api_router.get("/workspace/members")
+async def get_workspace_members(current_user: User = Depends(get_current_user)):
+    """Get all members of the current user's workspace."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id}, {"_id": 0})
+    if not workspace:
+        return {"members": []}
+    return {"members": workspace.get("members", []), "workspace_id": workspace.get("id")}
+
+
+@api_router.post("/workspace/invite")
+async def invite_workspace_member(
+    invite_req: WorkspaceInviteRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Invite a user to the workspace by email."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id})
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Check member limit
+    current_member_count = len(workspace.get("members", []))
+    max_members = workspace.get("max_members", 1)
+    if current_member_count >= max_members:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Member limit reached ({max_members}). Upgrade your plan to add more members."
+        )
+
+    # Check if already invited
+    existing = await db.workspace_invites.find_one({
+        "workspace_id": workspace["id"],
+        "invited_email": invite_req.email,
+        "accepted": False,
+    })
+    if existing:
+        raise HTTPException(status_code=409, detail="Invitation already sent to this email")
+
+    invite = WorkspaceInvite(
+        workspace_id=workspace["id"],
+        workspace_name=workspace["name"],
+        invited_email=invite_req.email,
+        invited_by_id=current_user.user_id,
+        invited_by_name=current_user.name,
+        role=invite_req.role,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    await db.workspace_invites.insert_one(invite.model_dump())
+
+    # TODO: Send invite email via Resend
+    logging.info(f"Workspace invite sent: {invite_req.email} to {workspace['name']} (token: {invite.token[:8]}...)")
+
+    return {"success": True, "message": f"Invitation sent to {invite_req.email}", "invite_id": invite.id}
+
+
+@api_router.get("/workspace/invite/{token}")
+async def get_invite_details(token: str):
+    """Get invite details by token (public endpoint for accept-invite page)."""
+    invite = await db.workspace_invites.find_one({"token": token}, {"_id": 0})
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found or expired")
+    if invite.get("accepted"):
+        raise HTTPException(status_code=410, detail="Invitation already accepted")
+    expiry = invite.get("expires_at")
+    if expiry and datetime.fromisoformat(expiry) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Invitation has expired")
+    return invite
+
+
+@api_router.post("/workspace/invite/{token}/accept")
+async def accept_workspace_invite(token: str, current_user: User = Depends(get_current_user)):
+    """Accept a workspace invitation."""
+    invite = await db.workspace_invites.find_one({"token": token})
+    if not invite or invite.get("accepted"):
+        raise HTTPException(status_code=404, detail="Invitation not found or already accepted")
+
+    if invite.get("invited_email") != current_user.email:
+        raise HTTPException(status_code=403, detail="This invitation was sent to a different email address")
+
+    # Add member to workspace
+    new_member = {
+        "user_id": current_user.user_id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "role": invite.get("role", "viewer"),
+        "joined_at": datetime.now(timezone.utc).isoformat(),
+        "invited_by": invite.get("invited_by_id"),
+    }
+    await db.workspaces.update_one(
+        {"id": invite["workspace_id"]},
+        {"$push": {"members": new_member}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    await db.workspace_invites.update_one({"token": token}, {"$set": {"accepted": True}})
+
+    return {"success": True, "message": "You've joined the workspace!", "workspace_id": invite["workspace_id"]}
+
+
+@api_router.delete("/workspace/members/{member_user_id}")
+async def remove_workspace_member(member_user_id: str, current_user: User = Depends(get_current_user)):
+    """Remove a member from the workspace (owner only)."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id})
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if member_user_id == current_user.user_id:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself (owner)")
+
+    await db.workspaces.update_one(
+        {"owner_id": current_user.user_id},
+        {"$pull": {"members": {"user_id": member_user_id}},
+         "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"success": True, "message": "Member removed"}
 
 # ==================== HASHTAG GROUPS ====================
 
@@ -2700,20 +2989,21 @@ async def delete_media_asset(asset_id: str, current_user: User = Depends(get_cur
 
 # ==================== AI CONTENT GENERATION ====================
 
+@limiter.limit("20/minute")
 @api_router.post("/ai/generate-content")
-async def generate_content(request: AIContentRequest, current_user: User = Depends(get_current_user)):
+async def generate_content(request: Request, ai_request: AIContentRequest, current_user: User = Depends(get_current_user)):
     try:
         api_key = os.environ.get('EMERGENT_LLM_KEY')
         if not api_key:
             raise HTTPException(status_code=500, detail="AI service not configured")
         
         platform_context = ""
-        if request.platform:
-            if request.platform == "twitter":
+        if ai_request.platform:
+            if ai_request.platform == "twitter":
                 platform_context = " Keep it under 280 characters for Twitter."
-            elif request.platform == "linkedin":
+            elif ai_request.platform == "linkedin":
                 platform_context = " Make it professional for LinkedIn."
-            elif request.platform == "instagram":
+            elif ai_request.platform == "instagram":
                 platform_context = " Make it engaging for Instagram with relevant hashtags."
         
         system_message = f"You are a social media content expert. Generate engaging social media posts.{platform_context}"
@@ -2724,7 +3014,7 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
             system_message=system_message
         ).with_model("openai", "gpt-5.2")
         
-        user_message = UserMessage(text=request.prompt)
+        user_message = UserMessage(text=ai_request.prompt)
         response = await chat.send_message(user_message)
         
         return {"content": response}
@@ -2732,8 +3022,9 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
         logging.error(f"AI generation error: {e}")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
 
+@limiter.limit("20/minute")
 @api_router.post("/ai/generate-image")
-async def generate_image(request: dict, current_user: User = Depends(get_current_user)):
+async def generate_image(http_request: Request, request: dict, current_user: User = Depends(get_current_user)):
     """
     Generate an image from a text prompt using the Emergent LLM / DALL-E API.
     Returns a URL to the generated image.
@@ -4974,6 +5265,22 @@ async def process_scheduled_posts():
         for post_doc in posts:
             post_id = post_doc['id']
             user_id = post_doc['user_id']
+
+            # Idempotency: skip if already published (guard against double-processing)
+            if post_doc.get("status") == "published":
+                logging.info(f"Post {post_id} already published, skipping (idempotency guard)")
+                continue
+
+            # Atomic claim: set status to "processing" to prevent duplicate execution
+            claim_result = await db.posts.update_one(
+                {"id": post_id, "status": "scheduled"},  # only claim if still scheduled
+                {"$set": {"status": "processing", "processing_started_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            if claim_result.modified_count == 0:
+                # Another worker already claimed this post
+                logging.info(f"Post {post_id} already claimed by another worker, skipping")
+                continue
+
             media_url = post_doc.get('media_urls', [])[0] if post_doc.get('media_urls') else None
             # IMPORTANT: For local files, we need the absolute path for YouTube
             # For FB/IG, we need a public URL. 
@@ -5003,17 +5310,28 @@ async def process_scheduled_posts():
             accounts = post_doc.get('accounts', [])
             has_error = False
             error_details = []
-            
+
+            # Per-platform independent results tracking
+            platform_results = post_doc.get("platform_results") or {}
+            platform_errors = {}
+            platform_successes = {}
+
             for account_id in accounts:
                 # Fetch full account details to get token
                 account = await db.social_accounts.find_one({"id": account_id})
                 if not account:
+                    platform_errors[account_id] = "Account not found"
                     continue
-                    
+
                 platform = account['platform']
                 token = account['access_token']
                 platform_user_id = account['platform_user_id']
-                
+
+                # Skip if this platform already published successfully (idempotency)
+                if platform_results.get(platform, {}).get("status") == "published":
+                    platform_successes[platform] = platform_results[platform]
+                    continue
+
                 try:
                     # Download file locally if it's a remote URL (Firebase) and we need to upload FILE (YouTube/LinkedIn)
                     temp_file_path = None
@@ -5163,26 +5481,58 @@ async def process_scheduled_posts():
                             local_file_path=local_file_path if media_url else None
                         )
 
-                            
+                    # Record per-platform success
+                    platform_successes[platform] = {
+                        "status": "published",
+                        "account_id": account_id,
+                        "published_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    platform_results[platform] = platform_successes[platform]
+
                 except Exception as e:
                     error_msg = str(e)
                     logging.error(f"Failed to publish to {platform}: {error_msg}")
                     has_error = True
                     error_details.append(f"{platform}: {error_msg}")
+                    platform_errors[platform] = error_msg
+                    platform_results[platform] = {
+                        "status": "failed",
+                        "account_id": account_id,
+                        "error": error_msg[:500],
+                        "retry_count": post_doc.get("retry_count", 0) + 1,
+                    }
                     # Continue attempting next account
             
             # Evaluate attempt success and manage retries/notifications
+            # Stage 1.6: per-platform independent execution — partial success counts as published
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if platform_successes and platform_errors:
+                # Partial success — at least one platform published; treat as success
+                logging.warning(
+                    f"Post {post_id}: partial publish. "
+                    f"Success: {list(platform_successes)}, Failed: {list(platform_errors)}"
+                )
+                has_error = False
             if has_error:
                 retry_count = post_doc.get("retry_count", 0) + 1
                 if retry_count >= 3:
                     # Definitive failure after 3 attempts
+                    status_history_entry = {
+                        "status": "failed",
+                        "at": now_iso,
+                        "note": f"Attempt {retry_count}/3 failed: {' | '.join(error_details)[:200]}",
+                    }
                     await db.posts.update_one(
                         {"id": post_id},
-                        {"$set": {
-                            "status": "failed",
-                            "retry_count": retry_count,
-                            "error": " | ".join(error_details)
-                        }}
+                        {
+                            "$set": {
+                                "status": "failed",
+                                "retry_count": retry_count,
+                                "error": " | ".join(error_details),
+                                "platform_results": platform_results,
+                            },
+                            "$push": {"status_history": status_history_entry},
+                        }
                     )
                     # Create Error Notification
                     await db.notifications.insert_one(Notification(
@@ -5199,7 +5549,7 @@ async def process_scheduled_posts():
                         if os.path.exists(local_path):
                             try: os.remove(local_path)
                             except: pass
-                            
+
                     cover_url = post_doc.get("cover_image_url")
                     if cover_url and "/uploads/" in cover_url:
                         from urllib.parse import urlparse
@@ -5210,26 +5560,45 @@ async def process_scheduled_posts():
                 else:
                     # Schedule a retry 5 minutes from now
                     next_attempt = now + timedelta(minutes=5)
+                    status_history_entry = {
+                        "status": "retry_scheduled",
+                        "at": now_iso,
+                        "note": f"Attempt {retry_count}/3 failed: {' | '.join(error_details)[:200]}",
+                    }
                     await db.posts.update_one(
                         {"id": post_id},
-                        {"$set": {
-                            "status": "scheduled",
-                            "retry_count": retry_count,
-                            "scheduled_time": next_attempt.isoformat()
-                        }}
+                        {
+                            "$set": {
+                                "status": "scheduled",
+                                "retry_count": retry_count,
+                                "scheduled_time": next_attempt.isoformat(),
+                                "platform_results": platform_results,
+                            },
+                            "$push": {"status_history": status_history_entry},
+                        }
                     )
                     logging.info(f"Post {post_id} failed attempt {retry_count}. Retrying at {next_attempt.isoformat()}.")
             else:
-                # Definitive Success
+                # Definitive Success (all platforms or partial — at least one published)
+                published_platforms = list(platform_successes.keys()) or post_doc.get("platforms", [])
+                status_history_entry = {
+                    "status": "published",
+                    "at": now_iso,
+                    "note": f"Published to {', '.join(published_platforms)}",
+                }
                 await db.posts.update_one(
                     {"id": post_id},
-                    {"$set": {
-                        "status": "published",
-                        "published_at": now.isoformat()
-                    }}
+                    {
+                        "$set": {
+                            "status": "published",
+                            "published_at": now_iso,
+                            "platform_results": platform_results,
+                        },
+                        "$push": {"status_history": status_history_entry},
+                    }
                 )
                 # Create Success Notification
-                platforms_str = ", ".join([p.capitalize() for p in post_doc.get("platforms", [])])
+                platforms_str = ", ".join([p.capitalize() for p in published_platforms])
                 if not platforms_str:
                     platforms_str = "connected platforms"
                     
@@ -5293,8 +5662,10 @@ async def shutdown_event():
 UPLOADS_DIR = ROOT_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+@limiter.limit("30/minute")
 @api_router.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...), 
     current_user: User = Depends(get_current_user)
 ):
@@ -5302,44 +5673,78 @@ async def upload_file(
     Upload a media file (image/video) to Firebase Cloud Storage (or fallback to local server)
     Returns the public URL to access the file
     """
+    # ── Backpressure: per-user concurrent upload limit ────────────────────────
+    user_limit = _get_upload_limit(current_user)
+    current_count = _upload_counters.get(current_user.user_id, 0)
+    if current_count >= user_limit:
+        raise api_error(
+            429, StructuredErrorCode.UPLOAD_USER_LIMIT,
+            "Concurrent upload limit reached. Please wait for current uploads to finish.",
+            {"retry_after": 30}
+        )
+
+    # ── Backpressure: global queue depth ──────────────────────────────────────
+    if _get_global_queue_depth() >= GLOBAL_QUEUE_LIMIT:
+        raise api_error(
+            503, StructuredErrorCode.UPLOAD_SYSTEM_BUSY,
+            "System is processing a high volume of uploads. Please try again in 2 minutes.",
+            {"retry_after": 120}
+        )
+
+    _increment_upload_counter(current_user.user_id)
     try:
+        # Read file content first so we can validate before storing
+        content = await file.read()
+
+        # ── Media validation (Stage 2.4) ──────────────────────────────────────
+        try:
+            validate_upload(
+                filename=file.filename,
+                file_size_bytes=len(content),
+                platforms=None,  # global check; platform-specific check at publish time
+            )
+        except MediaValidationError as e:
+            raise HTTPException(status_code=400, detail={"error": str(e), "code": e.error_code})
+
         # Create unique filename
         file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
         unique_filename = f"{uuid.uuid4()}.{file_ext}"
-        
+
         firebase_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET')
-        
+
         if firebase_bucket:
             from firebase_admin import storage
             bucket = storage.bucket()
             blob = bucket.blob(f"uploads/{unique_filename}")
-            
-            content = await file.read()
+
             blob.upload_from_string(content, content_type=file.content_type)
             blob.make_public()
-            
+
             file_url = blob.public_url
             logging.info(f"Uploaded file to Firebase: {file_url}")
         else:
             # Fallback: Save file to local uploads directory
             file_path = UPLOADS_DIR / unique_filename
             with open(file_path, "wb") as buffer:
-                content = await file.read()
                 buffer.write(content)
-                
+
             # Using a relative path that the frontend can prefix
             file_url = f"/uploads/{unique_filename}"
             logging.info(f"Uploaded file to local disk: {file_url}")
-        
+
         return {
             "success": True,
             "url": file_url,
             "filename": file.filename,
             "content_type": file.content_type
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload file")
+    finally:
+        _decrement_upload_counter(current_user.user_id)
 
 # Include routers
 app.include_router(api_router)
@@ -5390,27 +5795,16 @@ async def readiness_check():
 from fastapi.staticfiles import StaticFiles
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
-origins = [
-    "http://localhost:3000", 
-    "http://localhost:9500",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:9500",
+# CORS already configured above via _cors_origins (Stage 3 — environment-aware).
+# Additional known preview origins merged here to avoid duplicate middleware.
+_extra_origins = [
     "http://localhost:8001",
     "http://127.0.0.1:8001",
-    "https://postflow-25.preview.emergentagent.com"
+    "https://postflow-25.preview.emergentagent.com",
 ]
-
-# Add origins from environment variable
-if os.environ.get("CORS_ORIGINS"):
-    origins.extend(os.environ.get("CORS_ORIGINS").split(","))
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+for _o in _extra_origins:
+    if _o not in _cors_origins:
+        _cors_origins.append(_o)
 
 logging.basicConfig(
     level=logging.INFO,

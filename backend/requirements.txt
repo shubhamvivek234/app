@@ -105,6 +105,7 @@ rsa
 s3transfer
 s5cmd
 shellingham
+slowapi
 six
 sniffio
 starlette
