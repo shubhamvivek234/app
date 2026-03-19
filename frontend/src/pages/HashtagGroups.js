@@ -3,8 +3,21 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { getHashtagGroups, createHashtagGroup, updateHashtagGroup, deleteHashtagGroup } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FaHashtag, FaEdit, FaTrash, FaPlus, FaTimes, FaCheck } from 'react-icons/fa';
+import { FaHashtag, FaEdit, FaTrash, FaPlus, FaTimes, FaCheck, FaCopy } from 'react-icons/fa';
 import { toast } from 'sonner';
+
+const PLATFORM_OPTIONS = [
+  { value: '', label: 'All Platforms' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'twitter', label: 'Twitter / X' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'pinterest', label: 'Pinterest' },
+  { value: 'threads', label: 'Threads' },
+  { value: 'bluesky', label: 'Bluesky' },
+];
 
 // ── Parse hashtag text into a clean array ─────────────────────────────────────
 const parseHashtags = (raw) =>
@@ -18,6 +31,8 @@ const parseHashtags = (raw) =>
 const GroupForm = ({ initial, onSave, onCancel }) => {
   const [name, setName]         = useState(initial?.name || '');
   const [rawTags, setRawTags]   = useState(initial?.hashtags?.join(' ') || '');
+  const [category, setCategory] = useState(initial?.category || '');
+  const [platform, setPlatform] = useState(initial?.platform || '');
   const [saving, setSaving]     = useState(false);
 
   const preview = parseHashtags(rawTags);
@@ -27,7 +42,7 @@ const GroupForm = ({ initial, onSave, onCancel }) => {
     if (preview.length === 0) { toast.error('Add at least one hashtag'); return; }
     setSaving(true);
     try {
-      await onSave({ name: name.trim(), hashtags: preview });
+      await onSave({ name: name.trim(), hashtags: preview, category: category.trim(), platform });
     } finally {
       setSaving(false);
     }
@@ -35,13 +50,31 @@ const GroupForm = ({ initial, onSave, onCancel }) => {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-      <Input
-        placeholder="Group name (e.g. Travel, Marketing)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="text-sm"
-        autoFocus
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          placeholder="Group name (e.g. Travel, Marketing)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="text-sm"
+          autoFocus
+        />
+        <Input
+          placeholder="Category (optional)"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="text-sm"
+        />
+      </div>
+
+      <select
+        value={platform}
+        onChange={(e) => setPlatform(e.target.value)}
+        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white text-gray-700"
+      >
+        {PLATFORM_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
 
       <textarea
         className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 placeholder:text-gray-300 text-gray-800 min-h-[80px]"
@@ -93,21 +126,40 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
   const visible = group.hashtags.slice(0, MAX_PREVIEW);
   const extra   = group.hashtags.length - MAX_PREVIEW;
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(group.hashtags.join(' '));
+    toast.success('Hashtags copied to clipboard');
+  };
+
+  const platformLabel = PLATFORM_OPTIONS.find((o) => o.value === group.platform)?.label;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-3 hover:border-gray-300 transition-colors">
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
           <FaHashtag className="text-green-500 text-sm flex-shrink-0" />
           <p className="font-semibold text-gray-900 text-sm truncate">{group.name}</p>
           <span className="text-xs text-gray-400 flex-shrink-0">
             {group.hashtags.length} {group.hashtags.length === 1 ? 'tag' : 'tags'}
           </span>
+          {group.category && (
+            <span className="text-xs bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 flex-shrink-0">
+              {group.category}
+            </span>
+          )}
+          {platformLabel && group.platform && (
+            <span className="text-xs bg-blue-50 text-blue-600 rounded-full px-2 py-0.5 flex-shrink-0">
+              {platformLabel}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-1.5">
           {visible.map((tag) => (
             <span
               key={tag}
-              className="inline-block text-xs bg-white text-gray-600 border border-gray-200 rounded-full px-2 py-0.5"
+              className="inline-block text-xs bg-white text-gray-600 border border-gray-200 rounded-full px-2 py-0.5 cursor-pointer hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
+              onClick={() => { navigator.clipboard.writeText(tag); toast.success(`Copied ${tag}`); }}
+              title="Click to copy this tag"
             >
               {tag}
             </span>
@@ -121,6 +173,13 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
       </div>
 
       <div className="flex items-center gap-1 flex-shrink-0">
+        <button
+          onClick={handleCopy}
+          className="p-2 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+          title="Copy all hashtags"
+        >
+          <FaCopy className="text-sm" />
+        </button>
         <button
           onClick={() => onEdit(group)}
           className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors"
@@ -160,9 +219,9 @@ const HashtagGroups = () => {
 
   useEffect(() => { load(); }, []);
 
-  const handleCreate = async ({ name, hashtags }) => {
+  const handleCreate = async (groupData) => {
     try {
-      const created = await createHashtagGroup(name, hashtags);
+      const created = await createHashtagGroup(groupData);
       setGroups((prev) => [created, ...prev]);
       setShowNew(false);
       toast.success('Group created!');

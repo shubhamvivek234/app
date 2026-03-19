@@ -219,8 +219,8 @@ export const getHashtagGroups = async () => {
   const response = await axios.get(`${API}/hashtag-groups`, { headers: getAuthHeaders() });
   return response.data;
 };
-export const createHashtagGroup = async (name, hashtags) => {
-  const response = await axios.post(`${API}/hashtag-groups`, { name, hashtags }, { headers: getAuthHeaders() });
+export const createHashtagGroup = async (data) => {
+  const response = await axios.post(`${API}/hashtag-groups`, data, { headers: getAuthHeaders() });
   return response.data;
 };
 export const updateHashtagGroup = async (id, data) => {

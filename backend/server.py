@@ -1547,7 +1547,11 @@ async def get_posts(current_user: User = Depends(get_current_user), status: Opti
     if status:
         query["status"] = status
     if search:
-        query["content"] = {"$regex": search, "$options": "i"}
+        query["$or"] = [
+            {"content": {"$regex": search, "$options": "i"}},
+            {"video_title": {"$regex": search, "$options": "i"}},
+            {"youtube_title": {"$regex": search, "$options": "i"}},
+        ]
     
     posts = await db.posts.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
@@ -3184,6 +3188,139 @@ async def bulk_create_posts(payload: Dict[str, Any], current_user: User = Depend
             errors.append({"row": row_num, "message": str(e)})
 
     return {"created": created, "skipped": len(errors), "errors": errors}
+
+
+# ==================== TWITTER THREAD BUILDER (Stage 7) ====================
+
+class ThreadTweetItem(BaseModel):
+    content: str
+    media_urls: Optional[List[str]] = None
+
+class ThreadPublishRequest(BaseModel):
+    tweets: List[ThreadTweetItem]
+    account_id: str
+    scheduled_time: Optional[str] = None
+
+@api_router.post("/posts/thread")
+async def create_thread_post(
+    req: ThreadPublishRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Create a Twitter/X thread post (sequence of tweets)."""
+    # Validate account belongs to user
+    account = await db.social_accounts.find_one({
+        "id": req.account_id,
+        "user_id": current_user.user_id,
+        "platform": "twitter",
+    })
+    if not account:
+        raise HTTPException(404, detail="Twitter account not found")
+
+    # Combine tweets into a post with thread_tweets field
+    post = Post(
+        user_id=current_user.user_id,
+        content=req.tweets[0].content if req.tweets else "",
+        post_type="text",
+        platforms=["twitter"],
+        accounts=[req.account_id],
+        thread_tweets=[t.model_dump() for t in req.tweets],
+        status="scheduled" if req.scheduled_time else "draft",
+        scheduled_time=datetime.fromisoformat(req.scheduled_time) if req.scheduled_time else None,
+    )
+
+    post_dict = post.model_dump()
+    post_dict["created_at"] = post_dict["created_at"].isoformat() if hasattr(post_dict.get("created_at"), "isoformat") else str(post_dict.get("created_at", ""))
+    if post_dict.get("scheduled_time") and hasattr(post_dict["scheduled_time"], "isoformat"):
+        post_dict["scheduled_time"] = post_dict["scheduled_time"].isoformat()
+
+    await db.posts.insert_one(post_dict)
+    return {"success": True, "post_id": post.id, "tweet_count": len(req.tweets)}
+
+
+# ==================== INSTAGRAM GRID PLANNER (Stage 7) ====================
+
+@api_router.get("/instagram/grid")
+async def get_instagram_grid(
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Get the last 12 published Instagram posts for grid planning."""
+    query: dict = {
+        "user_id": current_user.user_id,
+        "platforms": "instagram",
+        "status": "published",
+    }
+    if account_id:
+        query["accounts"] = account_id
+
+    posts = await db.posts.find(
+        query,
+        {"_id": 0, "id": 1, "media_urls": 1, "cover_image_url": 1,
+         "content": 1, "published_at": 1, "platform_results": 1}
+    ).sort("published_at", -1).limit(12).to_list(12)
+
+    # Also get upcoming scheduled posts
+    scheduled = await db.posts.find(
+        {**query, "status": "scheduled"},
+        {"_id": 0, "id": 1, "media_urls": 1, "cover_image_url": 1,
+         "content": 1, "scheduled_time": 1}
+    ).sort("scheduled_time", 1).limit(6).to_list(6)
+
+    return {
+        "published": posts,
+        "scheduled": scheduled,
+        "total_published": len(posts),
+        "total_scheduled": len(scheduled),
+    }
+
+
+@api_router.patch("/instagram/grid/reorder")
+async def reorder_instagram_grid(
+    reorder: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Update scheduled_time for grid reordering (drag-and-drop)."""
+    updates = reorder.get("updates", [])
+    for item in updates:
+        await db.posts.update_one(
+            {"id": item["post_id"], "user_id": current_user.user_id},
+            {"$set": {"scheduled_time": item["scheduled_time"]}}
+        )
+    return {"success": True, "updated": len(updates)}
+
+
+# ==================== FULL-TEXT SEARCH (Stage 7) ====================
+
+@api_router.get("/search")
+async def search_content(
+    q: str,
+    type: Optional[str] = None,   # "posts" | "accounts" | "all"
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    """Full-text search across posts and connected accounts."""
+    results = {"posts": [], "accounts": []}
+    regex = {"$regex": q, "$options": "i"}
+
+    if type in (None, "posts", "all"):
+        posts = await db.posts.find(
+            {"user_id": current_user.user_id,
+             "$or": [{"content": regex}, {"video_title": regex}, {"youtube_title": regex}]},
+            {"_id": 0, "id": 1, "content": 1, "status": 1, "platforms": 1,
+             "post_type": 1, "scheduled_time": 1, "published_at": 1}
+        ).limit(limit).to_list(limit)
+        results["posts"] = posts
+
+    if type in (None, "accounts", "all"):
+        accounts = await db.social_accounts.find(
+            {"user_id": current_user.user_id,
+             "$or": [{"platform_username": regex}, {"platform": regex}]},
+            {"_id": 0, "id": 1, "platform": 1, "platform_username": 1, "picture_url": 1}
+        ).limit(10).to_list(10)
+        results["accounts"] = accounts
+
+    return {**results, "query": q, "total": len(results["posts"]) + len(results["accounts"])}
+
 
 # ==================== MEDIA LIBRARY ====================
 
@@ -5755,6 +5892,72 @@ async def process_scheduled_posts():
                             media_urls=[public_url] if media_url else None,
                             local_file_path=local_file_path if media_url else None
                         )
+                    elif platform == 'threads':
+                        from app.social.threads import ThreadsAuth
+                        threads_auth = ThreadsAuth()
+                        threads_content = post_doc.get('platform_specific_content', {}).get('threads', post_doc.get('content', ''))
+                        post_type = post_doc.get('post_type', 'text')
+                        media_type = 'IMAGE' if post_type == 'image' else ('VIDEO' if 'video' in post_type else 'TEXT')
+                        logging.info(f"Publishing to Threads: {platform_user_id}")
+                        platform_post_id = await threads_auth.publish_post(
+                            access_token=token,
+                            user_id=platform_user_id,
+                            text=threads_content,
+                            media_url=public_url if media_url else None,
+                            media_type=media_type,
+                        )
+                        logging.info(f"Threads post published: {platform_post_id}")
+                    elif platform == 'reddit':
+                        from app.social.reddit import RedditAuth
+                        reddit_auth = RedditAuth()
+                        reddit_content = post_doc.get('platform_specific_content', {}).get('reddit', post_doc.get('content', ''))
+                        reddit_title = post_doc.get('video_title') or post_doc.get('youtube_title') or reddit_content[:300]
+                        subreddit = account.get('platform_username', 'test')
+                        post_kind = 'link' if media_url else 'self'
+                        logging.info(f"Publishing to Reddit: r/{subreddit}")
+                        platform_post_id = await reddit_auth.submit_post(
+                            access_token=token,
+                            subreddit=subreddit,
+                            title=reddit_title,
+                            text=reddit_content,
+                            url=public_url if media_url else '',
+                            post_type=post_kind,
+                        )
+                        logging.info(f"Reddit post submitted: {platform_post_id}")
+                    elif platform == 'bluesky':
+                        from app.social.bluesky import BlueskyAuth
+                        bluesky_auth = BlueskyAuth()
+                        bluesky_content = post_doc.get('platform_specific_content', {}).get('bluesky', post_doc.get('content', ''))
+                        post_type = post_doc.get('post_type', 'text')
+                        image_urls = [public_url] if (media_url and post_type == 'image') else None
+                        logging.info(f"Publishing to Bluesky: {platform_user_id}")
+                        result = await bluesky_auth.publish_post(
+                            access_token=token,
+                            did=platform_user_id,
+                            text=bluesky_content,
+                            media_urls=image_urls,
+                        )
+                        platform_post_id = result.get('uri')
+                        logging.info(f"Bluesky post published: {platform_post_id}")
+                    elif platform == 'tiktok':
+                        from app.social.tiktok import TikTokAuth
+                        tiktok_auth = TikTokAuth()
+                        tiktok_content = post_doc.get('platform_specific_content', {}).get('tiktok', post_doc.get('content', ''))
+                        video_src = public_url or post_doc.get('video_url', '')
+                        if not video_src:
+                            raise Exception("TikTok publishing requires a video URL")
+                        logging.info(f"Publishing to TikTok: {platform_user_id}")
+                        result = await tiktok_auth.publish_video(
+                            access_token=token,
+                            video_url=video_src,
+                            caption=tiktok_content[:2200],
+                            privacy=post_doc.get('tiktok_privacy', 'PUBLIC_TO_EVERYONE'),
+                            allow_duet=post_doc.get('tiktok_allow_duet', True),
+                            allow_stitch=post_doc.get('tiktok_allow_stitch', True),
+                            allow_comments=post_doc.get('tiktok_allow_comments', True),
+                        )
+                        platform_post_id = result.get('publish_id')
+                        logging.info(f"TikTok video published: {platform_post_id}")
 
                     # Record per-platform success
                     platform_successes[platform] = {

@@ -41,6 +41,7 @@ import InstagramGridPlanner from '@/pages/InstagramGridPlanner';
 import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
+import CookieConsent from '@/components/CookieConsent';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -350,6 +351,7 @@ function App() {
             <Route path="/calendar/public/:token" element={<PublicCalendar />} />
           </Routes>
           <Toaster />
+          <CookieConsent />
         </div>
       </BrowserRouter>
     </AuthProvider>

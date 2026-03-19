@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: socialentangler-worker
+  labels:
+    app: socialentangler
+    component: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: socialentangler
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: socialentangler
+        component: worker
+    spec:
+      # Workers can run on spot/preemptible instances (stateless, idempotent)
+      tolerations:
+      - key: "cloud.google.com/gke-spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      terminationGracePeriodSeconds: 120   # Allow in-flight tasks to complete
+      containers:
+      - name: worker
+        image: socialentangler-api:latest
+        command: ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+        envFrom:
+        - secretRef:
+            name: socialentangler-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: socialentangler-beat
+  labels:
+    app: socialentangler
+    component: beat
+spec:
+  replicas: 1   # Beat MUST be a single replica
+  selector:
+    matchLabels:
+      app: socialentangler
+      component: beat
+  template:
+    metadata:
+      labels:
+        app: socialentangler
+        component: beat
+    spec:
+      containers:
+      - name: beat
+        image: socialentangler-api:latest
+        command: ["celery", "-A", "celery_app", "beat", "--loglevel=info"]
+        envFrom:
+        - secretRef:
+            name: socialentangler-secrets
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
