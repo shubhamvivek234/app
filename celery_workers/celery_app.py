@@ -98,6 +98,7 @@ def create_celery_app() -> Celery:
         "celery_workers.tasks.cleanup",
         "celery_workers.tasks.tokens",
         "celery_workers.tasks.reconcile",
+        "celery_workers.tasks.poll_status",  # Phase 5 — polling fallback
     ])
 
     return app

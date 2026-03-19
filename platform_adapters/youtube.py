@@ -175,6 +175,36 @@ class YouTubeAdapter(PlatformAdapter):
             "platform_post_id": video_id,
         }
 
+    async def check_status(self, platform_post_id: str, *, access_token: str = "") -> str:
+        """
+        Phase 5 — Poll YouTube API for video processing status.
+        Returns: "published" | "processing" | "failed"
+        """
+        if not access_token:
+            return "processing"  # no token available — can't poll; wait for webhook
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{YOUTUBE_API_BASE}/videos",
+                params={"part": "status", "id": platform_post_id},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if resp.status_code != 200:
+            return "processing"  # transient error — don't mark failed
+
+        items = resp.json().get("items", [])
+        if not items:
+            return "failed"  # video not found
+
+        upload_status = items[0].get("status", {}).get("uploadStatus", "")
+        privacy_status = items[0].get("status", {}).get("privacyStatus", "")
+
+        if upload_status == "processed" and privacy_status == "public":
+            return "published"
+        if upload_status in ("failed", "rejected", "deleted"):
+            return "failed"
+        return "processing"
+
     async def refresh_token(self, refresh_token: str) -> dict:
         """Exchange a refresh token with Google OAuth2."""
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "")

@@ -1,5 +1,5 @@
 """
-Phase 2.5 + 3.5 — Abstract base adapter with permanent error classifier.
+Phase 2.5 + 3.5 + 5 — Abstract base adapter with permanent error classifier.
 All platform adapters inherit from PlatformAdapter.
 Permanent errors: never retry. Transient errors: exponential backoff. Rate limits: requeue only.
 """
@@ -141,6 +141,15 @@ class PlatformAdapter(ABC):
         Default: no-op (platforms that don't need pre-upload).
         """
         return {}
+
+    async def check_status(self, platform_post_id: str) -> str:
+        """
+        Phase 5 — Polling fallback. Query platform API for current post status.
+        Returns: "published" | "processing" | "failed" | "pending"
+        Default: raises NotImplementedError — platforms without polling support
+        fall back to webhook-only confirmation.
+        """
+        raise NotImplementedError(f"{self.platform} does not support status polling")
 
     async def refresh_token(self, refresh_token: str) -> dict:
         """
