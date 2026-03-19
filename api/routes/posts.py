@@ -1,6 +1,7 @@
 """
 Posts CRUD — schedule, list, update (optimistic lock), soft-delete.
 All queries scope by workspace_id or user_id — never post_id alone.
+Phase 5.5: EC8 content policy + EC23 platform×content-type validation on create.
 """
 import logging
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from api.models.post import (
     PostStatus,
     UpdatePostRequest,
 )
+from utils.content_policy import check_content_policy, validate_platform_content_type
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -54,6 +56,31 @@ async def create_post(
     workspace_id = body.workspace_id or current_user.get("default_workspace_id")
     user_id = current_user["user_id"]
     now = datetime.now(timezone.utc)
+
+    # EC23 — Validate platform × content-type compatibility
+    for platform in body.platforms:
+        try:
+            validate_platform_content_type(platform, body.post_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    # EC8 — Content policy check (local, fast)
+    for platform in body.platforms:
+        result = check_content_policy(body.content or "", platform)
+        if not result.approved:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Content policy violation",
+                    "platform": platform,
+                    "violations": result.violations,
+                },
+            )
+        if result.warnings:
+            logger.warning(
+                "Content policy warnings for post by user=%s platform=%s: %s",
+                user_id, platform, result.warnings,
+            )
 
     doc: dict = {
         "id": str(ObjectId()),
