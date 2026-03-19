@@ -1,182 +1,84 @@
-# CLAUDE.md
+# SocialEntangler — Session Memory
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-# SocialEntangler — Social Media Scheduler
-
-Multi-platform social media scheduling SaaS. Architecture v2.8 (Celery + Redis Beat, MongoDB Atlas, Firebase Auth, workspace/teams).
-
-**Active branch:** `architecture/v2` (based on `version-6`)
+> This file is read FIRST and written LAST in every Claude Code session.
+> Keep it under 80 lines. Be specific. Vague entries waste the next session.
 
 ---
 
-## Commands
+## Current Phase
 
-### Backend (FastAPI + Celery)
+Stage: v2.9 (complete)
+Branch: main + version-6
+Description: Full v2.9 implementation complete — all Phases 0–10, all EC1–EC31 edge cases, Cloudflare integration added
+Arch doc reference: Architecture v2.9 / Implementation Plan v3.0
 
+---
+
+## Last Session Completed
+
+Date: 2026-03-20
+Completed tasks:
+- Replaced all bg-white → bg-offwhite (#fefefb) across 48 frontend files
+- Added offwhite custom color to tailwind.config.js
+- Replaced #ffffff → #fffffb on login/signup panel backgrounds
+- Integrated Cloudflare R2 (utils/storage.py), Turnstile (utils/turnstile.py), CDN cache purge
+- Added TurnstileWidget.js + wired into LoginV1/SignupV1
+- Fixed frontend server (craco launch config via system node bootstrap)
+- Installed socialentangler-dev skill + starter files
+
+Files changed:
+- frontend/tailwind.config.js, frontend/src/**/*.js (48 files)
+- backend/utils/storage.py, backend/utils/turnstile.py
+- frontend/src/components/TurnstileWidget.js
+- frontend/src/pages/LoginV1.js, SignupV1.js
+- frontend/src/context/AuthContext.js
+- .claude/launch.json (craco via /opt/homebrew/bin/node -e bootstrap)
+
+---
+
+## Active Work (next session starts here)
+
+Currently implementing: Cloudflare integration is done — no active task
+Next concrete step: Enable Cloudflare in production by setting STORAGE_BACKEND=r2 and TURNSTILE_ENABLED=true in production .env
+Blocked on: nothing
+
+---
+
+## Known Issues
+
+- Frontend preview_start requires system node bootstrap (see .claude/launch.json)
+  because macOS sandbox blocks node_modules execution from worktrees
+- TURNSTILE_ENABLED=false in dev (intentional — enable in production only)
+- STORAGE_BACKEND=r2 set in backend .env — Firebase code preserved as fallback
+
+---
+
+## Decisions Made This Session
+
+- Off-white color: #fefefb (bg-offwhite Tailwind) for all page backgrounds
+- Login/signup panels: #fffffb
+- Cloudflare R2 bucket: socialentangler-media (Asia Pacific, Standard)
+- Feature-flagged storage: STORAGE_BACKEND env var (r2|firebase)
+
+---
+
+## Test Status
+
+Last run: —
+Failing: —
+Coverage: not measured
+
+---
+
+## Notes for Next Session
+
+Start by running:
 ```bash
-cd backend
-source venv/bin/activate          # Python 3.11 venv
-
-# Run dev server
-uvicorn server:app --reload --port 8001
-
-# Run database migrations
-python -m migrations.runner up        # Apply pending
-python -m migrations.runner status    # Check status
-python -m migrations.runner down      # Rollback last
-
-# Run Celery worker (needs Redis running)
-celery -A celery_app worker --loglevel=info --concurrency=4
-
-# Run Celery Beat scheduler
-celery -A celery_app beat --loglevel=info
-
-# Inspect Celery
-celery -A celery_app inspect active
-celery -A celery_app inspect ping
-
-# Health checks
-curl http://localhost:8001/health
-curl http://localhost:8001/ready
+cat CLAUDE.md
+git log --oneline -5
+git status --short
 ```
 
-### Frontend (React/CRA)
-
-```bash
-cd frontend
-npm install --legacy-peer-deps      # react-day-picker peer dep conflict
-npm start                           # Dev server on :3000
-npm run build                       # Production build
-```
-
-### Docker (Production)
-
-```bash
-# Start all services (api, worker, beat, nginx, redis)
-docker-compose up -d
-
-# View logs
-docker-compose logs -f api
-docker-compose logs -f worker
-
-# Run migrations in production
-docker-compose exec api python -m migrations.runner up
-
-# Scale workers
-docker-compose up -d --scale worker=4
-```
-
----
-
-## Architecture
-
-### Request Flow
-
-```
-Browser → nginx (port 80)
-       → /api/* → FastAPI (port 8001)
-       → /       → React SPA (static files)
-```
-
-### Scheduling Flow
-
-```
-FastAPI saves post (status=scheduled) → MongoDB
-→ Celery Beat (every 1 min) → redis queue
-→ Celery worker picks up → publishes to social APIs
-→ Updates post status (published/failed) + creates Notification
-```
-
-### Auth Flow
-
-```
-Google popup → Firebase JWT → GET /api/auth/me → MongoDB user lookup/create
-→ setUser() in AuthContext → PrivateRoute allows access
-```
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `backend/server.py` | Main FastAPI app — all endpoints (5300+ lines) |
-| `backend/celery_app.py` | Celery app config + Beat schedule |
-| `backend/celery_tasks.py` | Celery task definitions |
-| `backend/migrations/` | Zero-downtime DB migrations (001–006 applied) |
-| `backend/app/circuit_breaker.py` | Per-platform circuit breaker |
-| `backend/app/media_validator.py` | FFmpeg-based media validation |
-| `backend/app/dlq.py` | Dead Letter Queue for failed tasks |
-| `backend/app/models/workspace.py` | Workspace/team model |
-| `backend/app/social/*.py` | Platform OAuth + publish logic |
-| `frontend/src/context/AuthContext.js` | Firebase auth state + backend sync |
-| `frontend/src/pages/` | All page components |
-| `frontend/src/lib/api.js` | All API helper functions |
-| `docker-compose.yml` | Production Docker Compose |
-| `nginx/nginx.conf` | nginx reverse proxy config |
-| `ARCHITECTURE.md` | Full architecture reference |
-
----
-
-## Database Collections
-
-`users` · `posts` · `social_accounts` · `notifications` · `payment_transactions` · `workspaces` · `workspace_invites` · `api_keys` · `migrations_log` · `media_assets`
-
----
-
-## Environment Variables (backend/.env)
-
-```
-MONGO_URL                 MongoDB Atlas connection string
-DB_NAME                   Database name
-REDIS_URL                 redis://localhost:6379/0
-JWT_SECRET                HS256 fallback signing key
-FIREBASE_STORAGE_BUCKET   Optional — uses local disk if empty
-GOOGLE_CLIENT_ID/SECRET   YouTube OAuth
-FACEBOOK_APP_ID/SECRET    Facebook + Instagram OAuth
-TWITTER_CLIENT_ID/SECRET  Twitter OAuth
-LINKEDIN_CLIENT_ID/SECRET LinkedIn OAuth
-RESEND_API_KEY            Email (Resend)
-STRIPE_API_KEY            Stripe payments
-RAZORPAY_KEY_ID/SECRET    Razorpay (INR)
-FRONTEND_URL              http://localhost:3000 (dev)
-SERVICE_URL               Backend public URL
-ENV                       "production" → JSON logs
-```
-
----
-
-## Platform Publishing Notes
-
-- **Instagram/Facebook videos**: Create container → poll status (30×5s) → publish. Uses `thumbnail_url` for VIDEO/REELS display (not `media_url`).
-- **YouTube**: Resumable upload protocol. Auto-refreshes OAuth token on 401.
-- **Retry logic**: 3 attempts, 5 min apart. Tracked in `retry_count` + `status_history`.
-- **Per-platform independence**: Each platform publishes independently — one failure doesn't block others.
-
----
-
-## Workspace / Teams
-
-- Every user auto-gets a personal workspace on first login
-- `GET /api/workspace` — fetch/create workspace
-- `POST /api/workspace/invite` — invite by email
-- `GET /api/workspace/activity` — team activity feed
-- Posts are workspace-scoped (teammates see each other's posts)
-- Role-based access: `owner > admin > editor > viewer`
-
----
-
-## GDPR / Compliance
-
-- `GET /api/gdpr/export` — download all user data as JSON
-- `DELETE /api/gdpr/delete-account` — permanent erasure (GDPR Art. 17)
-- `GET /api/gdpr/status` — data summary
-
----
-
-## API Keys (Developer API)
-
-- `GET/POST /api/api-keys` — list/create API keys
-- `DELETE /api/api-keys/{id}` — revoke
-- Keys use `se_live_` prefix, SHA-256 hashed in DB, shown only once on creation
+Skill active: socialentangler-dev (auto-loads for all SocialEntangler work)
+Backend worktree: .claude/worktrees/stupefied-matsumoto (feature/v2.9-implementation)
+Frontend: /frontend/ on main + version-6 branches
