@@ -161,6 +161,9 @@ async def upload_media(
             queue="media_processing",
         )
 
+        # 9. Purge any stale CDN cache entries for this media path (best-effort)
+        await _purge_media_cdn_cache(user_id, safe_filename)
+
         logger.info("Media upload queued: %s user=%s mime=%s size=%d", media_job_id, user_id, mime_type, total_bytes)
         return MediaUploadResponse(media_job_id=media_job_id, status=MediaStatus.QUARANTINE)
 
@@ -184,6 +187,40 @@ async def get_upload_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media job not found")
 
     return MediaAssetResponse(**doc)
+
+
+# ── CDN purge helper ──────────────────────────────────────────────────────────
+
+async def _purge_media_cdn_cache(user_id: str, filename: str) -> None:
+    """
+    Best-effort Cloudflare cache purge for a newly uploaded media file.
+    Failures are logged but do not propagate — upload success is not affected.
+    """
+    try:
+        from config.cdn import purge_by_urls  # noqa: PLC0415
+        cf_public_base = os.environ.get("CF_R2_PUBLIC_URL", "")
+        if not cf_public_base:
+            return
+        url = f"{cf_public_base}/uploads/{filename}"
+        await purge_by_urls([url])
+        logger.info("CDN purge requested: url=%s", url)
+    except Exception as exc:
+        logger.warning("CDN purge failed (non-fatal): %s", exc)
+
+
+async def purge_media_cache(urls: list[str]) -> None:
+    """
+    Public helper: purge a list of Cloudflare-cached media URLs.
+    Wraps config.cdn.purge_by_urls with error suppression so callers
+    don't need to handle CDN failures.
+    """
+    if not urls:
+        return
+    try:
+        from config.cdn import purge_by_urls  # noqa: PLC0415
+        await purge_by_urls(urls)
+    except Exception as exc:
+        logger.warning("purge_media_cache failed (non-fatal): %s", exc)
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────

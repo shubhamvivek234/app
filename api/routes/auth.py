@@ -2,12 +2,15 @@
 Auth routes — /me, /logout (JTI blocklist), /workspace (get-or-create).
 Auto-creates MongoDB user + personal workspace on first Firebase login.
 Phase 3.6.3: Login brute-force protection (Redis-backed attempt tracking).
+Phase 9.6: Cloudflare Turnstile bot protection (opt-in via TURNSTILE_ENABLED env var).
 """
 import logging
+import os
 import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel
 
 from api.deps import CurrentUser, DB, CacheRedis
 from api.limiter import limiter
@@ -15,6 +18,39 @@ from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceRes
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
+
+_TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() == "true"
+
+# ── Request models ────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    """Optional body accepted by /auth/login for Turnstile token."""
+    cf_turnstile_token: str | None = None
+
+
+class SignupRequest(BaseModel):
+    """Optional body accepted by /auth/signup for Turnstile token."""
+    cf_turnstile_token: str | None = None
+
+
+# ── Turnstile helper ──────────────────────────────────────────────────────────
+
+async def _verify_turnstile_if_enabled(token: str | None, ip: str) -> None:
+    """
+    When TURNSTILE_ENABLED=true, verify the Turnstile token.
+    Raises HTTP 403 if verification fails or token is missing.
+    When TURNSTILE_ENABLED=false (dev default) this is a no-op.
+    """
+    if not _TURNSTILE_ENABLED:
+        return
+    from utils.turnstile import verify_turnstile  # noqa: PLC0415
+    ok = await verify_turnstile(token=token or "", ip=ip)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bot protection check failed. Please try again.",
+        )
+
 
 # ── Brute-force protection constants ──────────────────────────────────────────
 _MAX_LOGIN_ATTEMPTS = 5
@@ -91,13 +127,20 @@ async def login(
     request: Request,
     db: DB,
     cache_redis: CacheRedis,
+    body: LoginRequest | None = None,
 ) -> UserResponse:
     """
     Verify Firebase ID token and return user record.
     Enforces brute-force protection: max 5 failed attempts per email per 15 min.
+    When TURNSTILE_ENABLED=true, also verifies the cf_turnstile_token field.
     """
     import firebase_admin.auth as fb_auth
     from api.deps import get_firebase_app
+
+    # Turnstile bot-protection check (no-op when TURNSTILE_ENABLED=false)
+    client_ip = request.client.host if request.client else ""
+    cf_token = body.cf_turnstile_token if body else None
+    await _verify_turnstile_if_enabled(cf_token, client_ip)
 
     auth_header = request.headers.get("authorization", "")
     token = auth_header.removeprefix("Bearer ").strip()
@@ -134,6 +177,61 @@ async def login(
     # Successful login — clear attempt counter
     await _clear_login_attempts(cache_redis, email)
     logger.info("Login successful: user=%s email=%s", user["user_id"], email)
+    return UserResponse(**user)
+
+
+# ── /signup ───────────────────────────────────────────────────────────────────
+
+@router.post("/auth/signup", response_model=UserResponse)
+@limiter.limit("10/minute")
+async def signup(
+    request: Request,
+    db: DB,
+    cache_redis: CacheRedis,
+    body: SignupRequest | None = None,
+) -> UserResponse:
+    """
+    Register / verify a new user after Firebase signup.
+
+    The client performs Firebase signup client-side, then calls this endpoint
+    with the resulting Firebase ID token in the Authorization header.
+    When TURNSTILE_ENABLED=true, a valid cf_turnstile_token must be supplied
+    in the request body to pass bot-protection before account creation.
+    """
+    import firebase_admin.auth as fb_auth
+    from api.deps import get_firebase_app
+
+    # Turnstile bot-protection check (no-op when TURNSTILE_ENABLED=false)
+    client_ip = request.client.host if request.client else ""
+    cf_token = body.cf_turnstile_token if body else None
+    await _verify_turnstile_if_enabled(cf_token, client_ip)
+
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing token",
+        )
+
+    try:
+        get_firebase_app()
+        decoded = fb_auth.verify_id_token(token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    uid = decoded.get("uid")
+    email = decoded.get("email", decoded.get("uid", "unknown"))
+
+    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+    if user is None:
+        display_name = decoded.get("name")
+        user = await _auto_create_user(db, uid, email, display_name)
+
+    logger.info("Signup verified: user=%s email=%s", user["user_id"], email)
     return UserResponse(**user)
 
 
