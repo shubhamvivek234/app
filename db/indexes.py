@@ -10,6 +10,18 @@ from db.mongo import get_client
 logger = logging.getLogger(__name__)
 
 
+async def _safe_create_index(collection, keys, **kwargs) -> None:
+    """Create index, ignoring conflicts with pre-existing indexes of different names."""
+    try:
+        await collection.create_index(keys, **kwargs)
+    except Exception as exc:
+        # IndexOptionsConflict (85) — index exists with different name, safe to ignore
+        if "already exists" in str(exc) or getattr(exc, "code", None) in (85, 86):
+            logger.debug("Index already exists on %s, skipping: %s", collection.name, exc)
+        else:
+            raise
+
+
 async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     if client is None:
         client = await get_client()
@@ -18,39 +30,39 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     db = client[os.environ["DB_NAME"]]
 
     # posts
-    await db.posts.create_index([("status", 1), ("scheduled_time", 1)])
-    await db.posts.create_index([("user_id", 1), ("status", 1), ("created_at", -1)])
-    await db.posts.create_index([("workspace_id", 1), ("status", 1), ("scheduled_time", 1)])
-    await db.posts.create_index([("deleted_at", 1)], expireAfterSeconds=2592000)  # 30-day TTL
+    await _safe_create_index(db.posts, [("status", 1), ("scheduled_time", 1)])
+    await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.posts, [("workspace_id", 1), ("status", 1), ("scheduled_time", 1)])
+    await _safe_create_index(db.posts, [("deleted_at", 1)], expireAfterSeconds=2592000)  # 30-day TTL
 
     # notifications
-    await db.notifications.create_index([("user_id", 1), ("is_read", 1), ("created_at", -1)])
+    await _safe_create_index(db.notifications, [("user_id", 1), ("is_read", 1), ("created_at", -1)])
 
     # social_accounts
-    await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
+    await _safe_create_index(db.social_accounts, [("user_id", 1), ("platform", 1), ("is_active", 1)])
 
     # payment_transactions
-    await db.payment_transactions.create_index([("user_id", 1), ("created_at", -1)])
+    await _safe_create_index(db.payment_transactions, [("user_id", 1), ("created_at", -1)])
 
     # user_sessions — TTL 30 days
-    await db.user_sessions.create_index([("created_at", 1)], expireAfterSeconds=2592000)
+    await _safe_create_index(db.user_sessions, [("created_at", 1)], expireAfterSeconds=2592000)
 
     # audit_events
-    await db.audit_events.create_index([("workspace_id", 1), ("timestamp", -1)])
-    await db.audit_events.create_index([("entity_id", 1), ("timestamp", -1)])
-    await db.audit_events.create_index([("timestamp", 1)], expireAfterSeconds=7776000)  # 90-day TTL
+    await _safe_create_index(db.audit_events, [("workspace_id", 1), ("timestamp", -1)])
+    await _safe_create_index(db.audit_events, [("entity_id", 1), ("timestamp", -1)])
+    await _safe_create_index(db.audit_events, [("timestamp", 1)], expireAfterSeconds=7776000)  # 90-day TTL
 
     # media_assets
-    await db.media_assets.create_index([("user_id", 1), ("status", 1)])
-    await db.media_assets.create_index([("post_id", 1)])
+    await _safe_create_index(db.media_assets, [("user_id", 1), ("status", 1)])
+    await _safe_create_index(db.media_assets, [("post_id", 1)])
 
     # webhook_events (dedup)
-    await db.webhook_events.create_index([("event_id", 1)], unique=True)
-    await db.webhook_events.create_index([("created_at", 1)], expireAfterSeconds=604800)  # 7-day TTL
+    await _safe_create_index(db.webhook_events, [("event_id", 1)], unique=True)
+    await _safe_create_index(db.webhook_events, [("created_at", 1)], expireAfterSeconds=604800)  # 7-day TTL
 
     # workspaces / workspace_members
-    await db.workspaces.create_index([("owner_id", 1)])
-    await db.workspace_members.create_index([("workspace_id", 1), ("user_id", 1)], unique=True)
+    await _safe_create_index(db.workspaces, [("owner_id", 1)])
+    await _safe_create_index(db.workspace_members, [("workspace_id", 1), ("user_id", 1)], unique=True)
 
     logger.info("All MongoDB indexes created successfully")
 

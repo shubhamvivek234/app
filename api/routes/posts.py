@@ -14,7 +14,7 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from api.deps import CurrentUser, DB, QueueRedis, require_permission
-from api.main import limiter
+from api.limiter import limiter
 from api.models.post import (
     CreatePostRequest,
     PostResponse,

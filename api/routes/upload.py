@@ -14,7 +14,7 @@ import magic
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis, require_permission
-from api.main import limiter
+from api.limiter import limiter
 from api.models.media import MediaAssetResponse, MediaStatus, MediaUploadResponse
 
 logger = logging.getLogger(__name__)

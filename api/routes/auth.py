@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, status
 
 from api.deps import CurrentUser, DB, CacheRedis
-from api.main import limiter
+from api.limiter import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
 
 logger = logging.getLogger(__name__)

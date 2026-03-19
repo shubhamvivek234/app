@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis
-from api.main import limiter
+from api.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])

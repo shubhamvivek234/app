@@ -65,13 +65,13 @@ async def ensure_indexes(db) -> None:
     Create indexes on audit_events collection.
     Called from api/main.py lifespan alongside db/indexes.py.
     """
+    from db.indexes import _safe_create_index
     coll = db[COLLECTION]
 
     # TTL index — auto-expire records after 90 days
-    await coll.create_index("expires_at", expireAfterSeconds=0, background=True)
-
+    await _safe_create_index(coll, "expires_at", expireAfterSeconds=0)
     # Query patterns: by actor, resource, workspace, action
-    await coll.create_index([("actor_id", 1), ("created_at", -1)], background=True)
-    await coll.create_index([("resource_type", 1), ("resource_id", 1), ("created_at", -1)], background=True)
-    await coll.create_index([("workspace_id", 1), ("created_at", -1)], background=True)
-    await coll.create_index([("action", 1), ("created_at", -1)], background=True)
+    await _safe_create_index(coll, [("actor_id", 1), ("created_at", -1)])
+    await _safe_create_index(coll, [("resource_type", 1), ("resource_id", 1), ("created_at", -1)])
+    await _safe_create_index(coll, [("workspace_id", 1), ("created_at", -1)])
+    await _safe_create_index(coll, [("action", 1), ("created_at", -1)])

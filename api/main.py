@@ -21,9 +21,8 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from api.middleware import SecurityHeadersMiddleware, TraceIDMiddleware
 from api.health import router as health_router
@@ -112,10 +111,7 @@ async def lifespan(app: FastAPI):
     await close_pools()
 
 
-limiter = Limiter(
-    key_func=get_remote_address,
-    storage_uri=os.environ.get("REDIS_CACHE_URL", "redis://localhost:6379/0"),
-)
+from api.limiter import limiter  # noqa: E402 — must be after route imports to avoid circular
 
 
 def create_app() -> FastAPI:
