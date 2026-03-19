@@ -184,6 +184,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     if post is None:
         return {"status": "post_deleted"}
 
+    # EC15: Check subscription is still active before publishing
+    try:
+        from utils.subscription import check_subscription_active
+        user_id = post.get("user_id", "")
+        is_active, reason = await check_subscription_active(db, user_id)
+        if not is_active:
+            logger.warning("EC15: subscription expired for user %s — pausing post %s", user_id, post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "paused",
+                "error": f"Subscription expired: {reason}",
+            })
+            return {"status": "subscription_expired"}
+    except ImportError:
+        pass  # subscription module not available — skip check
+
     try:
         adapter = get_adapter(platform)
         result = await adapter.publish(post)
@@ -225,7 +240,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         return {"status": "published", "platform": platform}
 
     except Exception as exc:
-        from platform_adapters.base import classify_error, ErrorClass
+        from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
 
         error_class = classify_error(exc)
 
@@ -237,6 +252,27 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "retry_count": attempt,
                 "last_attempt_at": datetime.utcnow(),
             })
+
+            # EC16: Detect account suspension/revocation and trigger ghost cascade
+            error_code = getattr(exc, "code", None)
+            subcode = getattr(exc, "subcode", None)
+            is_auth_error = (
+                (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
+                or subcode in {458, 460}
+                or error_code in (190, 261, 326)
+            )
+            if is_auth_error:
+                try:
+                    from utils.ghost_cascade import handle_ghost_account
+                    social_account_id = post.get("social_account_id") or post.get("account", {}).get("id", "")
+                    if social_account_id:
+                        await handle_ghost_account(
+                            db, social_account_id, error_code,
+                            suspension_reason=str(exc),
+                        )
+                except ImportError:
+                    pass
+
             await _send_failure_notification(post_id, platform, str(exc))
             return {"status": "permanent_failure"}
 
@@ -309,13 +345,37 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
         container_result = await adapter.pre_upload(post)
 
+        # EC12: If Instagram container is still pending, dispatch non-blocking poller
+        if container_result.get("pre_upload_status") == "pending" and platform == "instagram":
+            from celery_workers.tasks.container_status import check_instagram_container_status
+            container_id = container_result.get("container_id", "")
+            account = post.get("account", {})
+            check_instagram_container_status.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "container_id": container_id,
+                    "access_token_encrypted": account.get("access_token", ""),
+                    "poll_attempt": 0,
+                },
+                queue="default",
+            )
+            await db.posts.update_one(
+                {"id": post_id},
+                {"$set": {
+                    "pre_upload_status": "uploading",
+                    f"platform_container_ids.{platform}": container_id,
+                }}
+            )
+            return {"status": "polling", "platform": platform, "container_id": container_id}
+
         expiry = datetime.utcnow() + timedelta(hours=23)
+        container_id = container_result.get("container_id") or container_result.get("video_id")
         await db.posts.update_one(
             {"id": post_id},
             {"$set": {
                 "pre_upload_status": "ready",
                 "pre_upload_completed_at": datetime.utcnow(),
-                f"platform_container_ids.{platform}": container_result.get("container_id"),
+                f"platform_container_ids.{platform}": container_id,
                 f"container_expiry_at.{platform}": expiry.isoformat(),
             }}
         )

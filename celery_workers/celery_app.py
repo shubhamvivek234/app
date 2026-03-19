@@ -98,12 +98,15 @@ def create_celery_app() -> Celery:
         "celery_workers.tasks.cleanup",
         "celery_workers.tasks.tokens",
         "celery_workers.tasks.reconcile",
-        "celery_workers.tasks.poll_status",   # Phase 5 — polling fallback
-        "celery_workers.tasks.recurring",     # Phase 5.5 — recurring post instances
-        "celery_workers.tasks.analytics",     # Phase 6 — analytics collection
-        "celery_workers.tasks.bulk_import",   # Phase 6 — bulk CSV import
-        "celery_workers.tasks.ai_caption",    # Phase 7.5 — AI caption generation
-        "celery_workers.tasks.gdpr",          # Phase 8 — GDPR erasure + export
+        "celery_workers.tasks.poll_status",        # Phase 5 — polling fallback
+        "celery_workers.tasks.recurring",          # Phase 5.5 — recurring post instances
+        "celery_workers.tasks.analytics",          # Phase 6 — analytics collection
+        "celery_workers.tasks.bulk_import",        # Phase 6 — bulk CSV import
+        "celery_workers.tasks.ai_caption",         # Phase 7.5 — AI caption generation
+        "celery_workers.tasks.gdpr",               # Phase 8 — GDPR erasure + export
+        "celery_workers.tasks.subscription_check", # EC15 — subscription expiry grace period
+        "celery_workers.tasks.api_version_monitor",# Phase 10.2 — platform API version monitoring
+        "celery_workers.tasks.container_status",   # EC12 — non-blocking Instagram container check
     ])
 
     return app

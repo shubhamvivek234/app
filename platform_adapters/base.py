@@ -26,29 +26,41 @@ _PERMANENT_ERROR_CODES: dict[str, set] = {
         368,    # content policy violation
         32,     # page request limit reached (permanent for this page)
         100,    # invalid parameter
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
     "facebook": {
         190, 10, 200, 368, 100, 32,
         368,    # content policy blocked
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
     "youtube": {
         "forbidden", "quotaExceeded", "uploadLimitExceeded",
         "invalidVideoTitle", "invalidVideoDescription",
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
     "twitter": {
         187,    # duplicate tweet
         226,    # automated content policy
         261,    # app cannot perform write actions (suspended)
         326,    # account locked
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
     "linkedin": {
         "MEMBER_NOT_ELIGIBLE",
         "UNAUTHORIZED",
         "INVALID_CONTENT",
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
     "tiktok": {
         2200,   # video does not meet community guidelines
         2201,   # video content policy violation
+        "account_suspended",   # EC16: platform ban/suspension
+        "access_revoked",      # EC16: user revoked access
     },
 }
 
@@ -104,6 +116,10 @@ def classify_error(exc: Exception, platform: str = "") -> ErrorClass:
     if isinstance(exc, (PlatformAPIError, PlatformResponseError)):
         code = getattr(exc, "code", None)
         subcode = getattr(exc, "subcode", None)
+
+        # EC16: account suspension / access revocation → always permanent
+        if code in ("account_suspended", "access_revoked"):
+            return ErrorClass.PERMANENT
 
         # EC24: Instagram revocation subcodes → permanent (don't refresh token)
         if subcode in _REVOCATION_SUBCODES:

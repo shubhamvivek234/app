@@ -1,23 +1,29 @@
 """
 Posts CRUD — schedule, list, update (optimistic lock), soft-delete.
 All queries scope by workspace_id or user_id — never post_id alone.
-Phase 5.5: EC8 content policy + EC23 platform×content-type validation on create.
+Phase 5.5:  EC8 content policy + EC23 platform×content-type validation on create.
+Phase 7.5:  Pre-publish content intelligence (7.5.3) + audit event logging.
+Phase 10.1: Schedule density warning on post save.
 """
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from api.deps import CurrentUser, DB, QueueRedis
+from api.deps import CurrentUser, DB, QueueRedis, require_permission
+from api.main import limiter
 from api.models.post import (
     CreatePostRequest,
     PostResponse,
     PostStatus,
     UpdatePostRequest,
 )
+from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
+from utils.schedule_density import check_schedule_density
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -39,8 +45,11 @@ def _doc_to_response(doc: dict) -> PostResponse:
 
 # ── Create ───────────────────────────────────────────────────────────────────
 
-@router.post("/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED,
+             dependencies=[require_permission("post:create")])
+@limiter.limit("100/hour")
 async def create_post(
+    request: Request,
     body: CreatePostRequest,
     current_user: CurrentUser,
     db: DB,
@@ -65,6 +74,7 @@ async def create_post(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     # EC8 — Content policy check (local, fast)
+    policy_warnings: list[str] = []
     for platform in body.platforms:
         result = check_content_policy(body.content or "", platform)
         if not result.approved:
@@ -76,11 +86,56 @@ async def create_post(
                     "violations": result.violations,
                 },
             )
-        if result.warnings:
-            logger.warning(
-                "Content policy warnings for post by user=%s platform=%s: %s",
-                user_id, platform, result.warnings,
+        policy_warnings.extend(result.warnings)
+
+    # Phase 7.5.3 — Pre-publish content intelligence (non-blocking warnings)
+    intelligence_warnings: list[str] = []
+
+    # Duplicate detection: SHA256 of content vs last 30 published posts
+    if body.content:
+        content_hash = hashlib.sha256(body.content.encode()).hexdigest()
+        recent = await db.posts.count_documents({
+            "user_id": user_id,
+            "content_hash": content_hash,
+            "status": "published",
+        })
+        if recent > 0:
+            intelligence_warnings.append("Duplicate content detected — this post has been published before")
+
+    # Platform character count enforcement
+    _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000}
+    for platform in body.platforms:
+        limit = _CHAR_LIMITS.get(platform.lower())
+        if limit and body.content and len(body.content) > limit:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{platform} character limit is {limit} (got {len(body.content)})",
             )
+
+    # Hashtag limit warnings (platform best practices)
+    _HASHTAG_LIMITS = {"instagram": 30, "twitter": 2, "linkedin": 5, "tiktok": 10}
+    if body.content:
+        import re as _re
+        hashtag_count = len(_re.findall(r"#\w+", body.content))
+        for platform in body.platforms:
+            rec = _HASHTAG_LIMITS.get(platform.lower())
+            if rec and hashtag_count > rec:
+                intelligence_warnings.append(
+                    f"{platform}: {hashtag_count} hashtags detected — recommended max is {rec}"
+                )
+
+    all_warnings = policy_warnings + intelligence_warnings
+    if all_warnings:
+        logger.info("Post pre-publish warnings user=%s: %s", user_id, all_warnings)
+
+    # Phase 10.1 — Schedule density warning (non-blocking)
+    density_ws = body.workspace_id or current_user.get("default_workspace_id")
+    density_warnings = await check_schedule_density(
+        db, density_ws, body.platforms, body.scheduled_time
+    )
+    for dw in density_warnings:
+        logger.warning("Schedule density warning: %s", dw.message)
+        all_warnings.append(dw.message)
 
     doc: dict = {
         "id": str(ObjectId()),
@@ -104,18 +159,32 @@ async def create_post(
         "jitter_seconds": None,
         "version": 1,
         "dlq_reason": None,
+        "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
+        "schedule_warnings": all_warnings,
         "created_at": now,
         "updated_at": now,
     }
 
     await db.posts.insert_one(doc)
+
+    # Phase 7.5.1 — Audit event
+    await log_audit_event(
+        db,
+        action="post.created",
+        actor_id=user_id,
+        resource_type="post",
+        resource_id=doc["id"],
+        metadata={"platforms": body.platforms, "scheduled_time": body.scheduled_time.isoformat()},
+    )
+
     logger.info("Post created: %s user=%s workspace=%s", doc["id"], user_id, workspace_id)
     return _doc_to_response(doc)
 
 
 # ── List ─────────────────────────────────────────────────────────────────────
 
-@router.get("/posts", response_model=list[PostResponse])
+@router.get("/posts", response_model=list[PostResponse],
+            dependencies=[require_permission("post:read")])
 async def list_posts(
     current_user: CurrentUser,
     db: DB,
@@ -143,7 +212,8 @@ async def list_posts(
 
 # ── Get single ───────────────────────────────────────────────────────────────
 
-@router.get("/posts/{post_id}", response_model=PostResponse)
+@router.get("/posts/{post_id}", response_model=PostResponse,
+            dependencies=[require_permission("post:read")])
 async def get_post(
     post_id: str,
     current_user: CurrentUser,
@@ -172,7 +242,8 @@ async def get_post(
 
 # ── Update (optimistic lock EC25) ────────────────────────────────────────────
 
-@router.patch("/posts/{post_id}", response_model=PostResponse)
+@router.patch("/posts/{post_id}", response_model=PostResponse,
+              dependencies=[require_permission("post:update")])
 async def update_post(
     post_id: str,
     body: UpdatePostRequest,
@@ -220,12 +291,24 @@ async def update_post(
         )
 
     updated = await db.posts.find_one({"id": post_id, "user_id": user_id}, {"_id": 0})
+
+    # Phase 7.5.1 — Audit event
+    await log_audit_event(
+        db,
+        action="post.updated",
+        actor_id=user_id,
+        resource_type="post",
+        resource_id=post_id,
+        metadata={"fields_changed": list(updates.keys())},
+    )
+
     return _doc_to_response(updated)
 
 
 # ── Soft-delete ───────────────────────────────────────────────────────────────
 
-@router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[require_permission("post:delete")])
 async def delete_post(
     post_id: str,
     current_user: CurrentUser,
@@ -267,3 +350,13 @@ async def delete_post(
         schedule_media_cleanup.apply_async(args=[post_id], countdown=300)
     except Exception as exc:
         logger.warning("Failed to schedule media cleanup for %s: %s", post_id, exc)
+
+    # Phase 7.5.1 — Audit event
+    await log_audit_event(
+        db,
+        action="post.deleted",
+        actor_id=user_id,
+        resource_type="post",
+        resource_id=post_id,
+        metadata={},
+    )

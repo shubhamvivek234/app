@@ -80,10 +80,10 @@ class CreatePostRequest(BaseModel):
         if v is None:
             return v
         now = datetime.utcnow()
-        # Reject past times (> 5 minutes ago)
+        # EC19: Reject past times (> 5 minutes ago)
         if (now - v).total_seconds() > 300:
             raise ValueError("scheduled_time cannot be more than 5 minutes in the past")
-        # Max 365 days in future
+        # EC19: Max 365 days in future
         max_future = now.replace(year=now.year + 1)
         if v > max_future:
             raise ValueError("scheduled_time cannot be more than 365 days in the future")

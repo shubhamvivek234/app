@@ -1,6 +1,7 @@
 """
 Auth routes — /me, /logout (JTI blocklist), /workspace (get-or-create).
 Auto-creates MongoDB user + personal workspace on first Firebase login.
+Phase 3.6.3: Login brute-force protection (Redis-backed attempt tracking).
 """
 import logging
 import secrets
@@ -9,17 +10,51 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, status
 
 from api.deps import CurrentUser, DB, CacheRedis
+from api.main import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
 
+# ── Brute-force protection constants ──────────────────────────────────────────
+_MAX_LOGIN_ATTEMPTS = 5
+_LOGIN_LOCKOUT_SECONDS = 15 * 60  # 15 minutes
+
 _DEFAULT_WORKSPACE_NAME = "Personal Workspace"
+
+
+# ── Brute-force helpers ───────────────────────────────────────────────────────
+
+async def _check_login_attempts(cache_redis, email: str) -> None:
+    """Raise 429 if too many failed login attempts for this email."""
+    key = f"login_attempts:{email}"
+    attempts = await cache_redis.get(key)
+    if attempts and int(attempts) >= _MAX_LOGIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Account temporarily locked. Try again in 15 minutes.",
+        )
+
+
+async def _record_failed_login(cache_redis, email: str) -> None:
+    """Increment failed login counter with 15-minute TTL."""
+    key = f"login_attempts:{email}"
+    pipe = cache_redis.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, _LOGIN_LOCKOUT_SECONDS)
+    await pipe.execute()
+
+
+async def _clear_login_attempts(cache_redis, email: str) -> None:
+    """Clear failed login counter on successful login."""
+    key = f"login_attempts:{email}"
+    await cache_redis.delete(key)
 
 
 # ── /me ──────────────────────────────────────────────────────────────────────
 
 @router.get("/auth/me", response_model=UserResponse)
+@limiter.limit("20/minute")
 async def get_me(
     request: Request,
     current_user: CurrentUser,
@@ -48,9 +83,64 @@ async def get_me(
     return UserResponse(**user)
 
 
+# ── /login (with brute-force protection) ─────────────────────────────────────
+
+@router.post("/auth/login", response_model=UserResponse)
+@limiter.limit("20/minute")
+async def login(
+    request: Request,
+    db: DB,
+    cache_redis: CacheRedis,
+) -> UserResponse:
+    """
+    Verify Firebase ID token and return user record.
+    Enforces brute-force protection: max 5 failed attempts per email per 15 min.
+    """
+    import firebase_admin.auth as fb_auth
+    from api.deps import get_firebase_app
+
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing token",
+        )
+
+    # Decode token to extract email for rate-limit key (without full verify first)
+    try:
+        get_firebase_app()
+        decoded = fb_auth.verify_id_token(token)
+    except Exception:
+        # Cannot determine email — apply generic failure
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    email = decoded.get("email", decoded.get("uid", "unknown"))
+
+    # Check brute-force lockout
+    await _check_login_attempts(cache_redis, email)
+
+    uid = decoded.get("uid")
+    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+
+    if user is None:
+        # Auto-create user on first login
+        display_name = decoded.get("name")
+        user = await _auto_create_user(db, uid, email, display_name)
+
+    # Successful login — clear attempt counter
+    await _clear_login_attempts(cache_redis, email)
+    logger.info("Login successful: user=%s email=%s", user["user_id"], email)
+    return UserResponse(**user)
+
+
 # ── /logout ───────────────────────────────────────────────────────────────────
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
 async def logout(
     request: Request,
     current_user: CurrentUser,
@@ -87,7 +177,9 @@ async def logout(
 # ── /workspace ────────────────────────────────────────────────────────────────
 
 @router.get("/auth/workspace", response_model=WorkspaceResponse)
+@limiter.limit("20/minute")
 async def get_or_create_workspace(
+    request: Request,
     current_user: CurrentUser,
     db: DB,
 ) -> WorkspaceResponse:

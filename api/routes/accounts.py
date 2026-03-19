@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 
-from api.deps import CurrentUser, DB, CacheRedis
+from api.deps import CurrentUser, DB, CacheRedis, require_permission
 from utils.encryption import encrypt
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,8 @@ class OAuthCallbackResponse(BaseModel):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.get("/accounts", response_model=list[SocialAccountResponse])
+@router.get("/accounts", response_model=list[SocialAccountResponse],
+            dependencies=[require_permission("account:read")])
 async def list_accounts(
     current_user: CurrentUser,
     db: DB,
@@ -73,7 +74,8 @@ async def list_accounts(
     return [SocialAccountResponse(**d) for d in docs]
 
 
-@router.delete("/accounts/{account_id}", status_code=status.HTTP_200_OK)
+@router.delete("/accounts/{account_id}", status_code=status.HTTP_200_OK,
+               dependencies=[require_permission("account:disconnect")])
 async def disconnect_account(
     account_id: str,
     current_user: CurrentUser,
@@ -139,7 +141,8 @@ async def disconnect_account(
     return {"disconnected": True, "future_posts_cancelled": future_count}
 
 
-@router.get("/oauth/{platform}/url", response_model=OAuthUrlResponse)
+@router.get("/oauth/{platform}/url", response_model=OAuthUrlResponse,
+            dependencies=[require_permission("account:connect")])
 async def get_oauth_url(
     platform: str,
     current_user: CurrentUser,
@@ -161,7 +164,8 @@ async def get_oauth_url(
     return OAuthUrlResponse(platform=platform, authorization_url=auth_url, state=state)
 
 
-@router.get("/oauth/{platform}/callback", response_model=OAuthCallbackResponse)
+@router.get("/oauth/{platform}/callback", response_model=OAuthCallbackResponse,
+            dependencies=[require_permission("account:connect")])
 async def oauth_callback(
     platform: str,
     code: str,

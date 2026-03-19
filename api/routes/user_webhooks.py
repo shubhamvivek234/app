@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, HttpUrl, field_validator
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, require_permission
 from utils.ssrf_guard import is_safe_url
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ class WebhookEndpointResponse(BaseModel):
     "/webhooks/endpoints",
     response_model=WebhookEndpointResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[require_permission("webhook:manage")],
 )
 async def register_webhook(
     body: WebhookEndpointCreate,
@@ -125,7 +126,8 @@ async def register_webhook(
     return resp
 
 
-@router.get("/webhooks/endpoints", response_model=list[WebhookEndpointResponse])
+@router.get("/webhooks/endpoints", response_model=list[WebhookEndpointResponse],
+            dependencies=[require_permission("webhook:manage")])
 async def list_webhooks(current_user: CurrentUser, db: DB) -> list[WebhookEndpointResponse]:
     workspace_id = current_user.get("default_workspace_id")
     cursor = db.webhook_endpoints.find(
@@ -146,7 +148,8 @@ async def list_webhooks(current_user: CurrentUser, db: DB) -> list[WebhookEndpoi
     ]
 
 
-@router.delete("/webhooks/endpoints/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/webhooks/endpoints/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[require_permission("webhook:manage")])
 async def delete_webhook(
     endpoint_id: str,
     current_user: CurrentUser,

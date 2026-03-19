@@ -13,7 +13,8 @@ from typing import Annotated
 import magic
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 
-from api.deps import CurrentUser, DB, CacheRedis, QueueRedis
+from api.deps import CurrentUser, DB, CacheRedis, QueueRedis, require_permission
+from api.main import limiter
 from api.models.media import MediaAssetResponse, MediaStatus, MediaUploadResponse
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,9 @@ async def _release_concurrent_slot(cache_redis: CacheRedis, user_id: str) -> Non
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.post("/upload", response_model=MediaUploadResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/upload", response_model=MediaUploadResponse, status_code=status.HTTP_202_ACCEPTED,
+             dependencies=[require_permission("media:upload")])
+@limiter.limit("30/hour")
 async def upload_media(
     request: Request,
     file: Annotated[UploadFile, File(...)],

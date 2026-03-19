@@ -97,8 +97,10 @@ class InstagramAdapter(PlatformAdapter):
                 await record_failure(redis, self.platform)
             raise PlatformAPIError(f"Container processing failed: {poll_json.get('status', '')}")
 
-        # Still IN_PROGRESS — signal Celery to retry
-        # TODO: raise self.retry(countdown=CONTAINER_POLL_INTERVAL) in the Celery task wrapper
+        # EC12: Still IN_PROGRESS — dispatch non-blocking container status check
+        # Instead of polling here, return pending with container_id.
+        # The Celery task layer should dispatch check_instagram_container_status
+        # which checks once, releases the worker, and retries via Celery countdown.
         return {"container_id": container_id, "pre_upload_status": "pending"}
 
     async def publish(self, post: dict, *, redis=None) -> dict:

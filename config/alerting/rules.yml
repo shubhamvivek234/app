@@ -1,0 +1,105 @@
+# Phase 4 -- Prometheus Alerting Rules for SocialEntangler
+groups:
+  - name: socialentangler_alerts
+    rules:
+
+      # ── DLQ depth > 0 for 5 minutes ──────────────────────────────────────
+      - alert: DLQDepthNonZero
+        expr: dlq_depth > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue is not empty"
+          description: >-
+            DLQ depth has been {{ $value }} for more than 5 minutes.
+            Investigate poison-pill messages and consumer failures.
+
+      # ── Queue depth > 500 for 10 minutes ─────────────────────────────────
+      - alert: QueueDepthHigh
+        expr: queue_depth > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth exceeds 500"
+          description: >-
+            Queue {{ $labels.queue_name }} depth is {{ $value }}.
+            Workers may be falling behind or consumers may be unhealthy.
+
+      # ── Publish success rate < 90% in 15 minute window ───────────────────
+      - alert: PublishSuccessRateLow
+        expr: >-
+          (
+            sum(rate(publish_success_total[15m]))
+            / sum(rate(publish_attempts_total[15m]))
+          ) * 100 < 90
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Publish success rate below 90%"
+          description: >-
+            Publish success rate is {{ $value | printf "%.1f" }}% over the
+            last 15 minutes. Check platform adapters and API credentials.
+
+      # ── 5xx error rate > 1% in 5 minute window ──────────────────────────
+      - alert: HighServerErrorRate
+        expr: >-
+          (
+            sum(rate(http_responses_total{status=~"5.."}[5m]))
+            / sum(rate(http_responses_total[5m]))
+          ) * 100 > 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "5xx error rate exceeds 1%"
+          description: >-
+            Server error rate is {{ $value | printf "%.2f" }}% over the
+            last 5 minutes. Check application logs for stack traces.
+
+      # ── Circuit breaker OPEN for any platform ────────────────────────────
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Circuit breaker OPEN for {{ $labels.platform }}"
+          description: >-
+            Platform {{ $labels.platform }} circuit breaker is OPEN.
+            Publishing to this platform is halted. Investigate upstream
+            API health and error rates.
+
+      # ── Worker memory > 512 MB ───────────────────────────────────────────
+      - alert: WorkerMemoryHigh
+        expr: process_resident_memory_bytes{job=~".*worker.*"} > 536870912
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker memory exceeds 512 MB"
+          description: >-
+            Worker {{ $labels.instance }} resident memory is
+            {{ $value | humanize1024 }}. Possible memory leak —
+            check for unbounded caches or large media buffers.
+
+      # ── Token refresh failure rate > 5% ──────────────────────────────────
+      - alert: TokenRefreshFailureHigh
+        expr: >-
+          (
+            1 - (
+              sum(rate(token_refresh_success_total[5m]))
+              / sum(rate(token_refresh_attempts_total[5m]))
+            )
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Token refresh failure rate exceeds 5%"
+          description: >-
+            Token refresh failure rate is {{ $value | printf "%.1f" }}%.
+            Users may lose platform connectivity. Check OAuth provider
+            status and stored credentials.

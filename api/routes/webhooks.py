@@ -202,3 +202,265 @@ async def _process_youtube_webhook(payload: dict, db) -> None:
             {"platform_results.youtube.platform_post_id": video_id},
             {"$set": {"platform_results.youtube.status": "published", "updated_at": now}},
         )
+
+
+# ── EC28 — Stripe webhook (idempotent) ──────────────────────────────────────
+
+_STRIPE_DEDUP_TTL = 86400 * 3  # 72 hours
+
+_STRIPE_EVENT_HANDLERS: dict[str, str] = {
+    "checkout.session.completed": "checkout_completed",
+    "invoice.payment_succeeded": "payment_succeeded",
+    "invoice.payment_failed": "payment_failed",
+    "customer.subscription.deleted": "subscription_deleted",
+}
+
+
+@router.post("/webhooks/stripe", response_model=WebhookAckResponse)
+async def receive_stripe_webhook(
+    request: Request,
+    db: DB,
+    cache_redis: CacheRedis,
+) -> WebhookAckResponse:
+    """Idempotent Stripe webhook handler with HMAC signature verification."""
+    raw_body = await request.body()
+
+    # 1. Verify Stripe signature
+    stripe_signature = request.headers.get("stripe-signature", "")
+    stripe_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    if not stripe_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stripe webhook secret not configured",
+        )
+
+    try:
+        import stripe
+        event = stripe.Webhook.construct_event(
+            raw_body, stripe_signature, stripe_secret,
+        )
+    except Exception as exc:
+        logger.warning("Stripe signature verification failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Stripe signature",
+        )
+
+    event_id = event.get("id", "")
+    event_type = event.get("type", "")
+
+    # 2. Redis dedup — 72-hour TTL
+    dedup_key = f"stripe_event:{event_id}"
+    is_new = await cache_redis.set(dedup_key, "1", ex=_STRIPE_DEDUP_TTL, nx=True)
+    if not is_new:
+        logger.info("Duplicate Stripe event ignored: %s", event_id)
+        return WebhookAckResponse(received=True)
+
+    # 3. Store raw event in webhook_events collection
+    now = datetime.now(timezone.utc)
+    await db.webhook_events.insert_one({
+        "platform": "stripe",
+        "event_id": event_id,
+        "event_type": event_type,
+        "payload": event,
+        "raw_body": raw_body.decode("utf-8", errors="replace"),
+        "received_at": now,
+        "processed": False,
+    })
+
+    # 4. Process known event types
+    if event_type in _STRIPE_EVENT_HANDLERS:
+        await _process_stripe_event(event_type, event, db)
+        await db.webhook_events.update_one(
+            {"event_id": event_id, "platform": "stripe"},
+            {"$set": {"processed": True, "processed_at": now}},
+        )
+    else:
+        logger.info("Unhandled Stripe event type: %s", event_type)
+
+    return WebhookAckResponse(received=True)
+
+
+async def _process_stripe_event(event_type: str, event: dict, db) -> None:
+    """Route Stripe event to appropriate handler."""
+    now = datetime.now(timezone.utc)
+    data_obj = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        customer_email = data_obj.get("customer_email", "")
+        subscription_id = data_obj.get("subscription", "")
+        if customer_email:
+            await db.users.update_one(
+                {"email": customer_email},
+                {"$set": {
+                    "subscription_status": "active",
+                    "stripe_subscription_id": subscription_id,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Checkout completed for %s", customer_email)
+
+    elif event_type == "invoice.payment_succeeded":
+        customer_id = data_obj.get("customer", "")
+        if customer_id:
+            await db.users.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {
+                    "subscription_status": "active",
+                    "payment_failure_count": 0,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Payment succeeded for customer %s", customer_id)
+
+    elif event_type == "invoice.payment_failed":
+        customer_id = data_obj.get("customer", "")
+        attempt_count = data_obj.get("attempt_count", 1)
+        if customer_id:
+            await db.users.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {
+                    "payment_failure_count": attempt_count,
+                    "last_payment_failure_at": now,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Payment failed for customer %s (attempt %d)", customer_id, attempt_count)
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = data_obj.get("customer", "")
+        if customer_id:
+            from datetime import timedelta
+            grace_end = now + timedelta(days=7)
+            await db.users.update_one(
+                {"stripe_customer_id": customer_id},
+                {"$set": {
+                    "subscription_status": "cancelled",
+                    "subscription_grace_period_end": grace_end,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Subscription deleted for customer %s, grace until %s", customer_id, grace_end)
+
+
+# ── EC28 — Razorpay webhook (idempotent) ────────────────────────────────────
+
+_RAZORPAY_DEDUP_TTL = 86400 * 3  # 72 hours
+
+
+@router.post("/webhooks/razorpay", response_model=WebhookAckResponse)
+async def receive_razorpay_webhook(
+    request: Request,
+    db: DB,
+    cache_redis: CacheRedis,
+) -> WebhookAckResponse:
+    """Idempotent Razorpay webhook handler with HMAC signature verification."""
+    raw_body = await request.body()
+
+    # 1. Verify Razorpay signature (HMAC-SHA256)
+    razorpay_signature = request.headers.get("x-razorpay-signature", "")
+    razorpay_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+    if not razorpay_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Razorpay webhook secret not configured",
+        )
+
+    expected = hmac.new(
+        razorpay_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, razorpay_signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Razorpay signature",
+        )
+
+    # 2. Parse payload
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON payload",
+        )
+
+    event_id = payload.get("event_id", payload.get("id", ""))
+    event_type = payload.get("event", "")
+
+    # 3. Redis dedup — 72-hour TTL
+    dedup_key = f"razorpay_event:{event_id}"
+    is_new = await cache_redis.set(dedup_key, "1", ex=_RAZORPAY_DEDUP_TTL, nx=True)
+    if not is_new:
+        logger.info("Duplicate Razorpay event ignored: %s", event_id)
+        return WebhookAckResponse(received=True)
+
+    # 4. Store raw event
+    now = datetime.now(timezone.utc)
+    await db.webhook_events.insert_one({
+        "platform": "razorpay",
+        "event_id": event_id,
+        "event_type": event_type,
+        "payload": payload,
+        "raw_body": raw_body.decode("utf-8", errors="replace"),
+        "received_at": now,
+        "processed": False,
+    })
+
+    # 5. Process known event types
+    await _process_razorpay_event(event_type, payload, db)
+    await db.webhook_events.update_one(
+        {"event_id": event_id, "platform": "razorpay"},
+        {"$set": {"processed": True, "processed_at": now}},
+    )
+
+    return WebhookAckResponse(received=True)
+
+
+async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
+    """Route Razorpay event to appropriate handler."""
+    now = datetime.now(timezone.utc)
+    entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+
+    if event_type == "payment.captured":
+        email = entity.get("email", "")
+        if email:
+            await db.users.update_one(
+                {"email": email},
+                {"$set": {
+                    "subscription_status": "active",
+                    "payment_failure_count": 0,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Razorpay payment captured for %s", email)
+
+    elif event_type == "payment.failed":
+        email = entity.get("email", "")
+        if email:
+            await db.users.update_one(
+                {"email": email},
+                {
+                    "$inc": {"payment_failure_count": 1},
+                    "$set": {"last_payment_failure_at": now, "updated_at": now},
+                },
+            )
+            logger.info("Razorpay payment failed for %s", email)
+
+    elif event_type == "subscription.cancelled":
+        sub_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+        customer_id = sub_entity.get("customer_id", "")
+        if customer_id:
+            from datetime import timedelta
+            grace_end = now + timedelta(days=7)
+            await db.users.update_one(
+                {"razorpay_customer_id": customer_id},
+                {"$set": {
+                    "subscription_status": "cancelled",
+                    "subscription_grace_period_end": grace_end,
+                    "updated_at": now,
+                }},
+            )
+            logger.info("Razorpay subscription cancelled for customer %s", customer_id)

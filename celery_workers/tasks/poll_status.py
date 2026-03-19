@@ -45,9 +45,11 @@ def poll_processing_posts() -> dict:
 async def _async_poll() -> dict:
     from platform_adapters import get_adapter
     from utils.circuit_breaker import can_attempt
+    from db.redis_client import get_cache_redis
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
+    cache_redis = get_cache_redis()
 
     now = datetime.now(timezone.utc)
     polling_cutoff = now - timedelta(minutes=_POLLING_THRESHOLD_MINUTES)
@@ -85,7 +87,7 @@ async def _async_poll() -> dict:
             if not platform_post_id:
                 continue
 
-            if not can_attempt(platform):
+            if not await can_attempt(cache_redis, platform):
                 logger.info(
                     "poll_status: circuit breaker OPEN for %s — skipping post %s",
                     platform, post_id,

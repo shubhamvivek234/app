@@ -39,6 +39,16 @@ celery_app.conf.beat_schedule.update({
         "schedule": 7 * 24 * 3600,  # weekly
         "options": {"queue": "default"},
     },
+    "check-subscription-expiry": {
+        "task": "celery_workers.tasks.subscription_check.check_expiring_subscriptions",
+        "schedule": 86400,  # daily
+        "options": {"queue": "default"},
+    },
+    "api-version-monitor": {
+        "task": "celery_workers.tasks.api_version_monitor.check_platform_api_versions",
+        "schedule": 86400,  # daily
+        "options": {"queue": "default"},
+    },
 })
 
 
@@ -99,14 +109,14 @@ async def _async_scan_and_enqueue() -> dict:
         # Atomic claim — prevents double-enqueue from concurrent Beat instances (EC2)
         result = await db.posts.find_one_and_update(
             {"id": post_id, "status": "scheduled"},
-            {"$set": {
-                "status": "queued",
-                "status_history": {"$push": {
+            {
+                "$set": {"status": "queued"},
+                "$push": {"status_history": {
                     "status": "queued",
                     "timestamp": now.isoformat(),
                     "actor": "beat_scheduler",
                 }},
-            }},
+            },
             return_document=True,
         )
 
@@ -130,4 +140,28 @@ async def _async_scan_and_enqueue() -> dict:
         enqueued += 1
         logger.info("Enqueued post %s to %s queue", post_id, queue)
 
-    return {"enqueued": enqueued, "scan_time": now.isoformat()}
+    # Phase 1.5.3: Trigger pre-upload for posts with video that are due within 20 minutes
+    pre_upload_horizon = now + timedelta(minutes=20)
+    pre_upload_cursor = db.posts.find(
+        {
+            "status": "scheduled",
+            "scheduled_time": {"$lte": pre_upload_horizon, "$gt": enqueue_horizon},
+            "post_type": {"$in": ["video", "reel", "story"]},
+            "pre_upload_status": {"$in": [None, "pending"]},
+        },
+        {"_id": 0, "id": 1, "platforms": 1},
+        limit=50,
+    )
+    pre_uploads_triggered = 0
+    async for post in pre_upload_cursor:
+        from celery_workers.tasks.publish import pre_upload_task
+        platforms = post.get("platforms", [])
+        for p in platforms:
+            if p in ("instagram", "youtube"):
+                pre_upload_task.apply_async(
+                    kwargs={"post_id": post["id"], "platform": p},
+                    queue="media_processing",
+                )
+                pre_uploads_triggered += 1
+
+    return {"enqueued": enqueued, "pre_uploads": pre_uploads_triggered, "scan_time": now.isoformat()}

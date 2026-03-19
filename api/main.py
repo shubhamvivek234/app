@@ -1,10 +1,11 @@
 """
-Phase 0.8 + Phase 4 + Phase 5.8 — FastAPI application factory.
+Phase 0.8 + Phase 3.3 + Phase 4 + Phase 5.8 — FastAPI application factory.
 - CORSMiddleware with explicit allowed_origins (never wildcard *)
 - Security headers + trace_id middleware
 - Structured (JSON) logging in production
 - Sentry SDK integration with performance tracing (Phase 4)
 - Prometheus metrics via prometheus-fastapi-instrumentator (Phase 4)
+- slowapi rate limiting with Redis backend (Phase 3.3)
 - Startup: create DB indexes, close pools on shutdown
 """
 import os
@@ -20,6 +21,9 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from api.middleware import SecurityHeadersMiddleware, TraceIDMiddleware
 from api.health import router as health_router
@@ -31,9 +35,11 @@ from api.routes.webhooks import router as webhooks_router
 from api.routes.stream import router as stream_router
 from api.routes.public_api import router as public_api_router
 from api.routes.user_webhooks import router as user_webhooks_router
+from api.routes.admin import router as admin_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
+from db.audit_events import ensure_indexes as create_audit_indexes
 from utils.log_scrub import configure_scrubbing
 
 
@@ -92,12 +98,24 @@ def _configure_logging() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import os as _os
+    from db.mongo import get_client as _get_client
     _configure_logging()
     _configure_sentry()
     await create_all_indexes()
+    # Phase 7.5.1 — audit_events TTL + query indexes
+    _client = await _get_client()
+    _db = _client[_os.environ["DB_NAME"]]
+    await create_audit_indexes(_db)
     yield
     await close_client()
     await close_pools()
+
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=os.environ.get("REDIS_CACHE_URL", "redis://localhost:6379/0"),
+)
 
 
 def create_app() -> FastAPI:
@@ -108,6 +126,10 @@ def create_app() -> FastAPI:
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    # Rate limiting (Phase 3.3)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # CORS — explicit origins only, never wildcard
     allowed_origins = [
@@ -137,6 +159,7 @@ def create_app() -> FastAPI:
     app.include_router(stream_router, prefix="/api/v1")
     app.include_router(public_api_router, prefix="/api/v1")    # Phase 5.8
     app.include_router(user_webhooks_router, prefix="/api/v1") # Phase 5.8
+    app.include_router(admin_router, prefix="/api/v1")         # Phase 9
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(

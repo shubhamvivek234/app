@@ -91,26 +91,100 @@ class YouTubeAdapter(PlatformAdapter):
                 if redis:
                     await redis.setex(_resume_redis_key(post_id), RESUME_KEY_TTL, resume_uri)
 
-            # TODO: stream video bytes from media_url in CHUNK_SIZE chunks.
-            # For each chunk: PUT resume_uri with Content-Range header.
-            # On 308 (Resume Incomplete): continue from Range response header offset.
-            # On 200/201: upload complete — parse video_id from response body.
-            # Stub: download entire file and upload as single chunk.
-            file_resp = await client.get(media_url)
-            if file_resp.status_code != 200:
-                raise PlatformHTTPError(file_resp.status_code, "Could not fetch media file")
-            video_bytes = file_resp.content
-            total_size = len(video_bytes)
+            # EC11 — Chunked resumable upload: stream from media_url, upload in CHUNK_SIZE chunks.
 
-            upload_resp = await client.put(
-                resume_uri,
-                content=video_bytes,
-                headers={
-                    **auth_headers,
-                    "Content-Length": str(total_size),
-                    "Content-Range": f"bytes 0-{total_size - 1}/{total_size}",
-                },
-            )
+            # Step 1: Determine total file size via HEAD request.
+            head_resp = await client.head(media_url, follow_redirects=True)
+            if head_resp.status_code != 200:
+                raise PlatformHTTPError(head_resp.status_code, "Could not HEAD media file")
+            total_size = int(head_resp.headers.get("Content-Length", 0))
+            if total_size == 0:
+                raise PlatformResponseError("Media file has unknown or zero Content-Length")
+
+            # Step 2: Check if a previous partial upload exists (crash recovery).
+            start_offset = 0
+            if redis:
+                saved_offset = await redis.get(f"{_resume_redis_key(post_id)}:offset")
+                if saved_offset:
+                    start_offset = int(saved_offset if isinstance(saved_offset, str) else saved_offset.decode())
+                    logger.info("Resuming YouTube upload from offset %d / %d", start_offset, total_size)
+
+            # Step 3: Stream media file and upload in CHUNK_SIZE chunks.
+            upload_resp = None
+            offset = start_offset
+
+            async with client.stream("GET", media_url, headers={"Range": f"bytes={offset}-"}) as media_stream:
+                if media_stream.status_code not in (200, 206):
+                    raise PlatformHTTPError(media_stream.status_code, "Could not fetch media file")
+
+                buffer = b""
+                async for raw_chunk in media_stream.aiter_bytes():
+                    buffer += raw_chunk
+
+                    while len(buffer) >= CHUNK_SIZE:
+                        chunk_data = buffer[:CHUNK_SIZE]
+                        buffer = buffer[CHUNK_SIZE:]
+
+                        chunk_end = offset + len(chunk_data) - 1
+                        chunk_headers = {
+                            **auth_headers,
+                            "Content-Length": str(len(chunk_data)),
+                            "Content-Range": f"bytes {offset}-{chunk_end}/{total_size}",
+                        }
+                        chunk_resp = await client.put(
+                            resume_uri,
+                            content=chunk_data,
+                            headers=chunk_headers,
+                        )
+
+                        if chunk_resp.status_code in (200, 201):
+                            upload_resp = chunk_resp
+                            break
+                        elif chunk_resp.status_code == 308:
+                            # Resume Incomplete — read Range header for next offset.
+                            range_header = chunk_resp.headers.get("Range", "")
+                            if range_header:
+                                offset = int(range_header.split("-")[1]) + 1
+                            else:
+                                offset += len(chunk_data)
+
+                            # Persist progress for crash recovery.
+                            if redis:
+                                await redis.setex(
+                                    f"{_resume_redis_key(post_id)}:offset",
+                                    RESUME_KEY_TTL,
+                                    str(offset),
+                                )
+                            # Store chunk_upload_progress on post document via redis.
+                            progress = min(int((offset / total_size) * 100), 99)
+                            if redis:
+                                await redis.set(
+                                    f"upload:progress:{post_id}:youtube",
+                                    str(progress),
+                                )
+                            logger.debug("YouTube chunk upload progress: %d%% (%d/%d)", progress, offset, total_size)
+                        else:
+                            raise PlatformHTTPError(chunk_resp.status_code, chunk_resp.text)
+
+                    if upload_resp is not None:
+                        break
+
+                # Upload the remaining buffer (final chunk, smaller than CHUNK_SIZE).
+                if upload_resp is None and buffer:
+                    chunk_end = offset + len(buffer) - 1
+                    chunk_headers = {
+                        **auth_headers,
+                        "Content-Length": str(len(buffer)),
+                        "Content-Range": f"bytes {offset}-{chunk_end}/{total_size}",
+                    }
+                    upload_resp = await client.put(
+                        resume_uri,
+                        content=buffer,
+                        headers=chunk_headers,
+                    )
+
+            if upload_resp is None:
+                raise PlatformResponseError("Upload completed without a final response from YouTube")
 
         if upload_resp.status_code not in (200, 201):
             if redis:
@@ -126,6 +200,8 @@ class YouTubeAdapter(PlatformAdapter):
         if redis:
             await record_success(redis, self.platform)
             await redis.delete(_resume_redis_key(post_id))
+            await redis.delete(f"{_resume_redis_key(post_id)}:offset")
+            await redis.set(f"upload:progress:{post_id}:youtube", "100")
 
         return {"video_id": video_id}
 

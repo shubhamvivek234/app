@@ -102,7 +102,117 @@ async def _archive_to_coldline(url: str, post_id: str) -> None:
     bind=True,
 )
 def scan_orphaned_files(self) -> dict:
-    """Weekly task: find /media/ + /quarantine/ files with no corresponding DB record."""
-    logger.info("Orphaned file scan started")
-    # TODO: Enumerate GCS bucket paths, cross-reference with media_assets collection
-    return {"status": "scan_complete"}
+    """
+    Phase 10.6 — Weekly orphaned file scanner.
+    Lists files in /media/ and /quarantine/ GCS paths, checks if
+    corresponding post exists in MongoDB, deletes orphaned files.
+    """
+    import asyncio
+    return asyncio.get_event_loop().run_until_complete(_async_scan_orphans())
+
+
+async def _async_scan_orphans() -> dict:
+    """Scan GCS for orphaned media files and delete them in batches."""
+    import re
+    from db.mongo import get_client
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    media_bucket = os.environ.get("GCS_BUCKET_MEDIA", "")
+    quarantine_bucket = os.environ.get("GCS_BUCKET_QUARANTINE", "")
+
+    if not media_bucket and not quarantine_bucket:
+        logger.warning("orphan_scan: GCS bucket env vars not set — skipping")
+        return {"status": "skipped", "reason": "no_buckets_configured"}
+
+    # UUID pattern used in filenames
+    uuid_pattern = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.I)
+
+    files_scanned = 0
+    orphaned_found = 0
+    bytes_freed = 0
+    errors = 0
+
+    try:
+        from google.cloud import storage as gcs_storage
+        gcs_client = gcs_storage.Client()
+    except (ImportError, Exception) as exc:
+        logger.warning("orphan_scan: GCS client not available — %s", exc)
+        return {"status": "skipped", "reason": str(exc)}
+
+    for bucket_name, prefix_list in [
+        (media_bucket, ["media/", ""]),
+        (quarantine_bucket, ["quarantine/", ""]),
+    ]:
+        if not bucket_name:
+            continue
+
+        try:
+            bucket = gcs_client.bucket(bucket_name)
+        except Exception as exc:
+            logger.error("orphan_scan: cannot access bucket %s — %s", bucket_name, exc)
+            errors += 1
+            continue
+
+        for prefix in prefix_list:
+            blobs = bucket.list_blobs(prefix=prefix, max_results=5000)
+            batch_delete = []
+
+            for blob in blobs:
+                files_scanned += 1
+                # Extract UUID from blob name
+                match = uuid_pattern.search(blob.name)
+                if not match:
+                    continue
+
+                file_uuid = match.group(1)
+
+                # Check if any post or media_asset references this UUID
+                post = await db.posts.find_one(
+                    {"$or": [{"id": file_uuid}, {"media_ids": file_uuid}]},
+                    {"_id": 1, "deleted_at": 1},
+                )
+                asset = await db.media_assets.find_one(
+                    {"media_id": file_uuid},
+                    {"_id": 1},
+                )
+
+                is_orphaned = (post is None and asset is None) or (
+                    post is not None and post.get("deleted_at") is not None
+                )
+
+                if is_orphaned:
+                    batch_delete.append(blob)
+                    bytes_freed += blob.size or 0
+                    orphaned_found += 1
+
+                # Delete in batches of 100
+                if len(batch_delete) >= 100:
+                    for b in batch_delete:
+                        try:
+                            b.delete()
+                        except Exception as del_exc:
+                            logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
+                            errors += 1
+                    batch_delete = []
+
+            # Flush remaining batch
+            for b in batch_delete:
+                try:
+                    b.delete()
+                except Exception as del_exc:
+                    logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
+                    errors += 1
+
+    logger.info(
+        "orphan_scan: scanned=%d orphaned=%d bytes_freed=%d errors=%d",
+        files_scanned, orphaned_found, bytes_freed, errors,
+    )
+    return {
+        "status": "complete",
+        "files_scanned": files_scanned,
+        "orphaned_found": orphaned_found,
+        "bytes_freed": bytes_freed,
+        "errors": errors,
+    }

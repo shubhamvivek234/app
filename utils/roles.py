@@ -45,6 +45,13 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
 
     # Webhooks
     "webhook:manage": WorkspaceRole.ADMIN,
+
+    # Media upload
+    "media:upload": WorkspaceRole.EDITOR,
+
+    # Admin
+    "admin:read": WorkspaceRole.ADMIN,
+    "admin:manage": WorkspaceRole.OWNER,
 }
 
 _ROLE_RANK: dict[WorkspaceRole, int] = {

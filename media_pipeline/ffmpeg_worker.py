@@ -100,6 +100,119 @@ async def add_silent_audio_track(input_path: str) -> str:
     return output_path
 
 
+async def convert_gif_for_platforms(
+    input_path: str, platforms: list[str], output_dir: str
+) -> dict[str, str]:
+    """
+    EC30 — Convert animated GIF per-platform.
+
+    Returns dict mapping platform name -> output file path (or error string).
+    - Instagram/TikTok: GIF -> MP4 (H.264, silent audio, loop once)
+    - YouTube: GIF -> MP4 with 3x loop (-stream_loop 2)
+    - Twitter: Validate GIF < 15MB and < 6s; error if over limits
+    - LinkedIn: Warning that only first frame shown (no conversion)
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    results: dict[str, str] = {}
+
+    for platform in platforms:
+        platform_lower = platform.lower()
+
+        if platform_lower in ("instagram", "tiktok"):
+            output_path = os.path.join(output_dir, f"{uuid.uuid4()}_{platform_lower}.mp4")
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-ignore_loop", "0",
+                "-i", input_path,
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-vf", "fps=25,scale=min(1280\\,iw):-2:flags=lanczos",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-c:a", "aac",
+                "-shortest",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+            try:
+                await _run_process(cmd_args)
+                results[platform_lower] = output_path
+            except RuntimeError as exc:
+                results[platform_lower] = f"error: {exc}"
+
+        elif platform_lower == "youtube":
+            output_path = os.path.join(output_dir, f"{uuid.uuid4()}_youtube.mp4")
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-stream_loop", "2",
+                "-ignore_loop", "0",
+                "-i", input_path,
+                "-vf", "fps=25,scale=min(1280\\,iw):-2:flags=lanczos",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+                "-an",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+            try:
+                await _run_process(cmd_args)
+                results["youtube"] = output_path
+            except RuntimeError as exc:
+                results["youtube"] = f"error: {exc}"
+
+        elif platform_lower == "twitter":
+            # Validate GIF: must be < 15MB and < 6s duration.
+            try:
+                file_size = os.path.getsize(input_path)
+                max_size = 15 * 1024 * 1024  # 15 MB
+                if file_size > max_size:
+                    results["twitter"] = (
+                        f"error: GIF is {file_size / (1024 * 1024):.1f}MB, "
+                        f"exceeds Twitter's 15MB limit"
+                    )
+                    continue
+
+                # Probe duration with ffprobe.
+                probe_args = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    input_path,
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    *probe_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=FFMPEG_TIMEOUT
+                )
+                duration_str = stdout.decode().strip()
+                duration = float(duration_str) if duration_str else 0.0
+
+                if duration > 6.0:
+                    results["twitter"] = (
+                        f"error: GIF duration is {duration:.1f}s, "
+                        f"exceeds Twitter's 6s limit"
+                    )
+                    continue
+
+                # GIF passes validation — return original path.
+                results["twitter"] = input_path
+
+            except (ValueError, RuntimeError) as exc:
+                results["twitter"] = f"error: {exc}"
+
+        elif platform_lower == "linkedin":
+            results["linkedin"] = (
+                "warning: LinkedIn displays only the first frame of animated GIFs; "
+                "no conversion performed"
+            )
+
+        else:
+            results[platform_lower] = f"error: unsupported platform '{platform}'"
+
+    return results
+
+
 async def _run_process(args: list[str]) -> None:
     """Run a process with explicit arg list — no shell interpolation."""
     # All args are server-generated constants or server-side temp file paths.
