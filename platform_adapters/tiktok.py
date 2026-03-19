@@ -26,8 +26,9 @@ TIKTOK_PUBLISH_INIT = f"{TIKTOK_API_BASE}/v2/post/publish/video/init/"
 
 
 def _require_tiktok_enabled() -> None:
-    """Raise a clear error if TIKTOK_ENABLED is not set to 'true'."""
-    if os.environ.get("TIKTOK_ENABLED", "").lower() != "true":
+    """Raise a clear error if tiktok_enabled feature flag is off."""
+    from utils.feature_flags import is_enabled
+    if not is_enabled("tiktok_enabled"):
         raise PlatformAPIError(
             "TikTok publishing is disabled. Set TIKTOK_ENABLED=true to enable."
         )
