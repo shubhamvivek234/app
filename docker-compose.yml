@@ -1,6 +1,7 @@
 version: "3.9"
 
-# Phase 1.8 — Local dev Docker Compose
+# Phase 1.8 + Phase 4 — Local dev Docker Compose
+# Phase 4 adds: Prometheus, Grafana, Pushgateway, redis-exporter × 2, mongodb-exporter
 # All services required for full local development.
 # redis-queue: noeviction (jobs MUST NOT be evicted)
 # redis-cache: allkeys-lru (safe to evict cached data)
@@ -117,7 +118,82 @@ services:
       - api
     restart: unless-stopped
 
+  # ── Phase 4: Monitoring stack ─────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Receives pushed metrics from Celery worker processes
+  pushgateway:
+    image: prom/pushgateway:v1.8.0
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+
+  # Redis metrics exporters
+  redis-exporter-queue:
+    image: oliver006/redis_exporter:v1.58.0-alpine
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis-queue:6379
+    depends_on:
+      - redis-queue
+    restart: unless-stopped
+
+  redis-exporter-cache:
+    image: oliver006/redis_exporter:v1.58.0-alpine
+    ports:
+      - "9122:9121"
+    environment:
+      - REDIS_ADDR=redis://redis-cache:6379
+    depends_on:
+      - redis-cache
+    restart: unless-stopped
+
+  # MongoDB metrics exporter
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.40
+    ports:
+      - "9216:9216"
+    environment:
+      - MONGODB_URI=mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-password}@mongodb:27017/admin
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+
 volumes:
   redis_queue_data:
   redis_cache_data:
   mongo_data:
+  prometheus_data:
+  grafana_data:

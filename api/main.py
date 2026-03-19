@@ -1,8 +1,10 @@
 """
-Phase 0.8 — FastAPI application factory.
+Phase 0.8 + Phase 4 — FastAPI application factory.
 - CORSMiddleware with explicit allowed_origins (never wildcard *)
 - Security headers + trace_id middleware
 - Structured (JSON) logging in production
+- Sentry SDK integration with performance tracing (Phase 4)
+- Prometheus metrics via prometheus-fastapi-instrumentator (Phase 4)
 - Startup: create DB indexes, close pools on shutdown
 """
 import os
@@ -10,8 +12,14 @@ import logging
 import structlog
 from contextlib import asynccontextmanager
 
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from api.middleware import SecurityHeadersMiddleware, TraceIDMiddleware
 from api.health import router as health_router
@@ -25,6 +33,32 @@ from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
 from utils.log_scrub import configure_scrubbing
+
+
+def _configure_sentry() -> None:
+    """Initialise Sentry SDK — no-op if SENTRY_DSN is unset."""
+    dsn = os.getenv("SENTRY_DSN")
+    if not dsn:
+        return
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=os.getenv("ENV", "development"),
+        release=os.getenv("SENTRY_RELEASE", "2.9.0"),
+        # Performance tracing — 20% sample rate in prod
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.2")),
+        profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.05")),
+        integrations=[
+            FastApiIntegration(),
+            StarletteIntegration(),
+            LoggingIntegration(
+                level=logging.WARNING,       # breadcrumb threshold
+                event_level=logging.ERROR,   # capture as Sentry event
+            ),
+        ],
+        # Strip PII — do not send IP addresses or user emails
+        send_default_pii=False,
+    )
 
 
 def _configure_logging() -> None:
@@ -57,6 +91,7 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
+    _configure_sentry()
     await create_all_indexes()
     yield
     await close_client()
@@ -98,6 +133,17 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
+
+    # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
+    Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        should_respect_env_var=True,           # honour ENABLE_METRICS env var
+        should_instrument_requests_inprogress=True,
+        excluded_handlers=["/health", "/ready", "/metrics"],
+        inprogress_name="http_requests_inprogress",
+        inprogress_labels=True,
+    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
     return app
 

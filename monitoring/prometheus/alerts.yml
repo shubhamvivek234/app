@@ -1,0 +1,135 @@
+groups:
+  - name: socialentangler_slo
+    interval: 1m
+    rules:
+      # ── DLQ depth — any message in DLQ is an immediate alert ─────────────────
+      - alert: DLQNotEmpty
+        expr: socialentangler_dlq_depth > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Dead-letter queue has {{ $value }} message(s)"
+          description: >
+            Messages in the DLQ indicate repeated publish failures that exceeded
+            the 3-retry limit. Investigate publish logs and platform adapter errors.
+          runbook: "https://wiki.internal/runbooks/dlq-non-empty"
+
+      # ── Queue depth — alert before backlog causes scheduling drift ────────────
+      - alert: QueueDepthHigh
+        expr: socialentangler_queue_depth{queue_name="default"} > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Default queue depth is {{ $value }}"
+          description: >
+            High queue depth may cause posts to publish late. Consider scaling
+            worker replicas or investigating slow tasks.
+
+      - alert: QueueDepthCritical
+        expr: socialentangler_queue_depth{queue_name="default"} > 2000
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Default queue critically backed up: {{ $value }} messages"
+          description: >
+            Queue depth has reached critical levels. Scale workers immediately.
+
+      # ── Publish success rate < 90% over 5-minute window ──────────────────────
+      - alert: PublishSuccessRateLow
+        expr: |
+          (
+            rate(socialentangler_publish_attempts_total{outcome="success"}[5m])
+            /
+            rate(socialentangler_publish_attempts_total[5m])
+          ) < 0.9
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Publish success rate is {{ $value | humanizePercentage }}"
+          description: >
+            Platform publish success rate has dropped below 90%. Check circuit
+            breakers and platform API status pages.
+
+      # ── 5xx error rate > 1% ───────────────────────────────────────────────────
+      - alert: APIHighErrorRate
+        expr: |
+          (
+            rate(http_requests_total{status=~"5.."}[5m])
+            /
+            rate(http_requests_total[5m])
+          ) > 0.01
+        for: 3m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "API 5xx rate is {{ $value | humanizePercentage }}"
+          description: >
+            More than 1% of API requests are returning 5xx errors. Check
+            application logs and database connectivity.
+
+      # ── Circuit breaker open ──────────────────────────────────────────────────
+      - alert: CircuitBreakerOpen
+        expr: socialentangler_circuit_breaker_state == 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Circuit breaker OPEN for {{ $labels.platform }}"
+          description: >
+            The circuit breaker for {{ $labels.platform }} has been open for
+            5+ minutes. Platform publishes are being blocked. Check platform
+            API status.
+
+      # ── Token refresh failures ────────────────────────────────────────────────
+      - alert: TokenRefreshFailures
+        expr: |
+          rate(socialentangler_token_refreshes_total{outcome="failure"}[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Token refresh failures on {{ $labels.platform }}"
+          description: >
+            OAuth token refresh is failing for {{ $labels.platform }}. Affected
+            accounts will not be able to publish until resolved.
+
+      # ── API latency P99 > 2s ──────────────────────────────────────────────────
+      - alert: APILatencyHigh
+        expr: |
+          histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API P99 latency is {{ $value }}s"
+          description: >
+            99th percentile API latency has exceeded 2 seconds. Investigate
+            slow endpoints via /metrics or Grafana.
+
+  - name: socialentangler_infra
+    interval: 1m
+    rules:
+      # ── MongoDB connectivity ───────────────────────────────────────────────────
+      - alert: ReadinessCheckFailing
+        expr: up{job="socialentangler_api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "SocialEntangler API is down"
+          description: >
+            The API readiness check has been failing for 2 minutes. Verify
+            MongoDB and Redis connectivity via /ready endpoint.

@@ -1,11 +1,42 @@
 """
-Phase 1.1 — Celery application configuration.
+Phase 1.1 + Phase 4 — Celery application configuration.
 Two Redis instances: redis-queue (broker, noeviction) + redis-cache (backend, LRU).
 Four priority queues with dedicated worker pools.
+Sentry SDK integration for task error tracking (Phase 4).
 """
 import os
+import logging
+import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+
 from celery import Celery
 from kombu import Exchange, Queue
+
+
+def _configure_celery_sentry() -> None:
+    """Initialise Sentry for Celery workers — no-op if SENTRY_DSN unset."""
+    dsn = os.getenv("SENTRY_DSN")
+    if not dsn:
+        return
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=os.getenv("ENV", "development"),
+        release=os.getenv("SENTRY_RELEASE", "2.9.0"),
+        # Lower sample rate for workers — tasks are high volume
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        integrations=[
+            CeleryIntegration(monitor_beat_tasks=True),
+            LoggingIntegration(
+                level=logging.WARNING,
+                event_level=logging.ERROR,
+            ),
+        ],
+        send_default_pii=False,
+    )
+
+
+_configure_celery_sentry()
 
 # ── Queue definitions ────────────────────────────────────────────────────────
 default_exchange = Exchange("default", type="direct")

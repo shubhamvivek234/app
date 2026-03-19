@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: "${ENV:-development}"
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # FastAPI application metrics
+  - job_name: "socialentangler_api"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["api:8000"]
+
+  # Celery worker metrics via Pushgateway
+  - job_name: "celery_workers"
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
+  # Redis queue metrics (via redis_exporter)
+  - job_name: "redis_queue"
+    static_configs:
+      - targets: ["redis-exporter-queue:9121"]
+
+  - job_name: "redis_cache"
+    static_configs:
+      - targets: ["redis-exporter-cache:9122"]
+
+  # MongoDB metrics (via mongodb_exporter)
+  - job_name: "mongodb"
+    static_configs:
+      - targets: ["mongodb-exporter:9216"]
+
+  # Self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
