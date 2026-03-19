@@ -1,0 +1,58 @@
+"""
+Phase 0.2 — AES-256 token encryption via Fernet (cryptography lib).
+Every write to social_accounts.access_token / refresh_token MUST call encrypt().
+Every read that uses the token MUST call decrypt().
+Never log tokens. Never return them to frontend.
+"""
+import os
+import base64
+import logging
+from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
+
+_fernet: Fernet | None = None
+
+
+def _get_fernet() -> Fernet:
+    global _fernet
+    if _fernet is None:
+        raw_key = os.environ.get("ENCRYPTION_KEY")
+        if not raw_key:
+            raise EnvironmentError("ENCRYPTION_KEY environment variable is not set")
+        # Accept raw 32-byte key (base64-encoded) or pre-generated Fernet key
+        try:
+            key_bytes = base64.urlsafe_b64decode(raw_key.encode())
+            if len(key_bytes) != 32:
+                raise ValueError("ENCRYPTION_KEY must decode to exactly 32 bytes")
+            fernet_key = base64.urlsafe_b64encode(key_bytes)
+        except Exception:
+            # Already a valid Fernet key (44 chars base64url)
+            fernet_key = raw_key.encode()
+        _fernet = Fernet(fernet_key)
+    return _fernet
+
+
+def encrypt(plaintext: str) -> str:
+    """Encrypt a token string. Returns base64-encoded ciphertext."""
+    if not plaintext:
+        return plaintext
+    token = _get_fernet().encrypt(plaintext.encode("utf-8"))
+    return token.decode("utf-8")
+
+
+def decrypt(ciphertext: str) -> str:
+    """Decrypt a token string. Raises ValueError on tampered/invalid data."""
+    if not ciphertext:
+        return ciphertext
+    try:
+        plaintext = _get_fernet().decrypt(ciphertext.encode("utf-8"))
+        return plaintext.decode("utf-8")
+    except InvalidToken as exc:
+        logger.error("Token decryption failed — possible tampering or key rotation needed")
+        raise ValueError("Invalid or corrupted token") from exc
+
+
+def generate_key() -> str:
+    """One-time helper: generate a new Fernet key. Store result in ENCRYPTION_KEY."""
+    return Fernet.generate_key().decode("utf-8")

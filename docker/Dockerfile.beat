@@ -1,0 +1,25 @@
+# Celery Beat — SINGLE instance only. Kubernetes replicas: 1.
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+FROM python:3.11-slim
+RUN groupadd --gid 1001 appgroup && \
+    useradd --uid 1001 --gid 1001 --no-create-home appuser
+
+WORKDIR /app
+COPY --from=builder /root/.local /home/appuser/.local
+COPY celery_workers/ celery_workers/
+COPY db/ db/
+COPY utils/ utils/
+
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER 1001
+
+# WARNING: never scale replicas > 1 — causes duplicate job enqueueing
+CMD ["celery", "-A", "celery_workers.celery_app", "beat", \
+     "--loglevel=info", "--scheduler", "celery.beat.PersistentScheduler"]

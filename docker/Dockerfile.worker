@@ -1,0 +1,28 @@
+# Celery worker — handles publish and general tasks. Non-root.
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+FROM python:3.11-slim
+RUN groupadd --gid 1001 appgroup && \
+    useradd --uid 1001 --gid 1001 --no-create-home appuser
+
+WORKDIR /app
+COPY --from=builder /root/.local /home/appuser/.local
+COPY celery_workers/ celery_workers/
+COPY platform_adapters/ platform_adapters/
+COPY utils/ utils/
+COPY db/ db/
+
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER 1001
+
+# Kubernetes liveness probe: worker writes heartbeat every 30s
+# Probe checks: stat /tmp/celery_heartbeat mtime < 90s
+CMD ["celery", "-A", "celery_workers.celery_app", "worker", \
+     "--loglevel=info", "--concurrency=4", \
+     "--queues=high_priority,default,dead_letter"]
