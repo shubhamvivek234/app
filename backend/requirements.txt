@@ -71,6 +71,7 @@ pillow
 platformdirs
 pluggy
 propcache
+prometheus-client
 proto-plus
 protobuf
 pyasn1
@@ -105,6 +106,7 @@ rsa
 s3transfer
 s5cmd
 shellingham
+sentry-sdk[fastapi]
 slowapi
 six
 sniffio

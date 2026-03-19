@@ -86,7 +86,25 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    networks:
+      - app_net
+
+  # ── Nginx (reverse proxy + TLS termination) ──────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/app/frontend/build:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - app_net
 
@@ -132,6 +150,7 @@ volumes:
   redis_data:
   uploads:
   beat_schedule:
+  nginx_logs:
 
 networks:
   app_net:

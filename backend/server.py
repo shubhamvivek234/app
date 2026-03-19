@@ -119,6 +119,64 @@ env_path = ROOT_DIR / '.env'
 print(f"LOADING ENV FROM: {env_path}")
 load_dotenv(env_path, override=True)
 
+# ── Sentry (Stage 4 — Observability) ─────────────────────────────────────────
+import sentry_sdk
+_sentry_dsn = os.environ.get("SENTRY_DSN")
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        environment=os.environ.get("ENV", "development"),
+        traces_sample_rate=0.1,           # 10% of transactions traced
+        profiles_sample_rate=0.1,         # 10% profiling
+        send_default_pii=False,           # No PII in Sentry
+        before_send=lambda event, hint: (
+            None if os.environ.get("ENV") != "production" and event.get("level") == "info"
+            else event
+        ),
+    )
+    print(f"✅ Sentry initialized (env={os.environ.get('ENV', 'development')})")
+else:
+    print("⚠️  SENTRY_DSN not set — error tracking disabled")
+
+# ── Prometheus metrics (Stage 4 — Grafana integration) ───────────────────────
+try:
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+    # Define metrics
+    _posts_published_total = Counter(
+        "socialentangler_posts_published_total",
+        "Total posts successfully published",
+        ["platform"]
+    )
+    _posts_failed_total = Counter(
+        "socialentangler_posts_failed_total",
+        "Total posts permanently failed",
+        ["platform"]
+    )
+    _upload_requests_total = Counter(
+        "socialentangler_upload_requests_total",
+        "Total file upload requests",
+        ["media_type", "status"]
+    )
+    _api_request_duration = Histogram(
+        "socialentangler_api_request_duration_seconds",
+        "API request duration in seconds",
+        ["method", "endpoint", "status_code"],
+        buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+    )
+    _active_users_gauge = Gauge(
+        "socialentangler_active_subscriptions",
+        "Number of users with active subscriptions"
+    )
+    _queue_depth_gauge = Gauge(
+        "socialentangler_scheduled_posts_queue_depth",
+        "Number of posts waiting to be published"
+    )
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    print("⚠️  prometheus-client not installed — metrics endpoint disabled")
+
 # Verify critical env vars
 if not os.environ.get("GOOGLE_CLIENT_ID"):
     print(f"WARNING: GOOGLE_CLIENT_ID NOT FOUND in env. Keys loaded: {[k for k in os.environ.keys() if 'GOOGLE' in k]}")
@@ -242,6 +300,15 @@ scheduler = AsyncIOScheduler()
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
+# Add Sentry request handler middleware (captures request context)
+if _sentry_dsn:
+    try:
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        # Sentry auto-instruments FastAPI/Starlette via the SDK init above
+        pass
+    except ImportError:
+        pass
+
 # ── Rate Limiting (Stage 3) ────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 app.state.limiter = limiter
@@ -261,6 +328,30 @@ async def add_security_headers(request: Request, call_next):
     if os.environ.get("ENV") == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+# ── Request duration metrics middleware (Stage 4) ────────────────────────────
+if PROMETHEUS_AVAILABLE:
+    import time as _time_module
+
+    @app.middleware("http")
+    async def track_request_metrics(request: Request, call_next):
+        start = _time_module.time()
+        response = await call_next(request)
+        duration = _time_module.time() - start
+
+        # Only track API endpoints (skip /metrics, /health, static files)
+        path = request.url.path
+        if path.startswith("/api/") and PROMETHEUS_AVAILABLE:
+            # Normalize path (replace UUIDs/IDs with {id})
+            import re as _re_m
+            norm_path = _re_m.sub(r"/[0-9a-f-]{8,}(/|$)", "/{id}\\1", path)
+            _api_request_duration.labels(
+                method=request.method,
+                endpoint=norm_path,
+                status_code=str(response.status_code)
+            ).observe(duration)
+
+        return response
 
 # CORS Configuration (Stage 3 — environment-aware)
 _cors_origins_raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:9500,http://127.0.0.1:3000,http://127.0.0.1:9500")
@@ -1443,7 +1534,16 @@ async def create_post(request: Request, post_data: PostCreate, current_user: Use
 
 @api_router.get("/posts", response_model=List[Post])
 async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None, search: Optional[str] = None):
-    query = {"user_id": current_user.user_id}
+    # Workspace-aware query: show own posts + teammates' posts if in a shared workspace
+    workspace = await db.workspaces.find_one(
+        {"members.user_id": current_user.user_id}, {"members": 1, "owner_id": 1}
+    )
+    workspace_user_ids = [current_user.user_id]
+    if workspace and len(workspace.get("members", [])) > 1:
+        # Include all workspace member IDs
+        workspace_user_ids = [m["user_id"] for m in workspace.get("members", [])]
+
+    query = {"user_id": {"$in": workspace_user_ids}}
     if status:
         query["status"] = status
     if search:
@@ -1478,7 +1578,30 @@ async def get_post(post_id: str, current_user: User = Depends(get_current_user))
 
 @api_router.patch("/posts/{post_id}", response_model=Post)
 async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
+    post_doc = await db.posts.find_one({"id": post_id})
+    if not post_doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    # Role check: only owner/admin/editor can edit posts
+    if post_doc.get("user_id") != current_user.user_id:
+        # Check if user has editor+ permission in the workspace
+        workspace = await db.workspaces.find_one(
+            {"members.user_id": current_user.user_id},
+            {"members.$": 1}
+        )
+        member = next(
+            (m for m in (workspace or {}).get("members", []) if m["user_id"] == current_user.user_id),
+            None
+        )
+        member_role = (member or {}).get("role", "viewer")
+        if member_role not in ("owner", "admin", "editor"):
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "WS_PERMISSION_DENIED",
+                        "message": "You need editor or higher access to edit this post."}
+            )
+
+    post = post_doc
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
@@ -1596,6 +1719,16 @@ async def retry_dead_letter_post(post_id: str, current_user: User = Depends(get_
     if not result:
         raise HTTPException(status_code=404, detail="DLQ item not found")
     return {"success": True, "message": "Post re-queued for publishing"}
+
+
+# ==================== CIRCUIT BREAKERS (Stage 7) ====================
+from app.circuit_breaker import get_circuit_breaker, get_all_circuit_breaker_status, CircuitOpenError
+
+@api_router.get("/system/circuit-breakers")
+async def get_circuit_breaker_status(current_user: User = Depends(get_current_user)):
+    """Get status of all platform circuit breakers."""
+    return {"circuit_breakers": get_all_circuit_breaker_status()}
+
 
 # ==================== WORKSPACE / TEAMS (Stage 5.9) ====================
 from app.models.workspace import Workspace, WorkspaceMember, WorkspaceInvite, ROLE_PERMISSIONS, has_permission
@@ -1755,6 +1888,148 @@ async def remove_workspace_member(member_user_id: str, current_user: User = Depe
          "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
     )
     return {"success": True, "message": "Member removed"}
+
+
+@api_router.get("/workspace/activity")
+async def get_workspace_activity(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """Recent activity across the workspace — posts published, scheduled, failed."""
+    workspace = await db.workspaces.find_one(
+        {"members.user_id": current_user.user_id}, {"members": 1}
+    )
+    workspace_user_ids = [current_user.user_id]
+    if workspace:
+        workspace_user_ids = [m["user_id"] for m in workspace.get("members", [])]
+
+    # Recent posts with status changes
+    recent_posts = await db.posts.find(
+        {
+            "user_id": {"$in": workspace_user_ids},
+            "status": {"$in": ["published", "failed", "scheduled"]},
+        },
+        {"_id": 0, "id": 1, "content": 1, "status": 1, "platforms": 1,
+         "published_at": 1, "scheduled_time": 1, "user_id": 1}
+    ).sort("published_at", -1).limit(limit).to_list(limit)
+
+    # Attach author info
+    user_ids = list({p["user_id"] for p in recent_posts})
+    users = await db.users.find(
+        {"user_id": {"$in": user_ids}},
+        {"_id": 0, "user_id": 1, "name": 1, "picture": 1}
+    ).to_list(None)
+    user_map = {u["user_id"]: u for u in users}
+
+    for post in recent_posts:
+        uid = post.get("user_id")
+        post["author"] = user_map.get(uid, {"name": "Unknown", "picture": None})
+
+    return {"activity": recent_posts, "total": len(recent_posts)}
+
+
+# ==================== GDPR / DATA PRIVACY (Stage 8) ====================
+import json as _json_module
+from fastapi.responses import StreamingResponse
+import io as _io
+
+@api_router.get("/gdpr/export")
+async def export_my_data(current_user: User = Depends(get_current_user)):
+    """
+    GDPR Article 20 — Data Portability.
+    Export all personal data associated with the account as JSON.
+    """
+    uid = current_user.user_id
+
+    # Gather all user data
+    user_doc = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    posts = await db.posts.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    accounts = await db.social_accounts.find(
+        {"user_id": uid},
+        {"_id": 0, "access_token": 0, "refresh_token": 0}  # Exclude tokens from export
+    ).to_list(None)
+    notifications = await db.notifications.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    transactions = await db.payment_transactions.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    workspace = await db.workspaces.find_one({"owner_id": uid}, {"_id": 0})
+
+    export_data = {
+        "export_date": datetime.now(timezone.utc).isoformat(),
+        "user_id": uid,
+        "profile": user_doc,
+        "posts": posts,
+        "connected_accounts": accounts,
+        "notifications": notifications,
+        "payment_history": transactions,
+        "workspace": workspace,
+        "_note": "OAuth tokens are excluded from exports for security. Post media files are hosted on the respective social platforms."
+    }
+
+    # Serialize to JSON bytes
+    json_bytes = _json_module.dumps(export_data, indent=2, default=str).encode("utf-8")
+
+    return StreamingResponse(
+        _io.BytesIO(json_bytes),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="socialentangler_data_{uid[:8]}.json"',
+            "Content-Length": str(len(json_bytes)),
+        }
+    )
+
+
+@api_router.delete("/gdpr/delete-account")
+async def delete_my_account(current_user: User = Depends(get_current_user)):
+    """
+    GDPR Article 17 — Right to Erasure.
+    Permanently delete all user data. This action cannot be undone.
+    """
+    uid = current_user.user_id
+
+    # Delete in order (referential integrity)
+    await db.notifications.delete_many({"user_id": uid})
+    await db.posts.delete_many({"user_id": uid})
+    await db.social_accounts.delete_many({"user_id": uid})
+    await db.payment_transactions.delete_many({"user_id": uid})
+    await db.workspace_invites.delete_many({"invited_by_id": uid})
+
+    # Remove from workspaces as member
+    await db.workspaces.update_many(
+        {"members.user_id": uid},
+        {"$pull": {"members": {"user_id": uid}}}
+    )
+    # Delete owned workspace
+    await db.workspaces.delete_one({"owner_id": uid})
+
+    # Delete user document last
+    await db.users.delete_one({"user_id": uid})
+
+    logging.info(f"GDPR erasure: user {uid} data deleted")
+
+    return {"success": True, "message": "Your account and all associated data have been permanently deleted."}
+
+
+@api_router.get("/gdpr/status")
+async def get_gdpr_status(current_user: User = Depends(get_current_user)):
+    """Return a summary of what data we hold about the user."""
+    uid = current_user.user_id
+    post_count = await db.posts.count_documents({"user_id": uid})
+    account_count = await db.social_accounts.count_documents({"user_id": uid})
+
+    return {
+        "user_id": uid,
+        "email": current_user.email,
+        "account_created": current_user.created_at.isoformat() if hasattr(current_user.created_at, "isoformat") else str(current_user.created_at),
+        "data_held": {
+            "posts": post_count,
+            "connected_accounts": account_count,
+            "subscription": current_user.subscription_status,
+        },
+        "rights": {
+            "export_data": "GET /api/gdpr/export",
+            "delete_account": "DELETE /api/gdpr/delete-account",
+        }
+    }
+
 
 # ==================== HASHTAG GROUPS ====================
 
@@ -5492,6 +5767,12 @@ async def process_scheduled_posts():
                 except Exception as e:
                     error_msg = str(e)
                     logging.error(f"Failed to publish to {platform}: {error_msg}")
+                    if _sentry_dsn:
+                        with sentry_sdk.push_scope() as scope:
+                            scope.set_tag("platform", platform)
+                            scope.set_tag("post_id", post_id)
+                            scope.set_extra("retry_count", post_doc.get("retry_count", 0))
+                            sentry_sdk.capture_exception(e)
                     has_error = True
                     error_details.append(f"{platform}: {error_msg}")
                     platform_errors[platform] = error_msg
@@ -5542,6 +5823,10 @@ async def process_scheduled_posts():
                         message=f"Post failed after 3 attempts: {' | '.join(error_details)}"
                     ).model_dump())
                     logging.info(f"Post {post_id} definitively failed. Cleaning up.")
+                    # Track permanently failed metric
+                    if PROMETHEUS_AVAILABLE:
+                        for _platform in list(platform_errors.keys()) or post_doc.get("platforms", []):
+                            _posts_failed_total.labels(platform=_platform).inc()
                     # File Cleanup
                     if media_url and "/uploads/" in media_url:
                         from urllib.parse import urlparse
@@ -5609,7 +5894,11 @@ async def process_scheduled_posts():
                     message=f"Post successfully published to {platforms_str}."
                 ).model_dump())
                 logging.info(f"Processed post {post_id} successfully.")
-                # File Cleanup 
+                # Track published metric
+                if PROMETHEUS_AVAILABLE:
+                    for _platform in published_platforms:
+                        _posts_published_total.labels(platform=_platform).inc()
+                # File Cleanup
                 if media_url and "/uploads/" in media_url:
                     from urllib.parse import urlparse
                     local_path = os.path.join(ROOT_DIR, urlparse(media_url).path.lstrip("/"))
@@ -5698,13 +5987,14 @@ async def upload_file(
 
         # ── Media validation (Stage 2.4) ──────────────────────────────────────
         try:
-            validate_upload(
-                filename=file.filename,
-                file_size_bytes=len(content),
-                platforms=None,  # global check; platform-specific check at publish time
-            )
-        except MediaValidationError as e:
-            raise HTTPException(status_code=400, detail={"error": str(e), "code": e.error_code})
+            from app.media_validator import validate_upload as _validate_upload
+            platform_hint = None  # Could be passed as query param in future
+            validation_result = await _validate_upload(file, content, platform=platform_hint)
+        except HTTPException:
+            raise  # Re-raise validation errors directly
+        except Exception as val_err:
+            logging.warning(f"Media validation error (non-blocking): {val_err}")
+            validation_result = {}
 
         # Create unique filename
         file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
@@ -5736,7 +6026,10 @@ async def upload_file(
             "success": True,
             "url": file_url,
             "filename": file.filename,
-            "content_type": file.content_type
+            "content_type": file.content_type,
+            "media_type": validation_result.get("media_type", "unknown"),
+            "size_mb": validation_result.get("size_mb", 0),
+            "video_metadata": validation_result.get("video_metadata"),
         }
     except HTTPException:
         raise
@@ -5789,6 +6082,29 @@ async def readiness_check():
     return JSONResponse(
         content={"status": "ready" if all_ok else "not_ready", "checks": checks, "timestamp": datetime.now(timezone.utc).isoformat()},
         status_code=status_code
+    )
+
+from fastapi.responses import Response as _Response
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint for Grafana Cloud scraping."""
+    if not PROMETHEUS_AVAILABLE:
+        return {"error": "prometheus-client not installed"}
+
+    # Update gauge metrics
+    try:
+        scheduled_count = await db.posts.count_documents({"status": "scheduled"})
+        _queue_depth_gauge.set(scheduled_count)
+
+        active_subs = await db.users.count_documents({"subscription_status": "active"})
+        _active_users_gauge.set(active_subs)
+    except Exception:
+        pass
+
+    return _Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
     )
 
 # Add static files serving for uploads

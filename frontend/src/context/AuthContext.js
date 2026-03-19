@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
 import { auth, googleProvider } from '@/firebase';
+import { setUserContext } from '../lib/sentry';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -82,6 +83,7 @@ export const AuthProvider = ({ children }) => {
         timeout: 8000,
       });
       setUser(response.data);
+      setUserContext(response.data);
     };
 
     try {

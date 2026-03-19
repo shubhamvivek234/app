@@ -284,6 +284,10 @@ export const removeWorkspaceMember = async (memberUserId) => {
   const response = await axios.delete(`${API}/workspace/members/${memberUserId}`, { headers: getAuthHeaders() });
   return response.data;
 };
+export const getWorkspaceActivity = async (limit = 10) => {
+  const response = await axios.get(`${API}/workspace/activity?limit=${limit}`, { headers: getAuthHeaders() });
+  return response.data;
+};
 // Public — no auth needed
 export const getWorkspaceInviteDetails = async (token) => {
   const response = await axios.get(`${API}/workspace/invite/${encodeURIComponent(token)}`);
@@ -643,6 +647,22 @@ export const addLinkedInPageManually = async (pageId, pageName) => {
 export const getAgentChannels = async (apiKey) => {
   const response = await axios.get(`${API}/agent/channels`, {
     headers: { 'X-API-KEY': apiKey },
+  });
+  return response.data;
+};
+
+// GDPR / Privacy
+export const exportMyData = async () => {
+  const response = await axios.get(`${API}/gdpr/export`, {
+    headers: getAuthHeaders(),
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
+export const getGdprStatus = async () => {
+  const response = await axios.get(`${API}/gdpr/status`, {
+    headers: getAuthHeaders(),
   });
   return response.data;
 };

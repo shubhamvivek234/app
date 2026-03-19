@@ -1,140 +1,255 @@
 """
-Media validation — Stage 2.4
-Validates uploaded files before storing them.
+Media Validation — Stage 2.4
+Validates uploaded files before storage: size, format, MIME type, video metadata.
 """
 import os
 import subprocess
-from pathlib import Path
+import json
+import mimetypes
 from typing import Optional
+from fastapi import UploadFile, HTTPException
 
-# ── Platform Limits ───────────────────────────────────────────────────────────
-PLATFORM_LIMITS = {
-    "instagram": {
-        "image": {"max_size_mb": 8,  "formats": {"jpg", "jpeg", "png", "webp"},         "max_w": 1080, "max_h": 1350},
-        "video": {"max_size_mb": 100, "formats": {"mp4", "mov"},                          "max_duration_s": 60},
-    },
-    "facebook": {
-        "image": {"max_size_mb": 10, "formats": {"jpg", "jpeg", "png", "gif", "webp"},   "max_w": 2048, "max_h": 2048},
-        "video": {"max_size_mb": 4096, "formats": {"mp4", "mov", "avi"},                  "max_duration_s": 14400},
-    },
-    "youtube":  {
-        "video": {"max_size_mb": 128000, "formats": {"mp4", "mov", "avi", "mkv", "wmv"}, "max_duration_s": 43200},
-    },
-    "twitter":  {
-        "image": {"max_size_mb": 5,  "formats": {"jpg", "jpeg", "png", "gif", "webp"},   "max_w": 4096, "max_h": 4096},
-        "video": {"max_size_mb": 512, "formats": {"mp4", "mov"},                          "max_duration_s": 140},
-    },
-    "tiktok":   {
-        "video": {"max_size_mb": 287, "formats": {"mp4", "webm", "mov"},                 "max_duration_s": 600},
-    },
-    "linkedin": {
-        "image": {"max_size_mb": 5,  "formats": {"jpg", "jpeg", "png", "gif"},           "max_w": 7680, "max_h": 4320},
-        "video": {"max_size_mb": 5120, "formats": {"mp4", "mov", "avi"},                  "max_duration_s": 600},
-    },
+# Per-platform limits (bytes)
+MAX_IMAGE_SIZE = 8 * 1024 * 1024        # 8 MB
+MAX_VIDEO_SIZE = 500 * 1024 * 1024      # 500 MB
+MAX_DOCUMENT_SIZE = 20 * 1024 * 1024    # 20 MB (LinkedIn docs)
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif",
+    "image/webp", "image/bmp", "image/tiff",
+}
+ALLOWED_VIDEO_TYPES = {
+    "video/mp4", "video/quicktime", "video/x-msvideo",
+    "video/x-matroska", "video/webm", "video/mpeg",
+}
+ALLOWED_DOCUMENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # pptx
+    "application/vnd.ms-powerpoint",  # ppt
 }
 
-# Global defaults
-DEFAULT_MAX_IMAGE_MB = 10
-DEFAULT_MAX_VIDEO_MB = 500
-ALLOWED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
-ALLOWED_VIDEO_FORMATS = {"mp4", "mov", "avi", "mkv", "wmv", "webm", "m4v"}
+# Image extensions → MIME
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".mpeg", ".mpg", ".m4v"}
+DOCUMENT_EXTENSIONS = {".pdf", ".pptx", ".ppt"}
+
+# YouTube video constraints
+YT_MAX_DURATION_SEC = 12 * 3600      # 12 hours
+YT_MIN_RESOLUTION = (426, 240)       # 240p minimum
+
+# Instagram video constraints
+IG_MAX_DURATION_SEC = 90             # 90s for Reels
+IG_MAX_ASPECT_RATIO = 1.91           # landscape max
+IG_MIN_ASPECT_RATIO = 0.5            # portrait min (4:5 ~ 0.8, allowed down to 9:16 ~ 0.56)
 
 
+# ── Legacy error class kept for backward-compatibility with existing callers ──
 class MediaValidationError(ValueError):
     def __init__(self, message: str, error_code: str = "EC5:INVALID_MEDIA_FORMAT"):
         super().__init__(message)
         self.error_code = error_code
 
 
-def get_file_extension(filename: str) -> str:
-    return Path(filename).suffix.lstrip(".").lower()
+def get_file_ext(filename: str) -> str:
+    return os.path.splitext(filename.lower())[1]
 
 
-def validate_file_size(file_size_bytes: int, media_type: str, platform: Optional[str] = None) -> None:
-    """Raise MediaValidationError if file exceeds size limits."""
-    size_mb = file_size_bytes / (1024 * 1024)
-
-    if platform and platform in PLATFORM_LIMITS:
-        limits = PLATFORM_LIMITS[platform].get(media_type, {})
-        max_mb = limits.get("max_size_mb")
-        if max_mb and size_mb > max_mb:
-            raise MediaValidationError(
-                f"File size {size_mb:.1f}MB exceeds {platform} limit of {max_mb}MB for {media_type}",
-                error_code="EC4:MEDIA_TOO_LARGE"
-            )
-    else:
-        limit = DEFAULT_MAX_VIDEO_MB if media_type == "video" else DEFAULT_MAX_IMAGE_MB
-        if size_mb > limit:
-            raise MediaValidationError(
-                f"File size {size_mb:.1f}MB exceeds {limit}MB limit",
-                error_code="EC4:MEDIA_TOO_LARGE"
-            )
-
-
-def validate_file_format(filename: str, media_type: str) -> str:
-    """Validate file format. Returns the extension."""
-    ext = get_file_extension(filename)
-    allowed = ALLOWED_VIDEO_FORMATS if media_type == "video" else ALLOWED_IMAGE_FORMATS
-    if ext not in allowed:
-        raise MediaValidationError(
-            f"File format '.{ext}' is not supported for {media_type}. "
-            f"Allowed: {', '.join(sorted(allowed))}",
-            error_code="EC5:INVALID_MEDIA_FORMAT"
-        )
-    return ext
-
-
-def detect_media_type(filename: str) -> str:
-    """Detect image or video from extension."""
-    ext = get_file_extension(filename)
-    if ext in ALLOWED_VIDEO_FORMATS:
+def detect_media_type(filename: str, content_type: str) -> str:
+    """Returns 'image', 'video', 'document', or 'unknown'."""
+    ext = get_file_ext(filename)
+    if ext in IMAGE_EXTENSIONS or content_type in ALLOWED_IMAGE_TYPES:
+        return "image"
+    if ext in VIDEO_EXTENSIONS or content_type in ALLOWED_VIDEO_TYPES:
         return "video"
-    return "image"
+    if ext in DOCUMENT_EXTENSIONS or content_type in ALLOWED_DOCUMENT_TYPES:
+        return "document"
+    return "unknown"
 
 
-def get_video_duration_ffprobe(file_path: str) -> Optional[float]:
-    """Get video duration in seconds using ffprobe if available."""
+def validate_file_size(size_bytes: int, media_type: str, platform: Optional[str] = None) -> None:
+    """Raise HTTPException if file exceeds size limit."""
+    limits = {
+        "image": MAX_IMAGE_SIZE,
+        "video": MAX_VIDEO_SIZE,
+        "document": MAX_DOCUMENT_SIZE,
+    }
+    limit = limits.get(media_type, MAX_IMAGE_SIZE)
+    if size_bytes > limit:
+        limit_mb = limit // (1024 * 1024)
+        size_mb = round(size_bytes / (1024 * 1024), 1)
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error_code": "UPLOAD_TOO_LARGE",
+                "message": f"File too large: {size_mb} MB. Maximum allowed: {limit_mb} MB for {media_type}s.",
+                "details": {"size_mb": size_mb, "limit_mb": limit_mb},
+            }
+        )
+
+
+def validate_mime_type(filename: str, content_type: str) -> str:
+    """Validate MIME type and return media_type. Raise if not allowed."""
+    media_type = detect_media_type(filename, content_type)
+    ext = get_file_ext(filename)
+
+    if media_type == "image":
+        if content_type not in ALLOWED_IMAGE_TYPES and ext not in IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=415,
+                detail={
+                    "error_code": "UPLOAD_INVALID_FORMAT",
+                    "message": f"Unsupported image format: {content_type}. Allowed: JPEG, PNG, GIF, WebP.",
+                }
+            )
+    elif media_type == "video":
+        if content_type not in ALLOWED_VIDEO_TYPES and ext not in VIDEO_EXTENSIONS:
+            raise HTTPException(
+                status_code=415,
+                detail={
+                    "error_code": "UPLOAD_INVALID_FORMAT",
+                    "message": f"Unsupported video format: {content_type}. Allowed: MP4, MOV, AVI, MKV, WebM.",
+                }
+            )
+    elif media_type == "document":
+        pass  # Documents checked loosely by extension
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "error_code": "UPLOAD_INVALID_FORMAT",
+                "message": f"Unsupported file type: {content_type}. Upload images (JPEG/PNG/GIF/WebP), videos (MP4/MOV/AVI), or documents (PDF/PPTX).",
+            }
+        )
+    return media_type
+
+
+def get_video_metadata(file_path: str) -> Optional[dict]:
+    """
+    Use ffprobe to extract video metadata.
+    Returns dict with duration, width, height, codec, fps — or None if ffprobe unavailable.
+    """
+    ffprobe_path = None
+    for candidate in ["ffprobe", "/usr/bin/ffprobe", "/usr/local/bin/ffprobe"]:
+        if subprocess.run(["which", candidate], capture_output=True).returncode == 0:
+            ffprobe_path = candidate
+            break
+
+    if not ffprobe_path:
+        return None  # ffprobe not installed — skip video metadata validation
+
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", file_path],
-            capture_output=True, text=True, timeout=30
+            [
+                ffprobe_path, "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams", "-show_format",
+                file_path,
+            ],
+            capture_output=True, text=True, timeout=30,
         )
-        if result.returncode == 0:
-            import json
-            data = json.loads(result.stdout)
-            for stream in data.get("streams", []):
-                if stream.get("codec_type") == "video":
-                    duration = float(stream.get("duration", 0))
-                    if duration > 0:
-                        return duration
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
-        pass
-    return None
+        if result.returncode != 0:
+            return None
+
+        data = json.loads(result.stdout)
+        video_stream = next(
+            (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
+            None
+        )
+        if not video_stream:
+            return None
+
+        duration = float(data.get("format", {}).get("duration", 0))
+        width = int(video_stream.get("width", 0))
+        height = int(video_stream.get("height", 0))
+        codec = video_stream.get("codec_name", "unknown")
+        fps_str = video_stream.get("r_frame_rate", "0/1")
+        try:
+            num, den = fps_str.split("/")
+            fps = round(float(num) / float(den), 2) if float(den) > 0 else 0
+        except Exception:
+            fps = 0
+
+        return {
+            "duration_sec": round(duration, 2),
+            "width": width,
+            "height": height,
+            "codec": codec,
+            "fps": fps,
+            "aspect_ratio": round(width / height, 3) if height > 0 else 0,
+        }
+    except Exception:
+        return None
 
 
-def validate_upload(
-    filename: str,
-    file_size_bytes: int,
-    platforms: list[str] = None,
-) -> dict:
+def validate_video_for_platform(metadata: dict, platform: str) -> None:
+    """Validate video metadata against platform-specific constraints."""
+    if not metadata:
+        return  # Can't validate without metadata — allow upload, catch at publish time
+
+    duration = metadata.get("duration_sec", 0)
+    width = metadata.get("width", 0)
+    height = metadata.get("height", 0)
+    aspect = metadata.get("aspect_ratio", 1.0)
+
+    if platform == "youtube":
+        if duration > YT_MAX_DURATION_SEC:
+            raise HTTPException(400, detail={
+                "error_code": "UPLOAD_INVALID_FORMAT",
+                "message": f"Video too long for YouTube: {duration/3600:.1f}h. Max: 12 hours.",
+            })
+
+    elif platform == "instagram":
+        if duration > IG_MAX_DURATION_SEC:
+            raise HTTPException(400, detail={
+                "error_code": "UPLOAD_INVALID_FORMAT",
+                "message": f"Video too long for Instagram Reels: {int(duration)}s. Max: 90 seconds.",
+            })
+        if aspect > IG_MAX_ASPECT_RATIO or aspect < IG_MIN_ASPECT_RATIO:
+            raise HTTPException(400, detail={
+                "error_code": "UPLOAD_INVALID_FORMAT",
+                "message": f"Video aspect ratio {aspect:.2f} not supported for Instagram. Use between 0.56 (9:16) and 1.91 (16:9).",
+            })
+
+
+async def validate_upload(file: UploadFile, content: bytes, platform: Optional[str] = None) -> dict:
     """
     Full validation pipeline for an uploaded file.
-    Returns {"media_type": "image|video", "extension": "mp4", "size_mb": 12.3}
-    Raises MediaValidationError on any violation.
+    Returns metadata dict with media_type, size_bytes, and optionally video_metadata.
+    Call this BEFORE saving the file to storage.
     """
-    media_type = detect_media_type(filename)
-    ext = validate_file_format(filename, media_type)
+    filename = file.filename or "upload"
+    content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    size_bytes = len(content)
 
-    # Check size against all target platforms
-    if platforms:
-        for platform in platforms:
-            validate_file_size(file_size_bytes, media_type, platform)
-    else:
-        validate_file_size(file_size_bytes, media_type)
+    # 1. MIME type validation
+    media_type = validate_mime_type(filename, content_type)
 
-    return {
+    # 2. File size validation
+    validate_file_size(size_bytes, media_type)
+
+    result = {
         "media_type": media_type,
-        "extension": ext,
-        "size_mb": round(file_size_bytes / (1024 * 1024), 2),
+        "size_bytes": size_bytes,
+        "size_mb": round(size_bytes / (1024 * 1024), 2),
+        "content_type": content_type,
+        "filename": filename,
     }
+
+    # 3. Video metadata validation (if video and ffprobe available)
+    if media_type == "video":
+        import tempfile, uuid as _uuid
+        ext = get_file_ext(filename) or ".mp4"
+        tmp_path = f"/tmp/validate_{_uuid.uuid4().hex}{ext}"
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(content)
+            metadata = get_video_metadata(tmp_path)
+            if metadata:
+                result["video_metadata"] = metadata
+                if platform:
+                    validate_video_for_platform(metadata, platform)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    return result

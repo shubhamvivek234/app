@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { updateProfile, uploadProfilePhoto, changePassword } from '@/lib/api';
+import axios from 'axios';
 import { FaCamera, FaLock, FaUser, FaCrown, FaEye, FaEyeSlash, FaGoogle } from 'react-icons/fa';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -174,7 +175,7 @@ const Card = ({ icon: Icon, title, subtitle, children }) => (
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 const Settings = () => {
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, logout } = useAuth();
 
   // ── Profile form ──
   const [name, setName] = useState(user?.name || '');
@@ -205,6 +206,9 @@ const Settings = () => {
     }
   };
 
+  // ── GDPR state ──
+  const [exportingData, setExportingData] = useState(false);
+
   // ── Password form ──
   // Guard: treat as indeterminate (null) while user is still loading,
   // so we don't flash the "Google user" panel for email users.
@@ -231,6 +235,46 @@ const Settings = () => {
       toast.error(err.response?.data?.detail || 'Failed to change password');
     } finally {
       setSavingPw(false);
+    }
+  };
+
+  const handleExportData = async () => {
+    setExportingData(true);
+    try {
+      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/export`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (!response.ok) throw new Error('Export failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'my_socialentangler_data.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Data export downloaded successfully.');
+    } catch {
+      toast.error('Failed to export data. Please try again.');
+    } finally {
+      setExportingData(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmed = window.confirm(
+      'Are you absolutely sure? This will permanently delete your account, all posts, and connected accounts. This CANNOT be undone.'
+    );
+    if (!confirmed) return;
+    const doubleConfirmed = window.confirm('Final warning: Delete your account permanently?');
+    if (!doubleConfirmed) return;
+    try {
+      await axios.delete(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/delete-account`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      toast.success('Account deleted. Goodbye!');
+      logout();
+    } catch {
+      toast.error('Failed to delete account. Please contact support.');
     }
   };
 
@@ -442,6 +486,39 @@ const Settings = () => {
             </div>
           </div>
         </Card>
+
+        {/* Privacy & Data (GDPR) */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <h2 className="text-lg font-semibold text-slate-800 mb-1">Privacy &amp; Data</h2>
+          <p className="text-sm text-slate-500 mb-5">Manage your personal data in compliance with GDPR.</p>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+              <div>
+                <p className="font-medium text-slate-800 text-sm">Export My Data</p>
+                <p className="text-xs text-slate-500 mt-0.5">Download all your posts, accounts, and profile data as JSON.</p>
+              </div>
+              <button
+                onClick={handleExportData}
+                disabled={exportingData}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {exportingData ? 'Preparing...' : 'Export Data'}
+              </button>
+            </div>
+            <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg border border-red-100">
+              <div>
+                <p className="font-medium text-red-800 text-sm">Delete Account</p>
+                <p className="text-xs text-red-500 mt-0.5">Permanently delete your account and all data. Cannot be undone.</p>
+              </div>
+              <button
+                onClick={handleDeleteAccount}
+                className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
 
       </div>
     </DashboardLayout>
