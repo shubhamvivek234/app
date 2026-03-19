@@ -60,6 +60,14 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    optimizeDeps: {
+      // During dependency pre-bundling, rolldown is used (Vite 8+).
+      // Tell it to parse .js files as jsx so files like index.js don't break the scan.
+      rolldownOptions: {
+        moduleTypes: { '.js': 'jsx' },
+      },
+    },
+
     build: {
       outDir: 'build',
       sourcemap: false,
@@ -92,9 +100,12 @@ export default defineConfig(({ mode }) => {
     define: {
       // Polyfill process.env.NODE_ENV for libraries that use it
       'process.env.NODE_ENV': JSON.stringify(mode),
-      // Backwards compat for existing REACT_APP_ process.env usage in source
-      'process.env.REACT_APP_BACKEND_URL': JSON.stringify(
-        env.REACT_APP_BACKEND_URL || 'http://localhost:8001'
+      // Backwards compat: expose all REACT_APP_* vars as process.env.REACT_APP_*
+      // so existing source code doesn't need to change.
+      ...Object.fromEntries(
+        Object.entries(env)
+          .filter(([key]) => key.startsWith('REACT_APP_'))
+          .map(([key, val]) => [`process.env.${key}`, JSON.stringify(val)])
       ),
     },
     test: {
