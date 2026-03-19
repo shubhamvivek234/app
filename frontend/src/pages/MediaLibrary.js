@@ -31,9 +31,9 @@ const AssetCard = ({ asset, onCopy, onDelete }) => {
   const video = isVideo(asset.content_type);
 
   return (
-    <div className="group relative bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+    <div className="group relative bg-offwhite rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
       {/* Preview */}
-      <div className="relative w-full aspect-square bg-white border-b border-gray-100 overflow-hidden">
+      <div className="relative w-full aspect-square bg-offwhite border-b border-gray-100 overflow-hidden">
         {video ? (
           <video
             src={url}
@@ -55,7 +55,7 @@ const AssetCard = ({ asset, onCopy, onDelete }) => {
         )}
         {/* Fallback for broken images */}
         <div
-          className="absolute inset-0 hidden items-center justify-center bg-white text-gray-300"
+          className="absolute inset-0 hidden items-center justify-center bg-offwhite text-gray-300"
         >
           {video ? <FaVideo className="text-3xl" /> : <FaImage className="text-3xl" />}
         </div>
@@ -73,7 +73,7 @@ const AssetCard = ({ asset, onCopy, onDelete }) => {
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
           <button
             onClick={() => onCopy(asset)}
-            className="w-9 h-9 rounded-full bg-white/90 hover:bg-white text-gray-700 flex items-center justify-center transition-colors shadow"
+            className="w-9 h-9 rounded-full bg-white/90 hover:bg-offwhite text-gray-700 flex items-center justify-center transition-colors shadow"
             title="Copy URL"
           >
             <FaCopy className="text-sm" />
@@ -113,7 +113,7 @@ const UploadZone = ({ onFiles, dragging, onDragOver, onDragLeave, onDrop }) => (
     onDragLeave={onDragLeave}
     onDrop={onDrop}
     className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center justify-center gap-3 transition-colors ${
-      dragging ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
+      dragging ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-offwhite hover:border-gray-300'
     }`}
   >
     <FaCloudUploadAlt className={`text-4xl ${dragging ? 'text-green-400' : 'text-gray-300'}`} />
@@ -134,7 +134,7 @@ const UploadZone = ({ onFiles, dragging, onDragOver, onDragLeave, onDrop }) => (
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
 const SkeletonCard = () => (
-  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden animate-pulse">
+  <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden animate-pulse">
     <div className="aspect-square bg-gray-50" />
     <div className="px-3 py-2.5 space-y-1.5">
       <div className="h-3 bg-gray-50 rounded w-3/4" />
@@ -296,7 +296,7 @@ const MediaLibrary = () => {
         {/* Upload progress bar */}
         {uploading && (
           <div className="mb-4">
-            <div className="w-full h-1.5 bg-white border border-gray-200 rounded-full overflow-hidden">
+            <div className="w-full h-1.5 bg-offwhite border border-gray-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-green-500 rounded-full transition-all duration-300"
                 style={{ width: `${uploadProgress}%` }}
@@ -328,7 +328,7 @@ const MediaLibrary = () => {
           </div>
 
           {/* Type filter */}
-          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-offwhite border border-gray-200 rounded-lg p-1">
             {[
               { label: 'All', value: 'all' },
               { label: 'Images', value: 'image' },
@@ -339,7 +339,7 @@ const MediaLibrary = () => {
                 onClick={() => setFilterType(opt.value)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
                   filterType === opt.value
-                    ? 'bg-white text-gray-900 shadow-sm'
+                    ? 'bg-offwhite text-gray-900 shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
                 }`}
               >

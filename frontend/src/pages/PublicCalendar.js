@@ -49,7 +49,7 @@ const PublicCalendar = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="flex items-center justify-center min-h-screen bg-offwhite">
         <div className="text-gray-400 text-sm">Loading calendar…</div>
       </div>
     );
@@ -57,7 +57,7 @@ const PublicCalendar = () => {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-white gap-3">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-offwhite gap-3">
         <FaCalendarAlt className="text-gray-300 text-4xl" />
         <p className="text-gray-500 font-medium">{error}</p>
       </div>
@@ -65,7 +65,7 @@ const PublicCalendar = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-offwhite">
       <div className="max-w-5xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
@@ -97,9 +97,9 @@ const PublicCalendar = () => {
         </div>
 
         {/* Calendar */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden">
           {/* Day headers */}
-          <div className="grid grid-cols-7 bg-white border-b border-gray-200">
+          <div className="grid grid-cols-7 bg-offwhite border-b border-gray-200">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
               <div
                 key={d}
@@ -121,7 +121,7 @@ const PublicCalendar = () => {
                 <div
                   key={i}
                   className={`min-h-[110px] border-b border-r border-gray-200 last:border-r-0 p-1.5
-                    ${!isCurrentMonth ? 'bg-white' : 'bg-white'}
+                    ${!isCurrentMonth ? 'bg-offwhite' : 'bg-offwhite'}
                     ${today ? 'bg-green-500' : ''}`}
                 >
                   {/* Day number */}

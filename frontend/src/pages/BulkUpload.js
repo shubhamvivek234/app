@@ -96,7 +96,7 @@ const DropZone = ({ onFile, dragging, onDragOver, onDragLeave, onDrop }) => (
     onDragLeave={onDragLeave}
     onDrop={onDrop}
     className={`border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center gap-4 transition-colors ${
-      dragging ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-white hover:border-gray-300'
+      dragging ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-offwhite hover:border-gray-300'
     }`}
   >
     <FaCloudUploadAlt className={`text-5xl ${dragging ? 'text-green-400' : 'text-gray-300'}`} />
@@ -120,7 +120,7 @@ const PreviewTable = ({ rows, rowErrors }) => (
   <div className="overflow-x-auto rounded-xl border border-gray-200">
     <table className="w-full text-sm min-w-[700px]">
       <thead>
-        <tr className="bg-white border-b border-gray-200">
+        <tr className="bg-offwhite border-b border-gray-200">
           {['#', 'Content', 'Platforms', 'Scheduled Time', 'Post Type', 'Status'].map((h) => (
             <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">
               {h}
@@ -135,7 +135,7 @@ const PreviewTable = ({ rows, rowErrors }) => (
           return (
             <tr
               key={i}
-              className={`border-b border-gray-50 last:border-0 ${hasError ? 'bg-red-50/40' : 'bg-white'}`}
+              className={`border-b border-gray-50 last:border-0 ${hasError ? 'bg-red-50/40' : 'bg-offwhite'}`}
             >
               <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">{row._row}</td>
               <td className="px-4 py-2.5 text-xs text-gray-700 max-w-[200px]">
@@ -165,7 +165,7 @@ const PreviewTable = ({ rows, rowErrors }) => (
 
 // ── Result card ───────────────────────────────────────────────────────────────
 const ResultCard = ({ result, onReset }) => (
-  <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-6 space-y-4">
     <div className="flex items-center gap-3">
       {result.created > 0 ? (
         <FaCheckCircle className="text-green-500 text-2xl flex-shrink-0" />
@@ -343,7 +343,7 @@ const BulkUpload = () => {
         {!result && rows.length > 0 && (
           <div className="space-y-4">
             {/* File info bar */}
-            <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-4 py-3">
+            <div className="flex items-center justify-between bg-offwhite rounded-xl border border-gray-200 px-4 py-3">
               <div className="flex items-center gap-3">
                 <FaTable className="text-green-500 text-sm" />
                 <div>

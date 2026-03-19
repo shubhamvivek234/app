@@ -86,7 +86,7 @@ const LinkedInPreview = ({ content, media, account }) => {
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {/* Header */}
       <div className="p-3 flex items-start justify-between">
         <div className="flex items-start gap-2.5">

@@ -59,7 +59,7 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
   const toggling = false;
 
   return (
-    <div className={`bg-white rounded-xl border transition-colors ${isActive ? 'border-gray-200' : 'border-gray-100 opacity-75'}`}>
+    <div className={`bg-offwhite rounded-xl border transition-colors ${isActive ? 'border-gray-200' : 'border-gray-100 opacity-75'}`}>
       <div className="p-4">
         <div className="flex items-start gap-3">
           {/* Status dot */}
@@ -151,7 +151,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-green-200 p-5 space-y-4">
+    <form onSubmit={handleSubmit} className="bg-offwhite rounded-xl border border-green-200 p-5 space-y-4">
       <h3 className="text-sm font-semibold text-gray-900">New Recurring Post</h3>
 
       {/* Content */}
@@ -197,7 +197,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
           <select
             value={form.frequency}
             onChange={(e) => set('frequency', e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-white"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-offwhite"
           >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
@@ -247,7 +247,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
           <select
             value={form.day_of_month}
             onChange={(e) => set('day_of_month', parseInt(e.target.value))}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-white"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-offwhite"
           >
             {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
               <option key={d} value={d}>{ORDINALS[d]} ({d})</option>
@@ -258,7 +258,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
 
       {/* Preview */}
       {form.content && form.platforms.length > 0 && (
-        <div className="bg-white rounded-lg px-3 py-2.5 text-xs text-gray-500 border border-gray-200">
+        <div className="bg-offwhite rounded-lg px-3 py-2.5 text-xs text-gray-500 border border-gray-200">
           <span className="font-medium text-gray-700">Preview: </span>
           {describeFrequency(form)} on {form.platforms.map((p) => PLATFORM_LABELS[p] || p).join(', ')}
         </div>
@@ -387,11 +387,11 @@ const RecurringPosts = () => {
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 h-24 animate-pulse" />
+              <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-4 h-24 animate-pulse" />
             ))}
           </div>
         ) : rules.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center bg-white rounded-xl border border-dashed border-gray-200">
+          <div className="flex flex-col items-center justify-center py-16 text-center bg-offwhite rounded-xl border border-dashed border-gray-200">
             <FaRedo className="text-4xl text-gray-200 mb-3" />
             <p className="text-sm font-semibold text-gray-500">No recurring rules yet</p>
             <p className="text-xs text-gray-400 mt-1 max-w-xs">

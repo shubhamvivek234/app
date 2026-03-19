@@ -171,7 +171,7 @@ const SignupV2 = () => {
         .sv2-stat-num { font-family: 'Sora', sans-serif; font-size: 22px; font-weight: 700; color: #fff; line-height: 1; }
         .sv2-stat-label { font-size: 11px; color: rgba(255,255,255,0.42); margin-top: 3px; font-weight: 500; letter-spacing: 0.03em; }
 
-        .sv2-right { flex: 0 0 30%; background: #ffffff; display: flex; align-items: center; justify-content: center; padding: 24px 20px; position: relative; overflow-y: auto; }
+        .sv2-right { flex: 0 0 30%; background: #fffffb; display: flex; align-items: center; justify-content: center; padding: 24px 20px; position: relative; overflow-y: auto; }
         .sv2-form-card { width: 100%; max-width: 320px; }
         .sv2-form-logo { margin-bottom: 20px; display: flex; align-items: center; }
         .sv2-form-title { font-family: 'Sora', sans-serif; font-size: 21px; font-weight: 700; color: #0a1628; margin-bottom: 4px; letter-spacing: -0.4px; }

@@ -132,7 +132,7 @@ const Inbox = () => {
       <div className="flex h-[calc(100vh-64px)] overflow-hidden">
 
         {/* ── Left panel — message list ── */}
-        <div className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col bg-white">
+        <div className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col bg-offwhite">
           {/* Header */}
           <div className="px-4 pt-5 pb-3 border-b border-gray-100">
             <div className="flex items-center gap-2 mb-3">
@@ -153,7 +153,7 @@ const Inbox = () => {
                   className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors
                     ${activeTab === tab.key
                       ? 'bg-gray-900 text-white'
-                      : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                      : 'bg-offwhite border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
                 >
                   {tab.label}
                 </button>
@@ -212,7 +212,7 @@ const Inbox = () => {
         </div>
 
         {/* ── Right panel — message detail ── */}
-        <div className="flex-1 flex flex-col bg-white overflow-hidden">
+        <div className="flex-1 flex flex-col bg-offwhite overflow-hidden">
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <FaInbox className="text-5xl text-gray-200 mb-3" />
@@ -221,7 +221,7 @@ const Inbox = () => {
           ) : (
             <>
               {/* Message header */}
-              <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center gap-3">
+              <div className="px-6 py-4 bg-offwhite border-b border-gray-200 flex items-center gap-3">
                 {selected.author_avatar
                   ? <img src={selected.author_avatar} alt="" className="w-10 h-10 rounded-full object-cover" />
                   : <AvatarPlaceholder name={selected.author_name} className="w-10 h-10" />
@@ -257,7 +257,7 @@ const Inbox = () => {
                     ? <img src={selected.author_avatar} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                     : <AvatarPlaceholder name={selected.author_name} className="w-8 h-8" />
                   }
-                  <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 max-w-lg">
+                  <div className="bg-offwhite rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 max-w-lg">
                     <p className="text-sm text-gray-800 leading-relaxed">{selected.content}</p>
                   </div>
                 </div>
@@ -281,7 +281,7 @@ const Inbox = () => {
               </div>
 
               {/* Reply box */}
-              <div className="px-6 py-4 bg-white border-t border-gray-200">
+              <div className="px-6 py-4 bg-offwhite border-t border-gray-200">
                 <div className="flex gap-2 items-end">
                   <textarea
                     ref={replyRef}

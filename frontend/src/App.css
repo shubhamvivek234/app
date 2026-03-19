@@ -7,11 +7,11 @@
 }
 
 .btn-secondary {
-  @apply bg-white border border-input hover:bg-slate-50 text-slate-900 px-6 py-2.5 rounded-md font-medium transition-all active:scale-95;
+  @apply bg-offwhite border border-input hover:bg-slate-50 text-slate-900 px-6 py-2.5 rounded-md font-medium transition-all active:scale-95;
 }
 
 .card {
-  @apply bg-white rounded-lg border border-border overflow-hidden;
+  @apply bg-offwhite rounded-lg border border-border overflow-hidden;
 }
 
 .input-field {

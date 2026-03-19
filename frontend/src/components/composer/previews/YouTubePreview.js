@@ -12,7 +12,7 @@ const YouTubePreview = ({ content, media, account, videoTitle }) => {
   const hasVideo   = firstItem?.type === 'video';
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {/* Thumbnail / Video */}
       <div className="relative aspect-video bg-gray-900 overflow-hidden">
         {firstItem ? (

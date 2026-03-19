@@ -7,7 +7,7 @@ const GenericPreview = ({ content, media, account, platform }) => {
   const firstItem  = mediaArray[0] || null;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       <div className="p-3">
         <div className="flex items-center gap-2 mb-2">
           {avatar ? (

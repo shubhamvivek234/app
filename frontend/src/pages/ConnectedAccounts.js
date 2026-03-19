@@ -400,7 +400,7 @@ const ConnectedAccounts = () => {
                     return (
                     <div
                       key={account.id}
-                      className={`flex items-center gap-1.5 bg-white border rounded-full px-2 py-1 text-sm shadow-sm ${
+                      className={`flex items-center gap-1.5 bg-offwhite border rounded-full px-2 py-1 text-sm shadow-sm ${
                         tokenStatus === 'expired'  ? 'border-red-300 bg-red-50' :
                         tokenStatus === 'expiring' ? 'border-yellow-300 bg-yellow-50' :
                         'border-gray-200'
@@ -504,7 +504,7 @@ const ConnectedAccounts = () => {
       {/* Bluesky modal */}
       {blueskyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
+          <div className="bg-offwhite rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
             <div className="flex items-center gap-2 mb-4">
               <SiBluesky className="text-sky-500 text-xl" />
               <h2 className="text-lg font-semibold text-gray-900">Connect Bluesky</h2>
@@ -560,7 +560,7 @@ const ConnectedAccounts = () => {
       {/* ── LinkedIn Manual Page Add Modal ── */}
       {linkedinPageModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-offwhite rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 mb-5">
               <FaLinkedin className="text-blue-700 text-2xl" />
               <div>
@@ -621,7 +621,7 @@ const ConnectedAccounts = () => {
       {/* ── LinkedIn Pages Selection Modal (auto, from OAuth) ── */}
       {linkedinOrgsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-offwhite rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 mb-4">
               <FaLinkedin className="text-blue-700 text-2xl" />
               <div>

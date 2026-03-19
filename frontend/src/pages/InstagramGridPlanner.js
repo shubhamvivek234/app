@@ -42,7 +42,7 @@ const GridCell = ({
         ${isScheduled ? 'cursor-grab active:cursor-grabbing' : ''}
         ${isDragOver ? 'ring-2 ring-blue-400 ring-offset-1' : ''}
         ${isDragging ? 'opacity-40' : ''}
-        ${isPlaceholder ? 'bg-white border border-gray-200' : ''}
+        ${isPlaceholder ? 'bg-offwhite border border-gray-200' : ''}
       `}
     >
       {isPlaceholder ? (
@@ -86,7 +86,7 @@ const GridCell = ({
       ) : (
         /* Text-only post — show caption bg */
         <div className={`w-full h-full flex items-center justify-center p-2
-          ${isScheduled ? 'bg-amber-50' : 'bg-white'}`}
+          ${isScheduled ? 'bg-amber-50' : 'bg-offwhite'}`}
         >
           <p className="text-[11px] text-gray-600 text-center line-clamp-4 leading-tight">
             {post.content}
@@ -237,7 +237,7 @@ const InstagramGridPlanner = () => {
             { label: 'Scheduled', value: stats.scheduled, color: 'text-amber-500' },
             { label: 'With Media', value: stats.withImages },
           ].map(({ label, value, color = 'text-gray-900' }) => (
-            <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 text-center">
+            <div key={label} className="bg-offwhite rounded-xl border border-gray-200 p-4 text-center">
               <p className={`text-2xl font-bold ${color}`}>{value}</p>
               <p className="text-xs text-gray-500 mt-0.5">{label}</p>
             </div>
@@ -255,7 +255,7 @@ const InstagramGridPlanner = () => {
             <span className="text-xs text-gray-500">Scheduled (drag to reorder)</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-full bg-white border border-gray-300" />
+            <div className="w-3 h-3 rounded-full bg-offwhite border border-gray-300" />
             <span className="text-xs text-gray-500">Empty slot</span>
           </div>
         </div>
@@ -265,7 +265,7 @@ const InstagramGridPlanner = () => {
             <div className="w-8 h-8 border-2 border-pink-400 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : posts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 bg-white rounded-2xl border border-gray-200">
+          <div className="flex flex-col items-center justify-center h-64 bg-offwhite rounded-2xl border border-gray-200">
             <FaInstagram className="text-5xl text-gray-200 mb-3" />
             <p className="text-gray-500 font-medium">No Instagram posts yet</p>
             <p className="text-sm text-gray-400 mt-1">
@@ -281,7 +281,7 @@ const InstagramGridPlanner = () => {
         ) : (
           <>
             {/* Profile header mockup */}
-            <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-3">
+            <div className="bg-offwhite rounded-2xl border border-gray-200 p-4 mb-3">
               <div className="flex items-center gap-4 mb-4 pb-4 border-b border-gray-100">
                 <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-pink-400 to-purple-500 flex items-center justify-center text-white text-xl font-bold">
                   {selectedAccount?.account_name?.[0]?.toUpperCase() || 'I'}

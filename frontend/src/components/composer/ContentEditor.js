@@ -160,7 +160,7 @@ const ContentEditor = ({ content, onChange, selectedPlatforms, postType, onMedia
     : `${activeLimit.toLocaleString()} chars`;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-4">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden mb-4">
       {/* ── Formatting toolbar ── */}
       <div className="flex items-center gap-0.5 px-3 pt-2.5 pb-1 border-b border-gray-100">
         <ToolBtn onClick={() => applyTextFormat(toBold)} title="Bold (select text first)">

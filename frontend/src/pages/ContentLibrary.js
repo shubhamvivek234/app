@@ -201,7 +201,7 @@ const ContentLibrary = () => {
         </div>
 
         {/* Filters Row */}
-        <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4 bg-offwhite p-3 rounded-lg border border-slate-200 shadow-sm">
           {/* Search */}
           <div className="relative">
             <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none" />
@@ -292,7 +292,7 @@ const ContentLibrary = () => {
               return (
                 <div
                   key={post.id}
-                  className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
+                  className="bg-offwhite rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
                 >
                   {/* Action Dropdown Hover (Top Right) */}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 rounded border border-slate-100 px-1 py-1 backdrop-blur-sm shadow-sm">
@@ -334,8 +334,8 @@ const ContentLibrary = () => {
                   )}
 
                   {/* Top Bar: Platform Name & Date */}
-                  <div className="px-4 py-3 bg-white border-b border-slate-100 flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-white border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
+                  <div className="px-4 py-3 bg-offwhite border-b border-slate-100 flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-offwhite border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
                       {platformIcons[primaryPlatform]} {primaryPlatform}
                     </div>
                     <div className="text-slate-500 font-medium">
@@ -353,14 +353,14 @@ const ContentLibrary = () => {
 
                     {/* Media Preview Thumbnail (If Image/Video provided) */}
                     {post.media_urls && post.media_urls.length > 0 && (
-                      <div className="mb-4 h-32 bg-white rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                      <div className="mb-4 h-32 bg-offwhite rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
                          <img src={post.cover_image || post.media_urls[0]} alt="Media Thumbnail" className="w-full h-full object-cover" />
                       </div>
                     )}
                   </div>
 
                   {/* Bottom Bar: Accounts and Status Pill */}
-                  <div className="px-4 py-3 border-t border-slate-100 flex justify-between items-center bg-white">
+                  <div className="px-4 py-3 border-t border-slate-100 flex justify-between items-center bg-offwhite">
                     {/* Avatars Stack */}
                     <div className="flex -space-x-2">
                       {postAccounts.slice(0, 4).map((acc, idx) => {
@@ -368,7 +368,7 @@ const ContentLibrary = () => {
                         const bgColor = colors[(acc.platform_username || 'U').charCodeAt(0) % colors.length];
                         const zIndex = 10 - idx;
                         return (
-                          <div key={acc.id} className="relative rounded-full border-2 border-white bg-white" style={{ zIndex }}>
+                          <div key={acc.id} className="relative rounded-full border-2 border-white bg-offwhite" style={{ zIndex }}>
                              {acc.picture_url ? (
                                 <img src={acc.picture_url} className="w-7 h-7 rounded-full object-cover" title={acc.platform_username} alt="avatar" />
                              ) : (
@@ -376,14 +376,14 @@ const ContentLibrary = () => {
                                   {(acc.platform_username || 'U').charAt(0).toUpperCase()}
                                 </div>
                              )}
-                             <div className="absolute -bottom-0.5 -right-0.5 bg-white rounded-full p-[1px]">
+                             <div className="absolute -bottom-0.5 -right-0.5 bg-offwhite rounded-full p-[1px]">
                                {platformIcons[acc.platform] ? React.cloneElement(platformIcons[acc.platform], { className: "w-[8px] h-[8px]" }) : null}
                              </div>
                           </div>
                         )
                       })}
                       {postAccounts.length > 4 && (
-                        <div className="w-7 h-7 rounded-full border-2 border-white bg-white flex items-center justify-center text-[10px] text-slate-600 font-bold z-0">
+                        <div className="w-7 h-7 rounded-full border-2 border-white bg-offwhite flex items-center justify-center text-[10px] text-slate-600 font-bold z-0">
                           +{postAccounts.length - 4}
                         </div>
                       )}
@@ -394,7 +394,7 @@ const ContentLibrary = () => {
                       post.status === 'scheduled' ? 'bg-[#00A3FF] text-white' :
                       post.status === 'published' ? 'bg-emerald-500 text-white' :
                       post.status === 'failed' ? 'bg-red-500 text-white' :
-                      'bg-white border border-slate-300 text-slate-700'
+                      'bg-offwhite border border-slate-300 text-slate-700'
                     }`}>
                       {post.status}
                     </div>
@@ -447,7 +447,7 @@ const ContentLibrary = () => {
                           onChange={(e) => setNoteInput(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') handleAddNote(post.id); }}
                           placeholder="Add a note…"
-                          className="flex-1 text-[12px] border border-amber-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-white placeholder:text-slate-300"
+                          className="flex-1 text-[12px] border border-amber-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400 bg-offwhite placeholder:text-slate-300"
                         />
                         <button
                           onClick={() => handleAddNote(post.id)}

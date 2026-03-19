@@ -156,7 +156,7 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+    <div className="bg-offwhite rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
       <div className="flex gap-4 p-4">
 
         {/* Left: time column */}
@@ -186,7 +186,7 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
                 </div>
               )}
               {PlatformIcon && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white border border-gray-100 flex items-center justify-center shadow-sm">
+                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-offwhite border border-gray-100 flex items-center justify-center shadow-sm">
                   <PlatformIcon className={`text-[9px] ${meta.color}`} />
                 </div>
               )}
@@ -312,7 +312,7 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
             onKeyDown={handleCommentKeyDown}
             placeholder="Write a comment… (⌘↵ to send)"
             rows={3}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
           />
           <div className="flex justify-end gap-2 mt-2">
             <button
@@ -408,7 +408,7 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
                             }}
                             placeholder={`Reply to ${comment.author_name}… (⌘↵)`}
                             rows={2}
-                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 resize-none bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
                           />
                           <div className="flex justify-end gap-2 mt-1.5">
                             <button

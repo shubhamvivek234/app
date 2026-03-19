@@ -36,9 +36,9 @@ const LandingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-offwhite">
       {/* New Navigation Header */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
+      <nav className="bg-offwhite border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             {/* Logo */}
@@ -74,7 +74,7 @@ const LandingPage = () => {
             {/* User Profile or Auth Buttons */}
             <div className="flex items-center space-x-4">
               {user ? (
-                <div className="flex items-center space-x-3 bg-white border border-gray-200 rounded-full px-4 py-2 cursor-pointer" onClick={() => navigate('/dashboard')}>
+                <div className="flex items-center space-x-3 bg-offwhite border border-gray-200 rounded-full px-4 py-2 cursor-pointer" onClick={() => navigate('/dashboard')}>
                   <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-semibold">{user.name?.charAt(0) || 'U'}</span>
                   </div>
@@ -147,7 +147,7 @@ const LandingPage = () => {
       </section>
 
       {/* Stats Section - Post-Bridge Inspired */}
-      <section className="py-10 border-y border-gray-100 bg-white">
+      <section className="py-10 border-y border-gray-100 bg-offwhite">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row justify-center items-center gap-8 md:gap-16 text-center">
             <div>
@@ -169,7 +169,7 @@ const LandingPage = () => {
       </section>
 
       {/* How it Works Section */}
-      <section className="py-20 bg-white">
+      <section className="py-20 bg-offwhite">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
@@ -184,7 +184,7 @@ const LandingPage = () => {
             <div className="hidden md:block absolute top-12 left-[16%] right-[16%] h-0.5 bg-gradient-to-r from-indigo-200 via-purple-200 to-pink-200 -z-10"></div>
 
             {/* Step 1 */}
-            <div className="relative text-center bg-white p-6">
+            <div className="relative text-center bg-offwhite p-6">
               <div className="w-24 h-24 mx-auto bg-indigo-50 rounded-full flex items-center justify-center mb-6 border-4 border-white shadow-sm">
                 <span className="text-3xl font-bold text-indigo-600">1</span>
               </div>
@@ -193,7 +193,7 @@ const LandingPage = () => {
             </div>
 
             {/* Step 2 */}
-            <div className="relative text-center bg-white p-6">
+            <div className="relative text-center bg-offwhite p-6">
               <div className="w-24 h-24 mx-auto bg-purple-50 rounded-full flex items-center justify-center mb-6 border-4 border-white shadow-sm">
                 <span className="text-3xl font-bold text-purple-600">2</span>
               </div>
@@ -202,7 +202,7 @@ const LandingPage = () => {
             </div>
 
             {/* Step 3 */}
-            <div className="relative text-center bg-white p-6">
+            <div className="relative text-center bg-offwhite p-6">
               <div className="w-24 h-24 mx-auto bg-pink-50 rounded-full flex items-center justify-center mb-6 border-4 border-white shadow-sm">
                 <span className="text-3xl font-bold text-pink-600">3</span>
               </div>
@@ -214,7 +214,7 @@ const LandingPage = () => {
       </section>
 
       {/* Platforms Section */}
-      <section id="platforms" className="py-20 bg-white">
+      <section id="platforms" className="py-20 bg-offwhite">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="mb-12">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 mb-2">
@@ -227,29 +227,29 @@ const LandingPage = () => {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
             {/* Row 1 */}
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <div className="w-10 h-10 flex items-center justify-center bg-black rounded-lg">
                 <FaXTwitter className="text-2xl text-white" />
               </div>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Twitter/X</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <FaInstagram className="text-4xl" style={{ fill: 'url(#instagram-gradient)' }} />
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Instagram</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <svg viewBox="0 0 24 24" className="w-10 h-10 text-[#0A66C2]" fill="currentColor">
                 <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
               </svg>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">LinkedIn</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <svg viewBox="0 0 24 24" className="w-10 h-10 text-[#1877F2]" fill="currentColor">
                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
               </svg>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Facebook</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <div className="w-10 h-10 flex items-center justify-center rounded-lg">
                 <FaTiktok className="text-3xl text-black" />
               </div>
@@ -257,27 +257,27 @@ const LandingPage = () => {
             </div>
 
             {/* Row 2 */}
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-red-600">
                 <FaYoutube className="text-2xl text-white" />
               </div>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">YouTube</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <SiBluesky className="text-4xl text-[#0085FF]" />
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Bluesky</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <FaThreads className="text-4xl text-black" />
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Threads</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors">
               <div className="w-10 h-10 flex items-center justify-center rounded-full bg-[#E60023]">
                 <FaPinterest className="text-2xl text-white" />
               </div>
               <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">Pinterest</span>
             </div>
-            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-white rounded-2xl border border-gray-200 border-dashed">
+            <div className="flex flex-col items-center justify-center gap-3 p-6 bg-offwhite rounded-2xl border border-gray-200 border-dashed">
               <FaEllipsisH className="text-3xl text-slate-300" />
               <span className="text-[10px] font-semibold text-slate-400 capitalize tracking-widest shadow-none">More to come</span>
             </div>
@@ -324,10 +324,10 @@ const LandingPage = () => {
             </div>
             <div className="relative">
               <div
-                className="rounded-2xl overflow-hidden shadow-xl border border-gray-100 bg-white relative aspect-square flex items-center justify-center p-8"
+                className="rounded-2xl overflow-hidden shadow-xl border border-gray-100 bg-offwhite relative aspect-square flex items-center justify-center p-8"
               >
                 {/* Central Dashboard Hub */}
-                <div className="w-full max-w-sm bg-white rounded-xl shadow-lg border border-gray-200 p-4 z-10 relative">
+                <div className="w-full max-w-sm bg-offwhite rounded-xl shadow-lg border border-gray-200 p-4 z-10 relative">
                   <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-2">
                     <div className="w-3 h-3 rounded-full bg-red-400"></div>
                     <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
@@ -348,16 +348,16 @@ const LandingPage = () => {
                 </div>
 
                 {/* Floating Social Icons with Animation */}
-                <div className="absolute top-12 left-12 animate-bounce duration-[3000ms] shadow-lg rounded-full p-3 bg-white border border-gray-100 z-20">
+                <div className="absolute top-12 left-12 animate-bounce duration-[3000ms] shadow-lg rounded-full p-3 bg-offwhite border border-gray-100 z-20">
                   <FaTwitter className="text-2xl text-blue-400" />
                 </div>
-                <div className="absolute top-20 right-12 animate-bounce delay-700 duration-[4000ms] shadow-lg rounded-full p-3 bg-white border border-gray-100 z-20">
+                <div className="absolute top-20 right-12 animate-bounce delay-700 duration-[4000ms] shadow-lg rounded-full p-3 bg-offwhite border border-gray-100 z-20">
                   <FaInstagram className="text-2xl text-pink-500" />
                 </div>
-                <div className="absolute bottom-24 left-16 animate-bounce delay-1000 duration-[3500ms] shadow-lg rounded-full p-3 bg-white border border-gray-100 z-20">
+                <div className="absolute bottom-24 left-16 animate-bounce delay-1000 duration-[3500ms] shadow-lg rounded-full p-3 bg-offwhite border border-gray-100 z-20">
                   <FaLinkedin className="text-2xl text-blue-700" />
                 </div>
-                <div className="absolute bottom-12 right-20 animate-bounce delay-500 duration-[4500ms] shadow-lg rounded-full p-3 bg-white border border-gray-100 z-20">
+                <div className="absolute bottom-12 right-20 animate-bounce delay-500 duration-[4500ms] shadow-lg rounded-full p-3 bg-offwhite border border-gray-100 z-20">
                   <FaYoutube className="text-2xl text-red-600" />
                 </div>
 
@@ -381,7 +381,7 @@ const LandingPage = () => {
                 </div>
 
                 {/* Main Card: Magic Editor */}
-                <div className="w-full max-w-sm bg-white rounded-xl shadow-xl border border-purple-100 p-6 z-10 relative">
+                <div className="w-full max-w-sm bg-offwhite rounded-xl shadow-xl border border-purple-100 p-6 z-10 relative">
                   <div className="flex items-center justify-between mb-4 border-b border-gray-50 pb-2">
                     <span className="text-xs font-semibold text-purple-600 uppercase tracking-wider">AI Assistant</span>
                     <div className="flex gap-1">
@@ -442,7 +442,7 @@ const LandingPage = () => {
       </section>
 
       {/* Reviews Section */}
-      <section id="reviews" className="py-20 bg-white">
+      <section id="reviews" className="py-20 bg-offwhite">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
@@ -454,7 +454,7 @@ const LandingPage = () => {
           </div>
           <div className="grid md:grid-cols-3 gap-8">
             {/* Review 1 */}
-            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="bg-offwhite p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-1 text-yellow-400 mb-4">
                 {[...Array(5)].map((_, i) => (
                   <FaRocket key={i} className="text-sm" />
@@ -475,7 +475,7 @@ const LandingPage = () => {
             </div>
 
             {/* Review 2 */}
-            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="bg-offwhite p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-1 text-yellow-400 mb-4">
                 {[...Array(5)].map((_, i) => (
                   <FaRocket key={i} className="text-sm" />
@@ -496,7 +496,7 @@ const LandingPage = () => {
             </div>
 
             {/* Review 3 */}
-            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+            <div className="bg-offwhite p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-1 text-yellow-400 mb-4">
                 {[...Array(5)].map((_, i) => (
                   <FaRocket key={i} className="text-sm" />
@@ -520,7 +520,7 @@ const LandingPage = () => {
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-20 bg-white">
+      <section id="pricing" className="py-20 bg-offwhite">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900 mb-4">
@@ -531,7 +531,7 @@ const LandingPage = () => {
             </p>
           </div>
           <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            <div className="bg-white rounded-lg border border-border p-8 space-y-6">
+            <div className="bg-offwhite rounded-lg border border-border p-8 space-y-6">
               <div>
                 <h3 className="text-2xl font-semibold text-slate-900">Monthly</h3>
                 <div className="mt-4 flex items-baseline">
@@ -596,7 +596,7 @@ const LandingPage = () => {
                 </li>
               </ul>
               <Button
-                className="w-full bg-white text-indigo-600 hover:bg-gray-100"
+                className="w-full bg-offwhite text-indigo-600 hover:bg-gray-100"
                 onClick={() => navigate('/signup')}
                 data-testid="pricing-yearly-button"
               >
@@ -743,7 +743,7 @@ const LandingPage = () => {
             </p>
             <Button
               size="lg"
-              className="bg-white text-indigo-600 hover:bg-gray-100"
+              className="bg-offwhite text-indigo-600 hover:bg-gray-100"
               onClick={() => navigate('/signup')}
               data-testid="final-cta-button"
             >

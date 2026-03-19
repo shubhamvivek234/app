@@ -156,7 +156,7 @@ const StoryPost = ({ mediaArray, content, name, avatar }) => {
         {[0.55, 0, 0].map((fill, i) => (
           <div key={i} className="flex-1 h-0.5 bg-white/40 rounded-full overflow-hidden">
             {fill > 0 && (
-              <div className="h-full bg-white rounded-full" style={{ width: `${fill * 100}%` }} />
+              <div className="h-full bg-offwhite rounded-full" style={{ width: `${fill * 100}%` }} />
             )}
           </div>
         ))}
@@ -223,7 +223,7 @@ const FeedPost = ({
   const currentItem = mediaArray[activeSlide] || null;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between p-3">
         <div className="flex items-center gap-2.5">
@@ -243,7 +243,7 @@ const FeedPost = ({
               className="w-8 h-8 rounded-full p-0.5 flex-shrink-0"
               style={{ background: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)' }}
             >
-              <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-xs font-bold text-gray-700">
+              <div className="w-full h-full rounded-full bg-offwhite flex items-center justify-center text-xs font-bold text-gray-700">
                 {name.charAt(0).toUpperCase()}
               </div>
             </div>

@@ -89,7 +89,7 @@ const TwitterPreview = ({ content, media, account }) => {
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       <div className="p-3">
         <div className="flex gap-2.5">
           {/* Avatar */}

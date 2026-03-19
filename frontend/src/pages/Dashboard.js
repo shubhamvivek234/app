@@ -75,7 +75,7 @@ const Dashboard = () => {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Total Posts</p>
@@ -87,7 +87,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Scheduled</p>
@@ -99,7 +99,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Published</p>
@@ -111,7 +111,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Connected Accounts</p>
@@ -125,7 +125,7 @@ const Dashboard = () => {
         </div>
 
         {/* Recent Posts */}
-        <div className="bg-white rounded-lg border border-border">
+        <div className="bg-offwhite rounded-lg border border-border">
           <div className="p-6 border-b border-border">
             <h2 className="text-xl font-semibold text-slate-900">Recent Posts</h2>
           </div>
@@ -159,7 +159,7 @@ const Dashboard = () => {
                             ? 'bg-green-100 text-green-700'
                             : post.status === 'scheduled'
                             ? 'bg-amber-100 text-amber-700'
-                            : 'bg-white border border-slate-200 text-slate-700'
+                            : 'bg-offwhite border border-slate-200 text-slate-700'
                         }`}>
                           {post.status}
                         </span>
@@ -179,7 +179,7 @@ const Dashboard = () => {
 
         {/* Team Activity — only show if workspace has multiple members */}
         {workspaceMembers.length > 1 && (
-          <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="bg-offwhite rounded-xl border border-slate-200 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-slate-800">Team Activity</h3>
               <span className="text-xs text-slate-400">{workspaceMembers.length} members</span>

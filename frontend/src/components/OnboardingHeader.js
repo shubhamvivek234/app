@@ -25,7 +25,7 @@ const OnboardingHeader = ({ step }) => {
     const steps = [1, 2, 3];
 
     return (
-        <header className="w-full bg-white border-b border-gray-100 py-4 px-6 fixed top-0 left-0 z-50">
+        <header className="w-full bg-offwhite border-b border-gray-100 py-4 px-6 fixed top-0 left-0 z-50">
             <div className="max-w-7xl mx-auto flex items-center justify-between">
                 {/* Left: Logo */}
                 <div className="w-48">

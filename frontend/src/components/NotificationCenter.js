@@ -92,7 +92,7 @@ const NotificationCenter = () => {
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden z-50">
+                <div className="absolute right-0 mt-2 w-80 bg-offwhite rounded-xl shadow-lg border border-gray-100 overflow-hidden z-50">
                     <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                         <h3 className="font-bold text-gray-800">Notifications</h3>
                         {unreadCount > 0 && (
@@ -111,7 +111,7 @@ const NotificationCenter = () => {
                                     key={notification.id}
                                     onClick={() => !notification.is_read && handleMarkAsRead(notification.id)}
                                     className={`p-4 border-b border-gray-50 cursor-pointer transition-colors relative group
-                    ${notification.is_read ? 'bg-white opacity-70' : 'bg-green-50/30 hover:bg-green-50'}`}
+                    ${notification.is_read ? 'bg-offwhite opacity-70' : 'bg-green-50/30 hover:bg-green-50'}`}
                                 >
                                     <div className="flex items-start gap-3 w-full pr-4">
                                         <div className="mt-1 flex-shrink-0">

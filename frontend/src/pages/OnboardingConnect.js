@@ -107,12 +107,12 @@ const OnboardingConnect = () => {
   const PlatformIcon = selectedPlatform?.icon;
 
   return (
-    <div className="min-h-screen bg-white pt-20 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-offwhite pt-20 flex items-center justify-center px-4">
       <OnboardingHeader step={2} />
 
       <div className="max-w-3xl w-full">
         {/* Content */}
-        <div className="bg-white rounded-xl shadow-sm border border-border p-8">
+        <div className="bg-offwhite rounded-xl shadow-sm border border-border p-8">
           <h2 className="text-3xl font-bold text-slate-900 mb-2">Connect your accounts</h2>
           <p className="text-slate-600 mb-8">
             Connect and then manage all your social media accounts from one place
@@ -143,7 +143,7 @@ const OnboardingConnect = () => {
                     return (
                       <div
                         key={account.id}
-                        className="flex items-center p-4 bg-white rounded-lg border border-slate-200"
+                        className="flex items-center p-4 bg-offwhite rounded-lg border border-slate-200"
                       >
                         {PlatformIcon && <PlatformIcon className="text-2xl mr-3" style={{ color: platform.color }} />}
                         <div>
@@ -194,7 +194,7 @@ const OnboardingConnect = () => {
               return (
                 <div
                   key={platform.id}
-                  className="flex items-center justify-between p-4 bg-white rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+                  className="flex items-center justify-between p-4 bg-offwhite rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
                 >
                   <div className="flex items-center">
                     <Icon className="text-2xl mr-3" style={{ color: platform.color }} />

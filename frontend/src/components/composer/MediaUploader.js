@@ -105,13 +105,13 @@ const MediaUploader = ({ postType, uploadedMedia, uploading, uploadProgress, onF
                     onChange={(e) => setAiPrompt(e.target.value)}
                     placeholder="Describe the image you want to generate…"
                     rows={3}
-                    className="w-full border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 placeholder:text-gray-400 resize-none mb-2 bg-white"
+                    className="w-full border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 placeholder:text-gray-400 resize-none mb-2 bg-offwhite"
                   />
                   <div className="flex gap-2 mb-3">
                     <select
                       value={aiSize}
                       onChange={(e) => setAiSize(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white"
+                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-offwhite"
                     >
                       {AI_SIZES.map((s) => (
                         <option key={s.value} value={s.value}>{s.label}</option>
@@ -120,7 +120,7 @@ const MediaUploader = ({ postType, uploadedMedia, uploading, uploadProgress, onF
                     <select
                       value={aiStyle}
                       onChange={(e) => setAiStyle(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white"
+                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-offwhite"
                     >
                       {AI_STYLES.map((s) => (
                         <option key={s.value} value={s.value}>{s.label}</option>

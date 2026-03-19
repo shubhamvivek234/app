@@ -22,7 +22,7 @@ const ROLE_COLORS = {
   owner:  'bg-amber-100 text-amber-800',
   admin:  'bg-purple-100 text-purple-800',
   editor: 'bg-blue-100 text-blue-700',
-  viewer: 'bg-white border border-gray-200 text-gray-600',
+  viewer: 'bg-offwhite border border-gray-200 text-gray-600',
 };
 
 const PLATFORM_META = {
@@ -136,7 +136,7 @@ const TeamMembers = () => {
 
         {/* Invite panel */}
         {showInvite && (
-          <div className="bg-white rounded-2xl border border-gray-200 p-5 mb-5 shadow-sm">
+          <div className="bg-offwhite rounded-2xl border border-gray-200 p-5 mb-5 shadow-sm">
             <h2 className="text-sm font-semibold text-gray-800 mb-3">Invite a team member</h2>
             <div className="flex gap-3 mb-3">
               <div className="flex-1 relative">
@@ -184,7 +184,7 @@ const TeamMembers = () => {
         )}
 
         {/* Member list */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+        <div className="bg-offwhite rounded-2xl border border-gray-200 overflow-hidden">
           {/* Owner row */}
           <div className="flex items-center gap-4 px-5 py-4 border-b border-gray-100">
             <div className="w-10 h-10 rounded-full bg-gray-900 flex items-center justify-center text-white">

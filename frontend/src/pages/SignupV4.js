@@ -228,7 +228,7 @@ const SignupV4 = () => {
 
       {/* ══ LEFT PANEL — white + animated characters ══ */}
       <div style={{
-        flex: '0 0 55%', background: '#ffffff',
+        flex: '0 0 55%', background: '#fffffb',
         position: 'relative', display: 'flex',
         flexDirection: 'column', overflow: 'hidden',
       }}>
@@ -340,7 +340,7 @@ const SignupV4 = () => {
 
       {/* ══ RIGHT PANEL — white signup form ══ */}
       <div style={{
-        flex: '0 0 45%', background: '#ffffff',
+        flex: '0 0 45%', background: '#fffffb',
         display: 'flex', flexDirection: 'column',
         justifyContent: 'center', alignItems: 'center',
         padding: '40px 64px',

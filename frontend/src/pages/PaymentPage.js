@@ -236,7 +236,7 @@ const PaymentPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-offwhite">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-8">
           <Button variant="ghost" onClick={() => navigate('/onboarding/pricing')} className="text-gray-600">
@@ -246,7 +246,7 @@ const PaymentPage = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
           {/* Left Column - Trial Details */}
-          <div className="bg-white rounded-lg p-8 border border-gray-200 h-fit">
+          <div className="bg-offwhite rounded-lg p-8 border border-gray-200 h-fit">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">
               Try SocialEntangler {selectedPlan.name.toLowerCase()}
             </h2>
@@ -302,7 +302,7 @@ const PaymentPage = () => {
           </div>
 
           {/* Right Column - Payment Form */}
-          <div className="bg-white rounded-lg p-8 border border-gray-200">
+          <div className="bg-offwhite rounded-lg p-8 border border-gray-200">
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Email */}
               <div>

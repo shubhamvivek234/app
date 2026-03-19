@@ -31,7 +31,7 @@ const CardShell = ({ post, bannerContent, actionBar, children }) => {
   const isVideo  = post.post_type === 'video';
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {bannerContent}
       <div className="p-4">
         <div className="flex gap-4">
@@ -230,7 +230,7 @@ const TabPill = ({ label, count, active, color = 'amber', onClick }) => {
     >
       {label}
       {count > 0 && (
-        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-white bg-opacity-70' : 'bg-gray-200 text-gray-500'}`}>
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-offwhite bg-opacity-70' : 'bg-gray-200 text-gray-500'}`}>
           {count}
         </span>
       )}
@@ -240,7 +240,7 @@ const TabPill = ({ label, count, active, color = 'amber', onClick }) => {
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 const EmptyState = ({ icon: Icon, iconColor, title, subtitle }) => (
-  <div className="flex flex-col items-center justify-center py-20 text-center bg-white rounded-xl border border-dashed border-gray-200">
+  <div className="flex flex-col items-center justify-center py-20 text-center bg-offwhite rounded-xl border border-dashed border-gray-200">
     <Icon className={`text-4xl ${iconColor} mb-3`} />
     <p className="text-sm font-semibold text-gray-600">{title}</p>
     <p className="text-xs text-gray-400 mt-1 max-w-xs">{subtitle}</p>
@@ -329,7 +329,7 @@ const ApprovalQueue = () => {
       return (
         <div className="space-y-4">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="bg-white rounded-xl border border-gray-200 h-40 animate-pulse" />
+            <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-40 animate-pulse" />
           ))}
         </div>
       );

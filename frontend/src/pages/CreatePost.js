@@ -83,7 +83,7 @@ const CreatePost = () => {
               key={postType.id}
               onClick={() => setComposerType(postType.id)}
               data-testid={`post-type-${postType.id}`}
-              className="bg-white border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-green-400 hover:bg-green-50/30 transition-all cursor-pointer group min-h-[200px] flex flex-col items-center justify-center"
+              className="bg-offwhite border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-green-400 hover:bg-green-50/30 transition-all cursor-pointer group min-h-[200px] flex flex-col items-center justify-center"
             >
               {/* Icon */}
               <div className="flex justify-center mb-4 group-hover:scale-105 transition-transform">

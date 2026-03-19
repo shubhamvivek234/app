@@ -111,7 +111,7 @@ const parseDate = (val) => {
 
 // Engagement summary card
 const EngagementCard = ({ icon: Icon, label, value, color, loading }) => (
-  <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5 flex items-center gap-4">
     <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
       <Icon className="text-white text-lg" />
     </div>
@@ -134,7 +134,7 @@ const PlatformPill = ({ platform, active, onClick }) => {
       onClick={onClick}
       style={active ? { background: color, borderColor: color, color: '#fff' } : {}}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
-        ${active ? '' : 'border-gray-200 text-gray-600 bg-white hover:border-gray-300 hover:bg-gray-50'}`}
+        ${active ? '' : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300 hover:bg-gray-50'}`}
     >
       {Icon && <Icon className="text-sm" style={active ? {} : { color }} />}
       {PLATFORM_LABELS[platform] || platform}
@@ -146,7 +146,7 @@ const PlatformPill = ({ platform, active, onClick }) => {
 const TimelineTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
+    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
       <p className="font-semibold text-gray-700">{label}</p>
       <p className="text-indigo-600">{payload[0]?.value} posts</p>
     </div>
@@ -157,7 +157,7 @@ const TimelineTooltip = ({ active, payload, label }) => {
 const EngagementTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
+    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
       <p className="font-semibold text-gray-700 mb-1">{PLATFORM_LABELS[label] || label}</p>
       {payload.map((p) => (
         <p key={p.name} style={{ color: p.fill || p.color }} className="capitalize">
@@ -178,7 +178,7 @@ const PostCard = ({ post }) => {
   const dt = parseDate(post.published_at);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 flex gap-4 hover:shadow-sm transition-shadow">
+    <div className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4 hover:shadow-sm transition-shadow">
       {/* Thumbnail */}
       {post.media_url ? (
         <div className="w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
@@ -247,7 +247,7 @@ const PostCard = ({ post }) => {
 
 // Demographic placeholder card
 const DemoCard = ({ title }) => (
-  <div className="bg-white rounded-xl border border-gray-200 p-5">
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
     <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">{title}</p>
     <div className="h-32 flex items-center justify-center bg-gray-50 rounded-lg">
       <p className="text-sm text-gray-400">No data available</p>
@@ -301,7 +301,7 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
       {/* Trigger button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-white hover:bg-gray-50 transition-colors min-w-[180px] shadow-sm"
+        className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-offwhite hover:bg-gray-50 transition-colors min-w-[180px] shadow-sm"
       >
         {selected ? (
           <>
@@ -320,7 +320,7 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 w-64 bg-offwhite rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
           {/* "All accounts" option */}
           {showAll && (
             <button
@@ -608,7 +608,7 @@ const Analytics = () => {
       <div className="flex h-full overflow-hidden">
 
         {/* ── Left Platform Sidebar ──────────────────────────────────── */}
-        <aside className="w-52 shrink-0 border-r border-gray-200 bg-white overflow-y-auto hidden md:block">
+        <aside className="w-52 shrink-0 border-r border-gray-200 bg-offwhite overflow-y-auto hidden md:block">
           <PlatformSidebar
             accounts={accounts}
             selectedPlatform={selectedPlatform}
@@ -650,7 +650,7 @@ const Analytics = () => {
                 onClick={() => setDays(opt.value)}
                 className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
                   ${days === opt.value
-                    ? 'bg-white text-indigo-600 shadow-sm'
+                    ? 'bg-offwhite text-indigo-600 shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {opt.label}
@@ -666,7 +666,7 @@ const Analytics = () => {
             className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
               ${!selectedPlatform
                 ? 'bg-indigo-600 border-indigo-600 text-white'
-                : 'border-gray-200 text-gray-600 bg-white hover:border-gray-300'}`}
+                : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
           >
             All
           </button>
@@ -785,7 +785,7 @@ const Analytics = () => {
             {!loadingEngagement && engagement?.totals?.total_posts > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Average engagement per post */}
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
                   <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Avg. Engagement / Post</p>
                   <p className="text-2xl font-bold text-gray-900">
                     {fmt(Math.round(
@@ -809,7 +809,7 @@ const Analytics = () => {
                   const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                   const totalEng = (data.likes || 0) + (data.comments || 0) + (data.shares || 0);
                   return (
-                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Best Platform</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
@@ -828,7 +828,7 @@ const Analytics = () => {
                   const [plat, data] = best;
                   const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                   return (
-                    <div className="bg-white rounded-xl border border-gray-200 p-4">
+                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Most Viewed</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
@@ -845,7 +845,7 @@ const Analytics = () => {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
               {/* Posts Over Time */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts Published Over Time</h3>
                 {loadingOverview ? (
                   <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
@@ -871,7 +871,7 @@ const Analytics = () => {
               </div>
 
               {/* Platform Engagement Breakdown */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
                 {loadingEngagement ? (
                   <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
@@ -903,7 +903,7 @@ const Analytics = () => {
 
             {/* Post type breakdown */}
             {overview && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts by Type</h3>
                 {loadingOverview ? (
                   <div className="h-10 bg-gray-100 animate-pulse rounded-lg" />
@@ -936,7 +936,7 @@ const Analytics = () => {
             )}
 
             {/* Top performing posts */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
               {loadingEngagement ? (
                 <div className="space-y-3">
@@ -992,7 +992,7 @@ const Analytics = () => {
 
             {/* Platform summary table */}
             {overview?.platform_counts && Object.keys(overview.platform_counts).length > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Platform Summary</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -1061,7 +1061,7 @@ const Analytics = () => {
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
                     ${postsSort === opt.value
                       ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-gray-200 text-gray-600 bg-white hover:border-gray-300'}`}
+                      : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
                 >
                   {opt.label}
                 </button>
@@ -1083,7 +1083,7 @@ const Analytics = () => {
                   { label: 'Total Shares',   val: sortedPosts.reduce((s, p) => s + (p.metrics?.shares || 0), 0),   icon: FaShare,   color: 'text-green-500'  },
                   { label: 'Total Views',    val: sortedPosts.reduce((s, p) => s + (p.metrics?.views || 0), 0),    icon: FaEye,     color: 'text-purple-500' },
                 ].map(({ label, val, icon: Icon, color }) => (
-                  <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+                  <div key={label} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex items-center gap-3">
                     <Icon className={`${color} text-lg`} />
                     <div>
                       <p className="text-xs text-gray-500">{label}</p>
@@ -1098,7 +1098,7 @@ const Analytics = () => {
             {loadingPosts ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 flex gap-4">
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4">
                     <div className="w-20 h-20 bg-gray-100 animate-pulse rounded-lg flex-shrink-0" />
                     <div className="flex-1 space-y-2">
                       <div className="h-3 bg-gray-100 animate-pulse rounded w-1/3" />
@@ -1109,7 +1109,7 @@ const Analytics = () => {
                 ))}
               </div>
             ) : sortedPosts.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-200 py-16 text-center">
+              <div className="bg-offwhite rounded-xl border border-gray-200 py-16 text-center">
                 <FaFileAlt className="text-4xl text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 font-medium">No published posts found</p>
                 <p className="text-sm text-gray-400 mt-1">
@@ -1147,21 +1147,21 @@ const Analytics = () => {
             {loadingDemos ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-white rounded-xl border border-gray-200 p-5">
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-5">
                     <div className="h-4 bg-gray-100 animate-pulse rounded w-1/3 mb-4" />
                     <div className="h-40 bg-gray-100 animate-pulse rounded-lg" />
                   </div>
                 ))}
               </div>
             ) : !demographics?.supported ? (
-              <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
                 <p className="text-gray-500 font-medium">Demographics not available</p>
                 <p className="text-sm text-gray-400 mt-1">{demographics?.message || 'Connect an Instagram Business or Facebook Page account to see demographics.'}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Age Distribution */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Age Distribution</h4>
                   {demographics?.demographics?.age?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={200}>
@@ -1179,7 +1179,7 @@ const Analytics = () => {
                 </div>
 
                 {/* Gender Breakdown */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Gender Breakdown</h4>
                   {demographics?.demographics?.gender?.length > 0 ? (
                     <div className="space-y-3 mt-2">
@@ -1206,7 +1206,7 @@ const Analytics = () => {
                 </div>
 
                 {/* Top Cities */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Cities</h4>
                   {demographics?.demographics?.cities?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={220}>
@@ -1224,7 +1224,7 @@ const Analytics = () => {
                 </div>
 
                 {/* Top Countries */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Countries</h4>
                   {demographics?.demographics?.countries?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={220}>

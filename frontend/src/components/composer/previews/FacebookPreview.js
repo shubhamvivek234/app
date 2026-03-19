@@ -100,7 +100,7 @@ const FacebookPreview = ({ content, media, account }) => {
   const bgStyle      = TEXT_BG_STYLES[(name.charCodeAt(0) || 0) % TEXT_BG_STYLES.length];
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {/* Header */}
       <div className="flex items-start justify-between p-3">
         <div className="flex items-center gap-2.5">

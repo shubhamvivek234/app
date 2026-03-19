@@ -74,12 +74,12 @@ const Onboarding = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white pt-20">
+    <div className="min-h-screen bg-offwhite pt-20">
       <OnboardingHeader step={1} />
 
       <div className="flex items-center justify-center px-4 py-12">
         <div className="max-w-2xl w-full">
-          <div className="bg-white rounded-xl shadow-sm border border-border p-8">
+          <div className="bg-offwhite rounded-xl shadow-sm border border-border p-8">
             <p className="text-green-500 text-sm mb-2 text-center">almost ready</p>
             <h2 className="text-3xl font-bold text-slate-900 mb-8 text-center">what sounds most like you?</h2>
 
@@ -90,7 +90,7 @@ const Onboarding = () => {
                   onClick={() => setSelectedType(type.id)}
                   className={`w-full text-left p-4 rounded-lg border-2 transition-all ${selectedType === type.id
                     ? 'border-green-500 bg-green-50'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
+                    : 'border-gray-200 bg-offwhite hover:border-gray-300'
                     }`}
                 >
                   <div className="flex items-center">

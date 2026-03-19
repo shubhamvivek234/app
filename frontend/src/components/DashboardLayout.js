@@ -82,7 +82,7 @@ const UserMenu = ({ user, onLogout }) => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+        <div className="absolute right-0 top-full mt-2 w-48 bg-offwhite rounded-lg shadow-lg border border-gray-200 py-1 z-50">
           <div className="px-4 py-2 border-b border-gray-100">
             <p className="text-xs font-semibold text-gray-900 truncate">{user?.name}</p>
             <p className="text-xs text-gray-400 truncate">{user?.email}</p>
@@ -156,10 +156,10 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-offwhite">
 
       {/* ── Full-width top nav bar ── */}
-      <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 flex items-center z-50">
+      <header className="fixed top-0 left-0 right-0 h-14 bg-offwhite border-b border-gray-200 flex items-center z-50">
 
         {/* Logo block — shrinks with sidebar */}
         <div className={`flex-shrink-0 flex items-center h-full transition-all duration-200 ${collapsed ? 'w-14 justify-center px-0' : 'w-64 px-4'}`}>
@@ -204,7 +204,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       </header>
 
       {/* ── Sidebar ── */}
-      <div className={`fixed top-14 left-0 bottom-0 bg-white border-r border-gray-100 overflow-y-auto overflow-x-hidden transition-all duration-200 ${hideSidebar ? 'hidden' : collapsed ? 'w-14' : 'w-64'}`}>
+      <div className={`fixed top-14 left-0 bottom-0 bg-offwhite border-r border-gray-100 overflow-y-auto overflow-x-hidden transition-all duration-200 ${hideSidebar ? 'hidden' : collapsed ? 'w-14' : 'w-64'}`}>
         <div className="flex flex-col h-full py-3">
 
           {/* Workspace + collapse toggle */}
@@ -218,7 +218,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   <Link
                     to={item.path}
                     title={collapsed ? item.name : undefined}
-                    className={`flex items-center flex-1 py-2 rounded-lg text-sm font-medium transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} ${active ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-800 hover:shadow-sm'}`}
+                    className={`flex items-center flex-1 py-2 rounded-lg text-sm font-medium transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} ${active ? 'bg-offwhite text-green-700 shadow-sm' : 'text-gray-500 hover:bg-offwhite hover:text-gray-800 hover:shadow-sm'}`}
                   >
                     <Icon className={`flex-shrink-0 ${active ? 'text-green-600' : 'text-gray-400'}`} />
                     {!collapsed && item.name}
@@ -226,7 +226,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   <button
                     onClick={() => setCollapsed(v => !v)}
                     title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                    className="w-6 h-6 flex items-center justify-center rounded-md text-gray-300 hover:text-gray-500 hover:bg-white transition-all flex-shrink-0"
+                    className="w-6 h-6 flex items-center justify-center rounded-md text-gray-300 hover:text-gray-500 hover:bg-offwhite transition-all flex-shrink-0"
                   >
                     {collapsed ? <FaChevronRight className="text-[10px]" /> : <FaChevronLeft className="text-[10px]" />}
                   </button>
@@ -266,7 +266,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   to={item.path}
                   title={collapsed ? item.name : undefined}
                   data-testid={`nav-${item.name.toLowerCase().replace(' ', '-')}`}
-                  className={`flex items-center py-2 rounded-lg text-sm transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} ${active ? 'bg-white text-green-700 font-medium shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-800 hover:shadow-sm'}`}
+                  className={`flex items-center py-2 rounded-lg text-sm transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} ${active ? 'bg-offwhite text-green-700 font-medium shadow-sm' : 'text-gray-500 hover:bg-offwhite hover:text-gray-800 hover:shadow-sm'}`}
                 >
                   <Icon className={`flex-shrink-0 text-[13px] ${active ? 'text-green-600' : 'text-gray-400'}`} />
                   {!collapsed && item.name}
@@ -314,7 +314,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                       onClick={handleLogout}
                       title={collapsed ? 'Logout' : undefined}
                       data-testid="logout-button"
-                      className={`w-full flex items-center py-2 rounded-lg text-sm text-gray-500 hover:bg-white hover:text-gray-800 hover:shadow-sm transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'}`}
+                      className={`w-full flex items-center py-2 rounded-lg text-sm text-gray-500 hover:bg-offwhite hover:text-gray-800 hover:shadow-sm transition-all ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'}`}
                     >
                       <FaSignOutAlt className="flex-shrink-0 text-[13px] text-gray-400" />
                       {!collapsed && 'Logout'}

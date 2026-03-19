@@ -49,7 +49,7 @@ const GroupForm = ({ initial, onSave, onCancel }) => {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+    <div className="bg-offwhite rounded-xl border border-gray-200 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Input
           placeholder="Group name (e.g. Travel, Marketing)"
@@ -69,7 +69,7 @@ const GroupForm = ({ initial, onSave, onCancel }) => {
       <select
         value={platform}
         onChange={(e) => setPlatform(e.target.value)}
-        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white text-gray-700"
+        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 bg-offwhite text-gray-700"
       >
         {PLATFORM_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -134,7 +134,7 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
   const platformLabel = PLATFORM_OPTIONS.find((o) => o.value === group.platform)?.label;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-3 hover:border-gray-300 transition-colors">
+    <div className="bg-offwhite rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-3 hover:border-gray-300 transition-colors">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <FaHashtag className="text-green-500 text-sm flex-shrink-0" />
@@ -157,7 +157,7 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
           {visible.map((tag) => (
             <span
               key={tag}
-              className="inline-block text-xs bg-white text-gray-600 border border-gray-200 rounded-full px-2 py-0.5 cursor-pointer hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
+              className="inline-block text-xs bg-offwhite text-gray-600 border border-gray-200 rounded-full px-2 py-0.5 cursor-pointer hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
               onClick={() => { navigator.clipboard.writeText(tag); toast.success(`Copied ${tag}`); }}
               title="Click to copy this tag"
             >
@@ -289,7 +289,7 @@ const HashtagGroups = () => {
           <div className="text-center py-16 text-gray-400 text-sm">Loading…</div>
         ) : groups.length === 0 && !showNew ? (
           <div className="text-center py-16">
-            <div className="w-12 h-12 rounded-full bg-white border border-gray-200 flex items-center justify-center mx-auto mb-3">
+            <div className="w-12 h-12 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mx-auto mb-3">
               <FaHashtag className="text-gray-400 text-lg" />
             </div>
             <p className="text-gray-500 font-medium mb-1">No hashtag groups yet</p>

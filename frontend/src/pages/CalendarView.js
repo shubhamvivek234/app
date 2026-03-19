@@ -202,7 +202,7 @@ const CalendarView = () => {
             </div>
 
             {/* View Toggle */}
-            <div className="flex bg-white border border-gray-200 rounded-lg p-1">
+            <div className="flex bg-offwhite border border-gray-200 rounded-lg p-1">
               <Button
                 variant={viewMode === 'month' ? 'default' : 'ghost'}
                 size="sm"
@@ -226,9 +226,9 @@ const CalendarView = () => {
         </div>
 
         {/* Calendar Grid */}
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-offwhite rounded-lg border border-gray-200 overflow-hidden">
           {/* Weekday Headers */}
-          <div className="grid grid-cols-7 bg-white border-b border-gray-200">
+          <div className="grid grid-cols-7 bg-offwhite border-b border-gray-200">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
               <div
                 key={day}
@@ -252,7 +252,7 @@ const CalendarView = () => {
                   key={index}
                   onClick={() => setSelectedDay(day)}
                   className={`min-h-[120px] border-b border-r border-gray-200 last:border-r-0 cursor-pointer transition-colors
-                    ${!isCurrentMonth ? 'bg-white hover:bg-gray-50' : 'bg-white hover:bg-gray-50'}
+                    ${!isCurrentMonth ? 'bg-offwhite hover:bg-gray-50' : 'bg-offwhite hover:bg-gray-50'}
                     ${today ? 'bg-green-500 hover:bg-green-500' : ''}`}
                   data-testid={`calendar-day-${format(day, 'yyyy-MM-dd')}`}
                 >
@@ -275,7 +275,7 @@ const CalendarView = () => {
                       <div
                         key={post.id}
                         className={`text-xs px-2 py-1 rounded truncate hover:opacity-80 ${
-                          today ? 'bg-green-400 text-white' : 'bg-white border border-gray-200 text-gray-700'
+                          today ? 'bg-green-400 text-white' : 'bg-offwhite border border-gray-200 text-gray-700'
                         }`}
                         title={post.content}
                         data-testid={`post-${post.id}`}
@@ -394,7 +394,7 @@ const CalendarView = () => {
           <p className="text-sm text-gray-500">
             Anyone with this link can view your scheduled content calendar — read-only, no login required.
           </p>
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2.5">
+          <div className="flex items-center gap-2 bg-offwhite border border-gray-200 rounded-lg px-3 py-2.5">
             <span className="text-xs text-gray-600 truncate flex-1 font-mono">{shareUrl}</span>
             <button
               onClick={() => {

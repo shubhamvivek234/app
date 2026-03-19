@@ -100,7 +100,7 @@ const AccountPill = ({ account, selected, onClick }) => {
       className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all text-sm font-medium ${
         selected
           ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
-          : 'border-gray-200 bg-white text-gray-700 hover:border-green-200 hover:bg-green-50/50'
+          : 'border-gray-200 bg-offwhite text-gray-700 hover:border-green-200 hover:bg-green-50/50'
       }`}
     >
       {/* Avatar */}
@@ -121,7 +121,7 @@ const AccountPill = ({ account, selected, onClick }) => {
           </div>
         )}
         {Icon && (
-          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white border border-gray-100 flex items-center justify-center shadow-sm">
+          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-offwhite border border-gray-100 flex items-center justify-center shadow-sm">
             <Icon className={`text-[9px] ${meta.color}`} />
           </div>
         )}
@@ -133,7 +133,7 @@ const AccountPill = ({ account, selected, onClick }) => {
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
 const SkeletonPostCard = () => (
-  <div className="bg-white rounded-xl border border-gray-100 p-4 animate-pulse flex gap-4">
+  <div className="bg-offwhite rounded-xl border border-gray-100 p-4 animate-pulse flex gap-4">
     <div className="w-16 flex-shrink-0">
       <div className="h-3 bg-gray-50 rounded w-10 ml-auto" />
     </div>
@@ -427,7 +427,7 @@ const Publish = () => {
             <button
               onClick={fetchFeed}
               disabled={feedLoading}
-              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-white border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
               <FaSync className={`text-xs ${feedLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -437,7 +437,7 @@ const Publish = () => {
             <button
               onClick={fetchInbox}
               disabled={inboxLoading}
-              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-white border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
               <FaSync className={`text-xs ${inboxLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -446,7 +446,7 @@ const Publish = () => {
         </div>
 
         {/* ── Platform + Account selector ── */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4 space-y-3">
+        <div className="bg-offwhite rounded-2xl border border-gray-200 p-4 mb-4 space-y-3">
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>
@@ -495,7 +495,7 @@ const Publish = () => {
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
                         isActive
                           ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
-                          : 'border-gray-200 bg-white text-gray-600 hover:border-green-200 hover:bg-green-50/50'
+                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-green-200 hover:bg-green-50/50'
                       }`}
                     >
                       {Icon && <Icon className={`text-sm ${isActive ? 'text-green-600' : meta.color}`} />}
@@ -596,7 +596,7 @@ const Publish = () => {
                 {[1, 2, 3, 4].map((i) => <SkeletonPostCard key={i} />)}
               </div>
             ) : feedError ? (
-              <div className="bg-white rounded-2xl border border-red-100 p-8 text-center">
+              <div className="bg-offwhite rounded-2xl border border-red-100 p-8 text-center">
                 <p className="text-sm text-red-600 font-medium">{feedError}</p>
                 <button
                   onClick={fetchFeed}
@@ -606,8 +606,8 @@ const Publish = () => {
                 </button>
               </div>
             ) : posts.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-200 p-12 flex flex-col items-center justify-center text-center">
-                <div className="w-14 h-14 rounded-full bg-white border border-gray-200 flex items-center justify-center mb-4">
+              <div className="bg-offwhite rounded-2xl border border-gray-200 p-12 flex flex-col items-center justify-center text-center">
+                <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
                   <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                       d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -653,14 +653,14 @@ const Publish = () => {
             INBOX / DMs TAB
         ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'inbox' && (
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden" style={{ minHeight: '500px' }}>
+          <div className="bg-offwhite rounded-2xl border border-gray-200 overflow-hidden" style={{ minHeight: '500px' }}>
 
             {/* ── Filter bar ── */}
             <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60 flex-wrap">
               <select
                 value={inboxPlatform}
                 onChange={(e) => { setInboxPlatform(e.target.value); setInboxSelected(null); }}
-                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 <option value="">All platforms</option>
                 {PLATFORM_OPTIONS.map((p) => (
@@ -670,7 +670,7 @@ const Publish = () => {
               <select
                 value={inboxType}
                 onChange={(e) => { setInboxType(e.target.value); setInboxSelected(null); }}
-                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 <option value="">All types</option>
                 <option value="comment">Comments</option>
@@ -823,7 +823,7 @@ const Publish = () => {
                         }}
                         placeholder="Write a reply… (⌘↵ to send)"
                         rows={3}
-                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
                       />
                       <div className="flex items-center justify-between mt-2">
                         <p className="text-[11px] text-gray-400">

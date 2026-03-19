@@ -4,8 +4,8 @@ import Footer from '@/components/Footer';
 
 const Terms = () => {
   return (
-    <div className="min-h-screen bg-white">
-      <nav className="bg-white border-b border-gray-100">
+    <div className="min-h-screen bg-offwhite">
+      <nav className="bg-offwhite border-b border-gray-100">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <Link to="/" className="flex items-center space-x-2">

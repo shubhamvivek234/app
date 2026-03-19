@@ -58,7 +58,7 @@ const TweetBlock = ({ tweet, index, total, onChange, onDelete, onAddAfter, onIma
     <div className="relative flex gap-3 group">
       {/* Thread line */}
       <div className="flex flex-col items-center">
-        <div className="w-9 h-9 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center flex-shrink-0">
+        <div className="w-9 h-9 rounded-full bg-offwhite border-2 border-gray-200 flex items-center justify-center flex-shrink-0">
           <FaXTwitter className="text-gray-600 text-sm" />
         </div>
         {index < total - 1 && (
@@ -68,7 +68,7 @@ const TweetBlock = ({ tweet, index, total, onChange, onDelete, onAddAfter, onIma
 
       {/* Content area */}
       <div className="flex-1 pb-4">
-        <div className={`rounded-xl border transition-colors ${remaining < 0 ? 'border-red-300' : 'border-gray-200'} bg-white p-3`}>
+        <div className={`rounded-xl border transition-colors ${remaining < 0 ? 'border-red-300' : 'border-gray-200'} bg-offwhite p-3`}>
           <textarea
             rows={3}
             value={tweet.content}
@@ -159,7 +159,7 @@ const PreviewPanel = ({ tweets, handle = 'yourhandle' }) => {
         <div key={tweet.id} className="flex gap-3 relative">
           {/* Avatar + line */}
           <div className="flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full bg-white border border-gray-200 flex items-center justify-center flex-shrink-0 text-xs font-bold text-gray-500">
+            <div className="w-9 h-9 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center flex-shrink-0 text-xs font-bold text-gray-500">
               {handle[0].toUpperCase()}
             </div>
             {i < valid.length - 1 && (
@@ -302,7 +302,7 @@ const ThreadBuilder = () => {
           <div className="flex items-center gap-2">
             <FaXTwitter className="text-gray-900 text-lg" />
             <h1 className="text-xl font-bold text-gray-900">Thread Builder</h1>
-            <span className="text-xs font-medium text-gray-400 bg-white border border-gray-200 px-2 py-0.5 rounded-full">
+            <span className="text-xs font-medium text-gray-400 bg-offwhite border border-gray-200 px-2 py-0.5 rounded-full">
               {validTweets.length} tweet{validTweets.length !== 1 ? 's' : ''}
             </span>
           </div>
@@ -318,7 +318,7 @@ const ThreadBuilder = () => {
                 <select
                   value={selectedAccount}
                   onChange={(e) => setSelectedAccount(e.target.value)}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-white"
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-offwhite"
                 >
                   <option value="">Any connected account</option>
                   {twitterAccounts.map((a) => (
@@ -382,7 +382,7 @@ const ThreadBuilder = () => {
           {/* ── Right: Preview ── */}
           <div className="w-80 flex-shrink-0">
             <div className="sticky top-6">
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
                   <FaXTwitter className="text-sm text-gray-700" />
                   <span className="text-xs font-semibold text-gray-600">Thread Preview</span>

@@ -231,10 +231,10 @@ const KeysTab = () => {
             Copy this key and store it safely. <strong>It will never be shown again.</strong>
           </p>
           <div className="flex gap-2">
-            <code className="flex-1 bg-white border border-green-200 p-2 rounded text-sm font-mono truncate lg:whitespace-normal">
+            <code className="flex-1 bg-offwhite border border-green-200 p-2 rounded text-sm font-mono truncate lg:whitespace-normal">
               {generatedKey}
             </code>
-            <Button onClick={() => copyToClipboard(generatedKey)} variant="outline" size="sm" className="bg-white">
+            <Button onClick={() => copyToClipboard(generatedKey)} variant="outline" size="sm" className="bg-offwhite">
               <FaCopy className="mr-2" /> Copy
             </Button>
           </div>
@@ -245,7 +245,7 @@ const KeysTab = () => {
       )}
 
       {/* Generate form */}
-      <div className="bg-white rounded-lg border border-border p-6 shadow-sm">
+      <div className="bg-offwhite rounded-lg border border-border p-6 shadow-sm">
         <h2 className="text-xl font-semibold text-slate-900 mb-6">Generate New Key</h2>
         <form onSubmit={handleCreate} className="flex gap-4 items-end">
           <div className="flex-1 space-y-2">
@@ -264,10 +264,10 @@ const KeysTab = () => {
       </div>
 
       {/* Keys table */}
-      <div className="bg-white rounded-lg border border-border overflow-hidden shadow-sm">
+      <div className="bg-offwhite rounded-lg border border-border overflow-hidden shadow-sm">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-white border-b border-border">
+            <tr className="bg-offwhite border-b border-border">
               <th className="px-6 py-4 text-sm font-semibold text-slate-900">Name</th>
               <th className="px-6 py-4 text-sm font-semibold text-slate-900">Created</th>
               <th className="px-6 py-4 text-sm font-semibold text-slate-900">Last Used</th>
@@ -283,7 +283,7 @@ const KeysTab = () => {
               <tr key={key.id} className="hover:bg-slate-50/50 transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white border border-slate-200 rounded text-slate-600">
+                    <div className="p-2 bg-offwhite border border-slate-200 rounded text-slate-600">
                       <FaKey size={12} />
                     </div>
                     <span className="font-medium text-slate-900">{key.name}</span>
@@ -318,7 +318,7 @@ const ReferenceTab = () => {
   return (
     <div className="space-y-8">
       {/* Base URL + Auth */}
-      <div className="bg-white rounded-lg border border-border p-6 shadow-sm space-y-5">
+      <div className="bg-offwhite rounded-lg border border-border p-6 shadow-sm space-y-5">
         <div>
           <h2 className="text-lg font-semibold text-slate-900 mb-2">Base URL</h2>
           <CodeBlock>{BASE_URL}</CodeBlock>
@@ -339,7 +339,7 @@ const ReferenceTab = () => {
       {ENDPOINTS.map((group) => (
         <div key={group.group} className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400 px-1">{group.group}</h3>
-          <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden divide-y divide-border">
+          <div className="bg-offwhite rounded-lg border border-border shadow-sm overflow-hidden divide-y divide-border">
             {group.items.map((ep) => {
               const key = `${ep.method}-${ep.path}`;
               const isOpen = openEndpoint === key;
@@ -366,14 +366,14 @@ const ReferenceTab = () => {
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Parameters</p>
                           <table className="w-full text-sm border border-border rounded overflow-hidden">
                             <thead>
-                              <tr className="bg-white border-b border-border">
+                              <tr className="bg-offwhite border-b border-border">
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Name</th>
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">In</th>
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Required</th>
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Description</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-border bg-white">
+                            <tbody className="divide-y divide-border bg-offwhite">
                               {ep.params.map(p => (
                                 <tr key={p.name}>
                                   <td className="px-3 py-2 font-mono text-xs text-slate-800">{p.name}</td>
@@ -428,7 +428,7 @@ const ReferenceTab = () => {
             'DELETE /posts/group/{group}',
             'DELETE /integrations/{id}',
           ].map(ep => (
-            <span key={ep} className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-500">
+            <span key={ep} className="inline-flex items-center gap-1.5 bg-offwhite border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-500">
               {ep}
             </span>
           ))}

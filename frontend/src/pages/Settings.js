@@ -159,7 +159,7 @@ const PasswordInput = ({ id, placeholder, value, onChange, ...props }) => {
 
 // ─── Section card ─────────────────────────────────────────────────────────────
 const Card = ({ icon: Icon, title, subtitle, children }) => (
-  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+  <div className="bg-offwhite rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
     <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-center gap-3">
       <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-500">
         <Icon size={14} />
@@ -374,7 +374,7 @@ const Settings = () => {
             </div>
           ) : isGoogleUser ? (
             <div className="flex items-center gap-3 py-3 px-4 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center shadow-sm">
+              <div className="w-8 h-8 rounded-full bg-offwhite border border-slate-200 flex items-center justify-center shadow-sm">
                 <FaGoogle className="text-slate-500" size={13} />
               </div>
               <div>
@@ -488,7 +488,7 @@ const Settings = () => {
         </Card>
 
         {/* Privacy & Data (GDPR) */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="bg-offwhite rounded-xl border border-slate-200 p-6">
           <h2 className="text-lg font-semibold text-slate-800 mb-1">Privacy &amp; Data</h2>
           <p className="text-sm text-slate-500 mb-5">Manage your personal data in compliance with GDPR.</p>
           <div className="space-y-3">

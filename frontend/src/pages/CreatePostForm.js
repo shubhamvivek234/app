@@ -420,7 +420,7 @@ const ScrollTimePicker = ({ value, onChange }) => {
             className={`w-10 h-[50px] rounded-xl text-xs font-bold transition-all ${
               (p === 'PM') === isPM
                 ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-white border border-gray-200 text-gray-400 hover:bg-gray-50'
+                : 'bg-offwhite border border-gray-200 text-gray-400 hover:bg-gray-50'
             }`}
           >
             {p}
@@ -924,7 +924,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Top header bar */
   const headerBar = (
-    <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
+    <div className="h-14 bg-offwhite border-b border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
       <div className="flex items-center gap-3">
         <button onClick={handleBack} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
           <FaArrowLeft className="text-sm" />
@@ -965,7 +965,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Account selector strip */
   const accountStrip = (
-    <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0">
+    <div className="bg-offwhite border-b border-gray-200 px-5 py-3 flex-shrink-0">
       <AccountSelector
         accounts={availableAccounts}
         selectedAccounts={selectedAccounts}
@@ -985,7 +985,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     <div className="flex-1 overflow-y-auto p-5 min-w-0">
       {orderedPlatforms.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-16 h-16 rounded-full bg-white border border-gray-200 flex items-center justify-center mb-4">
+          <div className="w-16 h-16 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
             <svg className="w-7 h-7 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                 d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
@@ -998,7 +998,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         <>
           {/* ── AI Image Generation card (image/carousel posts only) ── */}
           {(type === 'image' || type === 'carousel') && uploadedMedia.length === 0 && (
-            <div className="bg-white rounded-xl border border-purple-100 shadow-sm p-4 mb-3">
+            <div className="bg-offwhite rounded-xl border border-purple-100 shadow-sm p-4 mb-3">
               <button
                 onClick={() => setShowAiPanel(v => !v)}
                 className="flex items-center gap-2 text-sm font-semibold text-purple-700 hover:text-purple-900 transition-colors w-full text-left"
@@ -1019,7 +1019,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                     <select
                       value={aiSize}
                       onChange={e => setAiSize(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-purple-300"
                     >
                       <option value="1024x1024">Square 1:1</option>
                       <option value="1792x1024">Landscape 16:9</option>
@@ -1028,7 +1028,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                     <select
                       value={aiStyle}
                       onChange={e => setAiStyle(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-purple-300"
                     >
                       <option value="vivid">Vivid</option>
                       <option value="natural">Natural</option>
@@ -1125,7 +1125,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
           {/* Cover image card (video + uploaded media) */}
           {type === 'video' && uploadedMedia.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mb-3">
+            <div className="bg-offwhite rounded-xl border border-gray-200 shadow-sm p-4 mb-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-semibold text-gray-700">Cover Image</span>
                 <button onClick={() => coverImageInputRef.current?.click()} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
@@ -1153,7 +1153,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Right panel: single-platform preview */
   const rightPanel = previewVisible && (
-    <div className="w-[340px] border-l border-gray-200 bg-white overflow-y-auto flex-shrink-0">
+    <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0">
       <div className="p-5">
         {activePlatform ? (
           <>
@@ -1177,7 +1177,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           </>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-14 h-14 rounded-full bg-white border border-gray-200 flex items-center justify-center mb-3">
+            <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-3">
               <FaEye className="text-gray-300 text-xl" />
             </div>
             <p className="text-sm font-medium text-gray-400">No account selected</p>
@@ -1190,7 +1190,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Fixed bottom action bar */
   const bottomBar = (
-    <div className="h-16 bg-white border-t border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
+    <div className="h-16 bg-offwhite border-t border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
       <label className="flex items-center gap-2 cursor-pointer">
         <Checkbox
           checked={createAnother}
@@ -1360,7 +1360,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                     <select
                       value={selectedTimezone}
                       onChange={(e) => setSelectedTimezone(e.target.value)}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 bg-offwhite focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
                     >
                       {tzOptions.map(tz => (
                         <option key={tz.value} value={tz.value}>{tz.label}</option>
@@ -1464,7 +1464,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // ── Render (modal vs full-page) ───────────────────────────────────────────
 
   const formContent = (isModalMode) => (
-    <div className={`flex flex-col bg-white overflow-hidden ${isModalMode ? 'w-full h-full rounded-2xl' : 'h-screen'}`}>
+    <div className={`flex flex-col bg-offwhite overflow-hidden ${isModalMode ? 'w-full h-full rounded-2xl' : 'h-screen'}`}>
       {headerBar}
       {accountStrip}
       <div className="flex flex-1 min-h-0 overflow-hidden">

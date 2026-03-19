@@ -160,9 +160,9 @@ Optional: mediaUrls, scheduledAt`,
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-offwhite">
       {/* Header */}
-      <nav className="bg-white border-b border-gray-100 py-4 sticky top-0 z-50">
+      <nav className="bg-offwhite border-b border-gray-100 py-4 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="cursor-pointer" onClick={() => navigate('/')}>
             <SocialEntanglerLogo />
@@ -202,7 +202,7 @@ Optional: mediaUrls, scheduledAt`,
             <span className="flex items-center justify-center w-8 h-8 rounded-full bg-slate-900 text-white text-sm font-bold shrink-0">1</span>
             Authentication
           </h2>
-          <div className="bg-white rounded-xl p-6 border border-slate-200 space-y-4">
+          <div className="bg-offwhite rounded-xl p-6 border border-slate-200 space-y-4">
             <p className="text-slate-700">
               All requests require a Bearer token in the{' '}
               <code className="bg-slate-100 px-1.5 py-0.5 rounded text-sm font-mono text-slate-800">Authorization</code>{' '}
@@ -261,7 +261,7 @@ Optional: mediaUrls, scheduledAt`,
                 </div>
 
                 {/* Endpoint Body */}
-                <div className="p-5 space-y-5 bg-white">
+                <div className="p-5 space-y-5 bg-offwhite">
                   {/* Request Body */}
                   {ep.body && (
                     <div>
@@ -310,7 +310,7 @@ Optional: mediaUrls, scheduledAt`,
           <p className="text-slate-600 leading-relaxed">
             For OpenClaw, LangChain tool-use, or any skill-based agent, register SocialEntangler using this JSON manifest:
           </p>
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+          <div className="bg-offwhite border border-slate-200 rounded-xl overflow-hidden shadow-sm">
             <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest font-mono">skill.json</span>
               <button
@@ -321,7 +321,7 @@ Optional: mediaUrls, scheduledAt`,
                 {copiedId === 'skill-json' ? '✓ Copied!' : 'Copy JSON'}
               </button>
             </div>
-            <pre className="p-5 text-sm text-slate-800 font-mono overflow-auto max-h-96 bg-white leading-relaxed">
+            <pre className="p-5 text-sm text-slate-800 font-mono overflow-auto max-h-96 bg-offwhite leading-relaxed">
               {JSON.stringify(skillJson, null, 2)}
             </pre>
           </div>
@@ -336,7 +336,7 @@ Optional: mediaUrls, scheduledAt`,
             </p>
             <div className="flex gap-3 justify-center flex-wrap">
               <Button
-                className="bg-white text-indigo-600 hover:bg-slate-100 px-6 font-semibold"
+                className="bg-offwhite text-indigo-600 hover:bg-slate-100 px-6 font-semibold"
                 onClick={() => navigate('/api-keys')}
               >
                 Get API Key

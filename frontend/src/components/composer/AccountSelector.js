@@ -79,7 +79,7 @@ const AccountSelector = ({
 
               {/* Platform icon badge */}
               {Icon && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-white border border-gray-200 flex items-center justify-center shadow-sm">
+                <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-offwhite border border-gray-200 flex items-center justify-center shadow-sm">
                   <Icon className={`text-[10px] ${platformInfo.color}`} />
                 </div>
               )}

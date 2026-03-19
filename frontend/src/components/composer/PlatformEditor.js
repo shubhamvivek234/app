@@ -453,7 +453,7 @@ const PlatformEditor = ({
   return (
   <>
     <div
-      className="bg-white rounded-xl border border-gray-200 shadow-sm mb-3 overflow-hidden"
+      className="bg-offwhite rounded-xl border border-gray-200 shadow-sm mb-3 overflow-hidden"
       onDragEnter={onDragEnter}
       onDragOver={(e) => { e.preventDefault(); onDragOver?.(e); }}
     >
@@ -1312,7 +1312,7 @@ const PlatformEditor = ({
         className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm"
         onClick={(e) => { if (e.target === e.currentTarget) setUnsplashOpen(false); }}
       >
-        <div className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        <div className="bg-offwhite rounded-2xl shadow-2xl flex flex-col overflow-hidden"
           style={{ width: '680px', maxWidth: '95vw', height: '600px', maxHeight: '90vh' }}
         >
           {/* Header */}

@@ -119,13 +119,13 @@ const Billing = () => {
         )}
 
         {/* Current Subscription */}
-        <div className="bg-white rounded-lg border border-border p-6">
+        <div className="bg-offwhite rounded-lg border border-border p-6">
           <h2 className="text-xl font-semibold text-slate-900 mb-4">Current Plan</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <span className={`px-3 py-1 rounded-full text-sm font-medium ${user?.subscription_status === 'active'
                 ? 'bg-green-100 text-green-700'
-                : 'bg-white border border-slate-200 text-slate-700'
+                : 'bg-offwhite border border-slate-200 text-slate-700'
                 }`}>
                 {user?.subscription_status === 'active' ? 'Active' : 'Free'}
               </span>
@@ -147,7 +147,7 @@ const Billing = () => {
           <h2 className="text-xl font-semibold text-slate-900 mb-6">Available Plans</h2>
           <div className="grid md:grid-cols-2 gap-6">
             {/* Monthly Plan */}
-            <div className="bg-white rounded-lg border border-border p-8 space-y-6">
+            <div className="bg-offwhite rounded-lg border border-border p-8 space-y-6">
               <div>
                 <h3 className="text-2xl font-semibold text-slate-900">Monthly</h3>
                 <div className="mt-4 flex items-baseline">
@@ -218,7 +218,7 @@ const Billing = () => {
               </ul>
               <div className="space-y-2">
                 <Button
-                  className="w-full bg-white text-indigo-600 hover:bg-gray-100"
+                  className="w-full bg-offwhite text-indigo-600 hover:bg-gray-100"
                   onClick={() => handleSubscribe('yearly')}
                   disabled={loading || user?.subscription_status === 'active'}
                   data-testid="subscribe-yearly-razorpay"
@@ -231,7 +231,7 @@ const Billing = () => {
         </div>
 
         {/* Payment Info */}
-        <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <div className="bg-offwhite border border-slate-200 rounded-lg p-6">
           <h3 className="text-lg font-semibold text-slate-900 mb-3">Payment Information</h3>
           <div className="space-y-2 text-sm text-slate-600">
             <p>• All payments are secure and encrypted</p>

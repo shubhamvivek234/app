@@ -80,7 +80,7 @@ const OnboardingPricing = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white pt-20 flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-offwhite pt-20 flex items-center justify-center px-4 py-12">
       <OnboardingHeader step={3} />
 
       <div className="max-w-6xl w-full">
@@ -98,7 +98,7 @@ const OnboardingPricing = () => {
           {plans.map((plan) => (
             <div
               key={plan.id}
-              className="bg-white rounded-2xl p-8 border-2 border-indigo-500 shadow-lg relative"
+              className="bg-offwhite rounded-2xl p-8 border-2 border-indigo-500 shadow-lg relative"
             >
               {/* Badge */}
               <div className="absolute -top-3 left-8">
