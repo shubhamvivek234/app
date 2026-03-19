@@ -100,6 +100,8 @@ def create_celery_app() -> Celery:
         "celery_workers.tasks.reconcile",
         "celery_workers.tasks.poll_status",   # Phase 5 — polling fallback
         "celery_workers.tasks.recurring",     # Phase 5.5 — recurring post instances
+        "celery_workers.tasks.analytics",     # Phase 6 — analytics collection
+        "celery_workers.tasks.bulk_import",   # Phase 6 — bulk CSV import
     ])
 
     return app
