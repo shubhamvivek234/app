@@ -1,5 +1,5 @@
 """
-Phase 0.8 + Phase 4 — FastAPI application factory.
+Phase 0.8 + Phase 4 + Phase 5.8 — FastAPI application factory.
 - CORSMiddleware with explicit allowed_origins (never wildcard *)
 - Security headers + trace_id middleware
 - Structured (JSON) logging in production
@@ -29,6 +29,8 @@ from api.routes.upload import router as upload_router
 from api.routes.accounts import router as accounts_router
 from api.routes.webhooks import router as webhooks_router
 from api.routes.stream import router as stream_router
+from api.routes.public_api import router as public_api_router
+from api.routes.user_webhooks import router as user_webhooks_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -133,6 +135,8 @@ def create_app() -> FastAPI:
     app.include_router(accounts_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
+    app.include_router(public_api_router, prefix="/api/v1")    # Phase 5.8
+    app.include_router(user_webhooks_router, prefix="/api/v1") # Phase 5.8
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(
