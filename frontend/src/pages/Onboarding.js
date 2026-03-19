@@ -1,14 +1,37 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import axios from 'axios';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
+const COMMON_TIMEZONES = [
+  "UTC",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Asia/Shanghai",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Sao_Paulo",
+  "Australia/Sydney",
+  "Pacific/Auckland",
+];
+
 const Onboarding = () => {
   const navigate = useNavigate();
   const [selectedType, setSelectedType] = useState('');
+  const [timezone, setTimezone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  );
   const [loading, setLoading] = useState(false);
 
   const userTypes = [
@@ -33,7 +56,7 @@ const Onboarding = () => {
 
       await axios.patch(
         `${apiUrl}/api/auth/me`,
-        { user_type: selectedType, onboarding_completed: false },
+        { user_type: selectedType, onboarding_completed: false, timezone },
         {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
@@ -51,12 +74,12 @@ const Onboarding = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 pt-20">
+    <div className="min-h-screen bg-offwhite pt-20">
       <OnboardingHeader step={1} />
 
       <div className="flex items-center justify-center px-4 py-12">
         <div className="max-w-2xl w-full">
-          <div className="bg-white rounded-xl shadow-sm border border-border p-8">
+          <div className="bg-offwhite rounded-xl shadow-sm border border-border p-8">
             <p className="text-green-500 text-sm mb-2 text-center">almost ready</p>
             <h2 className="text-3xl font-bold text-slate-900 mb-8 text-center">what sounds most like you?</h2>
 
@@ -67,7 +90,7 @@ const Onboarding = () => {
                   onClick={() => setSelectedType(type.id)}
                   className={`w-full text-left p-4 rounded-lg border-2 transition-all ${selectedType === type.id
                     ? 'border-green-500 bg-green-50'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
+                    : 'border-gray-200 bg-offwhite hover:border-gray-300'
                     }`}
                 >
                   <div className="flex items-center">
@@ -96,6 +119,21 @@ const Onboarding = () => {
                   </div>
                 </button>
               ))}
+            </div>
+
+            <div className="mt-6 space-y-1.5">
+              <Label htmlFor="timezone" className="text-xs font-medium text-slate-600">Your Timezone</Label>
+              <select
+                id="timezone"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                {COMMON_TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>{tz}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-400">Used to schedule your posts at the right time.</p>
             </div>
 
             <div className="mt-8 flex justify-between">

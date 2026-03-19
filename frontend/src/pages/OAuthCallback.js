@@ -107,8 +107,8 @@ const OAuthCallback = () => {
   }, [searchParams, navigate]);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-sm border border-border p-8 text-center">
+    <div className="min-h-screen bg-offwhite flex items-center justify-center px-4">
+      <div className="max-w-md w-full bg-offwhite rounded-xl shadow-sm border border-border p-8 text-center">
         {status === 'processing' && (
           <>
             <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-500 mx-auto mb-4"></div>

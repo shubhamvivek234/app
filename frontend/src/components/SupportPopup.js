@@ -52,7 +52,7 @@ const SupportPopup = ({ isOpen, onClose }) => {
 
   if (isMinimized) {
     return (
-      <div className="fixed bottom-0 right-8 z-50 bg-white border border-gray-200 rounded-t-lg shadow-lg w-72">
+      <div className="fixed bottom-0 right-8 z-50 bg-offwhite border border-gray-200 rounded-t-lg shadow-lg w-72">
         <div
           className="bg-slate-100 text-slate-800 px-4 py-2 rounded-t-lg flex justify-between items-center cursor-pointer border-b border-gray-200"
           onClick={() => setIsMinimized(false)}
@@ -78,7 +78,7 @@ const SupportPopup = ({ isOpen, onClose }) => {
   }
 
   return (
-    <div className="fixed bottom-0 right-4 md:right-8 z-50 bg-white border border-gray-200 rounded-t-lg shadow-2xl w-full max-w-[500px] flex flex-col h-[600px]">
+    <div className="fixed bottom-0 right-4 md:right-8 z-50 bg-offwhite border border-gray-200 rounded-t-lg shadow-2xl w-full max-w-[500px] flex flex-col h-[600px]">
       {/* Header */}
       <div className="bg-[#f2f6fc] text-slate-800 px-4 py-3 rounded-t-lg flex justify-between items-center select-none cursor-pointer border-b border-gray-200" onClick={() => setIsMinimized(true)}>
         <span className="font-medium text-sm">New Message</span>
@@ -151,7 +151,7 @@ const SupportPopup = ({ isOpen, onClose }) => {
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 flex justify-between items-center mt-auto border-t border-gray-100 bg-white">
+        <div className="p-4 flex justify-between items-center mt-auto border-t border-gray-100 bg-offwhite">
           <div className="flex items-center gap-2">
             <Button
               type="submit"

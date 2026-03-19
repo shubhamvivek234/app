@@ -1,512 +1,873 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import DashboardLayout from '@/components/DashboardLayout';
-import {
-  getAnalyticsFeed, getPostComments, replyToComment,
-  getConversations, sendDmReply, getSocialAccounts
-} from '@/lib/api';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import DashboardLayout from '@/components/DashboardLayout';
+import PostCard from '@/components/publish/PostCard';
 import {
-  FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok, FaGlobe,
-  FaComment, FaReply, FaEnvelope, FaSync, FaChevronDown, FaChevronUp, FaHeart, FaPaperPlane
+  getSocialAccounts,
+  getPublishFeed,
+  getInbox,
+  updateInboxMessage,
+  createInboxMessage,
+  getPostComments,
+  replyToComment,
+  getConversations,
+  sendDmReply,
+} from '@/lib/api';
+import {
+  FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
+  FaTiktok, FaYoutube, FaPinterest, FaPlus, FaSync,
+  FaInbox, FaRss, FaReply,
 } from 'react-icons/fa';
+import { SiBluesky, SiThreads } from 'react-icons/si';
 
-const PLATFORM_ICONS = {
-  instagram: FaInstagram, facebook: FaFacebook, twitter: FaTwitter,
-  linkedin: FaLinkedin, youtube: FaYoutube, tiktok: FaTiktok,
+// ── Platform metadata ─────────────────────────────────────────────────────────
+const PLATFORM_META = {
+  facebook:  { icon: FaFacebook,  color: 'text-blue-600',  ring: '#1877F2', label: 'Facebook' },
+  twitter:   { icon: FaTwitter,   color: 'text-sky-500',   ring: '#1DA1F2', label: 'X (Twitter)' },
+  linkedin:  { icon: FaLinkedin,  color: 'text-blue-700',  ring: '#0A66C2', label: 'LinkedIn' },
+  instagram: { icon: FaInstagram, color: 'text-pink-500',  ring: '#E1306C', label: 'Instagram' },
+  pinterest: { icon: FaPinterest, color: 'text-red-600',   ring: '#E60023', label: 'Pinterest' },
+  youtube:   { icon: FaYoutube,   color: 'text-red-500',   ring: '#FF0000', label: 'YouTube' },
+  tiktok:    { icon: FaTiktok,    color: 'text-gray-900',  ring: '#010101', label: 'TikTok' },
+  bluesky:   { icon: SiBluesky,   color: 'text-blue-500',  ring: '#0085FF', label: 'Bluesky' },
+  threads:   { icon: SiThreads,   color: 'text-gray-900',  ring: '#101010', label: 'Threads' },
 };
 
-const PLATFORM_COLORS = {
-  instagram: '#E4405F', facebook: '#1877F2', twitter: '#1DA1F2',
-  linkedin: '#0A66C2', youtube: '#FF0000', tiktok: '#000000',
-};
+const PLATFORM_OPTIONS = [
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'facebook',  label: 'Facebook' },
+  { value: 'twitter',   label: 'X (Twitter)' },
+  { value: 'linkedin',  label: 'LinkedIn' },
+  { value: 'youtube',   label: 'YouTube' },
+  { value: 'tiktok',    label: 'TikTok' },
+  { value: 'bluesky',   label: 'Bluesky' },
+  { value: 'threads',   label: 'Threads' },
+  { value: 'pinterest', label: 'Pinterest' },
+];
 
-const COMMENT_PLATFORMS = new Set(['instagram', 'facebook', 'youtube']);
-const REPLY_PLATFORMS = new Set(['instagram', 'facebook']);
-const DM_PLATFORMS = new Set(['instagram', 'facebook']);
+const AVATAR_COLORS = [
+  'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
+  'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500',
+];
+const avatarColor = (name = '') =>
+  AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length];
 
-const Publish = () => {
-  const [activeTab, setActiveTab] = useState('feed');
-  const [feed, setFeed] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [selectedPlatform, setSelectedPlatform] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // Comments state per post
-  const [commentsMap, setCommentsMap] = useState({});
-  const [commentsLoading, setCommentsLoading] = useState({});
-  const [expandedComments, setExpandedComments] = useState({});
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [replyText, setReplyText] = useState('');
-  const [replySending, setReplySending] = useState(false);
-
-  // DM / Inbox state
-  const [conversations, setConversations] = useState([]);
-  const [dmLoading, setDmLoading] = useState(false);
-  const [dmPlatform, setDmPlatform] = useState('instagram');
-  const [dmReplyText, setDmReplyText] = useState('');
-  const [dmSending, setDmSending] = useState(false);
-  const [selectedConv, setSelectedConv] = useState(null);
-
-  useEffect(() => {
-    const load = async () => {
+// ── Group posts by calendar date ──────────────────────────────────────────────
+const groupByDate = (posts) => {
+  const groups = {};
+  for (const post of posts) {
+    const raw = post.published_at;
+    let label = 'Unknown date';
+    if (raw) {
       try {
-        const data = await getSocialAccounts();
-        setAccounts(data);
-      } catch { /* ignore */ }
-    };
-    load();
+        label = new Date(raw).toLocaleDateString('en-GB', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+      } catch {
+        label = raw;
+      }
+    }
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(post);
+  }
+  return Object.entries(groups); // [[label, posts[]], ...]
+};
+
+// ── Format relative time ──────────────────────────────────────────────────────
+const formatRelative = (isoString) => {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  } catch {
+    return '';
+  }
+};
+
+// ── Account pill in the connected-accounts strip ──────────────────────────────
+const AccountPill = ({ account, selected, onClick }) => {
+  const meta = PLATFORM_META[account.platform] || {};
+  const Icon = meta.icon;
+  const ringColor = meta.ring || '#3B82F6';
+  const name = account.platform_username || account.platform;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all text-sm font-medium ${
+        selected
+          ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
+          : 'border-gray-200 bg-offwhite text-gray-700 hover:border-green-200 hover:bg-green-50/50'
+      }`}
+    >
+      {/* Avatar */}
+      <div className="relative flex-shrink-0">
+        {account.picture_url ? (
+          <img
+            src={account.picture_url}
+            alt={name}
+            className="w-8 h-8 rounded-full object-cover"
+            style={{ boxShadow: selected ? `0 0 0 2px white, 0 0 0 3px ${ringColor}` : undefined }}
+          />
+        ) : (
+          <div
+            className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-xs font-bold`}
+            style={{ boxShadow: selected ? `0 0 0 2px white, 0 0 0 3px ${ringColor}` : undefined }}
+          >
+            {name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        {Icon && (
+          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-offwhite border border-gray-100 flex items-center justify-center shadow-sm">
+            <Icon className={`text-[9px] ${meta.color}`} />
+          </div>
+        )}
+      </div>
+      <span className="max-w-[100px] truncate">{name}</span>
+    </button>
+  );
+};
+
+// ── Skeleton card ─────────────────────────────────────────────────────────────
+const SkeletonPostCard = () => (
+  <div className="bg-offwhite rounded-xl border border-gray-100 p-4 animate-pulse flex gap-4">
+    <div className="w-16 flex-shrink-0">
+      <div className="h-3 bg-gray-50 rounded w-10 ml-auto" />
+    </div>
+    <div className="flex-1 space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="w-9 h-9 rounded-full bg-gray-50 flex-shrink-0" />
+        <div className="space-y-1">
+          <div className="h-3 bg-gray-50 rounded w-24" />
+          <div className="h-2.5 bg-gray-50 rounded w-16" />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <div className="h-3 bg-gray-50 rounded w-full" />
+        <div className="h-3 bg-gray-50 rounded w-3/4" />
+      </div>
+      <div className="flex gap-4">
+        <div className="h-3 bg-gray-50 rounded w-12" />
+        <div className="h-3 bg-gray-50 rounded w-12" />
+        <div className="h-3 bg-gray-50 rounded w-12" />
+      </div>
+    </div>
+    <div className="w-20 h-20 rounded-lg bg-gray-50 flex-shrink-0" />
+  </div>
+);
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+const Publish = () => {
+  // ── Tab state ──
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'inbox'
+
+  // ── Feed state ──
+  const [accounts, setAccounts]               = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [activePlatform, setActivePlatform]   = useState('');
+  const [posts, setPosts]                     = useState([]);
+  const [feedLoading, setFeedLoading]         = useState(false);
+  const [feedError, setFeedError]             = useState(null);
+  const [feedWarnings, setFeedWarnings]       = useState([]);
+
+  // ── Inbox state ──
+  const [inboxPlatform, setInboxPlatform]   = useState('');
+  const [inboxType, setInboxType]           = useState(''); // '' | 'comment' | 'dm'
+  const [inboxMessages, setInboxMessages]   = useState([]);
+  const [inboxSelected, setInboxSelected]   = useState(null);
+  const [inboxReply, setInboxReply]         = useState('');
+  const [inboxLoading, setInboxLoading]     = useState(false);
+  const [inboxSending, setInboxSending]     = useState(false);
+  const [syncing, setSyncing]               = useState(false);
+
+  // ── Load connected accounts ──
+  useEffect(() => {
+    getSocialAccounts()
+      .then((data) => setAccounts(data || []))
+      .catch(() => setAccounts([]))
+      .finally(() => setAccountsLoading(false));
   }, []);
 
-  const platforms = [...new Set(accounts.map(a => a.platform))];
-
+  // ── Fetch feed ──
   const fetchFeed = useCallback(async () => {
-    setLoading(true);
+    setFeedLoading(true);
+    setFeedError(null);
     try {
-      const data = await getAnalyticsFeed(selectedPlatform, 50);
-      setFeed(data.posts || []);
-    } catch {
-      toast.error('Failed to load feed');
+      const params = { limit: 50 };
+      if (activePlatform) params.platform = activePlatform;
+      if (selectedAccounts.length === 1) params.accountId = selectedAccounts[0];
+      const data = await getPublishFeed(params);
+      setPosts(data.posts || []);
+      setFeedWarnings(data.warnings || []);
+    } catch (err) {
+      setFeedError('Failed to load posts. Please try again.');
+      setPosts([]);
+      setFeedWarnings([]);
     } finally {
-      setLoading(false);
+      setFeedLoading(false);
     }
-  }, [selectedPlatform]);
+  }, [activePlatform, selectedAccounts]);
 
   useEffect(() => {
-    if (activeTab === 'feed') fetchFeed();
-  }, [activeTab, fetchFeed]);
+    if (!accountsLoading) fetchFeed();
+  }, [accountsLoading, fetchFeed]);
 
-  // Fetch comments for a post
-  const handleFetchComments = async (post) => {
-    const key = `${post.platform}:${post.id}`;
-    if (expandedComments[key]) {
-      setExpandedComments(prev => ({ ...prev, [key]: false }));
-      return;
-    }
-
-    setCommentsLoading(prev => ({ ...prev, [key]: true }));
+  // ── Fetch inbox ──
+  const fetchInbox = useCallback(async () => {
+    setInboxLoading(true);
     try {
-      const data = await getPostComments(post.platform, post.id);
-      setCommentsMap(prev => ({ ...prev, [key]: data.comments || [] }));
-      setExpandedComments(prev => ({ ...prev, [key]: true }));
+      const data = await getInbox({
+        platform: inboxPlatform || undefined,
+        type: inboxType || undefined,
+      });
+      // API may return array or { messages: [] }
+      setInboxMessages(Array.isArray(data) ? data : (data.messages || []));
     } catch {
-      toast.error('Failed to load comments');
+      toast.error('Failed to load messages');
     } finally {
-      setCommentsLoading(prev => ({ ...prev, [key]: false }));
+      setInboxLoading(false);
+    }
+  }, [inboxPlatform, inboxType]);
+
+  useEffect(() => {
+    if (activeTab === 'inbox') fetchInbox();
+  }, [activeTab, fetchInbox]);
+
+  // ── Sync DM conversations from platforms into inbox ──
+  const handleSyncDMs = async () => {
+    setSyncing(true);
+    const DM_PLATFORMS = ['instagram', 'facebook'];
+    let synced = 0;
+    try {
+      for (const plat of DM_PLATFORMS) {
+        const platAccounts = accounts.filter((a) => a.platform === plat);
+        if (platAccounts.length === 0) continue;
+        try {
+          const data = await getConversations(plat, platAccounts[0]?.id);
+          if (data.conversations) {
+            for (const conv of data.conversations) {
+              for (const msg of (conv.messages || []).slice(0, 5)) {
+                try {
+                  await createInboxMessage({
+                    platform: plat,
+                    type: 'dm',
+                    author_name: msg.from || conv.participants?.[0] || 'Unknown',
+                    content: msg.content || '',
+                    platform_message_id: msg.id || conv.id,
+                    received_at: msg.timestamp,
+                  });
+                  synced++;
+                } catch { /* duplicate or error, skip */ }
+              }
+            }
+          }
+        } catch { /* platform not available */ }
+      }
+      if (synced > 0) {
+        toast.success(`Synced ${synced} message(s)`);
+        fetchInbox();
+      } else {
+        toast.info('No new messages to sync');
+      }
+    } catch {
+      toast.error('Sync failed');
+    } finally {
+      setSyncing(false);
     }
   };
 
-  // Reply to comment
-  const handleReply = async (post, comment) => {
-    if (!replyText.trim()) return;
-    setReplySending(true);
-    try {
-      await replyToComment(post.platform, comment.id, {
-        text: replyText,
-        accountId: post.account_id,
+  // ── Select platform (clears account selection) ──
+  const handlePlatformSelect = (plat) => {
+    setActivePlatform((prev) => {
+      const next = prev === plat ? '' : plat;
+      setSelectedAccounts([]);
+      return next;
+    });
+  };
+
+  // ── Toggle account pill ──
+  const toggleAccount = (accountId) => {
+    setSelectedAccounts((prev) =>
+      prev.includes(accountId)
+        ? prev.filter((id) => id !== accountId)
+        : [...prev, accountId]
+    );
+  };
+
+  // ── Add comment to a post (posts to platform) ──
+  const handleAddComment = async (post, text) => {
+    const REPLY_PLATFORMS = ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'];
+    if (REPLY_PLATFORMS.includes(post.platform)) {
+      try {
+        await replyToComment(post.platform, post.platform_post_id, {
+          text,
+          account_id: post.account_id,
+          post_id: post.platform_post_id,
+        });
+        toast.success('Comment posted to ' + (post.platform || 'platform') + '!');
+      } catch (err) {
+        toast.error('Failed to post comment: ' + (err?.response?.data?.detail || err.message));
+      }
+    } else {
+      await createInboxMessage({
+        platform: post.platform,
+        type: 'comment',
+        author_name: 'Me',
+        content: text,
+        post_id: post.platform_post_id || post.id,
       });
-      toast.success('Reply sent!');
-      setReplyText('');
-      setReplyingTo(null);
-      // Refresh comments
-      const key = `${post.platform}:${post.id}`;
-      const data = await getPostComments(post.platform, post.id);
-      setCommentsMap(prev => ({ ...prev, [key]: data.comments || [] }));
+      toast.success('Comment saved to inbox!');
+    }
+  };
+
+  // ── Fetch comments for a post ──
+  const handleFetchComments = async (post) => {
+    try {
+      return await getPostComments(post.platform, post.platform_post_id, post.account_id);
     } catch (err) {
+      toast.error('Failed to load comments');
+      return { comments: [] };
+    }
+  };
+
+  // ── Reply to a comment on a post ──
+  const handleReplyToComment = async (post, comment, text) => {
+    try {
+      const data = {
+        text,
+        account_id: post.account_id,
+        post_id: post.platform_post_id,
+      };
+      // For Bluesky, pass extra threading info
+      if (post.platform === 'bluesky' && comment) {
+        data.parent_cid = comment.cid;
+        data.root_uri = comment.root_uri;
+        data.root_cid = comment.root_cid;
+      }
+      await replyToComment(post.platform, comment.id, data);
+      toast.success('Reply posted!');
+    } catch (err) {
+      toast.error('Failed to post reply: ' + (err?.response?.data?.detail || err.message));
+    }
+  };
+
+  // ── Reply to inbox message ──
+  const handleInboxReply = async () => {
+    if (!inboxReply.trim() || !inboxSelected || inboxSending) return;
+    setInboxSending(true);
+    try {
+      const REPLY_PLATFORMS = ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'];
+      const isPlatformMsg = inboxSelected.platform_message_id && REPLY_PLATFORMS.includes(inboxSelected.platform);
+
+      // If this is a real platform message, try to reply on the platform
+      if (isPlatformMsg && inboxSelected.type === 'comment') {
+        try {
+          await replyToComment(inboxSelected.platform, inboxSelected.platform_message_id, {
+            text: inboxReply.trim(),
+            post_id: inboxSelected.post_id,
+          });
+        } catch (err) {
+          toast.error('Platform reply failed: ' + (err?.response?.data?.detail || err.message));
+        }
+      }
+
+      if (isPlatformMsg && inboxSelected.type === 'dm') {
+        try {
+          const DM_PLATFORMS = ['instagram', 'facebook'];
+          if (DM_PLATFORMS.includes(inboxSelected.platform)) {
+            await sendDmReply(inboxSelected.platform, inboxSelected.platform_message_id, {
+              text: inboxReply.trim(),
+              recipient_id: inboxSelected.author_id,
+            });
+          }
+        } catch (err) {
+          toast.error('DM reply failed: ' + (err?.response?.data?.detail || err.message));
+        }
+      }
+
+      // Always save to inbox
+      await updateInboxMessage(inboxSelected.id, { reply: inboxReply.trim() });
+      const updated = { ...inboxSelected, reply: inboxReply.trim(), status: 'replied' };
+      setInboxSelected(updated);
+      setInboxMessages((prev) =>
+        prev.map((m) => (m.id === inboxSelected.id ? updated : m))
+      );
+      setInboxReply('');
+      toast.success(isPlatformMsg ? 'Reply posted to platform!' : 'Reply saved!');
+    } catch {
       toast.error('Failed to send reply');
     } finally {
-      setReplySending(false);
+      setInboxSending(false);
     }
   };
 
-  // Fetch DMs
-  const handleSyncDMs = async () => {
-    setDmLoading(true);
-    try {
-      const data = await getConversations(dmPlatform);
-      setConversations(data.conversations || []);
-    } catch {
-      toast.error(`Failed to load ${dmPlatform} conversations`);
-    } finally {
-      setDmLoading(false);
-    }
-  };
+  // ── Derived ──
+  const platforms  = [...new Set(accounts.map((a) => a.platform))];
+  const dateGroups = groupByDate(posts);
 
-  // Send DM reply
-  const handleSendDm = async () => {
-    if (!dmReplyText.trim() || !selectedConv) return;
-    setDmSending(true);
-    try {
-      await sendDmReply(dmPlatform, selectedConv.id, {
-        text: dmReplyText,
-        accountId: selectedConv.account_id,
-      });
-      toast.success('Message sent!');
-      setDmReplyText('');
-      handleSyncDMs();
-    } catch {
-      toast.error('Failed to send message');
-    } finally {
-      setDmSending(false);
-    }
-  };
-
-  const renderPostCard = (post, idx) => {
-    const Icon = PLATFORM_ICONS[post.platform] || FaGlobe;
-    const color = PLATFORM_COLORS[post.platform] || '#6b7280';
-    const key = `${post.platform}:${post.id}`;
-    const comments = commentsMap[key] || [];
-    const isExpanded = expandedComments[key];
-    const isLoadingComments = commentsLoading[key];
-    const canFetchComments = COMMENT_PLATFORMS.has(post.platform);
-
-    return (
-      <div key={post.id || idx} className="bg-white rounded-lg border overflow-hidden">
-        {/* Post header */}
-        <div className="p-4 flex items-center gap-3 border-b border-gray-50">
-          <Icon style={{ color }} className="text-lg" />
-          <div>
-            <span className="text-sm font-medium text-gray-900">{post.account_name || post.platform}</span>
-            <span className="text-xs text-gray-400 ml-2 capitalize">{post.platform}</span>
-          </div>
-          {post.timestamp && (
-            <span className="ml-auto text-xs text-gray-400">
-              {format(new Date(post.timestamp), 'MMM d, h:mm a')}
-            </span>
-          )}
-        </div>
-
-        {/* Media */}
-        {post.media_url && (
-          <div className="aspect-video bg-gray-100 overflow-hidden">
-            <img
-              src={post.media_url}
-              alt=""
-              className="w-full h-full object-cover"
-              onError={(e) => { e.target.style.display = 'none'; }}
-            />
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="p-4">
-          <p className="text-sm text-gray-800 whitespace-pre-wrap line-clamp-4">{post.content || '(No caption)'}</p>
-        </div>
-
-        {/* Metrics */}
-        <div className="px-4 pb-3 flex items-center gap-4 text-xs text-gray-500">
-          <span className="flex items-center gap-1"><FaHeart className="text-red-400" /> {post.likes || 0}</span>
-          <span className="flex items-center gap-1"><FaComment /> {post.comments_count || 0}</span>
-          {post.views !== undefined && <span>{post.views.toLocaleString()} views</span>}
-          {post.permalink && (
-            <a href={post.permalink} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-500 hover:underline">View</a>
-          )}
-        </div>
-
-        {/* Comments section */}
-        {canFetchComments && (
-          <div className="border-t border-gray-100">
-            <button
-              onClick={() => handleFetchComments(post)}
-              disabled={isLoadingComments}
-              className="w-full px-4 py-2.5 flex items-center gap-2 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-            >
-              <FaComment className="text-xs" />
-              {isLoadingComments ? 'Loading...' : isExpanded ? 'Hide Comments' : `View Comments (${post.comments_count || 0})`}
-              {isExpanded ? <FaChevronUp className="ml-auto text-xs" /> : <FaChevronDown className="ml-auto text-xs" />}
-            </button>
-
-            {isExpanded && (
-              <div className="border-t border-gray-50 max-h-80 overflow-y-auto">
-                {comments.length === 0 ? (
-                  <p className="px-4 py-3 text-xs text-gray-400">No comments yet.</p>
-                ) : (
-                  comments.map((comment) => (
-                    <div key={comment.id} className="px-4 py-3 border-b border-gray-50 last:border-0">
-                      <div className="flex items-start gap-2">
-                        {comment.author_avatar ? (
-                          <img src={comment.author_avatar} alt="" className="w-6 h-6 rounded-full" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-xs text-gray-500">
-                            {comment.author_name?.[0]?.toUpperCase() || '?'}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-gray-900">{comment.author_name}</span>
-                            <span className="text-xs text-gray-400">
-                              {comment.timestamp ? format(new Date(comment.timestamp), 'MMM d') : ''}
-                            </span>
-                            {comment.likes > 0 && (
-                              <span className="text-xs text-gray-400 flex items-center gap-0.5">
-                                <FaHeart className="text-red-300" /> {comment.likes}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-700 mt-0.5">{comment.content}</p>
-                          {comment.can_reply && REPLY_PLATFORMS.has(post.platform) && (
-                            <button
-                              onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
-                              className="text-xs text-blue-500 hover:underline mt-1 flex items-center gap-1"
-                            >
-                              <FaReply className="text-[10px]" /> Reply
-                            </button>
-                          )}
-                          {/* Reply composer */}
-                          {replyingTo === comment.id && (
-                            <div className="mt-2 flex gap-2">
-                              <input
-                                value={replyText}
-                                onChange={(e) => setReplyText(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleReply(post, comment);
-                                }}
-                                placeholder="Write a reply..."
-                                className="flex-1 text-sm border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-green-500"
-                                disabled={replySending}
-                              />
-                              <button
-                                onClick={() => handleReply(post, comment)}
-                                disabled={replySending || !replyText.trim()}
-                                className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 disabled:opacity-50"
-                              >
-                                {replySending ? '...' : 'Send'}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderFeed = () => {
-    if (loading) {
-      return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="bg-white rounded-lg border p-6 animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-1/3 mb-4" />
-              <div className="h-32 bg-gray-200 rounded mb-4" />
-              <div className="h-3 bg-gray-200 rounded w-2/3" />
-            </div>
-          ))}
-        </div>
-      );
-    }
-
-    if (!feed.length) {
-      return (
-        <div className="text-center py-12 text-gray-500">
-          <FaComment className="text-3xl mx-auto mb-3 text-gray-300" />
-          <p>No posts found. Connect social accounts and they'll appear here.</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {feed.map((post, idx) => renderPostCard(post, idx))}
-      </div>
-    );
-  };
-
-  const renderInbox = () => {
-    const dmPlatforms = platforms.filter(p => DM_PLATFORMS.has(p));
-
-    return (
-      <div className="space-y-4">
-        {/* DM Platform Selector */}
-        <div className="bg-white rounded-lg border p-4">
-          <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-sm font-medium text-gray-700">Platform:</span>
-            {dmPlatforms.length === 0 ? (
-              <span className="text-sm text-gray-400">No DM-capable platforms connected (Instagram, Facebook Page)</span>
-            ) : (
-              dmPlatforms.map(p => {
-                const Icon = PLATFORM_ICONS[p] || FaGlobe;
-                return (
-                  <button
-                    key={p}
-                    onClick={() => setDmPlatform(p)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-colors ${
-                      dmPlatform === p ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    <Icon className="text-xs" />
-                    <span className="capitalize">{p}</span>
-                  </button>
-                );
-              })
-            )}
-            <button
-              onClick={handleSyncDMs}
-              disabled={dmLoading || dmPlatforms.length === 0}
-              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              <FaSync className={dmLoading ? 'animate-spin' : ''} /> Sync DMs
-            </button>
-          </div>
-        </div>
-
-        {/* Conversations */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Conversation list */}
-          <div className="lg:col-span-1 bg-white rounded-lg border overflow-hidden">
-            <div className="p-3 border-b bg-gray-50">
-              <h3 className="text-sm font-medium text-gray-700">Conversations</h3>
-            </div>
-            {conversations.length === 0 ? (
-              <div className="p-4 text-center text-sm text-gray-400">
-                {dmLoading ? 'Loading...' : 'Click "Sync DMs" to fetch conversations'}
-              </div>
-            ) : (
-              <div className="divide-y max-h-96 overflow-y-auto">
-                {conversations.map((conv) => (
-                  <button
-                    key={conv.id}
-                    onClick={() => setSelectedConv(conv)}
-                    className={`w-full text-left p-3 hover:bg-gray-50 transition-colors ${
-                      selectedConv?.id === conv.id ? 'bg-green-50' : ''
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {conv.participants?.join(', ') || 'Unknown'}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate mt-0.5">{conv.last_message || 'No messages'}</p>
-                    {conv.last_message_time && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {format(new Date(conv.last_message_time), 'MMM d, h:mm a')}
-                      </p>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Message area */}
-          <div className="lg:col-span-2 bg-white rounded-lg border overflow-hidden flex flex-col">
-            <div className="p-3 border-b bg-gray-50">
-              <h3 className="text-sm font-medium text-gray-700">
-                {selectedConv ? (selectedConv.participants?.join(', ') || 'Conversation') : 'Select a conversation'}
-              </h3>
-            </div>
-            <div className="flex-1 p-4 min-h-[200px] flex items-center justify-center">
-              {selectedConv ? (
-                <div className="text-center text-sm text-gray-500">
-                  <FaEnvelope className="text-2xl mx-auto mb-2 text-gray-300" />
-                  <p>Last message: {selectedConv.last_message || 'No messages'}</p>
-                  <p className="text-xs text-gray-400 mt-1">Full conversation history requires the Conversations API permission</p>
-                </div>
-              ) : (
-                <p className="text-sm text-gray-400">Select a conversation to view and reply</p>
-              )}
-            </div>
-            {selectedConv && (
-              <div className="p-3 border-t flex gap-2">
-                <input
-                  value={dmReplyText}
-                  onChange={(e) => setDmReplyText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSendDm();
-                  }}
-                  placeholder="Type a message..."
-                  className="flex-1 text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-green-500"
-                  disabled={dmSending}
-                />
-                <button
-                  onClick={handleSendDm}
-                  disabled={dmSending || !dmReplyText.trim()}
-                  className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  <FaPaperPlane className="text-xs" />
-                  {dmSending ? 'Sending...' : 'Send'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const tabItems = [
-    { id: 'feed', label: 'Feed & Comments', icon: FaComment },
-    { id: 'inbox', label: 'Messages / DMs', icon: FaEnvelope },
-  ];
+  const unreadCount = inboxMessages.filter((m) => m.status === 'unread').length;
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Publish</h1>
-          <p className="text-base text-slate-600 mt-1">View posts, reply to comments, and manage DMs.</p>
+      <div className="max-w-5xl mx-auto">
+
+        {/* ── Page header ── */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Publish</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              View your published posts and manage messages across connected accounts.
+            </p>
+          </div>
+          {activeTab === 'feed' && (
+            <button
+              onClick={fetchFeed}
+              disabled={feedLoading}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+            >
+              <FaSync className={`text-xs ${feedLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          )}
+          {activeTab === 'inbox' && (
+            <button
+              onClick={fetchInbox}
+              disabled={inboxLoading}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+            >
+              <FaSync className={`text-xs ${inboxLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          )}
         </div>
 
-        {/* Platform Filter */}
-        {activeTab === 'feed' && (
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setSelectedPlatform(null)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                !selectedPlatform ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
+        {/* ── Platform + Account selector ── */}
+        <div className="bg-offwhite rounded-2xl border border-gray-200 p-4 mb-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800">Select Platform &amp; Account</h2>
+              {!accountsLoading && (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {accounts.length} account{accounts.length !== 1 ? 's' : ''} connected
+                </p>
+              )}
+            </div>
+            <a
+              href="/accounts"
+              className="flex items-center gap-1.5 text-xs font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors"
             >
-              All
-            </button>
-            {platforms.map((p) => {
-              const Icon = PLATFORM_ICONS[p] || FaGlobe;
-              return (
+              <FaPlus className="text-[10px]" />
+              Add account
+            </a>
+          </div>
+
+          {accountsLoading ? (
+            <div className="flex flex-wrap gap-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-9 w-28 rounded-xl bg-gray-50 animate-pulse" />
+              ))}
+            </div>
+          ) : accounts.length === 0 ? (
+            <div className="py-4 text-center">
+              <p className="text-sm text-gray-500">No accounts connected yet.</p>
+              <a href="/accounts" className="text-sm text-green-600 hover:text-green-700 font-medium underline mt-1 inline-block">
+                Connect an account →
+              </a>
+            </div>
+          ) : (
+            <>
+              {/* Row 1: Platform pills */}
+              <div className="flex flex-wrap gap-2">
+                {platforms.map((plat) => {
+                  const meta = PLATFORM_META[plat] || {};
+                  const Icon = meta.icon;
+                  const isActive = activePlatform === plat;
+                  const accountCount = accounts.filter((a) => a.platform === plat).length;
+                  return (
+                    <button
+                      key={plat}
+                      onClick={() => handlePlatformSelect(plat)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
+                        isActive
+                          ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
+                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-green-200 hover:bg-green-50/50'
+                      }`}
+                    >
+                      {Icon && <Icon className={`text-sm ${isActive ? 'text-green-600' : meta.color}`} />}
+                      <span>{meta.label || plat}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                        isActive ? 'bg-green-200 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {accountCount}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Row 2: Account pills for selected platform */}
+              {activePlatform && (
+                <div className="pt-1 border-t border-gray-100">
+                  <p className="text-[11px] text-gray-400 mb-2 font-medium uppercase tracking-wide">
+                    {PLATFORM_META[activePlatform]?.label || activePlatform} accounts — select to filter feed
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {accounts
+                      .filter((a) => a.platform === activePlatform)
+                      .map((account) => (
+                        <AccountPill
+                          key={account.id}
+                          account={account}
+                          selected={selectedAccounts.includes(account.id)}
+                          onClick={() => toggleAccount(account.id)}
+                        />
+                      ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── Tab bar: Feed / Inbox ── */}
+        <div className="flex gap-1 border-b border-gray-200 mb-4">
+          <button
+            onClick={() => setActiveTab('feed')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'feed'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <FaRss className="text-xs" />
+            Feed
+          </button>
+          <button
+            onClick={() => setActiveTab('inbox')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'inbox'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <FaInbox className="text-xs" />
+            Inbox / DMs
+            {unreadCount > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            FEED TAB
+        ══════════════════════════════════════════════════════════════════════ */}
+        {activeTab === 'feed' && (
+          <>
+            {/* ── Warnings (token expired, API errors, etc.) ── */}
+            {feedWarnings.length > 0 && !feedLoading && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">⚠ Some accounts could not load posts</p>
+                {feedWarnings.map((w, i) => {
+                  const meta = PLATFORM_META[w.platform] || {};
+                  const Icon = meta.icon;
+                  return (
+                    <div key={i} className="flex items-start gap-2 text-xs text-amber-800">
+                      {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
+                      <span><strong>{w.username}</strong> ({meta.label || w.platform}): {w.reason}</span>
+                    </div>
+                  );
+                })}
+                <p className="text-[11px] text-amber-600 mt-1">
+                  Go to <a href="/accounts" className="underline font-medium">Accounts</a> to reconnect.
+                </p>
+              </div>
+            )}
+
+            {/* Post feed */}
+            {feedLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map((i) => <SkeletonPostCard key={i} />)}
+              </div>
+            ) : feedError ? (
+              <div className="bg-offwhite rounded-2xl border border-red-100 p-8 text-center">
+                <p className="text-sm text-red-600 font-medium">{feedError}</p>
                 <button
-                  key={p}
-                  onClick={() => setSelectedPlatform(p)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    selectedPlatform === p ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
+                  onClick={fetchFeed}
+                  className="mt-3 text-sm text-green-600 hover:text-green-700 underline"
                 >
-                  <Icon className="text-xs" />
-                  <span className="capitalize">{p}</span>
+                  Try again
                 </button>
-              );
-            })}
+              </div>
+            ) : posts.length === 0 ? (
+              <div className="bg-offwhite rounded-2xl border border-gray-200 p-12 flex flex-col items-center justify-center text-center">
+                <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
+                  <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-gray-700">No posts found</p>
+                <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                  {accounts.length === 0
+                    ? 'Connect your social accounts to see your published posts here.'
+                    : 'No published posts were found for the selected accounts or platform.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {dateGroups.map(([dateLabel, datePosts]) => (
+                  <div key={dateLabel}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="h-px flex-1 bg-gray-50" />
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2">
+                        {dateLabel}
+                      </span>
+                      <div className="h-px flex-1 bg-gray-50" />
+                    </div>
+                    <div className="space-y-3">
+                      {datePosts.map((post, idx) => (
+                        <PostCard
+                          key={post.platform_post_id || idx}
+                          post={post}
+                          onAddComment={handleAddComment}
+                          onFetchComments={handleFetchComments}
+                          onReplyToComment={handleReplyToComment}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            INBOX / DMs TAB
+        ══════════════════════════════════════════════════════════════════════ */}
+        {activeTab === 'inbox' && (
+          <div className="bg-offwhite rounded-2xl border border-gray-200 overflow-hidden" style={{ minHeight: '500px' }}>
+
+            {/* ── Filter bar ── */}
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60 flex-wrap">
+              <select
+                value={inboxPlatform}
+                onChange={(e) => { setInboxPlatform(e.target.value); setInboxSelected(null); }}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="">All platforms</option>
+                {PLATFORM_OPTIONS.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <select
+                value={inboxType}
+                onChange={(e) => { setInboxType(e.target.value); setInboxSelected(null); }}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="">All types</option>
+                <option value="comment">Comments</option>
+                <option value="dm">DMs</option>
+              </select>
+              <button
+                onClick={handleSyncDMs}
+                disabled={syncing}
+                className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ml-auto"
+              >
+                <FaSync className={`text-[10px] ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Syncing…' : 'Sync DMs'}
+              </button>
+              <span className="text-xs text-gray-400">
+                {inboxMessages.length} message{inboxMessages.length !== 1 ? 's' : ''}
+                {unreadCount > 0 && ` · ${unreadCount} unread`}
+              </span>
+            </div>
+
+            {/* ── Two-column layout ── */}
+            <div className="flex" style={{ minHeight: '460px' }}>
+
+              {/* Left: message list */}
+              <div className="w-72 shrink-0 border-r border-gray-100 overflow-y-auto">
+                {inboxLoading ? (
+                  <div className="p-4 space-y-3">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="animate-pulse">
+                        <div className="h-4 bg-gray-100 rounded w-3/4 mb-1" />
+                        <div className="h-3 bg-gray-100 rounded w-full mb-1" />
+                        <div className="h-2.5 bg-gray-100 rounded w-1/2" />
+                      </div>
+                    ))}
+                  </div>
+                ) : inboxMessages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                    <FaInbox className="text-3xl text-gray-200 mb-3" />
+                    <p className="text-sm text-gray-400 font-medium">No messages found</p>
+                    <p className="text-xs text-gray-300 mt-1">
+                      {inboxPlatform || inboxType
+                        ? 'Try removing filters'
+                        : 'Comments and DMs will appear here'}
+                    </p>
+                  </div>
+                ) : (
+                  inboxMessages.map((msg) => {
+                    const meta = PLATFORM_META[msg.platform] || {};
+                    const PIcon = meta.icon;
+                    return (
+                      <button
+                        key={msg.id}
+                        onClick={() => { setInboxSelected(msg); setInboxReply(''); }}
+                        className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${
+                          inboxSelected?.id === msg.id ? 'bg-indigo-50 border-l-2 border-l-indigo-500' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-0.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm font-semibold text-gray-800 truncate">
+                              {msg.author_name}
+                            </span>
+                            {msg.status === 'unread' && (
+                              <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />
+                            )}
+                          </div>
+                          <span className="text-[10px] text-gray-400 flex-shrink-0">
+                            {formatRelative(msg.received_at)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 truncate mb-1">{msg.content}</p>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                          {PIcon && <PIcon className={meta.color} style={{ fontSize: 10 }} />}
+                          <span className="capitalize">{msg.platform}</span>
+                          <span>·</span>
+                          <span className="capitalize">{msg.type}</span>
+                          {msg.status === 'replied' && (
+                            <>
+                              <span>·</span>
+                              <span className="text-green-500">Replied</span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Right: message detail + reply */}
+              <div className="flex-1 flex flex-col">
+                {inboxSelected ? (
+                  <>
+                    {/* Message detail */}
+                    <div className="p-5 flex-1 overflow-y-auto">
+                      <div className="mb-4">
+                        {/* Platform + type badge */}
+                        <div className="flex items-center gap-2 mb-3">
+                          {(() => {
+                            const meta = PLATFORM_META[inboxSelected.platform] || {};
+                            const PIcon = meta.icon;
+                            return PIcon ? (
+                              <PIcon className={`${meta.color} text-base`} />
+                            ) : null;
+                          })()}
+                          <span className="text-xs text-gray-400 uppercase tracking-wide font-medium">
+                            {PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform}
+                            {' · '}
+                            {inboxSelected.type === 'dm' ? 'Direct Message' : 'Comment'}
+                          </span>
+                        </div>
+
+                        {/* Author */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className={`w-8 h-8 rounded-full ${avatarColor(inboxSelected.author_name)} flex items-center justify-center text-white text-xs font-bold flex-shrink-0`}>
+                            {(inboxSelected.author_name || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">{inboxSelected.author_name}</p>
+                            <p className="text-[11px] text-gray-400">
+                              {formatRelative(inboxSelected.received_at)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Message content */}
+                        <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          {inboxSelected.content}
+                        </div>
+                      </div>
+
+                      {/* Existing reply */}
+                      {inboxSelected.reply && (
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <FaReply className="text-indigo-400 text-xs" />
+                            <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Your reply</p>
+                          </div>
+                          <p className="text-sm text-indigo-800 whitespace-pre-wrap">{inboxSelected.reply}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Reply composer */}
+                    <div className="border-t border-gray-100 p-4 bg-gray-50/40">
+                      <textarea
+                        value={inboxReply}
+                        onChange={(e) => setInboxReply(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleInboxReply();
+                        }}
+                        placeholder="Write a reply… (⌘↵ to send)"
+                        rows={3}
+                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+                      />
+                      <div className="flex items-center justify-between mt-2">
+                        <p className="text-[11px] text-gray-400">
+                          {inboxSelected?.platform_message_id && ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'].includes(inboxSelected?.platform)
+                            ? '💡 Reply will be posted directly to ' + (PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform)
+                            : '💡 Reply will be saved in your inbox'
+                          }
+                        </p>
+                        <button
+                          onClick={handleInboxReply}
+                          disabled={!inboxReply.trim() || inboxSending}
+                          className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {inboxSending ? (
+                            <>
+                              <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                              Sending…
+                            </>
+                          ) : (
+                            <>
+                              <FaReply className="text-xs" />
+                              Send Reply
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full py-20 text-center px-6">
+                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                      <FaInbox className="text-gray-300 text-lg" />
+                    </div>
+                    <p className="text-sm font-medium text-gray-500">Select a message</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Click a message on the left to view and reply
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="border-b border-gray-200">
-          <nav className="flex gap-6">
-            {tabItems.map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
-                    activeTab === tab.id
-                      ? 'border-green-600 text-green-700'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <Icon className="text-xs" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Content */}
-        {activeTab === 'feed' && renderFeed()}
-        {activeTab === 'inbox' && renderInbox()}
       </div>
     </DashboardLayout>
   );

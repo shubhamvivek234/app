@@ -1,413 +1,136 @@
-import React, { useState, useCallback } from 'react';
-import DashboardLayout from '@/components/DashboardLayout';
-import { createPost, generateContent } from '@/lib/api';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { toast } from 'sonner';
-import { FaTwitter, FaLinkedin, FaInstagram, FaMagic, FaVideo, FaImage, FaFileAlt } from 'react-icons/fa';
-import { useAuth } from '@/context/AuthContext';
-import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+import DashboardLayout from '@/components/DashboardLayout';
+import CreatePostForm from '@/pages/CreatePostForm';
+import {
+  FaTwitter,
+  FaInstagram,
+  FaLinkedin,
+  FaFacebook,
+  FaTiktok,
+  FaYoutube,
+  FaPinterest
+} from 'react-icons/fa';
+import { SiBluesky, SiThreads } from 'react-icons/si';
 
 const CreatePost = () => {
   const navigate = useNavigate();
-  const { user, token } = useAuth();
-  const [postType, setPostType] = useState('text'); // text, image, video
-  const [content, setContent] = useState('');
-  const [platforms, setPlatforms] = useState([]);
-  const [scheduledTime, setScheduledTime] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [showAiDialog, setShowAiDialog] = useState(false);
-  
-  // Media state
-  const [uploadedFiles, setUploadedFiles] = useState([]);
-  const [videoUrl, setVideoUrl] = useState('');
-  const [coverImageUrl, setCoverImageUrl] = useState('');
-  const [videoTitle, setVideoTitle] = useState('');
-  const [uploading, setUploading] = useState(false);
 
-  const platformOptions = [
-    { id: 'twitter', name: 'Twitter/X', icon: FaTwitter, color: 'text-blue-400' },
-    { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: 'text-pink-500' },
-    { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: 'text-blue-600' },
+  // null = closed, 'text' | 'image' | 'video' = composer open for that type
+  const [composerType, setComposerType] = useState(null);
+
+  const postTypes = [
+    {
+      id: 'text',
+      title: 'Text Post',
+      icon: (
+        <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h7" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5h18M3 5v2M3 5v-2M21 5v2M21 5v-2" />
+        </svg>
+      ),
+      platforms: ['facebook', 'twitter', 'linkedin', 'threads', 'bluesky'],
+    },
+    {
+      id: 'image',
+      title: 'Image Post',
+      icon: (
+        <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth={1.5} />
+          <circle cx="8.5" cy="8.5" r="1.5" strokeWidth={1.5} />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 15l-5-5L5 21" />
+        </svg>
+      ),
+      platforms: ['facebook', 'twitter', 'linkedin', 'instagram', 'pinterest', 'tiktok', 'threads'],
+    },
+    {
+      id: 'video',
+      title: 'Video Post',
+      icon: (
+        <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="2" y="4" width="16" height="12" rx="2" strokeWidth={1.5} />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 8l-4 2v4l4 2V8z" />
+        </svg>
+      ),
+      platforms: ['facebook', 'twitter', 'linkedin', 'youtube', 'tiktok', 'instagram', 'pinterest', 'threads'],
+    },
   ];
 
-  const onDrop = useCallback(async (acceptedFiles) => {
-    setUploading(true);
-    const newFiles = [];
-
-    for (const file of acceptedFiles) {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const response = await axios.post(`${BACKEND_URL}/api/upload`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        newFiles.push({
-          name: file.name,
-          url: response.data.url,
-          type: file.type,
-        });
-
-        // Auto-set URLs based on post type
-        if (postType === 'video' && file.type.startsWith('video/')) {
-          setVideoUrl(response.data.url);
-        }
-      } catch (error) {
-        toast.error(`Failed to upload ${file.name}`);
-      }
-    }
-
-    setUploadedFiles([...uploadedFiles, ...newFiles]);
-    setUploading(false);
-    toast.success(`Uploaded ${newFiles.length} file(s)`);
-  }, [uploadedFiles, token, postType]);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: postType === 'video' 
-      ? { 'video/*': ['.mp4', '.mov', '.avi'] }
-      : { 'image/*': ['.png', '.jpg', '.jpeg', '.gif'] },
-    multiple: postType !== 'video',
-  });
-
-  const togglePlatform = (platformId) => {
-    if (platforms.includes(platformId)) {
-      setPlatforms(platforms.filter((p) => p !== platformId));
-    } else {
-      setPlatforms([...platforms, platformId]);
-    }
-  };
-
-  const handleAiGenerate = async () => {
-    if (!aiPrompt.trim()) {
-      toast.error('Please enter a prompt');
-      return;
-    }
-
-    setAiLoading(true);
-    try {
-      const response = await generateContent(aiPrompt);
-      setContent(response.content);
-      setShowAiDialog(false);
-      setAiPrompt('');
-      toast.success('Content generated!');
-    } catch (error) {
-      toast.error('Failed to generate content');
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!content.trim()) {
-      toast.error('Please enter post content');
-      return;
-    }
-
-    if (platforms.length === 0) {
-      toast.error('Please select at least one platform');
-      return;
-    }
-
-    if (scheduledTime && user?.subscription_status !== 'active') {
-      toast.error('Scheduling requires an active subscription');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const postData = {
-        content,
-        post_type: postType,
-        platforms,
-        scheduled_time: scheduledTime || null,
-      };
-
-      // Add media based on post type
-      if (postType === 'image') {
-        postData.media_urls = uploadedFiles.map(f => f.url);
-      } else if (postType === 'video') {
-        postData.video_url = videoUrl;
-        postData.cover_image_url = coverImageUrl;
-        postData.video_title = videoTitle;
-      }
-
-      await createPost(postData);
-      toast.success(scheduledTime ? 'Post scheduled successfully!' : 'Post created as draft!');
-      navigate('/content');
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to create post');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const removeFile = (index) => {
-    setUploadedFiles(uploadedFiles.filter((_, i) => i !== index));
+  const platformIcons = {
+    facebook:  <FaFacebook  className="text-gray-500" />,
+    twitter:   <FaTwitter   className="text-gray-500" />,
+    linkedin:  <FaLinkedin  className="text-gray-500" />,
+    instagram: <FaInstagram className="text-gray-500" />,
+    pinterest: <FaPinterest className="text-gray-500" />,
+    youtube:   <FaYoutube   className="text-gray-500" />,
+    tiktok:    <FaTiktok    className="text-gray-500" />,
+    bluesky:   <SiBluesky   className="text-gray-500" />,
+    threads:   <SiThreads   className="text-gray-500" />,
   };
 
   return (
     <DashboardLayout>
-      <div className='"'max-w-4xl mx-auto space-y-8'"'>
-        {/* Header */}
-        <div>
-          <h1 className='"'text-3xl font-semibold tracking-tight text-slate-900'"'>Create Post</h1>
-          <p className='"'text-base text-slate-600 mt-1'"'>
-            Compose and schedule your social media content
-          </p>
+      <div className="max-w-4xl mx-auto">
+        {/* Page Title */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">Create a new post</h1>
         </div>
 
-        <form onSubmit={handleSubmit} className='"'space-y-6'"'>
-          {/* Post Type Selector */}
-          <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-            <Label className='"'text-base font-medium'"'>Post Type</Label>
-            <div className='"'grid grid-cols-3 gap-4'"'>
-              {[
-                { id: 'text', name: 'Text', icon: FaFileAlt },
-                { id: 'image', name: 'Image', icon: FaImage },
-                { id: 'video', name: 'Video', icon: FaVideo },
-              ].map((type) => {
-                const Icon = type.icon;
-                const isSelected = postType === type.id;
-                return (
-                  <button
-                    key={type.id}
-                    type='"'button'"'
-                    onClick={() => setPostType(type.id)}
-                    data-testid={`post-type-${type.id}`}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      isSelected
-                        ? 'border-indigo-600 bg-indigo-50'
-                        : 'border-border hover:border-slate-300'
-                    }`}
-                  >
-                    <Icon className='"'text-2xl text-indigo-600 mx-auto mb-2'"' />
-                    <p className='"'text-sm font-medium text-slate-900'"'>{type.name}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Content Area */}
-          <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-            <div className='"'flex justify-between items-center'"'>
-              <Label htmlFor='"'content'"' className='"'text-base font-medium'"'>
-                Post Content
-              </Label>
-              <Button
-                type='"'button'"'
-                variant='"'outline'"'
-                size='"'sm'"'
-                onClick={() => setShowAiDialog(!showAiDialog)}
-                data-testid='"'ai-generate-button'"'
-              >
-                <FaMagic className='"'mr-2'"' />
-                AI Generate
-              </Button>
-            </div>
-
-            {showAiDialog && (
-              <div className='"'p-4 bg-indigo-50 rounded-lg border border-indigo-200 space-y-3'"' data-testid='"'ai-dialog'"'>
-                <Input
-                  placeholder='"'E.g., Write a post about productivity tips for entrepreneurs'"'
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  data-testid='"'ai-prompt-input'"'
-                />
-                <Button
-                  type='"'button'"'
-                  size='"'sm'"'
-                  onClick={handleAiGenerate}
-                  disabled={aiLoading}
-                  data-testid='"'ai-submit-button'"'
-                >
-                  {aiLoading ? 'Generating...' : 'Generate'}
-                </Button>
+        {/* Post Type Selection Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {postTypes.map((postType) => (
+            <div
+              key={postType.id}
+              onClick={() => setComposerType(postType.id)}
+              data-testid={`post-type-${postType.id}`}
+              className="bg-offwhite border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-green-400 hover:bg-green-50/30 transition-all cursor-pointer group min-h-[200px] flex flex-col items-center justify-center"
+            >
+              {/* Icon */}
+              <div className="flex justify-center mb-4 group-hover:scale-105 transition-transform">
+                {postType.icon}
               </div>
-            )}
 
-            <Textarea
-              id='"'content'"'
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder='"'Write your post here...'"'
-              className='"'min-h-[200px] resize-none'"'
-              data-testid='"'post-content-textarea'"'
-            />
-            <div className='"'text-sm text-slate-500'"'>{content.length} characters</div>
-          </div>
+              {/* Title */}
+              <h3 className="text-lg font-medium text-gray-900 text-center mb-6">
+                {postType.title}
+              </h3>
 
-          {/* Video Title (for video posts) */}
-          {postType === 'video' && (
-            <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-              <Label htmlFor='"'video-title'"' className='"'text-base font-medium'"'>
-                Video Title (Optional)
-              </Label>
-              <Input
-                id='"'video-title'"'
-                value={videoTitle}
-                onChange={(e) => setVideoTitle(e.target.value)}
-                placeholder='"'Enter video title'"'
-                data-testid='"'video-title-input'"'
-              />
-            </div>
-          )}
-
-          {/* Media Upload */}
-          {(postType === 'image' || postType === 'video') && (
-            <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-              <Label className='"'text-base font-medium'"'>
-                {postType === 'video' ? 'Upload Video' : 'Upload Images'}
-              </Label>
-              
-              <div
-                {...getRootProps()}
-                className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                  isDragActive ? 'border-indigo-600 bg-indigo-50' : 'border-border hover:border-slate-300'
-                }`}
-                data-testid='"'dropzone'"'
-              >
-                <input {...getInputProps()} />
-                {uploading ? (
-                  <div className='"'text-slate-600'"'>Uploading...</div>
-                ) : isDragActive ? (
-                  <div className='"'text-indigo-600'"'>Drop files here...</div>
-                ) : (
-                  <div className='"'space-y-2'"'>
-                    <div className='"'text-slate-600'"'>
-                      Drag & drop {postType === 'video' ? 'video' : 'images'} here, or click to select
-                    </div>
-                    <div className='"'text-sm text-slate-500'"'>
-                      {postType === 'video' ? 'MP4, MOV, AVI' : 'PNG, JPG, JPEG, GIF'}
-                    </div>
+              {/* Platform Icons */}
+              <div className="flex justify-center items-center gap-2 flex-wrap">
+                {postType.platforms.map((platform) => (
+                  <div key={platform} className="text-lg">
+                    {platformIcons[platform]}
                   </div>
-                )}
+                ))}
               </div>
-
-              {/* Uploaded Files */}
-              {uploadedFiles.length > 0 && (
-                <div className='"'space-y-2'"'>
-                  <Label className='"'text-sm font-medium'"'>Uploaded Files</Label>
-                  {uploadedFiles.map((file, index) => (
-                    <div
-                      key={index}
-                      className='"'flex items-center justify-between p-3 bg-slate-50 rounded-md'"'
-                      data-testid={`uploaded-file-${index}`}
-                    >
-                      <span className='"'text-sm text-slate-700'"'>{file.name}</span>
-                      <button
-                        type='"'button'"'
-                        onClick={() => removeFile(index)}
-                        className='"'text-red-600 hover:text-red-700'"'
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Cover Image for Video */}
-              {postType === 'video' && (
-                <div className='"'space-y-2'"'>
-                  <Label htmlFor='"'cover-image'"'>Cover Image URL (Optional)</Label>
-                  <Input
-                    id='"'cover-image'"'
-                    value={coverImageUrl}
-                    onChange={(e) => setCoverImageUrl(e.target.value)}
-                    placeholder='"'Enter cover image URL'"'
-                    data-testid='"'cover-image-input'"'
-                  />
-                </div>
-              )}
             </div>
-          )}
+          ))}
+        </div>
 
-          {/* Platform Selection */}
-          <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-            <Label className='"'text-base font-medium'"'>Select Platforms</Label>
-            <div className='"'grid grid-cols-3 gap-4'"'>
-              {platformOptions.map((platform) => {
-                const Icon = platform.icon;
-                const isSelected = platforms.includes(platform.id);
-                return (
-                  <button
-                    key={platform.id}
-                    type='"'button'"'
-                    onClick={() => togglePlatform(platform.id)}
-                    data-testid={`platform-${platform.id}`}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      isSelected
-                        ? 'border-indigo-600 bg-indigo-50'
-                        : 'border-border hover:border-slate-300'
-                    }`}
-                  >
-                    <Icon className={`text-3xl ${platform.color} mx-auto mb-2`} />
-                    <p className='"'text-sm font-medium text-slate-900'"'>{platform.name}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Schedule */}
-          <div className='"'bg-white rounded-lg border border-border p-6 space-y-4'"'>
-            <div>
-              <Label htmlFor='"'schedule'"' className='"'text-base font-medium'"'>
-                Schedule Post (Optional)
-              </Label>
-              {user?.subscription_status !== 'active' && (
-                <p className='"'text-sm text-amber-600 mt-1'"'>
-                  Upgrade to a paid plan to schedule posts
-                </p>
-              )}
-            </div>
-            <Input
-              id='"'schedule'"'
-              type='"'datetime-local'"'
-              value={scheduledTime}
-              onChange={(e) => setScheduledTime(e.target.value)}
-              disabled={user?.subscription_status !== 'active'}
-              data-testid='"'schedule-input'"'
-            />
-          </div>
-
-          {/* Actions */}
-          <div className='"'flex gap-3'"'>
-            <Button
-              type='"'submit'"'
-              disabled={loading}
-              data-testid='"'submit-post-button'"'
+        {/* Connection Prompt */}
+        <div className="mt-8">
+          <p className="text-sm text-gray-600 flex items-center gap-1">
+            <span className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center text-white text-xs">i</span>
+            You can connect more accounts{' '}
+            <button
+              onClick={() => navigate('/accounts')}
+              className="text-green-600 hover:text-green-700 font-medium underline"
+              data-testid="connect-accounts-link"
             >
-              {loading ? 'Creating...' : scheduledTime ? 'Schedule Post' : 'Save as Draft'}
-            </Button>
-            <Button
-              type='"'button'"'
-              variant='"'outline'"'
-              onClick={() => navigate('/dashboard')}
-              data-testid='"'cancel-button'"'
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+              here
+            </button>
+          </p>
+        </div>
       </div>
+
+      {/* ── Composer modal (88% of screen) ──────────────────────────────────── */}
+      {composerType && (
+        <CreatePostForm
+          postTypeOverride={composerType}
+          asModal={true}
+          onClose={() => setComposerType(null)}
+        />
+      )}
     </DashboardLayout>
   );
 };

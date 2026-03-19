@@ -249,7 +249,7 @@ const LoginV2 = () => {
         }
         @keyframes snapBlink {
           0%, 45%  { background: #000000 !important; color: #ffffff; }
-          50%, 95% { background: #ffffff !important; color: #000000; }
+          50%, 95% { background: #fffffb !important; color: #000000; }
           100%     { background: #000000 !important; color: #ffffff; }
         }
 
@@ -405,7 +405,7 @@ const LoginV2 = () => {
         ══════════════════════════════════════════════════════════════ */
         .lv2-right {
           flex: 0 0 30%;
-          background: #ffffff;
+          background: #fffffb;
           display: flex;
           align-items: center;
           justify-content: center;

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getPosts } from '@/lib/api';
+import { getStats, getPosts, getWorkspaceMembers, getWorkspaceActivity } from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
 import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,8 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentPosts, setRecentPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [workspaceMembers, setWorkspaceMembers] = useState([]);
+  const [teamActivity, setTeamActivity] = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -29,6 +31,18 @@ const Dashboard = () => {
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+    }
+
+    // Fetch workspace members + activity
+    try {
+      const [membersData, activityData] = await Promise.all([
+        getWorkspaceMembers(),
+        getWorkspaceActivity(10),
+      ]);
+      setWorkspaceMembers(membersData?.members || []);
+      setTeamActivity(activityData?.activity || []);
+    } catch (err) {
+      // Workspace not critical — silent fail
     }
   };
 
@@ -61,7 +75,7 @@ const Dashboard = () => {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Total Posts</p>
@@ -73,7 +87,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Scheduled</p>
@@ -85,7 +99,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Published</p>
@@ -97,7 +111,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Connected Accounts</p>
@@ -111,7 +125,7 @@ const Dashboard = () => {
         </div>
 
         {/* Recent Posts */}
-        <div className="bg-white rounded-lg border border-border">
+        <div className="bg-offwhite rounded-lg border border-border">
           <div className="p-6 border-b border-border">
             <h2 className="text-xl font-semibold text-slate-900">Recent Posts</h2>
           </div>
@@ -145,7 +159,7 @@ const Dashboard = () => {
                             ? 'bg-green-100 text-green-700'
                             : post.status === 'scheduled'
                             ? 'bg-amber-100 text-amber-700'
-                            : 'bg-slate-100 text-slate-700'
+                            : 'bg-offwhite border border-slate-200 text-slate-700'
                         }`}>
                           {post.status}
                         </span>
@@ -162,6 +176,41 @@ const Dashboard = () => {
             )}
           </div>
         </div>
+
+        {/* Team Activity — only show if workspace has multiple members */}
+        {workspaceMembers.length > 1 && (
+          <div className="bg-offwhite rounded-xl border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-slate-800">Team Activity</h3>
+              <span className="text-xs text-slate-400">{workspaceMembers.length} members</span>
+            </div>
+            {teamActivity.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-4">No recent team activity</p>
+            ) : (
+              <div className="space-y-3">
+                {teamActivity.slice(0, 5).map((item) => (
+                  <div key={item.id} className="flex items-start gap-3">
+                    <img
+                      src={item.author?.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(item.author?.name || 'U')}&size=32`}
+                      alt={item.author?.name}
+                      className="w-7 h-7 rounded-full flex-shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-600 truncate">
+                        <span className="font-medium text-slate-800">{item.author?.name}</span>
+                        {' '}
+                        {item.status === 'published' ? 'published to' : item.status === 'scheduled' ? 'scheduled for' : 'post failed on'}
+                        {' '}
+                        <span className="font-medium">{(item.platforms || []).join(', ')}</span>
+                      </p>
+                      <p className="text-xs text-slate-400 truncate mt-0.5">{(item.content || '').slice(0, 60)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
