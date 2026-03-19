@@ -122,30 +122,67 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (email, password, cfTurnstileToken = null) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      // If Turnstile token is present, notify the backend so it can validate it
+      // (backend enforces this only when TURNSTILE_ENABLED=true)
+      if (cfTurnstileToken) {
+        try {
+          const idToken = await credential.user.getIdToken();
+          await axios.post(
+            `${API}/auth/login`,
+            { cf_turnstile_token: cfTurnstileToken },
+            { headers: { Authorization: `Bearer ${idToken}` } },
+          );
+        } catch (backendErr) {
+          console.warn('Turnstile backend validation error:', backendErr?.response?.data);
+          // Re-throw only if backend explicitly rejected the Turnstile check (403)
+          if (backendErr?.response?.status === 403) throw backendErr;
+        }
+      }
       return true;
     } catch (error) {
       console.error("Login error:", error);
-      toast.error("Invalid email or password");
+      if (error?.response?.status === 403) {
+        toast.error("Bot protection check failed. Please refresh and try again.");
+      } else {
+        toast.error("Invalid email or password");
+      }
       throw error;
     }
   };
 
-  const signup = async (email, password, name) => {
+  const signup = async (email, password, name, cfTurnstileToken = null) => {
     try {
       // Create user in Firebase
-      const result = await createUserWithEmailAndPassword(auth, email, password);
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
 
-      // Optionally update Firebase Profile Display Name immediately
-      // await updateProfile(result.user, { displayName: name });
-      // The backend sync will happen automatically on auth state change listener
+      // Notify backend of signup (includes Turnstile token when provided)
+      // Backend enforces Turnstile only when TURNSTILE_ENABLED=true
+      if (cfTurnstileToken) {
+        try {
+          const idToken = await credential.user.getIdToken();
+          await axios.post(
+            `${API}/auth/signup`,
+            { cf_turnstile_token: cfTurnstileToken },
+            { headers: { Authorization: `Bearer ${idToken}` } },
+          );
+        } catch (backendErr) {
+          console.warn('Signup Turnstile backend error:', backendErr?.response?.data);
+          if (backendErr?.response?.status === 403) throw backendErr;
+        }
+      }
 
+      // onAuthStateChanged will handle backend sync automatically
       return true;
     } catch (error) {
       console.error("Signup error:", error);
-      toast.error(error.message);
+      if (error?.response?.status === 403) {
+        toast.error("Bot protection check failed. Please refresh and try again.");
+      } else {
+        toast.error(error.message);
+      }
       throw error;
     }
   };

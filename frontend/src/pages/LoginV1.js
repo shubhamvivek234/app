@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import TurnstileWidget from '@/components/TurnstileWidget';
 
 const LoginV1 = () => {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ const LoginV1 = () => {
     password: '',
   });
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState(null);
 
   // Add Google Fonts
   useEffect(() => {
@@ -30,7 +32,7 @@ const LoginV1 = () => {
     setLoading(true);
 
     try {
-      await login(formData.email, formData.password);
+      await login(formData.email, formData.password, turnstileToken);
       toast.success('Welcome back!');
     } catch (error) {
       let errorMessage = 'Login failed';
@@ -497,6 +499,7 @@ const LoginV1 = () => {
                 Forgot password?
               </Link>
             </div>
+            <TurnstileWidget onVerify={setTurnstileToken} />
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in'}
             </button>

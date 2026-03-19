@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import TurnstileWidget from '@/components/TurnstileWidget';
 
 const Signup = () => {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ const Signup = () => {
     password: '',
   });
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState(null);
 
   // Add Google Fonts
   useEffect(() => {
@@ -31,7 +33,7 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      await signup(formData.email, formData.password, formData.name);
+      await signup(formData.email, formData.password, formData.name, turnstileToken);
       toast.success('Account created! Welcome to SocialEntangler.');
     } catch (error) {
       let errorMessage = 'Signup failed';
@@ -482,6 +484,7 @@ const Signup = () => {
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               />
             </div>
+            <TurnstileWidget onVerify={setTurnstileToken} />
             <button type="submit" className="btn-submit" disabled={loading}>
               {loading ? 'Creating account...' : 'Create account'}
             </button>
