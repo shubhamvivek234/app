@@ -102,6 +102,7 @@ def create_celery_app() -> Celery:
         "celery_workers.tasks.recurring",     # Phase 5.5 — recurring post instances
         "celery_workers.tasks.analytics",     # Phase 6 — analytics collection
         "celery_workers.tasks.bulk_import",   # Phase 6 — bulk CSV import
+        "celery_workers.tasks.ai_caption",    # Phase 7.5 — AI caption generation
     ])
 
     return app
