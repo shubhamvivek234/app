@@ -103,6 +103,7 @@ def create_celery_app() -> Celery:
         "celery_workers.tasks.analytics",     # Phase 6 — analytics collection
         "celery_workers.tasks.bulk_import",   # Phase 6 — bulk CSV import
         "celery_workers.tasks.ai_caption",    # Phase 7.5 — AI caption generation
+        "celery_workers.tasks.gdpr",          # Phase 8 — GDPR erasure + export
     ])
 
     return app
