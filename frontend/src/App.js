@@ -14,6 +14,7 @@ import VerifyEmail from '@/pages/VerifyEmail';
 import Dashboard from '@/pages/Dashboard';
 import CreatePost from '@/pages/CreatePost';
 import CreatePostForm from '@/pages/CreatePostForm';
+import Publish from '@/pages/Publish';
 import CalendarView from '@/pages/CalendarView';
 import ContentLibrary from '@/pages/ContentLibrary';
 import ConnectedAccounts from '@/pages/ConnectedAccounts';
@@ -28,6 +29,18 @@ import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
 import ApiKeys from '@/pages/ApiKeys';
 import AgentDocs from '@/pages/AgentDocs';
+import HashtagGroups from '@/pages/HashtagGroups';
+import PublicCalendar from '@/pages/PublicCalendar';
+import Analytics from '@/pages/Analytics';
+import MediaLibrary from '@/pages/MediaLibrary';
+import RecurringPosts from '@/pages/RecurringPosts';
+import BulkUpload from '@/pages/BulkUpload';
+import ApprovalQueue from '@/pages/ApprovalQueue';
+import ThreadBuilder from '@/pages/ThreadBuilder';
+import InstagramGridPlanner from '@/pages/InstagramGridPlanner';
+import Inbox from '@/pages/Inbox';
+import TeamMembers from '@/pages/TeamMembers';
+import AcceptInvite from '@/pages/AcceptInvite';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -52,6 +65,11 @@ const PrivateRoute = ({ children }) => {
   // Check subscription status
   if (user.subscription_status === 'expired') {
     return <Navigate to="/subscription-expired" />;
+  }
+
+  // Active subscribers always have full access — skip onboarding checks
+  if (user.subscription_status === 'active') {
+    return children;
   }
 
   // If onboarding not completed, redirect to main onboarding flow first
@@ -117,6 +135,7 @@ function App() {
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/accept-invite" element={<AcceptInvite />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route
@@ -184,6 +203,14 @@ function App() {
               }
             />
             <Route
+              path="/publish"
+              element={
+                <PrivateRoute>
+                  <Publish />
+                </PrivateRoute>
+              }
+            />
+            <Route
               path="/calendar"
               element={
                 <PrivateRoute>
@@ -247,6 +274,80 @@ function App() {
                 </PrivateRoute>
               }
             />
+            <Route
+              path="/hashtags"
+              element={
+                <PrivateRoute>
+                  <HashtagGroups />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <PrivateRoute>
+                  <Analytics />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/media"
+              element={
+                <PrivateRoute>
+                  <MediaLibrary />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/recurring"
+              element={
+                <PrivateRoute>
+                  <RecurringPosts />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/bulk-upload"
+              element={
+                <PrivateRoute>
+                  <BulkUpload />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/approvals"
+              element={
+                <PrivateRoute>
+                  <ApprovalQueue />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/team"
+              element={
+                <PrivateRoute>
+                  <TeamMembers />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/inbox"
+              element={
+                <PrivateRoute>
+                  <Inbox />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/tools/instagram-grid"
+              element={
+                <PrivateRoute>
+                  <InstagramGridPlanner />
+                </PrivateRoute>
+              }
+            />
+            {/* Public route — no auth required */}
+            <Route path="/calendar/public/:token" element={<PublicCalendar />} />
           </Routes>
           <Toaster />
         </div>

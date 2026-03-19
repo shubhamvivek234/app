@@ -107,7 +107,7 @@ const OnboardingConnect = () => {
   const PlatformIcon = selectedPlatform?.icon;
 
   return (
-    <div className="min-h-screen bg-slate-50 pt-20 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-white pt-20 flex items-center justify-center px-4">
       <OnboardingHeader step={2} />
 
       <div className="max-w-3xl w-full">
@@ -143,7 +143,7 @@ const OnboardingConnect = () => {
                     return (
                       <div
                         key={account.id}
-                        className="flex items-center p-4 bg-slate-50 rounded-lg border border-slate-200"
+                        className="flex items-center p-4 bg-white rounded-lg border border-slate-200"
                       >
                         {PlatformIcon && <PlatformIcon className="text-2xl mr-3" style={{ color: platform.color }} />}
                         <div>

@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "/Users/shubham/Documents/Workspace/SocialEntangler/app/backend/venv/bin/uvicorn",
+      "runtimeArgs": ["server:app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
+      "port": 8001,
+      "cwd": "/Users/shubham/Documents/Workspace/SocialEntangler/app/backend"
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "yarn",
+      "runtimeArgs": ["start"],
+      "port": 3000,
+      "cwd": "/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend"
+    }
+  ]
+}

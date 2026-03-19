@@ -80,7 +80,7 @@ const OnboardingPricing = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pt-20 flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-white pt-20 flex items-center justify-center px-4 py-12">
       <OnboardingHeader step={3} />
 
       <div className="max-w-6xl w-full">

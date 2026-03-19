@@ -138,3 +138,57 @@ class TwitterAuth:
                 raise Exception(f"Failed to publish tweet: {response.text}")
                 
             return response.json().get('data', {}).get('id')
+
+    async def fetch_user_tweets(self, access_token: str, user_id: str, limit: int = 20) -> list:
+        """Fetch user's recent tweets with public metrics"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.twitter.com/2/users/{user_id}/tweets",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={
+                    "tweet.fields": "created_at,public_metrics,attachments",
+                    "expansions": "attachments.media_keys",
+                    "media.fields": "url,preview_image_url,type",
+                    "max_results": min(limit, 100),
+                },
+            )
+
+            logging.info(f"[Twitter] fetch_user_tweets status: {response.status_code}")
+
+            if response.status_code != 200:
+                logging.error(f"[Twitter] fetch_user_tweets failed: {response.text}")
+                return []
+
+            data = response.json()
+            tweets = data.get("data", [])
+
+            # Build a media key → media object lookup
+            media_map = {}
+            for m in data.get("includes", {}).get("media", []):
+                media_map[m["media_key"]] = m
+
+            normalized = []
+            for tweet in tweets:
+                media_url = None
+                media_keys = tweet.get("attachments", {}).get("media_keys", [])
+                if media_keys:
+                    m = media_map.get(media_keys[0], {})
+                    media_url = m.get("url") or m.get("preview_image_url")
+
+                metrics = tweet.get("public_metrics", {})
+                normalized.append({
+                    "platform_post_id": tweet.get("id"),
+                    "content": tweet.get("text", ""),
+                    "media_url": media_url,
+                    "media_type": "IMAGE" if media_url else "TEXT",
+                    "post_url": f"https://twitter.com/i/web/status/{tweet.get('id')}",
+                    "metrics": {
+                        "likes": metrics.get("like_count", 0),
+                        "comments": metrics.get("reply_count", 0),
+                        "shares": metrics.get("retweet_count", 0),
+                        "views": metrics.get("impression_count", 0),
+                    },
+                    "published_at": tweet.get("created_at"),
+                })
+
+            return normalized

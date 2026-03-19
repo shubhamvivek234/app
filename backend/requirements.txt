@@ -9,6 +9,7 @@ bcrypt
 black
 boto3
 botocore
+celery
 certifi
 cffi
 charset-normalizer
@@ -70,6 +71,7 @@ pillow
 platformdirs
 pluggy
 propcache
+prometheus-client
 proto-plus
 protobuf
 pyasn1
@@ -92,6 +94,7 @@ python-multipart
 pytokens
 PyYAML
 razorpay
+redis
 referencing
 regex
 requests
@@ -103,10 +106,13 @@ rsa
 s3transfer
 s5cmd
 shellingham
+sentry-sdk[fastapi]
+slowapi
 six
 sniffio
 starlette
 stripe
+structlog
 tenacity
 tiktoken
 tqdm

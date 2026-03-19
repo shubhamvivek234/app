@@ -24,7 +24,9 @@ class LinkedInAuth:
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="LinkedIn credentials not configured")
         
-        scopes = "openid profile email w_member_social"
+        # w_organization_social triggers LinkedIn's native page selector during OAuth
+        # Must be enabled in the LinkedIn Developer App → Auth → OAuth 2.0 scopes
+        scopes = "openid profile email w_member_social w_organization_social"
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -175,3 +177,133 @@ class LinkedInAuth:
                 raise Exception(f"Failed to publish to LinkedIn: {response.text}")
                 
             return response.headers.get('x-restli-id')
+
+    async def fetch_organizations(self, access_token: str) -> list:
+        """
+        Fetch LinkedIn org pages the token is authorized for.
+        Works with w_organization_social scope (no r_organization_admin needed).
+        Tries both ADMINISTRATOR role and any-role to maximise results.
+        """
+        async with httpx.AsyncClient() as client:
+            orgs = []
+            seen_urns = set()
+
+            for role in ("ADMINISTRATOR", None):
+                params = {
+                    "q": "roleAssignee",
+                    "state": "APPROVED",
+                    "count": 20,
+                }
+                if role:
+                    params["role"] = role
+
+                resp = await client.get(
+                    "https://api.linkedin.com/v2/organizationAcls",
+                    params=params,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "X-Restli-Protocol-Version": "2.0.0",
+                        "LinkedIn-Version": "202304",
+                    },
+                )
+                logging.info(f"[LinkedIn] organizationAcls (role={role}) → {resp.status_code}")
+
+                if resp.status_code != 200:
+                    logging.warning(f"[LinkedIn] organizationAcls failed: {resp.status_code} {resp.text[:200]}")
+                    continue
+
+                for el in resp.json().get("elements", []):
+                    org_urn = el.get("organizationalTarget", "")
+                    if not org_urn or org_urn in seen_urns:
+                        continue
+                    seen_urns.add(org_urn)
+
+                    org_id = org_urn.split(":")[-1]
+
+                    # Try to fetch org name
+                    name = f"Organization {org_id}"
+                    org_resp = await client.get(
+                        f"https://api.linkedin.com/v2/organizations/{org_id}",
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "X-Restli-Protocol-Version": "2.0.0",
+                        },
+                    )
+                    if org_resp.status_code == 200:
+                        od = org_resp.json()
+                        name = (
+                            od.get("localizedName")
+                            or (od.get("name") or {}).get("localized", {}).get("en_US")
+                            or name
+                        )
+
+                    orgs.append({"org_id": org_id, "org_urn": org_urn, "name": name, "logo_url": None})
+
+            return orgs
+
+    async def fetch_posts(self, access_token: str, person_urn: str, limit: int = 20) -> list:
+        """
+        Fetch LinkedIn member's posts.
+        Note: Requires r_member_social scope which is restricted for most apps.
+        Returns empty list gracefully if insufficient permissions.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.linkedin.com/v2/ugcPosts",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                },
+                params={
+                    "q": "authors",
+                    "authors": f"List(urn:li:person:{person_urn})",
+                    "count": limit,
+                },
+            )
+
+            logging.info(f"[LinkedIn] fetch_posts status: {response.status_code}")
+
+            if response.status_code != 200:
+                logging.warning(
+                    f"[LinkedIn] fetch_posts unavailable (r_member_social scope may be needed): {response.text}"
+                )
+                return []
+
+            data = response.json()
+            elements = data.get("elements", [])
+
+            normalized = []
+            for post in elements:
+                content_obj = (
+                    post.get("specificContent", {})
+                    .get("com.linkedin.ugc.ShareContent", {})
+                )
+                text = content_obj.get("shareCommentary", {}).get("text", "")
+
+                media_url = None
+                media_list = content_obj.get("media", [])
+                if media_list:
+                    media_url = media_list[0].get("originalUrl")
+
+                post_urn = post.get("id", "")
+                published_at = None
+                first_pub = post.get("firstPublishedAt")
+                if first_pub:
+                    from datetime import datetime
+                    published_at = datetime.utcfromtimestamp(first_pub / 1000).isoformat() + "Z"
+
+                normalized.append({
+                    "platform_post_id": post_urn,
+                    "content": text,
+                    "media_url": media_url,
+                    "media_type": "IMAGE" if media_url else "TEXT",
+                    "post_url": f"https://www.linkedin.com/feed/update/{post_urn}/",
+                    "metrics": {
+                        "likes": 0,
+                        "comments": 0,
+                        "shares": 0,
+                    },
+                    "published_at": published_at,
+                })
+
+            return normalized

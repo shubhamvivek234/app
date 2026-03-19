@@ -6,6 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import structlog
 import asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
@@ -17,24 +18,164 @@ from passlib.context import CryptContext
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
+from cryptography.x509 import load_pem_x509_certificate
+from cryptography.hazmat.backends import default_backend
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
 import razorpay
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import resend
 import httpx
+import html as _html
+import html as _html_module
+import re as _re
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.social.facebook import FacebookAuth
 from app.social.instagram import InstagramAuth
 from app.social.google import GoogleAuth
 from app.social.twitter import TwitterAuth
 from app.social.linkedin import LinkedInAuth
+from app.social.threads import ThreadsAuth
+from app.social.reddit import RedditAuth
+from app.social.pinterest import PinterestAuth
+from app.social.snapchat import SnapchatAuth
+from app.social.tiktok import TikTokAuth
+from app.social.bluesky import BlueskyAuth
+from app.media_validator import validate_upload, MediaValidationError
+from app.dlq import get_dlq_items, retry_from_dlq
+from app.errors import ErrorCode as StructuredErrorCode, api_error, structured_error_response, classify_platform_error as classify_platform_error_structured
 # from paypal_checkout_sdk.core import PayPalHttpClient, SandboxEnvironment
 # from paypal_checkout_sdk.orders import OrdersCreateRequest, OrdersCaptureRequest
+
+# ── Error Classification (Stage 3.5) ───────────────────────────────────────────
+# Error codes from Architecture Blueprint v2.8
+class ErrorCode:
+    # Publishing errors
+    EC1  = "EC1:NETWORK_FAILURE"         # Network error during platform API call
+    EC2  = "EC2:AUTH_EXPIRED"            # Platform OAuth token expired
+    EC3  = "EC3:RATE_LIMITED"            # Hit platform rate limit
+    EC4  = "EC4:MEDIA_TOO_LARGE"        # File exceeds platform size limit
+    EC5  = "EC5:INVALID_MEDIA_FORMAT"   # Unsupported file format
+    EC6  = "EC6:CAPTION_TOO_LONG"       # Caption exceeds platform character limit
+    EC7  = "EC7:ACCOUNT_SUSPENDED"      # Platform account suspended
+    EC8  = "EC8:PERMISSION_DENIED"      # Missing required API permission
+    EC9  = "EC9:DUPLICATE_POST"         # Idempotency key collision detected
+    EC10 = "EC10:MEDIA_PROCESSING_TIMEOUT"  # Video processing exceeded 2.5 min
+    # System errors
+    EC17 = "EC17:DB_WRITE_FAILURE"      # MongoDB write failed after publish
+    EC20 = "EC20:QUEUE_OVERFLOW"        # Upload queue depth exceeded
+    EC26 = "EC26:REDIS_UNAVAILABLE"     # Redis connection failed
+    # Auth errors
+    EC30 = "EC30:SUBSCRIPTION_REQUIRED" # Feature requires active subscription
+
+
+def classify_platform_error(error: Exception, platform: str) -> str:
+    """Classify an exception into an EC error code."""
+    msg = str(error).lower()
+    if "token" in msg and ("expired" in msg or "invalid" in msg or "auth" in msg):
+        return ErrorCode.EC2
+    if "rate" in msg and "limit" in msg:
+        return ErrorCode.EC3
+    if "size" in msg or "too large" in msg or "file size" in msg:
+        return ErrorCode.EC4
+    if "format" in msg or "unsupported" in msg or "codec" in msg:
+        return ErrorCode.EC5
+    if "caption" in msg or "text" in msg and "long" in msg:
+        return ErrorCode.EC6
+    if "suspended" in msg or "disabled" in msg or "banned" in msg:
+        return ErrorCode.EC7
+    if "permission" in msg or "scope" in msg or "access" in msg:
+        return ErrorCode.EC8
+    if "timeout" in msg or "timed out" in msg:
+        return ErrorCode.EC10
+    if "network" in msg or "connection" in msg or "connect" in msg:
+        return ErrorCode.EC1
+    return ErrorCode.EC1  # Default to network failure
+
+
+def sanitize_text_input(text: str, max_length: int = 5000) -> str:
+    """
+    Sanitize user text input:
+    - Strip leading/trailing whitespace
+    - Remove null bytes
+    - Truncate to max_length
+    - HTML-escape for display contexts
+    """
+    if not text:
+        return ""
+    # Remove null bytes and control characters
+    text = "".join(ch for ch in text if ord(ch) >= 32 or ch in "\n\r\t")
+    # Normalize unicode whitespace — collapse 3+ newlines to 2
+    text = _re.sub(r"\n{3,}", "\n\n", text)
+    # Truncate
+    text = text[:max_length]
+    return text.strip()
+
 
 ROOT_DIR = Path(__file__).parent.resolve()
 env_path = ROOT_DIR / '.env'
 print(f"LOADING ENV FROM: {env_path}")
 load_dotenv(env_path, override=True)
+
+# ── Sentry (Stage 4 — Observability) ─────────────────────────────────────────
+import sentry_sdk
+_sentry_dsn = os.environ.get("SENTRY_DSN")
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        environment=os.environ.get("ENV", "development"),
+        traces_sample_rate=0.1,           # 10% of transactions traced
+        profiles_sample_rate=0.1,         # 10% profiling
+        send_default_pii=False,           # No PII in Sentry
+        before_send=lambda event, hint: (
+            None if os.environ.get("ENV") != "production" and event.get("level") == "info"
+            else event
+        ),
+    )
+    print(f"✅ Sentry initialized (env={os.environ.get('ENV', 'development')})")
+else:
+    print("⚠️  SENTRY_DSN not set — error tracking disabled")
+
+# ── Prometheus metrics (Stage 4 — Grafana integration) ───────────────────────
+try:
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+    # Define metrics
+    _posts_published_total = Counter(
+        "socialentangler_posts_published_total",
+        "Total posts successfully published",
+        ["platform"]
+    )
+    _posts_failed_total = Counter(
+        "socialentangler_posts_failed_total",
+        "Total posts permanently failed",
+        ["platform"]
+    )
+    _upload_requests_total = Counter(
+        "socialentangler_upload_requests_total",
+        "Total file upload requests",
+        ["media_type", "status"]
+    )
+    _api_request_duration = Histogram(
+        "socialentangler_api_request_duration_seconds",
+        "API request duration in seconds",
+        ["method", "endpoint", "status_code"],
+        buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+    )
+    _active_users_gauge = Gauge(
+        "socialentangler_active_subscriptions",
+        "Number of users with active subscriptions"
+    )
+    _queue_depth_gauge = Gauge(
+        "socialentangler_scheduled_posts_queue_depth",
+        "Number of posts waiting to be published"
+    )
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    print("⚠️  prometheus-client not installed — metrics endpoint disabled")
 
 # Verify critical env vars
 if not os.environ.get("GOOGLE_CLIENT_ID"):
@@ -46,7 +187,14 @@ print(f"TWITTER_REDIRECT_URI: {os.environ.get('TWITTER_REDIRECT_URI')}")
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=25,           # Max connections per API instance
+    minPoolSize=2,            # Keep minimum alive
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=30000,
+)
 db = client[os.environ['DB_NAME']]
 
 # JWT Configuration
@@ -60,6 +208,47 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 # Uploads Configuration
 UPLOADS_DIR = ROOT_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
+
+# ── Upload Backpressure (Addendum Section B.7) ────────────────────────────────
+# Per-plan concurrent upload limits
+UPLOAD_LIMITS = {
+    "starter": 3,
+    "pro": 5,
+    "agency": 10,
+    "enterprise": 20,
+    "free": 2,
+    "active": 5,   # default for any active subscription
+}
+GLOBAL_QUEUE_LIMIT = 200  # Max pending uploads across all users
+
+# In-memory counter (for single-instance deployments)
+# At scale: replace with Redis INCR/DECR (see Phase 2.8)
+import threading as _threading
+_upload_counters: dict = {}
+_upload_lock = _threading.Lock()
+
+
+def _get_upload_limit(user) -> int:
+    plan = getattr(user, "subscription_plan", None) or getattr(user, "subscription_status", "free")
+    return UPLOAD_LIMITS.get(plan, UPLOAD_LIMITS["free"])
+
+
+def _increment_upload_counter(user_id: str) -> int:
+    with _upload_lock:
+        _upload_counters[user_id] = _upload_counters.get(user_id, 0) + 1
+        return _upload_counters[user_id]
+
+
+def _decrement_upload_counter(user_id: str):
+    with _upload_lock:
+        val = _upload_counters.get(user_id, 1) - 1
+        _upload_counters[user_id] = max(0, val)
+
+
+def _get_global_queue_depth() -> int:
+    with _upload_lock:
+        return sum(_upload_counters.values())
+
 
 async def _handle_upload(file: UploadFile):
     """Internal helper to handle file uploads."""
@@ -111,43 +300,163 @@ scheduler = AsyncIOScheduler()
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
-# CORS Configuration
-origins = [
-    "http://localhost:3000",
-    "http://localhost:9500",
-    "http://127.0.0.1:9500",
-    "http://127.0.0.1:3000",
-    "http://0.0.0.0:9500",
-    "http://0.0.0.0:3000",
-    "null", # Logic sometimes sends null origin for local files or redirects
-    FRONTEND_URL,
-]
+# Add Sentry request handler middleware (captures request context)
+if _sentry_dsn:
+    try:
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        # Sentry auto-instruments FastAPI/Starlette via the SDK init above
+        pass
+    except ImportError:
+        pass
+
+# ── Rate Limiting (Stage 3) ────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── Security Headers (Stage 3.6) ─────────────────────────────────────────────
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Only add HSTS in production
+    if os.environ.get("ENV") == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# ── Request duration metrics middleware (Stage 4) ────────────────────────────
+if PROMETHEUS_AVAILABLE:
+    import time as _time_module
+
+    @app.middleware("http")
+    async def track_request_metrics(request: Request, call_next):
+        start = _time_module.time()
+        response = await call_next(request)
+        duration = _time_module.time() - start
+
+        # Only track API endpoints (skip /metrics, /health, static files)
+        path = request.url.path
+        if path.startswith("/api/") and PROMETHEUS_AVAILABLE:
+            # Normalize path (replace UUIDs/IDs with {id})
+            import re as _re_m
+            norm_path = _re_m.sub(r"/[0-9a-f-]{8,}(/|$)", "/{id}\\1", path)
+            _api_request_duration.labels(
+                method=request.method,
+                endpoint=norm_path,
+                status_code=str(response.status_code)
+            ).observe(duration)
+
+        return response
+
+# CORS Configuration (Stage 3 — environment-aware)
+_cors_origins_raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:9500,http://127.0.0.1:3000,http://127.0.0.1:9500")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+# Always include FRONTEND_URL if not already present
+if FRONTEND_URL and FRONTEND_URL not in _cors_origins:
+    _cors_origins.append(FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow ALL for development to eliminate CORS as a variable
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+import uuid as _uuid
+
+@app.middleware("http")
+async def add_correlation_id(request: Request, call_next):
+    """Attach a trace_id to every request for cross-service correlation."""
+    trace_id = request.headers.get("X-Trace-ID") or str(_uuid.uuid4())
+    request.state.trace_id = trace_id
+    response = await call_next(request)
+    response.headers["X-Trace-ID"] = trace_id
+    return response
+
 # Initialize Firebase Admin
 try:
-    cred = credentials.Certificate(os.path.join(ROOT_DIR, 'serviceAccountKey.json'))
-    
-    fb_options = None
+    service_account_path = os.path.join(ROOT_DIR, 'serviceAccountKey.json')
+    fb_options = {}
     bucket_env = os.environ.get('FIREBASE_STORAGE_BUCKET')
     if bucket_env:
-        fb_options = {'storageBucket': bucket_env}
-        
-    if fb_options:
-        firebase_admin.initialize_app(cred, fb_options)
+        fb_options['storageBucket'] = bucket_env
+
+    if os.path.exists(service_account_path):
+        cred = credentials.Certificate(service_account_path)
+        firebase_admin.initialize_app(cred, fb_options) if fb_options else firebase_admin.initialize_app(cred)
+        logging.info("Firebase Admin initialized with service account")
     else:
-        firebase_admin.initialize_app(cred)
-        
-    logging.info("Firebase Admin initialized successfully")
+        # No service account key — initialize with project ID only.
+        # Sufficient for verify_id_token (uses Google public keys).
+        project_id = 'socialentangler-b92a8'
+        fb_options['projectId'] = project_id
+        firebase_admin.initialize_app(options=fb_options)
+        logging.info(f"Firebase Admin initialized with project ID only ({project_id})")
 except Exception as e:
     logging.error(f"Failed to initialize Firebase Admin: {e}")
+
+# Firebase project ID for token verification
+FIREBASE_PROJECT_ID = 'socialentangler-b92a8'
+_google_certs_cache: Dict[str, Any] = {}
+_google_certs_expiry: float = 0.0
+
+async def verify_firebase_token(id_token: str) -> dict:
+    """
+    Verify a Firebase ID token by fetching Google's public certs directly.
+    Does not require Firebase Admin credentials.
+    """
+    import time
+    global _google_certs_cache, _google_certs_expiry
+
+    # Refresh certs if expired
+    if time.time() > _google_certs_expiry:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+            )
+            r.raise_for_status()
+            _google_certs_cache = r.json()
+            # Cache-Control max-age tells us when to refresh
+            cc = r.headers.get("cache-control", "max-age=3600")
+            max_age = 3600
+            for part in cc.split(","):
+                part = part.strip()
+                if part.startswith("max-age="):
+                    try:
+                        max_age = int(part.split("=")[1])
+                    except ValueError:
+                        pass
+            _google_certs_expiry = time.time() + max_age
+
+    # Get the key ID from the token header
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    if not kid or kid not in _google_certs_cache:
+        raise ValueError(f"Unknown key ID: {kid}")
+
+    # Build RSA public key from the X.509 cert
+    cert_pem = _google_certs_cache[kid].encode("utf-8")
+    cert = load_pem_x509_certificate(cert_pem, default_backend())
+    public_key = cert.public_key()
+
+    # Decode and verify the JWT
+    decoded = jwt.decode(
+        id_token,
+        public_key,
+        algorithms=["RS256"],
+        audience=FIREBASE_PROJECT_ID,
+        issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}",
+    )
+
+    # Map Firebase claims to the shape firebase_auth.verify_id_token returns
+    decoded.setdefault("uid", decoded.get("sub"))
+    return decoded
 
 
 # ==================== MODELS ====================
@@ -175,6 +484,8 @@ class User(BaseModel):
     subscription_end_date: Optional[datetime] = None
     user_type: Optional[str] = None  # founder, creator, agency, enterprise, small_business, personal
     onboarding_completed: bool = False
+    has_password: bool = False  # False for Google-authenticated users
+    timezone: str = "UTC"  # IANA timezone string (e.g. "Asia/Kolkata"). Addendum B.6.
 
 class Token(BaseModel):
     access_token: str
@@ -190,6 +501,7 @@ class Post(BaseModel):
     platforms: List[str]
     accounts: List[str] = []
     media_urls: Optional[List[str]] = []
+    media_alt_texts: Optional[List[str]] = []
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
@@ -205,6 +517,27 @@ class Post(BaseModel):
     instagram_first_comment: Optional[str] = None
     instagram_location: Optional[str] = None
     instagram_shop_grid_link: Optional[str] = None
+    recurring_rule_id: Optional[str] = None
+    rejection_note: Optional[str] = None
+    thread_tweets: Optional[List[Dict[str, Any]]] = None  # [{content, media_url, id}]
+    internal_notes: Optional[List[Dict[str, Any]]] = []   # [{id, text, created_at}]
+    linkedin_document_url: Optional[str] = None
+    linkedin_document_title: Optional[str] = None
+    tiktok_privacy: Optional[str] = "public"
+    tiktok_allow_duet: Optional[bool] = True
+    tiktok_allow_stitch: Optional[bool] = True
+    tiktok_allow_comments: Optional[bool] = True
+
+    # Per-platform publish results (Stage 1.6 — independent execution)
+    platform_results: Optional[Dict[str, Any]] = None
+    # e.g. {"instagram": {"status": "published", "post_id": "123", "published_at": "..."},
+    #        "facebook": {"status": "failed", "error": "...", "retry_count": 0}}
+
+    # Status history for audit trail
+    # status values include: draft, scheduled, processing, published, partial, failed
+    status_history: Optional[List[Dict[str, Any]]] = None
+    # e.g. [{"status": "scheduled", "at": "...", "note": "..."},
+    #        {"status": "published", "at": "...", "note": "Published to instagram, facebook"}]
 
 class PostCreate(BaseModel):
     content: str
@@ -212,6 +545,7 @@ class PostCreate(BaseModel):
     platforms: List[str]
     accounts: List[str] = []
     media_urls: Optional[List[str]] = []
+    media_alt_texts: Optional[List[str]] = []
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
@@ -219,17 +553,25 @@ class PostCreate(BaseModel):
     youtube_privacy: Optional[str] = "public"
     cover_image: Optional[str] = None
     scheduled_time: Optional[str] = None
+    thread_tweets: Optional[List[Dict[str, Any]]] = None  # [{content, media_url, id}]
     # Instagram specific fields
     instagram_post_format: Optional[str] = "Post"
     instagram_first_comment: Optional[str] = None
     instagram_location: Optional[str] = None
     instagram_shop_grid_link: Optional[str] = None
+    linkedin_document_url: Optional[str] = None
+    linkedin_document_title: Optional[str] = None
+    tiktok_privacy: Optional[str] = "public"
+    tiktok_allow_duet: Optional[bool] = True
+    tiktok_allow_stitch: Optional[bool] = True
+    tiktok_allow_comments: Optional[bool] = True
 
 class PostUpdate(BaseModel):
     content: Optional[str] = None
     platforms: Optional[List[str]] = None
     accounts: Optional[List[str]] = None
     media_urls: Optional[List[str]] = None
+    media_alt_texts: Optional[List[str]] = None
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
@@ -243,6 +585,48 @@ class PostUpdate(BaseModel):
     instagram_first_comment: Optional[str] = None
     instagram_location: Optional[str] = None
     instagram_shop_grid_link: Optional[str] = None
+    linkedin_document_url: Optional[str] = None
+    linkedin_document_title: Optional[str] = None
+    tiktok_privacy: Optional[str] = None
+    tiktok_allow_duet: Optional[bool] = None
+    tiktok_allow_stitch: Optional[bool] = None
+    tiktok_allow_comments: Optional[bool] = None
+
+class HashtagGroupCreate(BaseModel):
+    name: str
+    hashtags: List[str]
+
+class HashtagGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+
+class RecurringRuleCreate(BaseModel):
+    content: str
+    platforms: List[str]
+    accounts: List[str] = []
+    post_type: str = "text"
+    media_urls: Optional[List[str]] = []
+    frequency: str = "weekly"      # daily | weekly | monthly
+    days_of_week: List[int] = [1]  # JS convention: 0=Sun … 6=Sat (weekly only)
+    day_of_month: int = 1          # 1-28 (monthly only)
+    time_of_day: str = "09:00"     # HH:MM UTC
+
+class RecurringRuleUpdate(BaseModel):
+    status: Optional[str] = None       # active | paused
+    content: Optional[str] = None
+    frequency: Optional[str] = None
+    days_of_week: Optional[List[int]] = None
+    day_of_month: Optional[int] = None
+    time_of_day: Optional[str] = None
+
+class CalendarNoteCreate(BaseModel):
+    date: str          # YYYY-MM-DD
+    text: str
+    color: str = "green"  # green | blue | yellow | red
+
+class CalendarNoteUpdate(BaseModel):
+    text: Optional[str] = None
+    color: Optional[str] = None
 
 class ApiKey(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -431,43 +815,36 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
     # 1. Check for Authorization Header (Bearer Token)
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
+
     token = authorization.replace("Bearer ", "")
-    
+    user_doc = None
+
+    # 2. Try to verify as Firebase ID Token first
     try:
-        # 2. Verify Firebase ID Token
-        decoded_token = firebase_auth.verify_id_token(token)
+        decoded_token = await verify_firebase_token(token)
         uid = decoded_token['uid']
         email = decoded_token.get('email')
-        
-        if not email:
-             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: No email")
 
-        # 3. Sync User to MongoDB
+        if not email:
+            raise ValueError("No email in token")
+
+        # Fetch user by Firebase UID
         user_doc = await db.users.find_one({"user_id": uid})
-        
+
         if not user_doc:
-            # Fallback: check if they exist by email (e.g., from mock flow)
-            user_doc = await db.users.find_one({"email": email})
-            
-            if user_doc:
-                # Merge existing legacy user to the new Firebase UID
-                logging.info(f"Merging legacy user {user_doc['user_id']} with new Firebase UID {uid} for email {email}")
-                await db.users.update_one(
-                    {"email": email},
-                    {"$set": {"user_id": uid}}
-                )
-                
-                # Also update related tables to maintain referential integrity
-                await db.posts.update_many({"user_id": user_doc["user_id"]}, {"$set": {"user_id": uid}})
-                await db.social_accounts.update_many({"user_id": user_doc["user_id"]}, {"$set": {"user_id": uid}})
-                await db.payment_transactions.update_many({"user_id": user_doc["user_id"]}, {"$set": {"user_id": uid}})
-                
-                # Refresh local user_doc
+            # Check by email and merge if needed
+            existing = await db.users.find_one({"email": email})
+            if existing:
+                logging.info(f"Merging legacy user {existing['user_id']} with Firebase UID {uid}")
+                await db.users.update_one({"email": email}, {"$set": {"user_id": uid}})
+                await db.posts.update_many({"user_id": existing["user_id"]}, {"$set": {"user_id": uid}})
+                await db.social_accounts.update_many({"user_id": existing["user_id"]}, {"$set": {"user_id": uid}})
+                await db.payment_transactions.update_many({"user_id": existing["user_id"]}, {"$set": {"user_id": uid}})
+                user_doc = existing
                 user_doc["user_id"] = uid
             else:
-                # Truly a new user
-                new_user = {
+                # Create new user
+                user_doc = {
                     "user_id": uid,
                     "email": email,
                     "name": decoded_token.get('name', 'User'),
@@ -475,61 +852,48 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
                     "email_verified": decoded_token.get('email_verified', False),
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "subscription_status": "free",
-                    "onboarding_completed": False
+                    "onboarding_completed": False,
+                    "timezone": "UTC",
                 }
-                await db.users.insert_one(new_user)
-                user_doc = new_user
-        else:
-             # Optional: Update existing user info if needed?
-             pass
+                await db.users.insert_one(user_doc)
+    except (jwt.InvalidTokenError, ValueError) as firebase_error:
+        logging.debug(f"Firebase token verification failed: {firebase_error}, trying JWT fallback")
 
-        # 4. Check Subscription Status (Logic from previous implementation)
-        # ... reusing existing subscription checking logic ...
-        
-        if isinstance(user_doc.get('created_at'), str):
-             user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-             
-        # ... (rest of date parsing) ... 
+        # 3. Fallback to JWT token verification
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if not user_id:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: No user_id")
 
-        return User(**user_doc)
-
-    except firebase_auth.InvalidIdTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ID token")
-    except firebase_auth.ExpiredIdTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except Exception as e:
-        logging.error(f"Auth Error: {e}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed")
-    
-    # Fallback to Authorization header
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
-    token = authorization.replace("Bearer ", "")
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+            user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+            if not user_doc:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        except Exception as e:
+            logging.error(f"JWT verification failed: {e}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
-    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if user_doc is None:
+    except Exception as e:
+        logging.error(f"Auth error: {e}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed")
+
+    # 4. Process user_doc
+    if not user_doc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    
+
+    # Parse dates
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+
+    # Check subscription expiry
     if user_doc.get('subscription_status') == 'active' and user_doc.get('subscription_end_date'):
         end_date = user_doc['subscription_end_date']
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
-        
+
         if end_date < datetime.now(timezone.utc):
             await db.users.update_one(
                 {"user_id": user_doc["user_id"]},
@@ -582,10 +946,267 @@ async def send_verification_email(email: str, verification_token: str):
     except Exception as e:
         logging.error(f"Failed to send verification email: {e}")
 
+async def send_team_invite_email(invite_email: str, owner_name: str, role: str, invite_token: str, expires_at) -> bool:
+    """Send team invitation email via Resend. Returns True if sent, False otherwise."""
+    if not RESEND_API_KEY:
+        logging.warning("RESEND_API_KEY not set, skipping team invite email")
+        return False
+
+    accept_url = f"{FRONTEND_URL}/accept-invite?token={invite_token}"
+
+    if isinstance(expires_at, str):
+        from datetime import datetime as _dt
+        expires_at = _dt.fromisoformat(expires_at)
+    expiry_str = expires_at.strftime("%B %d, %Y")
+
+    role_info = {
+        "admin":  ("Admin",  "manage team members, connect social accounts, create and publish posts"),
+        "member": ("Member", "create, edit, and schedule posts for publication"),
+        "viewer": ("Viewer", "view scheduled posts and analytics"),
+    }
+    role_label, role_capability = role_info.get(role, ("Member", "access the workspace"))
+    safe_owner = _html.escape(owner_name)
+    safe_role_label = _html.escape(role_label)
+    safe_role_cap = _html.escape(role_capability)
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {{ font-family: 'Helvetica Neue', Arial, sans-serif; background:#f5f7f5; margin:0; padding:0; }}
+    .wrap {{ max-width:600px; margin:40px auto; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 4px 24px rgba(0,0,0,0.08); }}
+    .hdr {{ background:linear-gradient(135deg,#6366f1,#8b5cf6); padding:36px 48px 28px; text-align:center; }}
+    .hdr-logo {{ font-size:20px; font-weight:700; color:#fff; letter-spacing:-0.5px; }}
+    .hdr h1 {{ color:#fff; font-size:26px; font-weight:600; margin:12px 0 0; }}
+    .body {{ padding:36px 48px; }}
+    .card {{ background:#f8f9ff; border:1px solid #e5e7fb; border-radius:12px; padding:20px 24px; margin:20px 0; }}
+    .lbl {{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:#8a8fa8; margin-bottom:3px; }}
+    .val {{ font-size:15px; font-weight:600; color:#1a1a2e; }}
+    .badge {{ display:inline-block; padding:3px 12px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border-radius:20px; font-size:13px; font-weight:600; }}
+    .cap {{ font-size:13px; color:#6b7280; margin-top:6px; }}
+    .cta-wrap {{ text-align:center; margin:28px 0; }}
+    .cta {{ display:inline-block; padding:15px 40px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff !important; text-decoration:none; border-radius:12px; font-size:15px; font-weight:700; }}
+    .exp {{ text-align:center; font-size:12px; color:#9ca3af; margin-top:8px; }}
+    .link-wrap {{ font-size:12px; color:#9ca3af; line-height:1.6; }}
+    .link-wrap a {{ color:#6366f1; word-break:break-all; }}
+    .ftr {{ background:#f8f9ff; padding:20px 48px; border-top:1px solid #e5e7fb; }}
+    .ftr p {{ font-size:12px; color:#9ca3af; line-height:1.6; margin:0; }}
+    .ftr a {{ color:#6366f1; text-decoration:none; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hdr">
+      <div class="hdr-logo">SocialEntangler</div>
+      <h1>You're invited to a workspace</h1>
+    </div>
+    <div class="body">
+      <p style="font-size:15px;line-height:1.7;color:#4b5563;">
+        <strong>{safe_owner}</strong> has invited you to collaborate on their
+        SocialEntangler workspace.
+      </p>
+      <div class="card">
+        <div class="lbl">Invited by</div>
+        <div class="val">{safe_owner}</div>
+        <div style="height:12px;"></div>
+        <div class="lbl">Your role</div>
+        <div class="val"><span class="badge">{safe_role_label}</span></div>
+        <div class="cap">As {safe_role_label}, you can {safe_role_cap}.</div>
+      </div>
+      <div class="cta-wrap">
+        <a href="{accept_url}" class="cta">Accept Invitation</a>
+        <p class="exp">This invitation expires on {expiry_str}</p>
+      </div>
+      <p class="link-wrap">
+        Or copy and paste this link:<br>
+        <a href="{accept_url}">{accept_url}</a>
+      </p>
+    </div>
+    <div class="ftr">
+      <p>If you didn't expect this invitation, you can safely ignore this email. Your account will not be affected.</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    params = {
+        "from": SENDER_EMAIL,
+        "to": [invite_email],
+        "subject": f"{owner_name} invited you to their SocialEntangler workspace",
+        "html": html_content,
+    }
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+        logging.info(f"Team invite email sent to {invite_email}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to send team invite email: {e}")
+        return False
+
+async def send_approval_request_email(approver_email: str, approver_name: str, owner_name: str,
+                                       post_content: str, post_id: str):
+    """Email sent to can_approve team members when a post is submitted for review."""
+    if not RESEND_API_KEY:
+        return
+    review_url = f"{FRONTEND_URL}/approvals"
+    preview = _html.escape((post_content or "")[:200] + ("…" if len(post_content or "") > 200 else ""))
+    safe_approver = _html.escape(approver_name)
+    safe_owner = _html.escape(owner_name)
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f7f5;margin:0;padding:0;}}
+  .wrap{{max-width:580px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);}}
+  .hdr{{background:linear-gradient(135deg,#f59e0b,#d97706);padding:32px 40px 24px;}}
+  .hdr-logo{{font-size:18px;font-weight:700;color:#fff;}}
+  .hdr h1{{color:#fff;font-size:22px;font-weight:600;margin:10px 0 0;}}
+  .body{{padding:32px 40px;}}
+  .preview{{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 16px;margin:16px 0;font-size:14px;color:#78350f;line-height:1.6;white-space:pre-line;}}
+  .cta-wrap{{text-align:center;margin:24px 0;}}
+  .cta{{display:inline-block;padding:13px 36px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff!important;text-decoration:none;border-radius:10px;font-size:15px;font-weight:700;}}
+  .ftr{{background:#f8f9ff;padding:18px 40px;border-top:1px solid #e5e7fb;}}
+  .ftr p{{font-size:12px;color:#9ca3af;margin:0;}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="hdr">
+    <div class="hdr-logo">SocialEntangler</div>
+    <h1>Post awaiting your review</h1>
+  </div>
+  <div class="body">
+    <p style="font-size:15px;line-height:1.7;color:#4b5563;">
+      Hi <strong>{safe_approver}</strong>,<br>
+      <strong>{safe_owner}</strong> has submitted a post for your review.
+    </p>
+    <div class="preview">{preview}</div>
+    <div class="cta-wrap">
+      <a href="{review_url}" class="cta">Review Post</a>
+    </div>
+  </div>
+  <div class="ftr"><p>You're receiving this because you have post approval permissions in this workspace.</p></div>
+</div>
+</body></html>"""
+    params = {"from": SENDER_EMAIL, "to": [approver_email],
+               "subject": f"{owner_name} submitted a post for your review — SocialEntangler",
+               "html": html_content}
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as e:
+        logging.error(f"Failed to send approval request email: {e}")
+
+async def send_approval_result_email(owner_email: str, owner_name: str, reviewer_name: str,
+                                      post_content: str, approved: bool, rejection_note: str = None):
+    """Email sent to the post owner when their post is approved or rejected."""
+    if not RESEND_API_KEY:
+        return
+    post_url = f"{FRONTEND_URL}/approvals"
+    preview = _html.escape((post_content or "")[:200] + ("…" if len(post_content or "") > 200 else ""))
+    safe_reviewer = _html.escape(reviewer_name)
+    safe_owner_name = _html.escape(owner_name)
+    if approved:
+        accent = "#10b981"; icon = "✓"; headline = "Your post was approved!"
+        body_text = f"<strong>{safe_reviewer}</strong> approved your post. It's now scheduled."
+        extra = ""
+    else:
+        accent = "#ef4444"; icon = "✗"; headline = "Your post needs changes"
+        body_text = f"<strong>{safe_reviewer}</strong> rejected your post."
+        safe_note = _html.escape(rejection_note) if rejection_note else ""
+        note_html = f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 16px;margin:12px 0;font-size:14px;color:#991b1b;"><strong>Reason:</strong> {safe_note}</div>' if safe_note else ""
+        extra = note_html
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f7f5;margin:0;padding:0;}}
+  .wrap{{max-width:580px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);}}
+  .hdr{{background:{accent};padding:32px 40px 24px;}}
+  .hdr-logo{{font-size:18px;font-weight:700;color:#fff;}}
+  .hdr h1{{color:#fff;font-size:22px;font-weight:600;margin:10px 0 0;}}
+  .body{{padding:32px 40px;}}
+  .preview{{background:#f8f9ff;border:1px solid #e5e7fb;border-radius:10px;padding:14px 16px;margin:16px 0;font-size:14px;color:#374151;line-height:1.6;white-space:pre-line;}}
+  .cta{{display:inline-block;padding:13px 36px;background:{accent};color:#fff!important;text-decoration:none;border-radius:10px;font-size:14px;font-weight:700;}}
+  .ftr{{background:#f8f9ff;padding:18px 40px;border-top:1px solid #e5e7fb;}}
+  .ftr p{{font-size:12px;color:#9ca3af;margin:0;}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="hdr">
+    <div class="hdr-logo">SocialEntangler</div>
+    <h1>{icon} {headline}</h1>
+  </div>
+  <div class="body">
+    <p style="font-size:15px;line-height:1.7;color:#4b5563;">Hi <strong>{safe_owner_name}</strong>, {body_text}</p>
+    {extra}
+    <div class="preview">{preview}</div>
+    <p style="text-align:center;margin-top:20px;"><a href="{post_url}" class="cta">View in SocialEntangler</a></p>
+  </div>
+  <div class="ftr"><p>You're receiving this because a team member reviewed your post.</p></div>
+</div>
+</body></html>"""
+    subject = f"{'✓ Post approved' if approved else '✗ Post needs changes'} — SocialEntangler"
+    params = {"from": SENDER_EMAIL, "to": [owner_email], "subject": subject, "html": html_content}
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as e:
+        logging.error(f"Failed to send approval result email: {e}")
+
+async def send_mention_email(mentioned_email: str, mentioned_name: str, author_name: str,
+                              post_content: str, note_text: str):
+    """Email sent when a team member is @mentioned in an internal note."""
+    if not RESEND_API_KEY:
+        return
+    post_url = f"{FRONTEND_URL}/content"
+    preview = _html.escape((post_content or "")[:120] + ("…" if len(post_content or "") > 120 else ""))
+    safe_mentioned = _html.escape(mentioned_name)
+    safe_author = _html.escape(author_name)
+    safe_note = _html.escape(note_text)
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f7f5;margin:0;padding:0;}}
+  .wrap{{max-width:580px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);}}
+  .hdr{{background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px 40px 24px;}}
+  .hdr-logo{{font-size:18px;font-weight:700;color:#fff;}}
+  .hdr h1{{color:#fff;font-size:22px;font-weight:600;margin:10px 0 0;}}
+  .body{{padding:32px 40px;}}
+  .mention-box{{background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:14px 16px;margin:16px 0;font-size:14px;color:#3730a3;line-height:1.6;}}
+  .post-preview{{background:#f8f9ff;border:1px solid #e5e7fb;border-radius:10px;padding:12px 16px;margin:12px 0;font-size:13px;color:#6b7280;}}
+  .cta{{display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff!important;text-decoration:none;border-radius:10px;font-size:14px;font-weight:700;}}
+  .ftr{{background:#f8f9ff;padding:18px 40px;border-top:1px solid #e5e7fb;}}
+  .ftr p{{font-size:12px;color:#9ca3af;margin:0;}}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="hdr">
+    <div class="hdr-logo">SocialEntangler</div>
+    <h1>@ {safe_author} mentioned you</h1>
+  </div>
+  <div class="body">
+    <p style="font-size:15px;line-height:1.7;color:#4b5563;">
+      Hi <strong>{safe_mentioned}</strong>,<br>
+      <strong>{safe_author}</strong> mentioned you in a note on a post.
+    </p>
+    <div class="mention-box">{safe_note}</div>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:4px;">On post:</p>
+    <div class="post-preview">{preview}</div>
+    <p style="text-align:center;margin-top:20px;"><a href="{post_url}" class="cta">View Post</a></p>
+  </div>
+  <div class="ftr"><p>You're receiving this because you were mentioned in an internal note.</p></div>
+</div>
+</body></html>"""
+    params = {"from": SENDER_EMAIL, "to": [mentioned_email],
+               "subject": f"{author_name} mentioned you in a note — SocialEntangler",
+               "html": html_content}
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as e:
+        logging.error(f"Failed to send mention email: {e}")
+
 # ==================== AUTH ROUTES ====================
 
+@limiter.limit("5/minute")
 @api_router.post("/auth/signup", response_model=Token)
-async def signup(user_data: UserSignup):
+async def signup(request: Request, user_data: UserSignup):
     existing_user = await db.users.find_one({"email": user_data.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -680,15 +1301,24 @@ async def google_auth_callback(code: str, state: Optional[str] = None):
         user_doc = await db.users.find_one({"email": email}, {"_id": 0})
         
         if user_doc:
-            # Update existing user
+            # Update existing user — never overwrite name/picture the user may have customised
             user_id = user_doc["user_id"]
+            update_data: dict = {"email_verified": True}
+
+            # Only set name from Google if user has no name stored yet
+            if not user_doc.get("name") and user_info.get("name"):
+                update_data["name"] = user_info["name"]
+
+            # Only set picture from Google if user hasn't uploaded a custom one.
+            # Custom uploads are stored as /uploads/... paths; Google URLs start with https://
+            current_picture = user_doc.get("picture") or ""
+            google_picture = user_info.get("picture")
+            if google_picture and not current_picture.startswith("/uploads/"):
+                update_data["picture"] = google_picture
+
             await db.users.update_one(
                 {"user_id": user_id},
-                {"$set": {
-                    "name": user_info.get("name", user_doc.get("name")),
-                    "picture": user_info.get("picture", user_doc.get("picture")),
-                    "email_verified": True
-                }}
+                {"$set": update_data}
             )
         else:
             # Create new user
@@ -704,19 +1334,11 @@ async def google_auth_callback(code: str, state: Optional[str] = None):
             }
             await db.users.insert_one(new_user)
         
-        # 4. Create Session
-        session_token = str(uuid.uuid4()) # Simple session token
-        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-        
-        await db.user_sessions.insert_one({
-            "user_id": user_id,
-            "session_token": session_token,
-            "expires_at": expires_at.isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        
+        # 4. Create JWT Access Token
+        access_token = create_access_token({"sub": user_id, "email": email})
+
         # 5. Redirect to Frontend with Token
-        redirect_url = f"{FRONTEND_URL}/auth/callback?token={session_token}"
+        redirect_url = f"{FRONTEND_URL}/auth/callback?token={access_token}"
         return RedirectResponse(url=redirect_url)
 
     except Exception as e:
@@ -725,8 +1347,9 @@ async def google_auth_callback(code: str, state: Optional[str] = None):
         return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_failed")
 
 
+@limiter.limit("10/minute")
 @api_router.post("/auth/login", response_model=Token)
-async def login(credentials: UserLogin):
+async def login(request: Request, credentials: UserLogin):
     user_doc = await db.users.find_one({"email": credentials.email})
     if not user_doc or 'password' not in user_doc:
         raise HTTPException(status_code=400, detail="Invalid email or password")
@@ -749,7 +1372,12 @@ async def login(credentials: UserLogin):
 
 @api_router.get("/auth/me", response_model=User)
 async def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+    # Look up raw doc to compute has_password
+    raw = await db.users.find_one({"user_id": current_user.user_id}, {"_id": 0})
+    has_pw = bool(raw and raw.get("password"))
+    user_dict = current_user.model_dump()
+    user_dict["has_password"] = has_pw
+    return User(**user_dict)
 
 @api_router.patch("/auth/me", response_model=User)
 async def update_me(
@@ -758,24 +1386,94 @@ async def update_me(
 ):
     """Update current user profile"""
     # Filter allowed fields
-    allowed_fields = ['user_type', 'onboarding_completed', 'name']
+    allowed_fields = ['user_type', 'onboarding_completed', 'name', 'picture', 'timezone']
     update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
-    
+
     if not update_fields:
         return current_user
-    
+
+    # Validate timezone if provided
+    if "timezone" in update_fields:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(update_fields["timezone"])
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid timezone: {update_fields['timezone']}")
+
     # Update in database
     await db.users.update_one(
         {"user_id": current_user.user_id},
         {"$set": update_fields}
     )
-    
+
     # Get updated user
     updated_user = await db.users.find_one({"user_id": current_user.user_id})
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     return User(**updated_user)
+
+@api_router.post("/auth/profile-photo")
+async def upload_profile_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Upload a profile photo (max 1 MB). Returns the new picture URL."""
+    # Read content to check size
+    content = await file.read()
+    if len(content) > 1 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 1 MB.")
+
+    # Allowed image types
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, GIF, or WebP images are allowed.")
+
+    # Save file
+    file_ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "jpg").lower()
+    unique_filename = f"avatar_{current_user.user_id}_{uuid.uuid4().hex[:8]}.{file_ext}"
+    file_path = UPLOADS_DIR / unique_filename
+    with open(file_path, "wb") as buf:
+        buf.write(content)
+    picture_url = f"/uploads/{unique_filename}"
+
+    # Update user record
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": {"picture": picture_url}}
+    )
+    return {"picture": picture_url}
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@api_router.post("/auth/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Change password for email/password accounts. Not available for Google-authenticated users."""
+    # Fetch raw user doc (includes hashed password)
+    user_doc = await db.users.find_one({"user_id": current_user.user_id})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if "password" not in user_doc:
+        raise HTTPException(status_code=400, detail="Password change is not available for accounts signed in with Google.")
+
+    if not verify_password(body.old_password, user_doc["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters.")
+
+    new_hash = hash_password(body.new_password)
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": {"password": new_hash}}
+    )
+    return {"message": "Password updated successfully."}
 
 @api_router.post("/auth/logout")
 async def logout(session_token: Optional[str] = Cookie(None)):
@@ -787,10 +1485,14 @@ async def logout(session_token: Optional[str] = Cookie(None)):
 
 # ==================== POST ROUTES ====================
 
+@limiter.limit("60/minute")
 @api_router.post("/posts", response_model=Post)
-async def create_post(post_data: PostCreate, current_user: User = Depends(get_current_user)):
+async def create_post(request: Request, post_data: PostCreate, current_user: User = Depends(get_current_user)):
     if post_data.scheduled_time and current_user.subscription_status != "active":
-        raise HTTPException(status_code=403, detail="Scheduling requires active subscription")
+        raise api_error(
+            403, StructuredErrorCode.POST_SCHEDULE_REQUIRES_SUB,
+            "Active subscription required to schedule posts. Free users can save drafts only."
+        )
     
     scheduled_time = None
     status = "draft"
@@ -816,7 +1518,8 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
         instagram_post_format=post_data.instagram_post_format,
         instagram_first_comment=post_data.instagram_first_comment,
         instagram_location=post_data.instagram_location,
-        instagram_shop_grid_link=post_data.instagram_shop_grid_link
+        instagram_shop_grid_link=post_data.instagram_shop_grid_link,
+        thread_tweets=post_data.thread_tweets,
     )
     
     post_dict = post.model_dump()
@@ -830,10 +1533,21 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
 
 
 @api_router.get("/posts", response_model=List[Post])
-async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None):
-    query = {"user_id": current_user.user_id}
+async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None, search: Optional[str] = None):
+    # Workspace-aware query: show own posts + teammates' posts if in a shared workspace
+    workspace = await db.workspaces.find_one(
+        {"members.user_id": current_user.user_id}, {"members": 1, "owner_id": 1}
+    )
+    workspace_user_ids = [current_user.user_id]
+    if workspace and len(workspace.get("members", [])) > 1:
+        # Include all workspace member IDs
+        workspace_user_ids = [m["user_id"] for m in workspace.get("members", [])]
+
+    query = {"user_id": {"$in": workspace_user_ids}}
     if status:
         query["status"] = status
+    if search:
+        query["content"] = {"$regex": search, "$options": "i"}
     
     posts = await db.posts.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     
@@ -864,7 +1578,30 @@ async def get_post(post_id: str, current_user: User = Depends(get_current_user))
 
 @api_router.patch("/posts/{post_id}", response_model=Post)
 async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
+    post_doc = await db.posts.find_one({"id": post_id})
+    if not post_doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    # Role check: only owner/admin/editor can edit posts
+    if post_doc.get("user_id") != current_user.user_id:
+        # Check if user has editor+ permission in the workspace
+        workspace = await db.workspaces.find_one(
+            {"members.user_id": current_user.user_id},
+            {"members.$": 1}
+        )
+        member = next(
+            (m for m in (workspace or {}).get("members", []) if m["user_id"] == current_user.user_id),
+            None
+        )
+        member_role = (member or {}).get("role", "viewer")
+        if member_role not in ("owner", "admin", "editor"):
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "WS_PERMISSION_DENIED",
+                        "message": "You need editor or higher access to edit this post."}
+            )
+
+    post = post_doc
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
@@ -894,22 +1631,1654 @@ async def delete_post(post_id: str, current_user: User = Depends(get_current_use
         raise HTTPException(status_code=404, detail="Post not found")
     return {"message": "Post deleted"}
 
+@api_router.post("/posts/{post_id}/duplicate", status_code=201)
+async def duplicate_post(post_id: str, current_user: User = Depends(get_current_user)):
+    original = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not original:
+        raise HTTPException(status_code=404, detail="Post not found")
+    duplicate = {
+        **original,
+        "id": str(uuid.uuid4()),
+        "status": "draft",
+        "scheduled_time": None,
+        "published_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.posts.insert_one(duplicate)
+    duplicate.pop("_id", None)
+    return duplicate
+
+# ==================== INTERNAL NOTES ====================
+
+class NoteCreate(BaseModel):
+    text: str
+
+@api_router.post("/posts/{post_id}/notes", status_code=201)
+async def add_internal_note(post_id: str, body: NoteCreate, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    note = {
+        "id":           str(uuid.uuid4()),
+        "text":         body.text.strip(),
+        "author_id":    current_user.user_id,
+        "author_name":  current_user.name,
+        "created_at":   datetime.now(timezone.utc).isoformat(),
+    }
+    await db.posts.update_one(
+        {"id": post_id, "user_id": current_user.user_id},
+        {"$push": {"internal_notes": note}}
+    )
+    # Detect @mentions (format: @email or @Name) and send notifications (non-fatal)
+    import re as _re
+    mentioned_emails = _re.findall(r'@([\w.+-]+@[\w.-]+\.\w+)', body.text)
+    if mentioned_emails:
+        team_members = await db.team_members.find(
+            {"owner_user_id": current_user.user_id, "status": "accepted",
+             "email": {"$in": [e.lower() for e in mentioned_emails]}},
+            {"email": 1, "member_user_id": 1}
+        ).to_list(20)
+        for tm in team_members:
+            if tm["email"].lower() == current_user.email.lower():
+                continue  # don't notify yourself
+            member_user = await db.users.find_one({"user_id": tm.get("member_user_id")}, {"name": 1})
+            mentioned_name = member_user.get("name", tm["email"]) if member_user else tm["email"]
+            await send_mention_email(
+                mentioned_email=tm["email"],
+                mentioned_name=mentioned_name,
+                author_name=current_user.name,
+                post_content=post.get("content", ""),
+                note_text=body.text.strip(),
+            )
+    return note
+
+@api_router.delete("/posts/{post_id}/notes/{note_id}", status_code=200)
+async def delete_internal_note(post_id: str, note_id: str, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    await db.posts.update_one(
+        {"id": post_id, "user_id": current_user.user_id},
+        {"$pull": {"internal_notes": {"id": note_id}}}
+    )
+    return {"ok": True}
+
+# ==================== DEAD LETTER QUEUE ====================
+
+@api_router.get("/dlq")
+async def get_dead_letter_queue(current_user: User = Depends(get_current_user)):
+    """Get permanently failed posts for manual review."""
+    items = await get_dlq_items(db, current_user.user_id)
+    return {"items": items, "count": len(items)}
+
+
+@api_router.post("/dlq/{post_id}/retry")
+async def retry_dead_letter_post(post_id: str, current_user: User = Depends(get_current_user)):
+    """Re-queue a DLQ post for retry."""
+    result = await retry_from_dlq(db, post_id, current_user.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="DLQ item not found")
+    return {"success": True, "message": "Post re-queued for publishing"}
+
+
+# ==================== CIRCUIT BREAKERS (Stage 7) ====================
+from app.circuit_breaker import get_circuit_breaker, get_all_circuit_breaker_status, CircuitOpenError
+
+@api_router.get("/system/circuit-breakers")
+async def get_circuit_breaker_status(current_user: User = Depends(get_current_user)):
+    """Get status of all platform circuit breakers."""
+    return {"circuit_breakers": get_all_circuit_breaker_status()}
+
+
+# ==================== WORKSPACE / TEAMS (Stage 5.9) ====================
+from app.models.workspace import Workspace, WorkspaceMember, WorkspaceInvite, ROLE_PERMISSIONS, has_permission
+import re as _workspace_re
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str
+
+class WorkspaceInviteRequest(BaseModel):
+    email: str
+    role: str = "viewer"
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    role: str
+
+@api_router.get("/workspace")
+async def get_my_workspace(current_user: User = Depends(get_current_user)):
+    """Get the current user's primary workspace."""
+    workspace = await db.workspaces.find_one(
+        {"owner_id": current_user.user_id}, {"_id": 0}
+    )
+    if not workspace:
+        # Auto-create personal workspace if missing
+        import re as _re2, uuid as _uuid2
+        slug_base = _re2.sub(r"[^a-z0-9]", "-", (current_user.name or "workspace").lower())[:20]
+        slug = f"{slug_base}-{current_user.user_id[:8]}"
+        workspace = {
+            "id": str(_uuid2.uuid4()),
+            "name": f"{current_user.name} Workspace",
+            "slug": slug,
+            "owner_id": current_user.user_id,
+            "members": [{"user_id": current_user.user_id, "email": current_user.email,
+                         "name": current_user.name, "role": "owner",
+                         "joined_at": datetime.now(timezone.utc).isoformat()}],
+            "plan": "starter",
+            "subscription_status": current_user.subscription_status,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "settings": {},
+            "max_members": 1,
+            "max_accounts": 5,
+            "max_scheduled_posts": 30,
+        }
+        await db.workspaces.insert_one(workspace)
+        workspace.pop("_id", None)
+    return workspace
+
+
+@api_router.get("/workspace/members")
+async def get_workspace_members(current_user: User = Depends(get_current_user)):
+    """Get all members of the current user's workspace."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id}, {"_id": 0})
+    if not workspace:
+        return {"members": []}
+    return {"members": workspace.get("members", []), "workspace_id": workspace.get("id")}
+
+
+@api_router.post("/workspace/invite")
+async def invite_workspace_member(
+    invite_req: WorkspaceInviteRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Invite a user to the workspace by email."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id})
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Check member limit
+    current_member_count = len(workspace.get("members", []))
+    max_members = workspace.get("max_members", 1)
+    if current_member_count >= max_members:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Member limit reached ({max_members}). Upgrade your plan to add more members."
+        )
+
+    # Check if already invited
+    existing = await db.workspace_invites.find_one({
+        "workspace_id": workspace["id"],
+        "invited_email": invite_req.email,
+        "accepted": False,
+    })
+    if existing:
+        raise HTTPException(status_code=409, detail="Invitation already sent to this email")
+
+    invite = WorkspaceInvite(
+        workspace_id=workspace["id"],
+        workspace_name=workspace["name"],
+        invited_email=invite_req.email,
+        invited_by_id=current_user.user_id,
+        invited_by_name=current_user.name,
+        role=invite_req.role,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    await db.workspace_invites.insert_one(invite.model_dump())
+
+    # TODO: Send invite email via Resend
+    logging.info(f"Workspace invite sent: {invite_req.email} to {workspace['name']} (token: {invite.token[:8]}...)")
+
+    return {"success": True, "message": f"Invitation sent to {invite_req.email}", "invite_id": invite.id}
+
+
+@api_router.get("/workspace/invite/{token}")
+async def get_invite_details(token: str):
+    """Get invite details by token (public endpoint for accept-invite page)."""
+    invite = await db.workspace_invites.find_one({"token": token}, {"_id": 0})
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invitation not found or expired")
+    if invite.get("accepted"):
+        raise HTTPException(status_code=410, detail="Invitation already accepted")
+    expiry = invite.get("expires_at")
+    if expiry and datetime.fromisoformat(expiry) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Invitation has expired")
+    return invite
+
+
+@api_router.post("/workspace/invite/{token}/accept")
+async def accept_workspace_invite(token: str, current_user: User = Depends(get_current_user)):
+    """Accept a workspace invitation."""
+    invite = await db.workspace_invites.find_one({"token": token})
+    if not invite or invite.get("accepted"):
+        raise HTTPException(status_code=404, detail="Invitation not found or already accepted")
+
+    if invite.get("invited_email") != current_user.email:
+        raise HTTPException(status_code=403, detail="This invitation was sent to a different email address")
+
+    # Add member to workspace
+    new_member = {
+        "user_id": current_user.user_id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "role": invite.get("role", "viewer"),
+        "joined_at": datetime.now(timezone.utc).isoformat(),
+        "invited_by": invite.get("invited_by_id"),
+    }
+    await db.workspaces.update_one(
+        {"id": invite["workspace_id"]},
+        {"$push": {"members": new_member}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    await db.workspace_invites.update_one({"token": token}, {"$set": {"accepted": True}})
+
+    return {"success": True, "message": "You've joined the workspace!", "workspace_id": invite["workspace_id"]}
+
+
+@api_router.delete("/workspace/members/{member_user_id}")
+async def remove_workspace_member(member_user_id: str, current_user: User = Depends(get_current_user)):
+    """Remove a member from the workspace (owner only)."""
+    workspace = await db.workspaces.find_one({"owner_id": current_user.user_id})
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if member_user_id == current_user.user_id:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself (owner)")
+
+    await db.workspaces.update_one(
+        {"owner_id": current_user.user_id},
+        {"$pull": {"members": {"user_id": member_user_id}},
+         "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"success": True, "message": "Member removed"}
+
+
+@api_router.get("/workspace/activity")
+async def get_workspace_activity(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """Recent activity across the workspace — posts published, scheduled, failed."""
+    workspace = await db.workspaces.find_one(
+        {"members.user_id": current_user.user_id}, {"members": 1}
+    )
+    workspace_user_ids = [current_user.user_id]
+    if workspace:
+        workspace_user_ids = [m["user_id"] for m in workspace.get("members", [])]
+
+    # Recent posts with status changes
+    recent_posts = await db.posts.find(
+        {
+            "user_id": {"$in": workspace_user_ids},
+            "status": {"$in": ["published", "failed", "scheduled"]},
+        },
+        {"_id": 0, "id": 1, "content": 1, "status": 1, "platforms": 1,
+         "published_at": 1, "scheduled_time": 1, "user_id": 1}
+    ).sort("published_at", -1).limit(limit).to_list(limit)
+
+    # Attach author info
+    user_ids = list({p["user_id"] for p in recent_posts})
+    users = await db.users.find(
+        {"user_id": {"$in": user_ids}},
+        {"_id": 0, "user_id": 1, "name": 1, "picture": 1}
+    ).to_list(None)
+    user_map = {u["user_id"]: u for u in users}
+
+    for post in recent_posts:
+        uid = post.get("user_id")
+        post["author"] = user_map.get(uid, {"name": "Unknown", "picture": None})
+
+    return {"activity": recent_posts, "total": len(recent_posts)}
+
+
+# ==================== GDPR / DATA PRIVACY (Stage 8) ====================
+import json as _json_module
+from fastapi.responses import StreamingResponse
+import io as _io
+
+@api_router.get("/gdpr/export")
+async def export_my_data(current_user: User = Depends(get_current_user)):
+    """
+    GDPR Article 20 — Data Portability.
+    Export all personal data associated with the account as JSON.
+    """
+    uid = current_user.user_id
+
+    # Gather all user data
+    user_doc = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    posts = await db.posts.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    accounts = await db.social_accounts.find(
+        {"user_id": uid},
+        {"_id": 0, "access_token": 0, "refresh_token": 0}  # Exclude tokens from export
+    ).to_list(None)
+    notifications = await db.notifications.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    transactions = await db.payment_transactions.find({"user_id": uid}, {"_id": 0}).to_list(None)
+    workspace = await db.workspaces.find_one({"owner_id": uid}, {"_id": 0})
+
+    export_data = {
+        "export_date": datetime.now(timezone.utc).isoformat(),
+        "user_id": uid,
+        "profile": user_doc,
+        "posts": posts,
+        "connected_accounts": accounts,
+        "notifications": notifications,
+        "payment_history": transactions,
+        "workspace": workspace,
+        "_note": "OAuth tokens are excluded from exports for security. Post media files are hosted on the respective social platforms."
+    }
+
+    # Serialize to JSON bytes
+    json_bytes = _json_module.dumps(export_data, indent=2, default=str).encode("utf-8")
+
+    return StreamingResponse(
+        _io.BytesIO(json_bytes),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="socialentangler_data_{uid[:8]}.json"',
+            "Content-Length": str(len(json_bytes)),
+        }
+    )
+
+
+@api_router.delete("/gdpr/delete-account")
+async def delete_my_account(current_user: User = Depends(get_current_user)):
+    """
+    GDPR Article 17 — Right to Erasure.
+    Permanently delete all user data. This action cannot be undone.
+    """
+    uid = current_user.user_id
+
+    # Delete in order (referential integrity)
+    await db.notifications.delete_many({"user_id": uid})
+    await db.posts.delete_many({"user_id": uid})
+    await db.social_accounts.delete_many({"user_id": uid})
+    await db.payment_transactions.delete_many({"user_id": uid})
+    await db.workspace_invites.delete_many({"invited_by_id": uid})
+
+    # Remove from workspaces as member
+    await db.workspaces.update_many(
+        {"members.user_id": uid},
+        {"$pull": {"members": {"user_id": uid}}}
+    )
+    # Delete owned workspace
+    await db.workspaces.delete_one({"owner_id": uid})
+
+    # Delete user document last
+    await db.users.delete_one({"user_id": uid})
+
+    logging.info(f"GDPR erasure: user {uid} data deleted")
+
+    return {"success": True, "message": "Your account and all associated data have been permanently deleted."}
+
+
+@api_router.get("/gdpr/status")
+async def get_gdpr_status(current_user: User = Depends(get_current_user)):
+    """Return a summary of what data we hold about the user."""
+    uid = current_user.user_id
+    post_count = await db.posts.count_documents({"user_id": uid})
+    account_count = await db.social_accounts.count_documents({"user_id": uid})
+
+    return {
+        "user_id": uid,
+        "email": current_user.email,
+        "account_created": current_user.created_at.isoformat() if hasattr(current_user.created_at, "isoformat") else str(current_user.created_at),
+        "data_held": {
+            "posts": post_count,
+            "connected_accounts": account_count,
+            "subscription": current_user.subscription_status,
+        },
+        "rights": {
+            "export_data": "GET /api/gdpr/export",
+            "delete_account": "DELETE /api/gdpr/delete-account",
+        }
+    }
+
+
+# ==================== HASHTAG GROUPS ====================
+
+@api_router.get("/hashtag-groups")
+async def get_hashtag_groups(current_user: User = Depends(get_current_user)):
+    groups = await db.hashtag_groups.find(
+        {"user_id": current_user.user_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
+    return groups
+
+@api_router.post("/hashtag-groups", status_code=201)
+async def create_hashtag_group(data: HashtagGroupCreate, current_user: User = Depends(get_current_user)):
+    group = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "name": data.name,
+        "hashtags": data.hashtags,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.hashtag_groups.insert_one(group)
+    group.pop("_id", None)
+    return group
+
+@api_router.patch("/hashtag-groups/{group_id}")
+async def update_hashtag_group(group_id: str, data: HashtagGroupUpdate, current_user: User = Depends(get_current_user)):
+    update = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
+    if update:
+        await db.hashtag_groups.update_one(
+            {"id": group_id, "user_id": current_user.user_id},
+            {"$set": update}
+        )
+    group = await db.hashtag_groups.find_one({"id": group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(status_code=404, detail="Hashtag group not found")
+    return group
+
+@api_router.delete("/hashtag-groups/{group_id}", status_code=204)
+async def delete_hashtag_group(group_id: str, current_user: User = Depends(get_current_user)):
+    result = await db.hashtag_groups.delete_one({"id": group_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Hashtag group not found")
+
+# ==================== INBOX (COMMENTS / DMs) ====================
+
+class InboxMessageCreate(BaseModel):
+    platform: str
+    type: str = "comment"         # comment | dm
+    author_name: str
+    author_avatar: Optional[str] = None
+    content: str
+    post_id: Optional[str] = None # linked post if comment
+    platform_message_id: Optional[str] = None
+    received_at: Optional[str] = None
+
+@api_router.get("/inbox")
+async def get_inbox(
+    platform: Optional[str] = None,
+    msg_type: Optional[str] = None,   # comment | dm
+    status: Optional[str] = None,     # unread | read | replied
+    current_user: User = Depends(get_current_user),
+):
+    query: dict = {"user_id": current_user.user_id}
+    if platform:
+        query["platform"] = platform
+    if msg_type:
+        query["type"] = msg_type
+    if status:
+        query["status"] = status
+    messages = await db.inbox.find(query, {"_id": 0}).sort("received_at", -1).to_list(500)
+    return messages
+
+@api_router.post("/inbox", status_code=201)
+async def create_inbox_message(body: InboxMessageCreate, current_user: User = Depends(get_current_user)):
+    """Manually add a message (used by platform sync jobs or testing)."""
+    msg = {
+        "id":                    str(uuid.uuid4()),
+        "user_id":               current_user.user_id,
+        "platform":              body.platform,
+        "type":                  body.type,
+        "author_name":           body.author_name,
+        "author_avatar":         body.author_avatar,
+        "content":               body.content,
+        "post_id":               body.post_id,
+        "platform_message_id":   body.platform_message_id,
+        "status":                "unread",
+        "reply":                 None,
+        "received_at":           body.received_at or datetime.now(timezone.utc).isoformat(),
+        "replied_at":            None,
+    }
+    await db.inbox.insert_one(msg)
+    msg.pop("_id", None)
+    return msg
+
+@api_router.patch("/inbox/{message_id}")
+async def update_inbox_message(
+    message_id: str,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Mark read/unread, add reply text."""
+    update: dict = {}
+    if "status" in body:
+        update["status"] = body["status"]
+    if "reply" in body:
+        update["reply"] = body["reply"]
+        update["replied_at"] = datetime.now(timezone.utc).isoformat()
+        update["status"] = "replied"
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    result = await db.inbox.update_one(
+        {"id": message_id, "user_id": current_user.user_id},
+        {"$set": update},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"ok": True}
+
+@api_router.delete("/inbox/{message_id}")
+async def delete_inbox_message(message_id: str, current_user: User = Depends(get_current_user)):
+    await db.inbox.delete_one({"id": message_id, "user_id": current_user.user_id})
+    return {"ok": True}
+
+@api_router.get("/inbox/stats")
+async def get_inbox_stats(current_user: User = Depends(get_current_user)):
+    total   = await db.inbox.count_documents({"user_id": current_user.user_id})
+    unread  = await db.inbox.count_documents({"user_id": current_user.user_id, "status": "unread"})
+    replied = await db.inbox.count_documents({"user_id": current_user.user_id, "status": "replied"})
+    return {"total": total, "unread": unread, "replied": replied}
+
+# ==================== CALENDAR NOTES ====================
+
+@api_router.get("/calendar-notes")
+async def get_calendar_notes(month: str, current_user: User = Depends(get_current_user)):
+    """Get all notes for a given month. month format: YYYY-MM"""
+    notes = await db.calendar_notes.find(
+        {"user_id": current_user.user_id, "date": {"$regex": f"^{month}"}},
+        {"_id": 0}
+    ).to_list(1000)
+    return notes
+
+@api_router.post("/calendar-notes", status_code=201)
+async def create_calendar_note(data: CalendarNoteCreate, current_user: User = Depends(get_current_user)):
+    note = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "date": data.date,
+        "text": data.text,
+        "color": data.color,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.calendar_notes.insert_one(note)
+    note.pop("_id", None)
+    return note
+
+@api_router.patch("/calendar-notes/{note_id}")
+async def update_calendar_note(note_id: str, data: CalendarNoteUpdate, current_user: User = Depends(get_current_user)):
+    update = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
+    if update:
+        await db.calendar_notes.update_one(
+            {"id": note_id, "user_id": current_user.user_id}, {"$set": update}
+        )
+    return await db.calendar_notes.find_one({"id": note_id}, {"_id": 0})
+
+@api_router.delete("/calendar-notes/{note_id}", status_code=204)
+async def delete_calendar_note(note_id: str, current_user: User = Depends(get_current_user)):
+    await db.calendar_notes.delete_one({"id": note_id, "user_id": current_user.user_id})
+
+# ==================== CALENDAR SHARE ====================
+
+@api_router.post("/calendar/share")
+async def create_calendar_share(current_user: User = Depends(get_current_user)):
+    """Generate (or return existing) public share token for the user's calendar."""
+    existing = await db.calendar_shares.find_one({"user_id": current_user.user_id}, {"_id": 0})
+    if existing:
+        existing.pop("_id", None)
+        return existing
+    share = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "token": str(uuid.uuid4()).replace("-", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.calendar_shares.insert_one(share)
+    share.pop("_id", None)
+    return share
+
+@api_router.get("/calendar/public/{token}")
+async def get_public_calendar(token: str):
+    """Public endpoint — no auth required. Returns scheduled posts for a shared calendar."""
+    share = await db.calendar_shares.find_one({"token": token}, {"_id": 0})
+    if not share:
+        raise HTTPException(status_code=404, detail="Calendar not found")
+    posts = await db.posts.find(
+        {"user_id": share["user_id"], "status": "scheduled"},
+        {"_id": 0}
+    ).to_list(500)
+    for post in posts:
+        post.pop("user_id", None)
+    return {"posts": posts}
+
+@api_router.delete("/calendar/share", status_code=204)
+async def delete_calendar_share(current_user: User = Depends(get_current_user)):
+    """Revoke the public share link."""
+    await db.calendar_shares.delete_one({"user_id": current_user.user_id})
+
+# ==================== ANALYTICS ====================
+
+@api_router.get("/analytics/overview")
+async def get_analytics_overview(
+    days: int = 30,
+    platform: Optional[str] = None,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Return aggregate counts for the dashboard analytics page."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    base_q: Dict[str, Any] = {"user_id": current_user.user_id, "status": "published", "published_at": {"$gte": since}}
+    if platform:
+        base_q["platforms"] = platform
+    if account_id:
+        base_q["accounts"] = account_id
+
+    published_in_period = await db.posts.count_documents(base_q)
+    total_q: Dict[str, Any] = {"user_id": current_user.user_id, "status": "published"}
+    if platform:
+        total_q["platforms"] = platform
+    if account_id:
+        total_q["accounts"] = account_id
+    total_published = await db.posts.count_documents(total_q)
+    scheduled = await db.posts.count_documents({"user_id": current_user.user_id, "status": "scheduled"})
+    drafts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "draft"})
+
+    # Pull lightweight fields for breakdowns
+    published_posts = await db.posts.find(
+        base_q,
+        {"_id": 0, "platforms": 1, "post_type": 1},
+    ).to_list(5000)
+
+    platform_counts: dict = {}
+    type_counts: dict = {"text": 0, "image": 0, "video": 0}
+    for post in published_posts:
+        for p in post.get("platforms", []):
+            platform_counts[p] = platform_counts.get(p, 0) + 1
+        t = post.get("post_type", "text")
+        type_counts[t] = type_counts.get(t, 0) + 1
+
+    top_platform = max(platform_counts, key=platform_counts.get) if platform_counts else None
+
+    return {
+        "published_in_period": published_in_period,
+        "total_published": total_published,
+        "scheduled": scheduled,
+        "drafts": drafts,
+        "top_platform": top_platform,
+        "platform_counts": platform_counts,
+        "type_counts": type_counts,
+    }
+
+
+@api_router.get("/analytics/timeline")
+async def get_analytics_timeline(
+    days: int = 30,
+    platform: Optional[str] = None,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Return a list of {date, count} for published posts per day over the last N days."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_str = since.isoformat()
+
+    q: Dict[str, Any] = {"user_id": current_user.user_id, "status": "published", "published_at": {"$gte": since_str}}
+    if platform:
+        q["platforms"] = platform
+    if account_id:
+        q["accounts"] = account_id
+
+    posts = await db.posts.find(q, {"_id": 0, "published_at": 1}).to_list(5000)
+
+    day_counts: dict = {}
+    for post in posts:
+        pa = post.get("published_at")
+        if pa:
+            try:
+                date_str = pa[:10]  # YYYY-MM-DD
+                day_counts[date_str] = day_counts.get(date_str, 0) + 1
+            except Exception:
+                pass
+
+    # Build a complete date series (no gaps)
+    result = []
+    cursor = since
+    now = datetime.now(timezone.utc)
+    while cursor <= now:
+        date_str = cursor.strftime("%Y-%m-%d")
+        result.append({"date": date_str, "count": day_counts.get(date_str, 0)})
+        cursor += timedelta(days=1)
+
+    return result
+
+
+@api_router.get("/analytics/engagement")
+async def get_analytics_engagement(
+    days: int = 30,
+    platform: Optional[str] = None,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch real engagement metrics (likes, comments, shares, views) from connected social accounts.
+    Aggregates totals, per-platform breakdown, and returns top posts sorted by engagement.
+    """
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+    if platform:
+        acct_query["platform"] = platform
+
+    accounts = await db.social_accounts.find(acct_query, {"_id": 0}).to_list(100)
+    if not accounts:
+        return {
+            "totals": {"total_posts": 0, "total_likes": 0, "total_comments": 0, "total_shares": 0, "total_views": 0},
+            "platform_breakdown": {},
+            "top_posts": [],
+            "accounts_fetched": 0,
+        }
+
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+    tw_auth = TwitterAuth()
+    li_auth = LinkedInAuth()
+    yt_auth = GoogleAuth()
+    threads_auth = ThreadsAuth()
+    reddit_auth = RedditAuth()
+    pinterest_auth = PinterestAuth()
+    tiktok_auth = TikTokAuth()
+    bluesky_auth = BlueskyAuth()
+    snapchat_auth = SnapchatAuth()
+
+    all_posts = []
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+
+    for account in accounts:
+        plat = account.get("platform")
+        token = account.get("access_token")
+        if not token:
+            continue
+
+        try:
+            posts = []
+            if plat == "instagram":
+                uid = account.get("platform_user_id", "me")
+                posts = await ig_auth.fetch_media(token, uid, 50)
+            elif plat == "facebook":
+                page_id = account.get("platform_user_id")
+                if page_id:
+                    posts = await fb_auth.fetch_page_posts(token, page_id, 50)
+            elif plat == "twitter":
+                uid = account.get("platform_user_id")
+                if uid:
+                    posts = await tw_auth.fetch_user_tweets(token, uid, 50)
+            elif plat == "linkedin":
+                person_urn = account.get("platform_user_id")
+                if person_urn:
+                    posts = await li_auth.fetch_posts(token, person_urn, 50)
+            elif plat == "youtube":
+                refresh_tok = account.get("refresh_token")
+                if refresh_tok:
+                    try:
+                        new_tokens = await yt_auth.refresh_access_token(refresh_tok)
+                        token = new_tokens.get("access_token", token)
+                    except Exception:
+                        pass
+                posts = await yt_auth.fetch_channel_videos(token, 50)
+            elif plat == "threads":
+                uid = account.get("platform_user_id", "me")
+                posts = await threads_auth.fetch_posts(token, uid, 50)
+            elif plat == "reddit":
+                username = account.get("platform_username")
+                if username:
+                    posts = await reddit_auth.fetch_user_posts(token, username, 50)
+            elif plat == "pinterest":
+                posts = await pinterest_auth.fetch_pins(token, 50)
+            elif plat == "tiktok":
+                posts = await tiktok_auth.fetch_posts(token, 50)
+            elif plat == "bluesky":
+                handle = account.get("platform_username")
+                if handle:
+                    posts = await bluesky_auth.fetch_posts(token, handle, 50)
+            elif plat == "snapchat":
+                posts = await snapchat_auth.fetch_posts(token, 50)
+
+            # Filter to posts within the selected date range
+            def _in_range(p):
+                pa = p.get("published_at")
+                if not pa:
+                    return True  # include if no date info
+                try:
+                    dt = datetime.fromisoformat(pa.replace("Z", "+00:00"))
+                    dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                    return dt >= since_dt
+                except Exception:
+                    return True
+
+            for post in posts:
+                if _in_range(post):
+                    post["account_id"] = account.get("id")
+                    post["platform"] = plat
+                    post["account_username"] = account.get("platform_username", plat)
+                    post["account_picture"] = account.get("picture_url")
+                    all_posts.append(post)
+
+        except Exception as e:
+            logging.error(f"[analytics/engagement] Error fetching from {plat}: {e}")
+            continue
+
+    # Aggregate totals
+    totals = {"total_posts": 0, "total_likes": 0, "total_comments": 0, "total_shares": 0, "total_views": 0}
+    platform_breakdown: dict = {}
+
+    for post in all_posts:
+        m = post.get("metrics", {}) or {}
+        likes = m.get("likes") or 0
+        comments = m.get("comments") or 0
+        shares = m.get("shares") or 0
+        views = m.get("views") or 0
+        totals["total_posts"] += 1
+        totals["total_likes"] += likes
+        totals["total_comments"] += comments
+        totals["total_shares"] += shares
+        totals["total_views"] += views
+
+        plat_key = post.get("platform", "unknown")
+        if plat_key not in platform_breakdown:
+            platform_breakdown[plat_key] = {"posts": 0, "likes": 0, "comments": 0, "shares": 0, "views": 0}
+        platform_breakdown[plat_key]["posts"] += 1
+        platform_breakdown[plat_key]["likes"] += likes
+        platform_breakdown[plat_key]["comments"] += comments
+        platform_breakdown[plat_key]["shares"] += shares
+        platform_breakdown[plat_key]["views"] += views
+
+    # Top posts sorted by total engagement (likes + comments + shares)
+    def _engagement_score(p):
+        m = p.get("metrics", {}) or {}
+        return (m.get("likes") or 0) + (m.get("comments") or 0) + (m.get("shares") or 0)
+
+    top_posts = sorted(all_posts, key=_engagement_score, reverse=True)[:10]
+
+    return {
+        "totals": totals,
+        "platform_breakdown": platform_breakdown,
+        "top_posts": top_posts,
+        "accounts_fetched": len(accounts),
+    }
+
+# ==================== ANALYTICS DEMOGRAPHICS ====================
+
+DEMOGRAPHICS_PLATFORMS = {"instagram", "facebook"}
+
+@api_router.get("/analytics/demographics")
+async def get_analytics_demographics(
+    platform: Optional[str] = None,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch follower/fan demographics from Instagram and Facebook."""
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+    if platform:
+        acct_query["platform"] = platform
+
+    accounts = await db.social_accounts.find(acct_query, {"_id": 0}).to_list(100)
+    eligible = [a for a in accounts if a.get("platform") in DEMOGRAPHICS_PLATFORMS]
+
+    if not eligible:
+        return {
+            "supported": False,
+            "message": "Demographics require an Instagram Business or Facebook Page account.",
+            "demographics": {"age": [], "gender": [], "cities": [], "countries": []},
+        }
+
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+
+    # Aggregate demographics from all eligible accounts
+    combined = {"age": {}, "gender": {}, "cities": {}, "countries": {}}
+    accounts_used = []
+    errors = []
+
+    for account in eligible:
+        plat = account.get("platform")
+        token = account.get("access_token")
+        if not token:
+            continue
+
+        try:
+            if plat == "instagram":
+                uid = account.get("platform_user_id", "me")
+                demo = await ig_auth.fetch_demographics(token, uid)
+            elif plat == "facebook":
+                page_id = account.get("platform_user_id")
+                if not page_id:
+                    continue
+                demo = await fb_auth.fetch_page_demographics(token, page_id)
+            else:
+                continue
+
+            if not demo.get("supported", True):
+                errors.append({"account": account.get("platform_username", plat), "error": demo.get("error", "")})
+                continue
+
+            accounts_used.append(account.get("platform_username", plat))
+
+            # Merge into combined
+            for item in demo.get("age", []):
+                key = item["range"]
+                combined["age"][key] = combined["age"].get(key, 0) + item["count"]
+            for item in demo.get("gender", []):
+                key = item["label"]
+                combined["gender"][key] = combined["gender"].get(key, 0) + item["count"]
+            for item in demo.get("cities", []):
+                key = item["name"]
+                combined["cities"][key] = combined["cities"].get(key, 0) + item["count"]
+            for item in demo.get("countries", []):
+                key = item["name"]
+                combined["countries"][key] = combined["countries"].get(key, 0) + item["count"]
+
+        except Exception as e:
+            logging.error(f"[analytics/demographics] Error from {plat}: {e}")
+            errors.append({"account": account.get("platform_username", plat), "error": str(e)})
+
+    def to_sorted_list(d, key_name):
+        return sorted([{key_name: k, "count": v} for k, v in d.items()], key=lambda x: x["count"], reverse=True)
+
+    return {
+        "supported": True,
+        "demographics": {
+            "age": to_sorted_list(combined["age"], "range"),
+            "gender": to_sorted_list(combined["gender"], "label"),
+            "cities": to_sorted_list(combined["cities"], "name")[:20],
+            "countries": to_sorted_list(combined["countries"], "name")[:20],
+        },
+        "accounts_used": accounts_used,
+        "errors": errors,
+    }
+
+
+# ==================== COMMENTS ====================
+
+COMMENT_PLATFORMS = {"instagram", "facebook", "youtube", "threads", "reddit", "bluesky"}
+REPLY_PLATFORMS = {"instagram", "facebook", "threads", "reddit", "bluesky"}  # YouTube needs youtube.force-ssl scope
+
+@api_router.get("/comments/{platform}/{post_id:path}")
+async def get_post_comments(
+    platform: str,
+    post_id: str,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch comments for a post from the platform API."""
+    if platform not in COMMENT_PLATFORMS:
+        return {"comments": [], "supported": False, "message": f"Comments not available for {platform}"}
+
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "platform": platform, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+
+    account = await db.social_accounts.find_one(acct_query, {"_id": 0})
+    if not account:
+        return {"comments": [], "supported": False, "message": "No connected account found"}
+
+    token = account.get("access_token")
+    if not token:
+        return {"comments": [], "supported": False, "message": "No access token"}
+
+    try:
+        comments = []
+        if platform == "instagram":
+            comments = await InstagramAuth().fetch_comments(token, post_id)
+        elif platform == "facebook":
+            comments = await FacebookAuth().fetch_comments(token, post_id)
+        elif platform == "youtube":
+            # Refresh token if available
+            refresh_tok = account.get("refresh_token")
+            if refresh_tok:
+                try:
+                    new_tokens = await GoogleAuth().refresh_access_token(refresh_tok)
+                    token = new_tokens.get("access_token", token)
+                except Exception:
+                    pass
+            comments = await GoogleAuth().fetch_comments(token, post_id)
+        elif platform == "threads":
+            comments = await ThreadsAuth().fetch_replies(token, post_id)
+        elif platform == "reddit":
+            comments = await RedditAuth().fetch_comments(token, post_id)
+        elif platform == "bluesky":
+            comments = await BlueskyAuth().fetch_replies(token, post_id)
+
+        return {
+            "comments": comments,
+            "supported": True,
+            "platform": platform,
+            "post_id": post_id,
+            "can_reply": platform in REPLY_PLATFORMS,
+        }
+    except Exception as e:
+        logging.error(f"[comments] Error fetching comments from {platform}: {e}")
+        return {"comments": [], "supported": True, "error": str(e)}
+
+
+@api_router.post("/comments/{platform}/{comment_id:path}/reply")
+async def reply_to_comment(
+    platform: str,
+    comment_id: str,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Reply to a comment on a platform."""
+    text = body.get("text", "").strip()
+    account_id = body.get("account_id")
+    post_id = body.get("post_id")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Reply text is required")
+    if platform not in REPLY_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"Replying not supported for {platform}")
+
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "platform": platform, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+
+    account = await db.social_accounts.find_one(acct_query, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="No connected account found")
+
+    token = account.get("access_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="No access token")
+
+    try:
+        result = {}
+        if platform == "instagram":
+            result = await InstagramAuth().reply_to_comment(token, comment_id, text)
+        elif platform == "facebook":
+            result = await FacebookAuth().reply_to_comment(token, comment_id, text)
+        elif platform == "threads":
+            uid = account.get("platform_user_id", "me")
+            reply_id = await ThreadsAuth().reply_to_thread(token, uid, comment_id, text)
+            result = {"id": reply_id}
+        elif platform == "reddit":
+            result = await RedditAuth().reply_to_comment(token, comment_id, text)
+        elif platform == "bluesky":
+            # For Bluesky, comment_id is the parent URI
+            # We need the parent CID and root info from the body
+            parent_cid = body.get("parent_cid")
+            root_uri = body.get("root_uri")
+            root_cid = body.get("root_cid")
+            did = account.get("platform_user_id")
+            if did and parent_cid and root_uri and root_cid:
+                reply_ref = {
+                    "root": {"uri": root_uri, "cid": root_cid},
+                    "parent": {"uri": comment_id, "cid": parent_cid},
+                }
+                result_id = await BlueskyAuth().publish_post(token, did, text, reply_ref=reply_ref)
+                result = {"id": result_id}
+            else:
+                raise Exception("Missing Bluesky reply context (parent_cid, root_uri, root_cid)")
+
+        return {"ok": True, "reply_id": result.get("id"), "platform": platform}
+
+    except Exception as e:
+        logging.error(f"[comments/reply] Error replying on {platform}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== MESSAGES / DMs ====================
+
+DM_PLATFORMS = {"instagram", "facebook"}
+
+@api_router.get("/messages/{platform}")
+async def get_conversations(
+    platform: str,
+    account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch DM conversations from a platform."""
+    if platform not in DM_PLATFORMS:
+        return {"conversations": [], "supported": False, "message": f"DMs not available for {platform}"}
+
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "platform": platform, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+
+    account = await db.social_accounts.find_one(acct_query, {"_id": 0})
+    if not account:
+        return {"conversations": [], "supported": False, "message": "No connected account found"}
+
+    token = account.get("access_token")
+    if not token:
+        return {"conversations": [], "supported": False, "message": "No access token"}
+
+    try:
+        conversations = []
+        if platform == "instagram":
+            uid = account.get("platform_user_id", "me")
+            conversations = await InstagramAuth().fetch_conversations(token, uid)
+        elif platform == "facebook":
+            page_id = account.get("platform_user_id")
+            if page_id:
+                conversations = await FacebookAuth().fetch_page_conversations(token, page_id)
+
+        return {
+            "conversations": conversations,
+            "supported": True,
+            "platform": platform,
+            "account_id": account.get("id"),
+        }
+    except Exception as e:
+        logging.error(f"[messages] Error fetching conversations from {platform}: {e}")
+        return {"conversations": [], "supported": True, "error": str(e)}
+
+
+@api_router.post("/messages/{platform}/{conversation_id}/reply")
+async def send_dm_reply(
+    platform: str,
+    conversation_id: str,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+):
+    """Send a DM reply on a platform."""
+    text = body.get("text", "").strip()
+    account_id = body.get("account_id")
+    recipient_id = body.get("recipient_id")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Message text is required")
+    if platform not in DM_PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"DMs not supported for {platform}")
+    if not recipient_id:
+        raise HTTPException(status_code=400, detail="recipient_id is required")
+
+    acct_query: Dict[str, Any] = {"user_id": current_user.user_id, "platform": platform, "is_active": True}
+    if account_id:
+        acct_query["id"] = account_id
+
+    account = await db.social_accounts.find_one(acct_query, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="No connected account found")
+
+    token = account.get("access_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="No access token")
+
+    try:
+        result = {}
+        if platform == "instagram":
+            result = await InstagramAuth().send_message(token, recipient_id, text)
+        elif platform == "facebook":
+            page_id = account.get("platform_user_id")
+            if page_id:
+                result = await FacebookAuth().send_page_message(token, page_id, recipient_id, text)
+
+        return {"ok": True, "platform": platform, "result": result}
+
+    except Exception as e:
+        logging.error(f"[messages/reply] Error sending DM on {platform}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== RECURRING POSTS ====================
+
+def _generate_recurring_times(
+    frequency: str,
+    days_of_week: list,   # JS convention: 0=Sun … 6=Sat
+    day_of_month: int,
+    time_of_day: str,     # "HH:MM" UTC
+    horizon_days: int = 60,
+) -> list:
+    """Return ISO-format UTC datetime strings for recurring scheduled posts."""
+    try:
+        hour, minute = map(int, time_of_day.split(":"))
+    except Exception:
+        hour, minute = 9, 0
+
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=horizon_days)
+
+    # Start cursor at the first occurrence on/after tomorrow
+    cursor = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if cursor <= now:
+        cursor += timedelta(days=1)
+
+    results = []
+
+    if frequency == "daily":
+        while cursor <= end:
+            results.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+
+    elif frequency == "weekly":
+        # Convert JS weekday (0=Sun) → Python weekday (0=Mon)
+        py_days = {(d + 6) % 7 for d in (days_of_week or [1])}
+        while cursor <= end:
+            if cursor.weekday() in py_days:
+                results.append(cursor.isoformat())
+            cursor += timedelta(days=1)
+
+    elif frequency == "monthly":
+        target_day = max(1, min(28, day_of_month or 1))
+        while cursor <= end:
+            if cursor.day == target_day:
+                results.append(cursor.isoformat())
+                cursor += timedelta(days=28)
+            else:
+                cursor += timedelta(days=1)
+
+    return results[:200]  # safety cap
+
+
+async def _create_posts_for_rule(rule: dict, user_id: str) -> int:
+    """Bulk-insert scheduled posts for all times generated by a rule."""
+    times = _generate_recurring_times(
+        frequency=rule.get("frequency", "weekly"),
+        days_of_week=rule.get("days_of_week", [1]),
+        day_of_month=rule.get("day_of_month", 1),
+        time_of_day=rule.get("time_of_day", "09:00"),
+    )
+    if not times:
+        return 0
+
+    now_str = datetime.now(timezone.utc).isoformat()
+    posts = [
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "content": rule.get("content", ""),
+            "post_type": rule.get("post_type", "text"),
+            "platforms": rule.get("platforms", []),
+            "accounts": rule.get("accounts", []),
+            "media_urls": rule.get("media_urls", []),
+            "media_alt_texts": [],
+            "scheduled_time": st,
+            "status": "scheduled",
+            "created_at": now_str,
+            "published_at": None,
+            "ai_generated": False,
+            "recurring_rule_id": rule["id"],
+        }
+        for st in times
+    ]
+    await db.posts.insert_many(posts)
+    return len(posts)
+
+
+@api_router.post("/recurring-rules", status_code=201)
+async def create_recurring_rule(data: RecurringRuleCreate, current_user: User = Depends(get_current_user)):
+    """Create a recurring rule and pre-generate scheduled posts for the next 60 days."""
+    rule = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "content": data.content,
+        "platforms": data.platforms,
+        "accounts": data.accounts,
+        "post_type": data.post_type,
+        "media_urls": data.media_urls or [],
+        "frequency": data.frequency,
+        "days_of_week": data.days_of_week,
+        "day_of_month": data.day_of_month,
+        "time_of_day": data.time_of_day,
+        "status": "active",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.recurring_rules.insert_one(rule)
+    rule.pop("_id", None)
+
+    count = await _create_posts_for_rule(rule, current_user.user_id)
+    rule["upcoming_count"] = count
+    return rule
+
+
+@api_router.get("/recurring-rules")
+async def list_recurring_rules(current_user: User = Depends(get_current_user)):
+    """List all recurring rules for the current user with upcoming post counts."""
+    rules = await db.recurring_rules.find(
+        {"user_id": current_user.user_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+
+    now_str = datetime.now(timezone.utc).isoformat()
+    for rule in rules:
+        rule["upcoming_count"] = await db.posts.count_documents({
+            "recurring_rule_id": rule["id"],
+            "status": "scheduled",
+            "scheduled_time": {"$gte": now_str},
+        })
+    return rules
+
+
+@api_router.patch("/recurring-rules/{rule_id}")
+async def update_recurring_rule(
+    rule_id: str,
+    data: RecurringRuleUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    """Update a rule's status (pause/resume) or schedule. Re-generates posts on schedule change."""
+    rule = await db.recurring_rules.find_one(
+        {"id": rule_id, "user_id": current_user.user_id}, {"_id": 0}
+    )
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
+    schedule_fields = {"frequency", "days_of_week", "day_of_month", "time_of_day"}
+    schedule_changed = bool(updates.keys() & schedule_fields)
+
+    if updates:
+        await db.recurring_rules.update_one({"id": rule_id}, {"$set": updates})
+
+    # If schedule changed or rule re-activated, delete old future posts and regenerate
+    if schedule_changed or updates.get("status") == "active":
+        now_str = datetime.now(timezone.utc).isoformat()
+        await db.posts.delete_many({
+            "recurring_rule_id": rule_id,
+            "status": "scheduled",
+            "scheduled_time": {"$gte": now_str},
+        })
+        if updates.get("status", rule.get("status")) == "active":
+            updated_rule = {**rule, **updates}
+            await _create_posts_for_rule(updated_rule, current_user.user_id)
+
+    # If paused, delete upcoming scheduled posts
+    if updates.get("status") == "paused":
+        now_str = datetime.now(timezone.utc).isoformat()
+        await db.posts.delete_many({
+            "recurring_rule_id": rule_id,
+            "status": "scheduled",
+            "scheduled_time": {"$gte": now_str},
+        })
+
+    updated = await db.recurring_rules.find_one({"id": rule_id}, {"_id": 0})
+    return updated
+
+
+@api_router.delete("/recurring-rules/{rule_id}", status_code=204)
+async def delete_recurring_rule(rule_id: str, current_user: User = Depends(get_current_user)):
+    """Delete a rule and all its future scheduled posts."""
+    result = await db.recurring_rules.delete_one({"id": rule_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    now_str = datetime.now(timezone.utc).isoformat()
+    await db.posts.delete_many({
+        "recurring_rule_id": rule_id,
+        "status": "scheduled",
+        "scheduled_time": {"$gte": now_str},
+    })
+
+# ==================== POST APPROVAL WORKFLOW ====================
+
+@api_router.post("/posts/{post_id}/submit-for-review")
+async def submit_post_for_review(post_id: str, current_user: User = Depends(get_current_user)):
+    """Move a draft/rejected post into the approval queue and notify can_approve team members."""
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.get("status") not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Only draft or rejected posts can be submitted for review")
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": "pending_review", "rejection_note": None}},
+    )
+    # Notify can_approve team members (non-fatal)
+    approvers = await db.team_members.find(
+        {"owner_user_id": current_user.user_id, "status": "accepted", "can_approve": True},
+        {"email": 1, "member_user_id": 1}
+    ).to_list(50)
+    for approver in approvers:
+        approver_user = await db.users.find_one({"user_id": approver.get("member_user_id")}, {"name": 1})
+        approver_name = approver_user.get("name", approver["email"]) if approver_user else approver["email"]
+        await send_approval_request_email(
+            approver_email=approver["email"],
+            approver_name=approver_name,
+            owner_name=current_user.name,
+            post_content=post.get("content", ""),
+            post_id=post_id,
+        )
+    return {"id": post_id, "status": "pending_review"}
+
+
+async def _get_post_for_approval(post_id: str, current_user: User):
+    """
+    Return the post if current_user is allowed to approve/reject it:
+      - the post owner themselves, OR
+      - a team member with can_approve=True in the owner's workspace.
+    Raises 404 if not found, 403 if not authorised.
+    """
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    # Owner can always act on their own post
+    if post["user_id"] == current_user.user_id:
+        return post
+
+    # Check if current_user is a can_approve member of the post owner's workspace
+    member = await db.team_members.find_one({
+        "owner_user_id": post["user_id"],
+        "email": current_user.email.lower(),
+        "status": "accepted",
+        "can_approve": True,
+    })
+    if not member:
+        raise HTTPException(status_code=403, detail="You do not have permission to approve or reject this post")
+
+    return post
+
+
+@api_router.post("/posts/{post_id}/approve")
+async def approve_post(post_id: str, current_user: User = Depends(get_current_user)):
+    """Approve a pending-review post (moves to scheduled or draft) and notify post owner."""
+    post = await _get_post_for_approval(post_id, current_user)
+    if post.get("status") != "pending_review":
+        raise HTTPException(status_code=400, detail="Only pending-review posts can be approved")
+    new_status = "scheduled" if post.get("scheduled_time") else "draft"
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": new_status, "rejection_note": None}},
+    )
+    # Notify post owner if approver is different (team member approving)
+    owner_doc = await db.users.find_one({"user_id": post["user_id"]}, {"email": 1, "name": 1})
+    if owner_doc and owner_doc.get("email") != current_user.email:
+        await send_approval_result_email(
+            owner_email=owner_doc["email"],
+            owner_name=owner_doc.get("name", ""),
+            reviewer_name=current_user.name,
+            post_content=post.get("content", ""),
+            approved=True,
+        )
+    return {"id": post_id, "status": new_status}
+
+
+@api_router.post("/posts/{post_id}/reject")
+async def reject_post(post_id: str, payload: Dict[str, Any], current_user: User = Depends(get_current_user)):
+    """Reject a pending-review post with an optional note (status → rejected) and notify owner."""
+    post = await _get_post_for_approval(post_id, current_user)
+    if post.get("status") != "pending_review":
+        raise HTTPException(status_code=400, detail="Only pending-review posts can be rejected")
+    note = (payload.get("note") or "").strip() or None
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": "rejected", "rejection_note": note}},
+    )
+    # Notify post owner if rejector is different (team member)
+    owner_doc = await db.users.find_one({"user_id": post["user_id"]}, {"email": 1, "name": 1})
+    if owner_doc and owner_doc.get("email") != current_user.email:
+        await send_approval_result_email(
+            owner_email=owner_doc["email"],
+            owner_name=owner_doc.get("name", ""),
+            reviewer_name=current_user.name,
+            post_content=post.get("content", ""),
+            approved=False,
+            rejection_note=note,
+        )
+    return {"id": post_id, "status": "rejected", "rejection_note": note}
+
+
+@api_router.post("/posts/{post_id}/resubmit")
+async def resubmit_post(post_id: str, current_user: User = Depends(get_current_user)):
+    """Move a rejected post back to draft so it can be edited and re-submitted."""
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.get("status") != "rejected":
+        raise HTTPException(status_code=400, detail="Only rejected posts can be resubmitted")
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": "draft", "rejection_note": None}},
+    )
+    return {"id": post_id, "status": "draft"}
+
+# ==================== BULK IMPORT ====================
+
+@api_router.post("/posts/bulk")
+async def bulk_create_posts(payload: Dict[str, Any], current_user: User = Depends(get_current_user)):
+    """
+    Bulk-create posts from a parsed CSV payload.
+    Body: { "posts": [ {content, platforms, scheduled_time?, post_type?, media_urls?, ...} ] }
+    Returns: { created, skipped, errors: [{row, message}] }
+    """
+    rows = payload.get("posts", [])
+    if not rows:
+        raise HTTPException(status_code=400, detail="No posts provided")
+
+    created = 0
+    errors = []
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    for i, row in enumerate(rows):
+        row_num = i + 1
+        try:
+            content = (row.get("content") or "").strip()
+            if not content:
+                errors.append({"row": row_num, "message": "content is required"})
+                continue
+
+            platforms = row.get("platforms") or []
+            if isinstance(platforms, str):
+                platforms = [p.strip() for p in platforms.split("|") if p.strip()]
+            if not platforms:
+                errors.append({"row": row_num, "message": "platforms is required"})
+                continue
+
+            scheduled_time = None
+            status = "draft"
+            raw_time = (row.get("scheduled_time") or "").strip()
+            if raw_time:
+                if current_user.subscription_status != "active":
+                    errors.append({"row": row_num, "message": "scheduling requires an active subscription"})
+                    continue
+                try:
+                    if len(raw_time) == 16:  # "YYYY-MM-DD HH:MM"
+                        raw_time = raw_time.replace(" ", "T") + ":00+00:00"
+                    scheduled_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                    status = "scheduled"
+                except ValueError:
+                    errors.append({"row": row_num, "message": f"invalid scheduled_time format: '{raw_time}'"})
+                    continue
+
+            media_urls_raw = (row.get("media_urls") or "").strip()
+            media_urls = [u.strip() for u in media_urls_raw.split("|") if u.strip()] if media_urls_raw else []
+
+            post_dict = {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user.user_id,
+                "content": content,
+                "post_type": (row.get("post_type") or "text").strip() or "text",
+                "platforms": platforms,
+                "accounts": [],
+                "media_urls": media_urls,
+                "media_alt_texts": [],
+                "scheduled_time": scheduled_time.isoformat() if scheduled_time else None,
+                "status": status,
+                "created_at": now_str,
+                "published_at": None,
+                "ai_generated": False,
+                "instagram_first_comment": (row.get("instagram_first_comment") or "").strip() or None,
+                "instagram_post_format": "Post",
+            }
+            await db.posts.insert_one(post_dict)
+            created += 1
+        except Exception as e:
+            logging.error(f"Bulk import row {row_num} error: {e}")
+            errors.append({"row": row_num, "message": str(e)})
+
+    return {"created": created, "skipped": len(errors), "errors": errors}
+
+# ==================== MEDIA LIBRARY ====================
+
+@api_router.post("/media", status_code=201)
+async def create_media_asset(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+    """Upload a file to the user's persistent media library."""
+    try:
+        file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else 'bin'
+        unique_filename = f"{uuid.uuid4()}.{file_ext}"
+        content = await file.read()
+        size_bytes = len(content)
+
+        firebase_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET')
+        if firebase_bucket:
+            from firebase_admin import storage as fb_storage
+            bucket = fb_storage.bucket()
+            blob = bucket.blob(f"media/{current_user.user_id}/{unique_filename}")
+            blob.upload_from_string(content, content_type=file.content_type)
+            blob.make_public()
+            file_url = blob.public_url
+        else:
+            file_path = UPLOADS_DIR / unique_filename
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+            file_url = f"/uploads/{unique_filename}"
+
+        asset = {
+            "id": str(uuid.uuid4()),
+            "user_id": current_user.user_id,
+            "url": file_url,
+            "filename": file.filename,
+            "content_type": file.content_type or f"image/{file_ext}",
+            "size_bytes": size_bytes,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.media_assets.insert_one(asset)
+        asset.pop("_id", None)
+        return asset
+    except Exception as e:
+        logging.error(f"Media library upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload media")
+
+
+@api_router.get("/media")
+async def list_media_assets(
+    media_type: Optional[str] = None,  # "image" or "video"
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """Return all media assets for the current user, newest first."""
+    query: dict = {"user_id": current_user.user_id}
+    if media_type:
+        query["content_type"] = {"$regex": f"^{media_type}/", "$options": "i"}
+    if search:
+        query["filename"] = {"$regex": search, "$options": "i"}
+    assets = await db.media_assets.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return assets
+
+
+@api_router.delete("/media/{asset_id}", status_code=204)
+async def delete_media_asset(asset_id: str, current_user: User = Depends(get_current_user)):
+    """Delete a media asset from the library (and from local disk if stored locally)."""
+    asset = await db.media_assets.find_one(
+        {"id": asset_id, "user_id": current_user.user_id}, {"_id": 0}
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    # Remove local file if applicable
+    url = asset.get("url", "")
+    if "/uploads/" in url and not url.startswith("http"):
+        local_path = ROOT_DIR / url.lstrip("/")
+        if local_path.exists():
+            try:
+                local_path.unlink()
+            except Exception:
+                pass
+    await db.media_assets.delete_one({"id": asset_id, "user_id": current_user.user_id})
+
 # ==================== AI CONTENT GENERATION ====================
 
+@limiter.limit("20/minute")
 @api_router.post("/ai/generate-content")
-async def generate_content(request: AIContentRequest, current_user: User = Depends(get_current_user)):
+async def generate_content(request: Request, ai_request: AIContentRequest, current_user: User = Depends(get_current_user)):
     try:
         api_key = os.environ.get('EMERGENT_LLM_KEY')
         if not api_key:
             raise HTTPException(status_code=500, detail="AI service not configured")
         
         platform_context = ""
-        if request.platform:
-            if request.platform == "twitter":
+        if ai_request.platform:
+            if ai_request.platform == "twitter":
                 platform_context = " Keep it under 280 characters for Twitter."
-            elif request.platform == "linkedin":
+            elif ai_request.platform == "linkedin":
                 platform_context = " Make it professional for LinkedIn."
-            elif request.platform == "instagram":
+            elif ai_request.platform == "instagram":
                 platform_context = " Make it engaging for Instagram with relevant hashtags."
         
         system_message = f"You are a social media content expert. Generate engaging social media posts.{platform_context}"
@@ -920,13 +3289,63 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
             system_message=system_message
         ).with_model("openai", "gpt-5.2")
         
-        user_message = UserMessage(text=request.prompt)
+        user_message = UserMessage(text=ai_request.prompt)
         response = await chat.send_message(user_message)
         
         return {"content": response}
     except Exception as e:
         logging.error(f"AI generation error: {e}")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+@limiter.limit("20/minute")
+@api_router.post("/ai/generate-image")
+async def generate_image(http_request: Request, request: dict, current_user: User = Depends(get_current_user)):
+    """
+    Generate an image from a text prompt using the Emergent LLM / DALL-E API.
+    Returns a URL to the generated image.
+    """
+    prompt = (request.get("prompt") or "").strip()
+    size   = request.get("size", "1024x1024")   # 1024x1024 | 1024x1792 | 1792x1024
+    style  = request.get("style", "vivid")       # vivid | natural
+
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=60) as client:
+            # Emergent API proxies to OpenAI images endpoint
+            response = await client.post(
+                "https://api.openai.com/v1/images/generations",
+                json={
+                    "model":   "dall-e-3",
+                    "prompt":  prompt,
+                    "n":       1,
+                    "size":    size,
+                    "style":   style,
+                    "quality": "standard",
+                },
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type":  "application/json",
+                },
+            )
+            if response.status_code != 200:
+                logging.error(f"[AI Image] OpenAI error: {response.text}")
+                raise HTTPException(status_code=500, detail="Image generation failed")
+            data = response.json()
+            image_url = data["data"][0]["url"]
+            revised_prompt = data["data"][0].get("revised_prompt", prompt)
+            return {"url": image_url, "revised_prompt": revised_prompt}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"[AI Image] generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
 
 # ==================== SOCIAL ACCOUNTS ====================
 
@@ -1001,7 +3420,7 @@ async def twitter_callback(request: Request, code: Optional[str] = None, state: 
             "platform_username": tw_profile.get('username', 'twitter_user'),
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
+            "token_expiry": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
             "connected_at": datetime.now(timezone.utc).isoformat(),
             "picture_url": tw_profile.get('profile_image_url'),
             "is_active": True
@@ -1014,16 +3433,15 @@ async def twitter_callback(request: Request, code: Optional[str] = None, state: 
         )
 
         logging.info(f"[Twitter] Connected: {tw_profile.get('username')} for user {user_id_from_state}")
-        
-        # Twitter requires 127.0.0.1 to match Developer Portal settings.
-        # We enforce redirecting back to the 127.0.0.1 frontend to avoid CORS/session domain issues.
-        twitter_frontend_url = FRONTEND_URL.replace("localhost", "127.0.0.1")
-        return RedirectResponse(url=f"{twitter_frontend_url}/{return_to}?connected=true&platform=twitter")
+
+        # Redirect back to the frontend using the original FRONTEND_URL (localhost).
+        # Do NOT replace localhost→127.0.0.1 here — localStorage is origin-scoped,
+        # so switching origins would lose the JWT token and log the user out.
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platform=twitter")
 
     except Exception as e:
         logging.error(f"Twitter OAuth error: {e}")
-        twitter_frontend_url = FRONTEND_URL.replace("localhost", "127.0.0.1")
-        return RedirectResponse(url=f"{twitter_frontend_url}/accounts?error=oauth_failed")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed")
 
 
 # ==================== SOCIAL ACCOUNTS ====================
@@ -1053,13 +3471,47 @@ async def connect_social_account(account_data: SocialAccountConnect, current_use
 @api_router.get("/social-accounts", response_model=List[SocialAccount])
 async def get_social_accounts(current_user: User = Depends(get_current_user)):
     accounts = await db.social_accounts.find({"user_id": current_user.user_id}, {"_id": 0}).to_list(100)
-    
+
+    tw_auth = TwitterAuth()
+    now_utc = datetime.now(timezone.utc)
+
     for account in accounts:
         if isinstance(account.get('connected_at'), str):
             account['connected_at'] = datetime.fromisoformat(account['connected_at'])
         if account.get('token_expiry') and isinstance(account['token_expiry'], str):
             account['token_expiry'] = datetime.fromisoformat(account['token_expiry'])
-    
+
+        # ── Auto-refresh Twitter tokens that are expiring within 30 minutes ──
+        if account.get('platform') == 'twitter' and account.get('refresh_token'):
+            expiry = account.get('token_expiry')
+            if expiry:
+                expiry_dt = expiry if isinstance(expiry, datetime) else datetime.fromisoformat(str(expiry))
+                if not expiry_dt.tzinfo:
+                    expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+                minutes_left = (expiry_dt - now_utc).total_seconds() / 60
+                if minutes_left < 30:
+                    try:
+                        new_tokens = await tw_auth.refresh_token(account['refresh_token'])
+                        new_access = new_tokens.get('access_token')
+                        new_refresh = new_tokens.get('refresh_token', account['refresh_token'])
+                        new_expires_in = new_tokens.get('expires_in', 7200)
+                        new_expiry = now_utc + timedelta(seconds=new_expires_in)
+
+                        await db.social_accounts.update_one(
+                            {"id": account['id']},
+                            {"$set": {
+                                "access_token": new_access,
+                                "refresh_token": new_refresh,
+                                "token_expiry": new_expiry.isoformat(),
+                            }}
+                        )
+                        account['access_token'] = new_access
+                        account['refresh_token'] = new_refresh
+                        account['token_expiry'] = new_expiry
+                        logging.info(f"[Twitter] Auto-refreshed token for account {account.get('platform_username')}")
+                    except Exception as refresh_err:
+                        logging.warning(f"[Twitter] Auto-refresh failed for {account.get('platform_username')}: {refresh_err}")
+
     return accounts
 
 @api_router.delete("/social-accounts/{account_id}")
@@ -1068,6 +3520,176 @@ async def disconnect_social_account(account_id: str, current_user: User = Depend
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Account not found")
     return {"message": "Account disconnected"}
+
+# ==================== PUBLISH FEED ====================
+
+@api_router.get("/publish/feed")
+async def get_publish_feed(
+    account_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch recent published posts from connected social accounts.
+    Optionally filter by account_id or platform.
+    Returns posts sorted by published_at descending.
+    """
+    query: Dict[str, Any] = {"user_id": current_user.user_id, "is_active": True}
+    if account_id:
+        query["id"] = account_id
+    if platform:
+        query["platform"] = platform
+
+    accounts = await db.social_accounts.find(query, {"_id": 0}).to_list(100)
+    if not accounts:
+        return {"posts": [], "accounts_fetched": 0, "total": 0}
+
+    ig_auth = InstagramAuth()
+    fb_auth = FacebookAuth()
+    tw_auth = TwitterAuth()
+    li_auth = LinkedInAuth()
+    yt_auth = GoogleAuth()
+    threads_auth = ThreadsAuth()
+    reddit_auth = RedditAuth()
+    pinterest_auth = PinterestAuth()
+    tiktok_auth = TikTokAuth()
+    bluesky_auth = BlueskyAuth()
+    snapchat_auth = SnapchatAuth()
+
+    all_posts = []
+    warnings = []  # surface per-account errors to the frontend
+
+    for account in accounts:
+        plat = account.get("platform")
+        token = account.get("access_token")
+        username = account.get("platform_username", plat)
+
+        if not token:
+            warnings.append({"platform": plat, "username": username, "reason": "No access token stored. Please reconnect this account."})
+            continue
+
+        try:
+            posts = []
+
+            if plat == "instagram":
+                uid = account.get("platform_user_id", "me")
+                posts = await ig_auth.fetch_media(token, uid, limit)
+                if not posts:
+                    warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Token may be expired or account may not be a Business/Creator account."})
+
+            elif plat == "facebook":
+                page_id = account.get("platform_user_id")
+                if page_id:
+                    posts = await fb_auth.fetch_page_posts(token, page_id, limit)
+                    if not posts:
+                        warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Token may be expired or insufficient permissions."})
+                else:
+                    warnings.append({"platform": plat, "username": username, "reason": "No Page ID stored. Please reconnect this account."})
+
+            elif plat == "twitter":
+                uid = account.get("platform_user_id")
+                if uid:
+                    posts = await tw_auth.fetch_user_tweets(token, uid, limit)
+                    if not posts:
+                        warnings.append({"platform": plat, "username": username, "reason": "No tweets returned. Token may be expired."})
+                else:
+                    warnings.append({"platform": plat, "username": username, "reason": "No user ID stored. Please reconnect this account."})
+
+            elif plat == "linkedin":
+                person_urn = account.get("platform_user_id")
+                if person_urn:
+                    posts = await li_auth.fetch_posts(token, person_urn, limit)
+                    if not posts:
+                        warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Token may be expired."})
+                else:
+                    warnings.append({"platform": plat, "username": username, "reason": "No person URN stored. Please reconnect this account."})
+
+            elif plat == "youtube":
+                # Auto-refresh YouTube token if a refresh_token is stored
+                refresh_tok = account.get("refresh_token")
+                if refresh_tok:
+                    try:
+                        new_tokens = await yt_auth.refresh_access_token(refresh_tok)
+                        token = new_tokens.get("access_token", token)
+                    except Exception as refresh_err:
+                        logging.warning(f"[publish/feed] YouTube token refresh failed: {refresh_err}")
+                        warnings.append({"platform": plat, "username": username, "reason": "Token refresh failed. Please reconnect this account."})
+                posts = await yt_auth.fetch_channel_videos(token, limit)
+                if not posts:
+                    warnings.append({"platform": plat, "username": username, "reason": "No videos returned. Token may be expired."})
+
+            elif plat == "threads":
+                uid = account.get("platform_user_id", "me")
+                posts = await threads_auth.fetch_posts(token, uid, limit)
+                if not posts:
+                    warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Token may be expired."})
+
+            elif plat == "reddit":
+                reddit_username = account.get("platform_username")
+                if reddit_username:
+                    posts = await reddit_auth.fetch_user_posts(token, reddit_username, limit)
+                    if not posts:
+                        warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Token may be expired."})
+                else:
+                    warnings.append({"platform": plat, "username": username, "reason": "No username stored. Please reconnect this account."})
+
+            elif plat == "pinterest":
+                posts = await pinterest_auth.fetch_pins(token, limit)
+                if not posts:
+                    warnings.append({"platform": plat, "username": username, "reason": "No pins returned. Token may be expired."})
+
+            elif plat == "tiktok":
+                posts = await tiktok_auth.fetch_posts(token, limit)
+                if not posts:
+                    warnings.append({"platform": plat, "username": username, "reason": "No videos returned. Token may be expired."})
+
+            elif plat == "bluesky":
+                handle = account.get("platform_username")
+                if handle:
+                    posts = await bluesky_auth.fetch_posts(token, handle, limit)
+                    if not posts:
+                        warnings.append({"platform": plat, "username": username, "reason": "No posts returned. Session may be expired."})
+                else:
+                    warnings.append({"platform": plat, "username": username, "reason": "No handle stored. Please reconnect this account."})
+
+            elif plat == "snapchat":
+                posts = await snapchat_auth.fetch_posts(token, limit)
+
+            # Attach account metadata to each post
+            for post in posts:
+                post["account_id"] = account.get("id")
+                post["platform"] = plat
+                post["account_username"] = account.get("platform_username", plat)
+                post["account_picture"] = account.get("picture_url")
+
+            all_posts.extend(posts)
+
+        except Exception as e:
+            err_msg = str(e)
+            logging.error(f"[publish/feed] Error fetching from {plat} ({username}): {err_msg}")
+            warnings.append({"platform": plat, "username": username, "reason": f"API error: {err_msg[:120]}"})
+            continue
+
+    # Sort by published_at descending (newest first)
+    def parse_date(p):
+        val = p.get("published_at")
+        if not val:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    all_posts.sort(key=parse_date, reverse=True)
+
+    return {
+        "posts": all_posts,
+        "accounts_fetched": len(accounts),
+        "total": len(all_posts),
+        "warnings": warnings,
+    }
 
 # ==================== PAYMENTS ====================
 
@@ -1610,6 +4232,128 @@ async def agent_create_post(
     
     return {"success": True, "post_id": post_id}
 
+# ==================== PUBLIC API v1 ====================
+# Mirrors the Postiz-compatible public API under /api/public/v1/
+# Authentication: X-API-Key header (same as agent endpoints)
+
+public_router = APIRouter(prefix="/api/public/v1")
+
+class PublicPostCreate(BaseModel):
+    integration_id: str
+    content: str
+    media_urls: Optional[List[str]] = []
+    scheduled_at: Optional[str] = None  # ISO 8601 UTC
+
+@public_router.get("/is-connected")
+async def public_is_connected(current_user: User = Depends(get_api_key_user)):
+    """Verify that your API key is valid and active."""
+    return {"connected": True}
+
+@public_router.get("/integrations")
+async def public_list_integrations(current_user: User = Depends(get_api_key_user)):
+    """List all connected social media channels (integrations)."""
+    accounts = await db.social_accounts.find({"user_id": current_user.user_id}).to_list(100)
+    return [{
+        "id": acc["id"],
+        "name": acc.get("username", ""),
+        "identifier": acc["platform"],
+        "picture": acc.get("profile_picture_url"),
+        "disabled": not acc.get("is_active", True),
+        "profile": acc.get("platform_username", ""),
+    } for acc in accounts]
+
+@public_router.post("/upload")
+async def public_upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_api_key_user)
+):
+    """Upload a media file (multipart/form-data). Returns id and path for use in posts."""
+    url = await _handle_upload(file)
+    media_id = str(uuid.uuid4())
+    return {
+        "id": media_id,
+        "name": file.filename,
+        "path": url,
+    }
+
+@public_router.post("/posts")
+async def public_create_post(
+    body: PublicPostCreate,
+    current_user: User = Depends(get_api_key_user)
+):
+    """Create or schedule a post. Pass scheduled_at (ISO 8601 UTC) to schedule, or omit for immediate queue."""
+    acc = await db.social_accounts.find_one({"id": body.integration_id, "user_id": current_user.user_id})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Integration not found")
+
+    post_id = str(uuid.uuid4())
+
+    scheduled_time = None
+    if body.scheduled_at:
+        try:
+            scheduled_time = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at format. Use ISO 8601 UTC.")
+
+    post_data = {
+        "id": post_id,
+        "user_id": current_user.user_id,
+        "content": body.content,
+        "platforms": [acc["platform"]],
+        "accounts": [body.integration_id],
+        "media_urls": body.media_urls or [],
+        "scheduled_time": scheduled_time,
+        "status": "scheduled" if scheduled_time else "queue",
+        "created_at": datetime.now(timezone.utc),
+        "ai_generated": True,
+    }
+    await db.posts.insert_one(post_data)
+    return {"postId": post_id, "integration": body.integration_id}
+
+@public_router.get("/posts")
+async def public_list_posts(
+    startDate: str,
+    endDate: str,
+    current_user: User = Depends(get_api_key_user)
+):
+    """List posts within a date range. startDate and endDate must be ISO 8601 UTC strings."""
+    try:
+        start = datetime.fromisoformat(startDate.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(endDate.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601 UTC.")
+
+    posts = await db.posts.find({
+        "user_id": current_user.user_id,
+        "created_at": {"$gte": start, "$lte": end},
+    }, {"_id": 0}).to_list(500)
+
+    result = []
+    for p in posts:
+        result.append({
+            "id": p["id"],
+            "content": p.get("content", ""),
+            "publishDate": p["scheduled_time"].isoformat() if p.get("scheduled_time") else p["created_at"].isoformat(),
+            "releaseURL": p.get("release_url"),
+            "state": p.get("status", "QUEUE").upper(),
+            "integration": {
+                "id": p["accounts"][0] if p.get("accounts") else None,
+                "providerIdentifier": p["platforms"][0] if p.get("platforms") else None,
+            },
+        })
+    return {"posts": result}
+
+@public_router.delete("/posts/{post_id}")
+async def public_delete_post(
+    post_id: str,
+    current_user: User = Depends(get_api_key_user)
+):
+    """Delete a post by its ID."""
+    result = await db.posts.delete_one({"id": post_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"id": post_id}
+
 # ==================== NOTIFICATIONS ====================
 
 @api_router.get("/notifications")
@@ -1719,13 +4463,20 @@ async def youtube_callback(request: Request, current_user: User = Depends(get_cu
             "refresh_token": refresh_token,
             "token_expiry": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
             "picture_url": picture_url,
-            "connected_at": datetime.now(timezone.utc).isoformat()
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "is_active": True,
         }
-        
+
         await db.social_accounts.update_one(
             {"user_id": current_user.user_id, "platform": "youtube", "platform_user_id": channel_id},
             {"$set": account},
             upsert=True
+        )
+
+        # Patch any existing YouTube accounts that were saved without is_active
+        await db.social_accounts.update_many(
+            {"user_id": current_user.user_id, "platform": "youtube", "is_active": {"$exists": False}},
+            {"$set": {"is_active": True}}
         )
         
         return {
@@ -1845,7 +4596,7 @@ async def facebook_callback(request: Request, code: Optional[str] = None, state:
             "platform_username": fb_profile.get('name', 'Facebook User'),
             "access_token": long_lived_token,
             "refresh_token": None,
-            "token_expires_at": None,
+            "token_expiry": None,
             "connected_at": datetime.now(timezone.utc).isoformat(),
             "picture_url": fb_picture,
             "is_active": True,
@@ -1874,7 +4625,7 @@ async def facebook_callback(request: Request, code: Optional[str] = None, state:
                 "platform_username": acc['name'],
                 "access_token": acc['access_token'],
                 "refresh_token": None,
-                "token_expires_at": None,
+                "token_expiry": None,
                 "connected_at": datetime.now(timezone.utc).isoformat(),
                 "picture_url": picture_url,
                 "is_active": True,
@@ -1899,7 +4650,7 @@ async def facebook_callback(request: Request, code: Optional[str] = None, state:
                     "platform_username": ig_info.get('username', 'Instagram User'),
                     "access_token": acc['access_token'],
                     "refresh_token": None,
-                    "token_expires_at": None, 
+                    "token_expiry": None, 
                     "connected_at": datetime.now(timezone.utc).isoformat(),
                     "picture_url": ig_info.get('profile_picture_url'),
                     "is_active": True
@@ -1982,7 +4733,7 @@ async def instagram_callback(request: Request, code: Optional[str] = None, state
             "platform_username": username,
             "access_token": long_lived_token,
             "refresh_token": None,
-            "token_expires_at": None,
+            "token_expiry": None,
             "connected_at": datetime.now(timezone.utc).isoformat(),
             "picture_url": picture_url,
             "is_active": True,
@@ -2071,7 +4822,7 @@ async def linkedin_callback(request: Request, code: Optional[str] = None, state:
             "platform_username": user_name,
             "access_token": access_token,
             "refresh_token": token_data.get('refresh_token'),
-            "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600))).isoformat(),
+            "token_expiry": (datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600))).isoformat(),
             "connected_at": datetime.now(timezone.utc).isoformat(),
             "picture_url": picture_url,
             "is_active": True
@@ -2082,21 +4833,700 @@ async def linkedin_callback(request: Request, code: Optional[str] = None, state:
             {"$set": li_account},
             upsert=True
         )
-        
-        logging.info(f"[LinkedIn] Save success for user {user_id_from_state}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=linkedin")
+
+        logging.info(f"[LinkedIn] Personal account saved for user {user_id_from_state}")
+
+        # 4. Auto-save any LinkedIn Pages the user selected during OAuth
+        # LinkedIn shows a native page selector when w_organization_social is requested.
+        # After the user picks their pages there, we auto-save them — no extra modal needed.
+        org_list = []
+        try:
+            org_list = await li_auth.fetch_organizations(access_token)
+            logging.info(f"[LinkedIn] Found {len(org_list)} org page(s) for user {user_id_from_state}")
+        except Exception as org_err:
+            logging.warning(f"[LinkedIn] fetch_organizations error (non-fatal): {org_err}")
+
+        connected_names = [li_account["platform_username"]]
+        for org in org_list:
+            org_account = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id_from_state,
+                "platform": "linkedin",
+                "platform_user_id": org["org_urn"],
+                "platform_username": org["name"],
+                "account_type": "page",
+                "access_token": access_token,
+                "refresh_token": token_data.get("refresh_token"),
+                "token_expiry": (datetime.now(timezone.utc) + timedelta(seconds=token_data.get("expires_in", 3600))).isoformat(),
+                "connected_at": datetime.now(timezone.utc).isoformat(),
+                "picture_url": org.get("logo_url"),
+                "is_active": True,
+            }
+            await db.social_accounts.update_one(
+                {"user_id": user_id_from_state, "platform": "linkedin", "platform_user_id": org["org_urn"]},
+                {"$set": org_account},
+                upsert=True,
+            )
+            connected_names.append(org["name"])
+            logging.info(f"[LinkedIn] Auto-saved page: {org['name']} for user {user_id_from_state}")
+
+        platform_label = ", ".join(connected_names) if len(connected_names) > 1 else "linkedin"
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms={platform_label}")
             
     except Exception as e:
         logging.error(f"[LinkedIn] Callback general error: {e}")
         return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
 
+# ── LinkedIn Pages / Organizations ────────────────────────────────────────────
+
+@api_router.get("/oauth/linkedin/pending-orgs")
+async def linkedin_pending_orgs(current_user: User = Depends(get_current_user)):
+    """Return LinkedIn org list stored during OAuth callback (if any)."""
+    user_doc = await db.users.find_one({"user_id": current_user.user_id}, {"_id": 0})
+    orgs = user_doc.get("pending_linkedin_orgs", []) if user_doc else []
+    return {"orgs": orgs}
+
+
+class LinkedInOrgSave(BaseModel):
+    org_ids: List[str]
+
+
+@api_router.post("/oauth/linkedin/save-orgs")
+async def linkedin_save_orgs(payload: LinkedInOrgSave, current_user: User = Depends(get_current_user)):
+    """Save user-selected LinkedIn organization pages as social_accounts."""
+    user_doc = await db.users.find_one({"user_id": current_user.user_id}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    all_orgs = user_doc.get("pending_linkedin_orgs", [])
+    token = user_doc.get("pending_linkedin_token")
+    selected = [o for o in all_orgs if o["org_id"] in payload.org_ids]
+
+    for org in selected:
+        org_account = {
+            "id": str(uuid.uuid4()),
+            "user_id": current_user.user_id,
+            "platform": "linkedin",
+            "platform_user_id": org["org_urn"],
+            "platform_username": org["name"],
+            "account_type": "page",
+            "access_token": token,
+            "refresh_token": None,
+            "token_expiry": None,
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "picture_url": org.get("logo_url"),
+            "is_active": True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": current_user.user_id, "platform": "linkedin", "platform_user_id": org["org_urn"]},
+            {"$set": org_account},
+            upsert=True,
+        )
+        logging.info(f"[LinkedIn] Saved org page: {org['name']} for user {current_user.user_id}")
+
+    # Clear pending state from user document
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$unset": {"pending_linkedin_orgs": "", "pending_linkedin_token": ""}}
+    )
+    return {"saved": len(selected)}
+
+
+class LinkedInPageManual(BaseModel):
+    page_id: str          # LinkedIn Company Page ID or vanity URL
+    page_name: str        # Display name the user provides
+
+
+@api_router.post("/oauth/linkedin/add-page")
+async def linkedin_add_page_manually(payload: LinkedInPageManual, current_user: User = Depends(get_current_user)):
+    """
+    Manually add a LinkedIn Company Page account.
+    The user provides their page ID/vanity name and we save it using
+    their existing LinkedIn personal account token (w_organization_social scope).
+    """
+    # Find the user's existing LinkedIn personal account for the access token
+    li_personal = await db.social_accounts.find_one(
+        {"user_id": current_user.user_id, "platform": "linkedin", "account_type": {"$ne": "page"}},
+        {"_id": 0}
+    )
+    if not li_personal:
+        raise HTTPException(status_code=400, detail="Connect your LinkedIn personal account first.")
+
+    access_token = li_personal.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="LinkedIn access token missing. Please reconnect.")
+
+    # Normalise page_id: extract numeric ID from URL if user pasted a URL
+    # e.g. https://www.linkedin.com/company/mycompany/ → "mycompany"
+    page_id = payload.page_id.strip().rstrip("/")
+    if "linkedin.com/company/" in page_id:
+        page_id = page_id.split("linkedin.com/company/")[-1].split("/")[0]
+
+    # Build the org URN
+    org_urn = f"urn:li:organization:{page_id}" if page_id.isdigit() else f"urn:li:organizationBrand:{page_id}"
+
+    page_account = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "platform": "linkedin",
+        "platform_user_id": org_urn,
+        "platform_username": payload.page_name or f"LinkedIn Page ({page_id})",
+        "account_type": "page",
+        "access_token": access_token,
+        "refresh_token": None,
+        "token_expiry": None,
+        "connected_at": datetime.now(timezone.utc).isoformat(),
+        "picture_url": None,
+        "is_active": True,
+    }
+    await db.social_accounts.update_one(
+        {"user_id": current_user.user_id, "platform": "linkedin", "platform_user_id": org_urn},
+        {"$set": page_account},
+        upsert=True,
+    )
+    logging.info(f"[LinkedIn] Manually added page {page_id} ({payload.page_name}) for user {current_user.user_id}")
+    return {"success": True, "page_id": page_id, "name": payload.page_name}
+
+
+# ==================== THREADS OAUTH ====================
+
+@api_router.get("/oauth/threads/authorize")
+async def threads_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
+    """Initiate Threads OAuth flow"""
+    th_auth = ThreadsAuth()
+    state = _make_oauth_state(current_user.user_id, returnTo)
+    auth_url = th_auth.get_auth_url(state)
+    logging.info(f"[Threads] Authorize for user {current_user.user_id}")
+    return {"authorization_url": auth_url, "state": state}
+
+@api_router.get("/oauth/threads/callback")
+async def threads_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """Handle Threads OAuth callback"""
+    try:
+        if error or not code:
+            error_msg = error or "No authorization code provided"
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        if not user_id_from_state:
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+
+        th_auth = ThreadsAuth()
+        token_data = await th_auth.exchange_code_for_token(code)
+        short_token = token_data.get("access_token")
+
+        # Exchange for long-lived token
+        long_token_data = await th_auth.get_long_lived_token(short_token)
+        access_token = long_token_data.get("access_token", short_token)
+
+        profile = await th_auth.get_user_profile(access_token)
+        th_account = {
+            "id":               str(uuid.uuid4()),
+            "user_id":          user_id_from_state,
+            "platform":         "threads",
+            "platform_user_id": str(profile.get("id", "")),
+            "username":         profile.get("name") or profile.get("username", "Threads User"),
+            "platform_username": profile.get("username") or profile.get("name", "threads_user"),
+            "access_token":     access_token,
+            "refresh_token":    None,
+            "connected_at":     datetime.now(timezone.utc).isoformat(),
+            "picture_url":      profile.get("threads_profile_picture_url"),
+            "is_active":        True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": user_id_from_state, "platform": "threads", "platform_user_id": th_account["platform_user_id"]},
+            {"$set": th_account},
+            upsert=True,
+        )
+        logging.info(f"[Threads] Connected: {th_account['platform_username']} for user {user_id_from_state}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=threads")
+
+    except Exception as e:
+        logging.error(f"[Threads] Callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
+
+# ==================== REDDIT OAUTH ====================
+
+@api_router.get("/oauth/reddit/authorize")
+async def reddit_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
+    """Initiate Reddit OAuth flow"""
+    rd_auth = RedditAuth()
+    state = _make_oauth_state(current_user.user_id, returnTo)
+    auth_url = rd_auth.get_auth_url(state)
+    logging.info(f"[Reddit] Authorize for user {current_user.user_id}")
+    return {"authorization_url": auth_url, "state": state}
+
+@api_router.get("/oauth/reddit/callback")
+async def reddit_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """Handle Reddit OAuth callback"""
+    try:
+        if error or not code:
+            error_msg = error or "No authorization code provided"
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        if not user_id_from_state:
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+
+        rd_auth = RedditAuth()
+        token_data = await rd_auth.exchange_code_for_token(code)
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+
+        profile = await rd_auth.get_user_profile(access_token)
+        rd_account = {
+            "id":               str(uuid.uuid4()),
+            "user_id":          user_id_from_state,
+            "platform":         "reddit",
+            "platform_user_id": str(profile.get("id", "")),
+            "username":         profile.get("name", "Reddit User"),
+            "platform_username": profile.get("name", "reddit_user"),
+            "access_token":     access_token,
+            "refresh_token":    refresh_token,
+            "connected_at":     datetime.now(timezone.utc).isoformat(),
+            "picture_url":      profile.get("icon_img", "").split("?")[0] or None,
+            "is_active":        True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": user_id_from_state, "platform": "reddit", "platform_user_id": rd_account["platform_user_id"]},
+            {"$set": rd_account},
+            upsert=True,
+        )
+        logging.info(f"[Reddit] Connected: {rd_account['platform_username']} for user {user_id_from_state}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=reddit")
+
+    except Exception as e:
+        logging.error(f"[Reddit] Callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
+
+# ==================== PINTEREST OAUTH ====================
+
+@api_router.get("/oauth/pinterest/authorize")
+async def pinterest_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
+    """Initiate Pinterest OAuth flow"""
+    pt_auth = PinterestAuth()
+    state = _make_oauth_state(current_user.user_id, returnTo)
+    auth_url = pt_auth.get_auth_url(state)
+    logging.info(f"[Pinterest] Authorize for user {current_user.user_id}")
+    return {"authorization_url": auth_url, "state": state}
+
+@api_router.get("/oauth/pinterest/callback")
+async def pinterest_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """Handle Pinterest OAuth callback"""
+    try:
+        if error or not code:
+            error_msg = error or "No authorization code provided"
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        if not user_id_from_state:
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+
+        pt_auth = PinterestAuth()
+        token_data = await pt_auth.exchange_code_for_token(code)
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+
+        profile = await pt_auth.get_user_profile(access_token)
+        pt_account = {
+            "id":               str(uuid.uuid4()),
+            "user_id":          user_id_from_state,
+            "platform":         "pinterest",
+            "platform_user_id": str(profile.get("id", "")),
+            "username":         profile.get("username", "Pinterest User"),
+            "platform_username": profile.get("username", "pinterest_user"),
+            "access_token":     access_token,
+            "refresh_token":    refresh_token,
+            "token_expiry": (datetime.now(timezone.utc) + timedelta(seconds=token_data.get("expires_in", 3600))).isoformat(),
+            "connected_at":     datetime.now(timezone.utc).isoformat(),
+            "picture_url":      profile.get("profile_image"),
+            "is_active":        True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": user_id_from_state, "platform": "pinterest", "platform_user_id": pt_account["platform_user_id"]},
+            {"$set": pt_account},
+            upsert=True,
+        )
+        logging.info(f"[Pinterest] Connected: {pt_account['platform_username']} for user {user_id_from_state}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=pinterest")
+
+    except Exception as e:
+        logging.error(f"[Pinterest] Callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
+
+# ==================== SNAPCHAT OAUTH ====================
+
+@api_router.get("/oauth/snapchat/authorize")
+async def snapchat_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
+    """Initiate Snapchat OAuth flow"""
+    sc_auth = SnapchatAuth()
+    state = _make_oauth_state(current_user.user_id, returnTo)
+    auth_url = sc_auth.get_auth_url(state)
+    logging.info(f"[Snapchat] Authorize for user {current_user.user_id}")
+    return {"authorization_url": auth_url, "state": state}
+
+@api_router.get("/oauth/snapchat/callback")
+async def snapchat_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """Handle Snapchat OAuth callback"""
+    try:
+        if error or not code:
+            error_msg = error or "No authorization code provided"
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        if not user_id_from_state:
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+
+        sc_auth = SnapchatAuth()
+        token_data = await sc_auth.exchange_code_for_token(code)
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+
+        profile = await sc_auth.get_user_profile(access_token)
+        sc_account = {
+            "id":               str(uuid.uuid4()),
+            "user_id":          user_id_from_state,
+            "platform":         "snapchat",
+            "platform_user_id": str(profile.get("id", "")),
+            "username":         profile.get("name", "Snapchat User"),
+            "platform_username": profile.get("username") or profile.get("name", "snapchat_user"),
+            "access_token":     access_token,
+            "refresh_token":    refresh_token,
+            "connected_at":     datetime.now(timezone.utc).isoformat(),
+            "picture_url":      profile.get("picture_url"),
+            "is_active":        True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": user_id_from_state, "platform": "snapchat", "platform_user_id": sc_account["platform_user_id"]},
+            {"$set": sc_account},
+            upsert=True,
+        )
+        logging.info(f"[Snapchat] Connected: {sc_account['platform_username']} for user {user_id_from_state}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=snapchat")
+
+    except Exception as e:
+        logging.error(f"[Snapchat] Callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
+
+# ==================== TIKTOK OAUTH ====================
+
+@api_router.get("/oauth/tiktok/authorize")
+async def tiktok_authorize(returnTo: Optional[str] = "accounts", current_user: User = Depends(get_current_user)):
+    """Initiate TikTok OAuth flow (returns URL + PKCE verifier)"""
+    tt_auth = TikTokAuth()
+    state = _make_oauth_state(current_user.user_id, returnTo)
+    result = tt_auth.get_auth_url(state)
+    # Store PKCE verifier in a short-lived DB record
+    await db.oauth_pkce.update_one(
+        {"user_id": current_user.user_id, "platform": "tiktok"},
+        {"$set": {"verifier": result["verifier"], "created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"authorization_url": result["url"], "state": state}
+
+@api_router.get("/oauth/tiktok/callback")
+async def tiktok_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """Handle TikTok OAuth callback"""
+    try:
+        if error or not code:
+            error_msg = error or "No authorization code"
+            return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={error_msg}")
+
+        user_id_from_state, return_to = _parse_oauth_state(state or "")
+        if not user_id_from_state:
+            return RedirectResponse(url=f"{FRONTEND_URL}/login?error=auth_required")
+
+        pkce_doc = await db.oauth_pkce.find_one({"user_id": user_id_from_state, "platform": "tiktok"})
+        verifier = pkce_doc.get("verifier", "") if pkce_doc else ""
+
+        tt_auth = TikTokAuth()
+        token_data = await tt_auth.exchange_code_for_token(code, verifier)
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        open_id = token_data.get("open_id", "")
+
+        profile = await tt_auth.get_user_profile(access_token)
+        tt_account = {
+            "id":                str(uuid.uuid4()),
+            "user_id":           user_id_from_state,
+            "platform":          "tiktok",
+            "platform_user_id":  open_id or profile.get("id", ""),
+            "username":          profile.get("username", "TikTok User"),
+            "platform_username": profile.get("username", "tiktok_user"),
+            "access_token":      access_token,
+            "refresh_token":     refresh_token,
+            "connected_at":      datetime.now(timezone.utc).isoformat(),
+            "picture_url":       profile.get("picture_url"),
+            "is_active":         True,
+        }
+        await db.social_accounts.update_one(
+            {"user_id": user_id_from_state, "platform": "tiktok", "platform_user_id": tt_account["platform_user_id"]},
+            {"$set": tt_account},
+            upsert=True,
+        )
+        await db.oauth_pkce.delete_one({"user_id": user_id_from_state, "platform": "tiktok"})
+        logging.info(f"[TikTok] Connected: {tt_account['platform_username']} for user {user_id_from_state}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/{return_to}?connected=true&platforms=tiktok")
+
+    except Exception as e:
+        logging.error(f"[TikTok] Callback error: {e}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/accounts?error=oauth_failed&message={str(e)}")
+
+# ==================== BLUESKY AUTH ====================
+
+class BlueskyConnectRequest(BaseModel):
+    handle: str      # e.g. user.bsky.social
+    app_password: str
+
+@api_router.post("/oauth/bluesky/connect")
+async def bluesky_connect(body: BlueskyConnectRequest, current_user: User = Depends(get_current_user)):
+    """Connect a Bluesky account via handle + app password."""
+    bs_auth = BlueskyAuth()
+    try:
+        session = await bs_auth.create_session(body.handle, body.app_password)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    did = session.get("did", "")
+    access_token = session.get("accessJwt", "")
+    refresh_token = session.get("refreshJwt", "")
+
+    profile = await bs_auth.get_user_profile(access_token, did)
+
+    bs_account = {
+        "id":                str(uuid.uuid4()),
+        "user_id":           current_user.user_id,
+        "platform":          "bluesky",
+        "platform_user_id":  did,
+        "username":          profile.get("username", body.handle),
+        "platform_username": profile.get("username", body.handle),
+        "access_token":      access_token,
+        "refresh_token":     refresh_token,
+        "connected_at":      datetime.now(timezone.utc).isoformat(),
+        "picture_url":       profile.get("picture_url"),
+        "is_active":         True,
+    }
+    await db.social_accounts.update_one(
+        {"user_id": current_user.user_id, "platform": "bluesky", "platform_user_id": did},
+        {"$set": bs_account},
+        upsert=True,
+    )
+    logging.info(f"[Bluesky] Connected: {bs_account['platform_username']} for user {current_user.user_id}")
+    bs_account.pop("_id", None)
+    return {"ok": True, "account": bs_account}
+
+# ==================== TEAM MEMBERS ====================
+
+class TeamInviteCreate(BaseModel):
+    email: str
+    role: str = "member"   # owner | admin | member | viewer
+
+@api_router.get("/team/members")
+async def get_team_members(current_user: User = Depends(get_current_user)):
+    members = await db.team_members.find(
+        {"owner_user_id": current_user.user_id}, {"_id": 0}
+    ).sort("invited_at", -1).to_list(100)
+    return members
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+
+@api_router.post("/team/invite", status_code=201)
+async def invite_team_member(body: TeamInviteCreate, current_user: User = Depends(get_current_user)):
+    existing = await db.team_members.find_one(
+        {"owner_user_id": current_user.user_id, "email": body.email.lower(), "status": "pending"}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="A pending invite already exists for this email")
+    now = datetime.now(timezone.utc)
+    invite_token = str(uuid.uuid4())
+    expires_at = now + timedelta(days=7)
+    member = {
+        "id":                   str(uuid.uuid4()),
+        "owner_user_id":        current_user.user_id,
+        "email":                body.email.lower().strip(),
+        "role":                 body.role,
+        "status":               "pending",
+        "invited_at":           now.isoformat(),
+        "accepted_at":          None,
+        "invite_token":         invite_token,
+        "expires_at":           expires_at.isoformat(),
+        "can_approve":          False,
+        "assigned_account_ids": [],
+    }
+    await db.team_members.insert_one(member)
+    member.pop("_id", None)
+    # Send invitation email (non-fatal)
+    email_sent = await send_team_invite_email(
+        invite_email=body.email.lower().strip(),
+        owner_name=current_user.name,
+        role=body.role,
+        invite_token=invite_token,
+        expires_at=expires_at,
+    )
+    return {**member, "email_sent": email_sent}
+
+@api_router.patch("/team/members/{member_id}")
+async def update_team_member(member_id: str, body: dict, current_user: User = Depends(get_current_user)):
+    update = {}
+    if "role" in body:
+        update["role"] = body["role"]
+    if "can_approve" in body:
+        update["can_approve"] = bool(body["can_approve"])
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    result = await db.team_members.update_one(
+        {"id": member_id, "owner_user_id": current_user.user_id},
+        {"$set": update},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"ok": True}
+
+@api_router.delete("/team/members/{member_id}")
+async def remove_team_member(member_id: str, current_user: User = Depends(get_current_user)):
+    await db.team_members.delete_one(
+        {"id": member_id, "owner_user_id": current_user.user_id}
+    )
+    return {"ok": True}
+
+@api_router.get("/team/check-invite")
+async def check_invite_token(token: str):
+    """Public endpoint — returns invite details for the AcceptInvite page (no auth required)."""
+    invite_doc = await db.team_members.find_one({"invite_token": token}, {"_id": 0, "invite_token": 0})
+    if not invite_doc:
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
+    if invite_doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Invite is {invite_doc.get('status', 'invalid')}")
+    # Check expiry
+    expires_at_raw = invite_doc.get("expires_at")
+    if expires_at_raw:
+        expires_at = datetime.fromisoformat(expires_at_raw) if isinstance(expires_at_raw, str) else expires_at_raw
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Invite has expired")
+    # Look up owner name
+    owner_doc = await db.users.find_one({"user_id": invite_doc["owner_user_id"]}, {"name": 1, "email": 1})
+    owner_name = owner_doc.get("name", "Someone") if owner_doc else "Someone"
+    # Check if invitee already has an account
+    existing_user = await db.users.find_one({"email": invite_doc["email"]})
+    return {
+        "email":      invite_doc["email"],
+        "role":       invite_doc["role"],
+        "owner_name": owner_name,
+        "expires_at": expires_at_raw,
+        "user_exists": existing_user is not None,
+    }
+
+@api_router.post("/auth/accept-invite")
+async def accept_invite(body: AcceptInviteRequest, current_user: User = Depends(get_current_user)):
+    """Authenticated — called after login/signup on the AcceptInvite page."""
+    invite_doc = await db.team_members.find_one({"invite_token": body.token})
+    if not invite_doc:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite_doc.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Invite is already {invite_doc.get('status', 'invalid')}")
+    # Enforce email match
+    if invite_doc["email"].lower() != current_user.email.lower():
+        raise HTTPException(status_code=403, detail="This invite was sent to a different email address")
+    # Check expiry
+    expires_at_raw = invite_doc.get("expires_at")
+    if expires_at_raw:
+        expires_at = datetime.fromisoformat(expires_at_raw) if isinstance(expires_at_raw, str) else expires_at_raw
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Invite has expired")
+    now = datetime.now(timezone.utc)
+    await db.team_members.update_one(
+        {"invite_token": body.token},
+        {"$set": {
+            "status":         "accepted",
+            "accepted_at":    now.isoformat(),
+            "member_user_id": current_user.user_id,
+        }}
+    )
+    return {
+        "message":            "Invite accepted",
+        "workspace_owner_id": invite_doc["owner_user_id"],
+        "role":               invite_doc["role"],
+    }
+
+@api_router.patch("/team/members/{member_id}/accounts")
+async def assign_member_accounts(member_id: str, body: dict, current_user: User = Depends(get_current_user)):
+    """Owner assigns which social accounts a team member can access."""
+    account_ids = body.get("account_ids", [])
+    if not isinstance(account_ids, list):
+        raise HTTPException(status_code=400, detail="account_ids must be a list")
+    # Verify all provided account IDs actually belong to the owner
+    if account_ids:
+        owned = await db.social_accounts.find(
+            {"user_id": current_user.user_id, "id": {"$in": account_ids}},
+            {"id": 1}
+        ).to_list(200)
+        owned_ids = {a["id"] for a in owned}
+        invalid = [a for a in account_ids if a not in owned_ids]
+        if invalid:
+            raise HTTPException(status_code=400, detail=f"Some account IDs do not belong to you: {invalid}")
+    result = await db.team_members.update_one(
+        {"id": member_id, "owner_user_id": current_user.user_id},
+        {"$set": {"assigned_account_ids": account_ids}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    return {"ok": True, "assigned_account_ids": account_ids}
+
+@api_router.post("/team/resend-invite/{invite_id}")
+async def resend_team_invite(invite_id: str, current_user: User = Depends(get_current_user)):
+    """Owner resends an existing invite — generates a new token and resets the 7-day expiry."""
+    invite_doc = await db.team_members.find_one({"id": invite_id, "owner_user_id": current_user.user_id})
+    if not invite_doc:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    if invite_doc.get("status") == "accepted":
+        raise HTTPException(status_code=400, detail="Cannot resend an accepted invite")
+    new_token = str(uuid.uuid4())
+    new_expires = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.team_members.update_one(
+        {"id": invite_id},
+        {"$set": {
+            "invite_token": new_token,
+            "expires_at":   new_expires.isoformat(),
+            "status":       "pending",
+            "invited_at":   datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    email_sent = await send_team_invite_email(
+        invite_email=invite_doc["email"],
+        owner_name=current_user.name,
+        role=invite_doc["role"],
+        invite_token=new_token,
+        expires_at=new_expires,
+    )
+    return {"ok": True, "message": "Invite resent", "email_sent": email_sent}
+
 # ==================== SCHEDULED POST PROCESSOR ====================
 
 async def process_scheduled_posts():
-    """Background job to publish scheduled posts"""
+    """Background job to publish scheduled posts and expire overdue pending-review posts."""
     try:
         now = datetime.now(timezone.utc)
-        
+
+        # Mark pending-review posts whose scheduled_time has passed as expired_approval
+        expired_reviews = await db.posts.find({
+            "status": "pending_review",
+            "scheduled_time": {"$lte": now.isoformat(), "$ne": None},
+        }, {"id": 1}).to_list(100)
+        if expired_reviews:
+            expired_ids = [p["id"] for p in expired_reviews]
+            await db.posts.update_many(
+                {"id": {"$in": expired_ids}},
+                {"$set": {"status": "expired_approval"}},
+            )
+            logging.info(f"Marked {len(expired_ids)} posts as expired_approval")
+
         posts = await db.posts.find({
             "status": "scheduled",
             "scheduled_time": {"$lte": now.isoformat()}
@@ -2110,6 +5540,22 @@ async def process_scheduled_posts():
         for post_doc in posts:
             post_id = post_doc['id']
             user_id = post_doc['user_id']
+
+            # Idempotency: skip if already published (guard against double-processing)
+            if post_doc.get("status") == "published":
+                logging.info(f"Post {post_id} already published, skipping (idempotency guard)")
+                continue
+
+            # Atomic claim: set status to "processing" to prevent duplicate execution
+            claim_result = await db.posts.update_one(
+                {"id": post_id, "status": "scheduled"},  # only claim if still scheduled
+                {"$set": {"status": "processing", "processing_started_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            if claim_result.modified_count == 0:
+                # Another worker already claimed this post
+                logging.info(f"Post {post_id} already claimed by another worker, skipping")
+                continue
+
             media_url = post_doc.get('media_urls', [])[0] if post_doc.get('media_urls') else None
             # IMPORTANT: For local files, we need the absolute path for YouTube
             # For FB/IG, we need a public URL. 
@@ -2139,17 +5585,28 @@ async def process_scheduled_posts():
             accounts = post_doc.get('accounts', [])
             has_error = False
             error_details = []
-            
+
+            # Per-platform independent results tracking
+            platform_results = post_doc.get("platform_results") or {}
+            platform_errors = {}
+            platform_successes = {}
+
             for account_id in accounts:
                 # Fetch full account details to get token
                 account = await db.social_accounts.find_one({"id": account_id})
                 if not account:
+                    platform_errors[account_id] = "Account not found"
                     continue
-                    
+
                 platform = account['platform']
                 token = account['access_token']
                 platform_user_id = account['platform_user_id']
-                
+
+                # Skip if this platform already published successfully (idempotency)
+                if platform_results.get(platform, {}).get("status") == "published":
+                    platform_successes[platform] = platform_results[platform]
+                    continue
+
                 try:
                     # Download file locally if it's a remote URL (Firebase) and we need to upload FILE (YouTube/LinkedIn)
                     temp_file_path = None
@@ -2299,26 +5756,64 @@ async def process_scheduled_posts():
                             local_file_path=local_file_path if media_url else None
                         )
 
-                            
+                    # Record per-platform success
+                    platform_successes[platform] = {
+                        "status": "published",
+                        "account_id": account_id,
+                        "published_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    platform_results[platform] = platform_successes[platform]
+
                 except Exception as e:
                     error_msg = str(e)
                     logging.error(f"Failed to publish to {platform}: {error_msg}")
+                    if _sentry_dsn:
+                        with sentry_sdk.push_scope() as scope:
+                            scope.set_tag("platform", platform)
+                            scope.set_tag("post_id", post_id)
+                            scope.set_extra("retry_count", post_doc.get("retry_count", 0))
+                            sentry_sdk.capture_exception(e)
                     has_error = True
                     error_details.append(f"{platform}: {error_msg}")
+                    platform_errors[platform] = error_msg
+                    platform_results[platform] = {
+                        "status": "failed",
+                        "account_id": account_id,
+                        "error": error_msg[:500],
+                        "retry_count": post_doc.get("retry_count", 0) + 1,
+                    }
                     # Continue attempting next account
             
             # Evaluate attempt success and manage retries/notifications
+            # Stage 1.6: per-platform independent execution — partial success counts as published
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if platform_successes and platform_errors:
+                # Partial success — at least one platform published; treat as success
+                logging.warning(
+                    f"Post {post_id}: partial publish. "
+                    f"Success: {list(platform_successes)}, Failed: {list(platform_errors)}"
+                )
+                has_error = False
             if has_error:
                 retry_count = post_doc.get("retry_count", 0) + 1
                 if retry_count >= 3:
                     # Definitive failure after 3 attempts
+                    status_history_entry = {
+                        "status": "failed",
+                        "at": now_iso,
+                        "note": f"Attempt {retry_count}/3 failed: {' | '.join(error_details)[:200]}",
+                    }
                     await db.posts.update_one(
                         {"id": post_id},
-                        {"$set": {
-                            "status": "failed",
-                            "retry_count": retry_count,
-                            "error": " | ".join(error_details)
-                        }}
+                        {
+                            "$set": {
+                                "status": "failed",
+                                "retry_count": retry_count,
+                                "error": " | ".join(error_details),
+                                "platform_results": platform_results,
+                            },
+                            "$push": {"status_history": status_history_entry},
+                        }
                     )
                     # Create Error Notification
                     await db.notifications.insert_one(Notification(
@@ -2328,6 +5823,10 @@ async def process_scheduled_posts():
                         message=f"Post failed after 3 attempts: {' | '.join(error_details)}"
                     ).model_dump())
                     logging.info(f"Post {post_id} definitively failed. Cleaning up.")
+                    # Track permanently failed metric
+                    if PROMETHEUS_AVAILABLE:
+                        for _platform in list(platform_errors.keys()) or post_doc.get("platforms", []):
+                            _posts_failed_total.labels(platform=_platform).inc()
                     # File Cleanup
                     if media_url and "/uploads/" in media_url:
                         from urllib.parse import urlparse
@@ -2335,7 +5834,7 @@ async def process_scheduled_posts():
                         if os.path.exists(local_path):
                             try: os.remove(local_path)
                             except: pass
-                            
+
                     cover_url = post_doc.get("cover_image_url")
                     if cover_url and "/uploads/" in cover_url:
                         from urllib.parse import urlparse
@@ -2346,26 +5845,45 @@ async def process_scheduled_posts():
                 else:
                     # Schedule a retry 5 minutes from now
                     next_attempt = now + timedelta(minutes=5)
+                    status_history_entry = {
+                        "status": "retry_scheduled",
+                        "at": now_iso,
+                        "note": f"Attempt {retry_count}/3 failed: {' | '.join(error_details)[:200]}",
+                    }
                     await db.posts.update_one(
                         {"id": post_id},
-                        {"$set": {
-                            "status": "scheduled",
-                            "retry_count": retry_count,
-                            "scheduled_time": next_attempt.isoformat()
-                        }}
+                        {
+                            "$set": {
+                                "status": "scheduled",
+                                "retry_count": retry_count,
+                                "scheduled_time": next_attempt.isoformat(),
+                                "platform_results": platform_results,
+                            },
+                            "$push": {"status_history": status_history_entry},
+                        }
                     )
                     logging.info(f"Post {post_id} failed attempt {retry_count}. Retrying at {next_attempt.isoformat()}.")
             else:
-                # Definitive Success
+                # Definitive Success (all platforms or partial — at least one published)
+                published_platforms = list(platform_successes.keys()) or post_doc.get("platforms", [])
+                status_history_entry = {
+                    "status": "published",
+                    "at": now_iso,
+                    "note": f"Published to {', '.join(published_platforms)}",
+                }
                 await db.posts.update_one(
                     {"id": post_id},
-                    {"$set": {
-                        "status": "published",
-                        "published_at": now.isoformat()
-                    }}
+                    {
+                        "$set": {
+                            "status": "published",
+                            "published_at": now_iso,
+                            "platform_results": platform_results,
+                        },
+                        "$push": {"status_history": status_history_entry},
+                    }
                 )
                 # Create Success Notification
-                platforms_str = ", ".join([p.capitalize() for p in post_doc.get("platforms", [])])
+                platforms_str = ", ".join([p.capitalize() for p in published_platforms])
                 if not platforms_str:
                     platforms_str = "connected platforms"
                     
@@ -2376,7 +5894,11 @@ async def process_scheduled_posts():
                     message=f"Post successfully published to {platforms_str}."
                 ).model_dump())
                 logging.info(f"Processed post {post_id} successfully.")
-                # File Cleanup 
+                # Track published metric
+                if PROMETHEUS_AVAILABLE:
+                    for _platform in published_platforms:
+                        _posts_published_total.labels(platform=_platform).inc()
+                # File Cleanup
                 if media_url and "/uploads/" in media_url:
                     from urllib.parse import urlparse
                     local_path = os.path.join(ROOT_DIR, urlparse(media_url).path.lstrip("/"))
@@ -2402,6 +5924,20 @@ async def startup_event():
     scheduler.add_job(process_scheduled_posts, 'interval', minutes=1)
     scheduler.start()
     logging.info("Scheduler started")
+    # Team member invite indexes
+    await db.team_members.create_index([("invite_token", 1)], unique=True, sparse=True)
+    await db.team_members.create_index([("owner_user_id", 1), ("status", 1)])
+    await db.team_members.create_index([("email", 1)])
+    # Warn loudly if email sending is not configured
+    if not RESEND_API_KEY:
+        logging.warning("=" * 70)
+        logging.warning("EMAIL DISABLED: RESEND_API_KEY is not set in .env")
+        logging.warning("Team invitations, approval notifications, and @mention")
+        logging.warning("emails will NOT be sent until you add your Resend API key.")
+        logging.warning("Get a free key at https://resend.com and set RESEND_API_KEY in .env")
+        logging.warning("=" * 70)
+    else:
+        logging.info(f"Email configured — sender: {SENDER_EMAIL}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -2415,8 +5951,10 @@ async def shutdown_event():
 UPLOADS_DIR = ROOT_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+@limiter.limit("30/minute")
 @api_router.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...), 
     current_user: User = Depends(get_current_user)
 ):
@@ -2424,77 +5962,186 @@ async def upload_file(
     Upload a media file (image/video) to Firebase Cloud Storage (or fallback to local server)
     Returns the public URL to access the file
     """
+    # ── Backpressure: per-user concurrent upload limit ────────────────────────
+    user_limit = _get_upload_limit(current_user)
+    current_count = _upload_counters.get(current_user.user_id, 0)
+    if current_count >= user_limit:
+        raise api_error(
+            429, StructuredErrorCode.UPLOAD_USER_LIMIT,
+            "Concurrent upload limit reached. Please wait for current uploads to finish.",
+            {"retry_after": 30}
+        )
+
+    # ── Backpressure: global queue depth ──────────────────────────────────────
+    if _get_global_queue_depth() >= GLOBAL_QUEUE_LIMIT:
+        raise api_error(
+            503, StructuredErrorCode.UPLOAD_SYSTEM_BUSY,
+            "System is processing a high volume of uploads. Please try again in 2 minutes.",
+            {"retry_after": 120}
+        )
+
+    _increment_upload_counter(current_user.user_id)
     try:
+        # Read file content first so we can validate before storing
+        content = await file.read()
+
+        # ── Media validation (Stage 2.4) ──────────────────────────────────────
+        try:
+            from app.media_validator import validate_upload as _validate_upload
+            platform_hint = None  # Could be passed as query param in future
+            validation_result = await _validate_upload(file, content, platform=platform_hint)
+        except HTTPException:
+            raise  # Re-raise validation errors directly
+        except Exception as val_err:
+            logging.warning(f"Media validation error (non-blocking): {val_err}")
+            validation_result = {}
+
         # Create unique filename
         file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
         unique_filename = f"{uuid.uuid4()}.{file_ext}"
-        
+
         firebase_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET')
-        
+
         if firebase_bucket:
             from firebase_admin import storage
             bucket = storage.bucket()
             blob = bucket.blob(f"uploads/{unique_filename}")
-            
-            content = await file.read()
+
             blob.upload_from_string(content, content_type=file.content_type)
             blob.make_public()
-            
+
             file_url = blob.public_url
             logging.info(f"Uploaded file to Firebase: {file_url}")
         else:
             # Fallback: Save file to local uploads directory
             file_path = UPLOADS_DIR / unique_filename
             with open(file_path, "wb") as buffer:
-                content = await file.read()
                 buffer.write(content)
-                
+
             # Using a relative path that the frontend can prefix
             file_url = f"/uploads/{unique_filename}"
             logging.info(f"Uploaded file to local disk: {file_url}")
-        
+
         return {
             "success": True,
             "url": file_url,
             "filename": file.filename,
-            "content_type": file.content_type
+            "content_type": file.content_type,
+            "media_type": validation_result.get("media_type", "unknown"),
+            "size_mb": validation_result.get("size_mb", 0),
+            "video_metadata": validation_result.get("video_metadata"),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error uploading file: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload file")
+    finally:
+        _decrement_upload_counter(current_user.user_id)
 
-# Include router
+# Include routers
 app.include_router(api_router)
+app.include_router(public_router)
+
+# ==================== HEALTH CHECKS ====================
+@app.get("/health")
+async def health_check():
+    """Liveness probe — is the process alive?"""
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness probe — are all dependencies connected?"""
+    checks = {}
+    all_ok = True
+
+    # MongoDB check
+    try:
+        await client.admin.command("ping")
+        checks["mongodb"] = "ok"
+    except Exception as e:
+        checks["mongodb"] = f"error: {str(e)}"
+        all_ok = False
+
+    # Redis check (optional — only if Redis is configured)
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        try:
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(redis_url, socket_connect_timeout=2)
+            await r.ping()
+            await r.aclose()
+            checks["redis"] = "ok"
+        except Exception as e:
+            checks["redis"] = f"error: {str(e)}"
+            all_ok = False
+    else:
+        checks["redis"] = "not_configured"
+
+    status_code = 200 if all_ok else 503
+    return JSONResponse(
+        content={"status": "ready" if all_ok else "not_ready", "checks": checks, "timestamp": datetime.now(timezone.utc).isoformat()},
+        status_code=status_code
+    )
+
+from fastapi.responses import Response as _Response
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint for Grafana Cloud scraping."""
+    if not PROMETHEUS_AVAILABLE:
+        return {"error": "prometheus-client not installed"}
+
+    # Update gauge metrics
+    try:
+        scheduled_count = await db.posts.count_documents({"status": "scheduled"})
+        _queue_depth_gauge.set(scheduled_count)
+
+        active_subs = await db.users.count_documents({"subscription_status": "active"})
+        _active_users_gauge.set(active_subs)
+    except Exception:
+        pass
+
+    return _Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 # Add static files serving for uploads
 from fastapi.staticfiles import StaticFiles
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
-origins = [
-    "http://localhost:3000", 
-    "http://localhost:9500",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:9500",
+# CORS already configured above via _cors_origins (Stage 3 — environment-aware).
+# Additional known preview origins merged here to avoid duplicate middleware.
+_extra_origins = [
     "http://localhost:8001",
     "http://127.0.0.1:8001",
-    "https://postflow-25.preview.emergentagent.com"
+    "https://postflow-25.preview.emergentagent.com",
 ]
-
-# Add origins from environment variable
-if os.environ.get("CORS_ORIGINS"):
-    origins.extend(os.environ.get("CORS_ORIGINS").split(","))
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+for _o in _extra_origins:
+    if _o not in _cors_origins:
+        _cors_origins.append(_o)
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+
+# Configure structlog
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.dev.ConsoleRenderer() if os.environ.get("ENV") != "production" else structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+logger = structlog.get_logger(__name__)
 

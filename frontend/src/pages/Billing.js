@@ -125,7 +125,7 @@ const Billing = () => {
             <div className="flex items-center gap-3">
               <span className={`px-3 py-1 rounded-full text-sm font-medium ${user?.subscription_status === 'active'
                 ? 'bg-green-100 text-green-700'
-                : 'bg-slate-100 text-slate-700'
+                : 'bg-white border border-slate-200 text-slate-700'
                 }`}>
                 {user?.subscription_status === 'active' ? 'Active' : 'Free'}
               </span>
@@ -231,7 +231,7 @@ const Billing = () => {
         </div>
 
         {/* Payment Info */}
-        <div className="bg-slate-50 rounded-lg p-6">
+        <div className="bg-white border border-slate-200 rounded-lg p-6">
           <h3 className="text-lg font-semibold text-slate-900 mb-3">Payment Information</h3>
           <div className="space-y-2 text-sm text-slate-600">
             <p>• All payments are secure and encrypted</p>

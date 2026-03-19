@@ -34,7 +34,7 @@ const VerifyEmail = () => {
   }, [searchParams]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-white px-4">
       <div className="max-w-md w-full bg-white p-8 rounded-lg border border-border shadow-sm text-center">
         {status === 'verifying' && (
           <>
