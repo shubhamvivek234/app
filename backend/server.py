@@ -328,7 +328,7 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.JWTError:
+    except (jwt.PyJWTError, Exception):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -1510,13 +1510,17 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
 @app.on_event("startup")
 async def startup_event():
     # MongoDB indexes — critical for scheduler performance at scale
-    await db.posts.create_index([("user_id", 1), ("status", 1), ("scheduled_time", 1)])
-    await db.posts.create_index([("status", 1), ("scheduled_time", 1)])
-    await db.posts.create_index([("user_id", 1), ("created_at", -1)])
-    await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
-    await db.users.create_index([("email", 1)], unique=True)
-    await db.users.create_index([("user_id", 1)], unique=True)
-    logging.info("MongoDB indexes created")
+    try:
+        await db.posts.create_index([("user_id", 1), ("status", 1), ("scheduled_time", 1)])
+        await db.posts.create_index([("status", 1), ("scheduled_time", 1)])
+        await db.posts.create_index([("user_id", 1), ("created_at", -1)])
+        await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
+        await db.users.create_index([("email", 1)], unique=True)
+        await db.users.create_index([("user_id", 1)], unique=True)
+        logging.info("MongoDB indexes created")
+    except Exception as e:
+        # Index may already exist with same or different name — continue startup
+        logging.info(f"MongoDB index creation completed (some may already exist): {str(e)[:100]}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
