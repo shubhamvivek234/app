@@ -35,9 +35,14 @@ import hashlib
 import tempfile
 import re
 import time
+import json as _json
+import asyncio as _asyncio
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Redis URL for SSE pub/sub (20.4)
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -195,6 +200,7 @@ class User(BaseModel):
     subscription_status: str = "free"
     subscription_plan: Optional[str] = None
     subscription_end_date: Optional[datetime] = None
+    is_admin: bool = False  # 20.10: Admin panel access
 
 class Token(BaseModel):
     access_token: str
@@ -467,6 +473,14 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
     user_doc = await _resolve_user_doc(user_id)
     return User(**user_doc)
 
+
+async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """20.10: Dependency that enforces admin-only access."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
+
+
 async def send_verification_email(email: str, verification_token: str):
     """Send email verification link"""
     if not RESEND_API_KEY:
@@ -732,6 +746,22 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
             )
         status = "scheduled"
     
+    # 20.11: Schedule density check — warn if posting too frequently to avoid shadow-banning
+    density_warnings = []
+    if scheduled_time:
+        try:
+            from utils.schedule_density import check_schedule_density
+            import sys as _sys
+            _sys.path.insert(0, str(ROOT_DIR.parent / "utils"))
+            density_warnings = await check_schedule_density(
+                db,
+                workspace_id=current_user.user_id,
+                platforms=post_data.platforms,
+                proposed_time=scheduled_time,
+            )
+        except Exception as _de:
+            logging.warning("Schedule density check failed (non-blocking): %s", _de)
+
     post = Post(
         user_id=current_user.user_id,
         content=post_data.content,
@@ -751,7 +781,17 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
         post_dict['scheduled_time'] = post_dict['scheduled_time'].isoformat()
     
     await db.posts.insert_one(post_dict)
-    return post
+
+    # 20.11: Attach density warnings to response (post still created — warnings only)
+    post_response = post.model_dump()
+    post_response['schedule_warnings'] = [
+        {"platform": w.platform, "message": w.message, "post_count": w.post_count, "recommended_max": w.recommended_max}
+        for w in density_warnings
+    ]
+    if density_warnings:
+        logging.warning("Schedule density warnings for user %s: %s", current_user.user_id,
+                        [w.message for w in density_warnings])
+    return JSONResponse(content=post_response, status_code=201)
 
 # ==================== MEDIA PROCESSING ====================
 
@@ -1562,6 +1602,193 @@ async def update_notification_preferences(
         upsert=True,
     )
     return {"status": "updated", "preferences": preferences}
+
+
+# ==================== SSE REAL-TIME UPDATES (20.4) ====================
+
+from fastapi.responses import StreamingResponse as _StreamingResponse
+
+@api_router.get("/stream/status")
+async def stream_user_status(current_user: User = Depends(get_current_user)):
+    """
+    20.4: Server-Sent Events stream for real-time post status updates.
+    Browser connects once; Celery workers push updates via Redis pub/sub.
+    Channel: user:{user_id}:updates
+    Falls back to 30s client-side polling if SSE is not supported.
+    """
+    channel = f"user:{current_user.user_id}:updates"
+
+    async def event_generator():
+        import redis.asyncio as _aioredis
+        r = _aioredis.from_url(REDIS_URL, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            # Send a connection confirmation heartbeat
+            yield f"data: {_json.dumps({'type': 'connected', 'channel': channel})}\n\n"
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield f"data: {message['data']}\n\n"
+                # Heartbeat every ~30s to keep connection alive through proxies
+                await _asyncio.sleep(0)
+        except _asyncio.CancelledError:
+            pass
+        finally:
+            await pubsub.unsubscribe(channel)
+            await r.aclose()
+
+    return _StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # Disable nginx buffering
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@api_router.get("/stream/post/{post_id}")
+async def stream_post_status(post_id: str, current_user: User = Depends(get_current_user)):
+    """
+    20.4: SSE stream for a single post's status updates.
+    Channel: post:{post_id}:updates
+    """
+    # Verify post belongs to user
+    post_doc = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0, "status": 1})
+    if not post_doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    channel = f"post:{post_id}:updates"
+
+    async def event_generator():
+        import redis.asyncio as _aioredis
+        r = _aioredis.from_url(REDIS_URL, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            yield f"data: {_json.dumps({'type': 'connected', 'post_id': post_id, 'current_status': post_doc.get('status')})}\n\n"
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield f"data: {message['data']}\n\n"
+                await _asyncio.sleep(0)
+        except _asyncio.CancelledError:
+            pass
+        finally:
+            await pubsub.unsubscribe(channel)
+            await r.aclose()
+
+    return _StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+# ==================== ADMIN PANEL (20.10) ====================
+
+@api_router.get("/admin/users")
+async def admin_list_users(
+    page: int = 1,
+    limit: int = 50,
+    email: Optional[str] = None,
+    plan: Optional[str] = None,
+    admin_user: User = Depends(get_admin_user),
+):
+    """20.10: List all users with optional filters. Admin only."""
+    query: Dict[str, Any] = {}
+    if email:
+        query["email"] = {"$regex": email, "$options": "i"}
+    if plan:
+        query["subscription_plan"] = plan
+    skip = (page - 1) * limit
+    users = await db.users.find(query, {"_id": 0, "password": 0}).skip(skip).limit(limit).to_list(limit)
+    total = await db.users.count_documents(query)
+    return {"users": users, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+
+@api_router.get("/admin/users/{user_id}")
+async def admin_get_user(user_id: str, admin_user: User = Depends(get_admin_user)):
+    """20.10: Get full user profile including subscription and post stats. Admin only."""
+    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password": 0})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+    post_counts = {
+        s: await db.posts.count_documents({"user_id": user_id, "status": s})
+        for s in ["scheduled", "published", "failed", "draft"]
+    }
+    social_accounts = await db.social_accounts.find({"user_id": user_id}, {"_id": 0}).to_list(20)
+    return {"user": user_doc, "post_counts": post_counts, "social_accounts": social_accounts}
+
+
+@api_router.patch("/admin/users/{user_id}/subscription")
+async def admin_update_subscription(
+    user_id: str,
+    plan: str,
+    status: str,
+    days: int = 30,
+    admin_user: User = Depends(get_admin_user),
+):
+    """20.10: Manually set a user's subscription plan and status. Admin only."""
+    end_date = datetime.now(timezone.utc) + timedelta(days=days)
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_plan": plan,
+            "subscription_status": status,
+            "subscription_end_date": end_date.isoformat(),
+            "admin_overridden_at": datetime.now(timezone.utc).isoformat(),
+            "admin_overridden_by": admin_user.user_id,
+        }},
+    )
+    return {"status": "updated", "user_id": user_id, "plan": plan, "subscription_status": status}
+
+
+@api_router.get("/admin/posts/{post_id}")
+async def admin_get_post(post_id: str, admin_user: User = Depends(get_admin_user)):
+    """20.10: Inspect any post with full platform_results. Admin only."""
+    post_doc = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if not post_doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return post_doc
+
+
+@api_router.get("/admin/dlq")
+async def admin_list_dlq(
+    page: int = 1,
+    limit: int = 50,
+    admin_user: User = Depends(get_admin_user),
+):
+    """20.10: List posts in dead-letter queue (permanently failed). Admin only."""
+    query = {"status": {"$in": ["failed", "permanently_failed"]}, "dlq_reason": {"$exists": True}}
+    skip = (page - 1) * limit
+    posts = await db.posts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.posts.count_documents(query)
+    return {"posts": posts, "total": total, "page": page}
+
+
+@api_router.post("/admin/dlq/{post_id}/retry")
+async def admin_retry_dlq_post(post_id: str, admin_user: User = Depends(get_admin_user)):
+    """20.10: Re-queue a DLQ post for retry. Admin only."""
+    post_doc = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if not post_doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": "scheduled", "dlq_reason": None, "admin_retry_by": admin_user.user_id,
+                  "admin_retry_at": datetime.now(timezone.utc).isoformat()},
+         "$unset": {"claimed_at": ""}},
+    )
+    return {"status": "requeued", "post_id": post_id}
+
+
+@api_router.get("/admin/queue/stats")
+async def admin_queue_stats(admin_user: User = Depends(get_admin_user)):
+    """20.10: Queue depth and status distribution. Admin only."""
+    statuses = ["scheduled", "processing", "published", "failed", "permanently_failed", "draft", "paused"]
+    counts = {s: await db.posts.count_documents({"status": s}) for s in statuses}
+    dlq_count = await db.posts.count_documents({"dlq_reason": {"$exists": True, "$ne": None}})
+    return {"status_counts": counts, "dlq_count": dlq_count}
 
 
 # ==================== STATS ====================

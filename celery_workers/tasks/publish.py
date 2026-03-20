@@ -449,6 +449,26 @@ async def _update_platform_result(db, post_id: str, platform: str, update: dict)
         {"$set": {f"platform_results.{platform}.{k}": v for k, v in update.items()}}
     )
 
+    # 20.4: Publish SSE update so browser is notified in real-time (non-blocking)
+    try:
+        import json as _json
+        import os as _os
+        from db.redis_client import get_cache_redis
+        r = get_cache_redis()
+        post_doc = await db.posts.find_one({"id": post_id}, {"user_id": 1, "status": 1})
+        if post_doc:
+            payload = _json.dumps({
+                "type": "platform_update",
+                "post_id": post_id,
+                "platform": platform,
+                "update": {k: str(v) for k, v in update.items()},
+            })
+            # Publish to per-post and per-user channels
+            await r.publish(f"post:{post_id}:updates", payload)
+            await r.publish(f"user:{post_doc.get('user_id', '')}:updates", payload)
+    except Exception as _sse_err:
+        logger.debug("SSE publish failed (non-blocking): %s", _sse_err)
+
 
 async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -> None:
     client = await get_client()
