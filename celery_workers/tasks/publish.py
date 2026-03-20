@@ -17,6 +17,8 @@ from celery import group
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_queue_redis, get_cache_redis
+from utils.circuit_breaker import can_attempt, record_success, record_failure
+from utils.feature_flags import is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +225,24 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         logger.info("Platform %s/%s already confirmed in Redis — skipping API call", post_id, platform)
         return {"status": "already_confirmed"}
 
+    # ── Poison pill guard per platform (Section 20.5) ─────────────────────────
+    poison_key = f"delivery_count:{task.request.id}:{platform}"
+    delivery_count = int(await r_cache.incr(poison_key) or 0)
+    await r_cache.expire(poison_key, 86400)
+    if delivery_count > MAX_DELIVERY_COUNT:
+        logger.error("Poison pill per-platform: %s/%s delivered >%d times — DLQ",
+                     post_id, platform, MAX_DELIVERY_COUNT)
+        await _move_to_dlq(post_id, "poison_pill_per_platform", platform=platform)
+        return {"status": "dlq", "reason": "poison_pill_per_platform"}
+
+    # ── Feature flag gate (Section 20.14) ──────────────────────────────────────
+    if platform == "tiktok" and not is_enabled("tiktok_publishing", default=True):
+        logger.info("Feature flag tiktok_publishing is OFF — skipping TikTok for post %s", post_id)
+        await _update_platform_result(db, post_id, platform, {
+            "status": "cancelled", "error": "TikTok publishing disabled via feature flag"
+        })
+        return {"status": "feature_flagged"}
+
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
         return {"status": "post_deleted"}
@@ -250,7 +270,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             err = post.get("pre_upload_error", "Pre-upload failed before publish time")
             logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
             await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
-            await _send_failure_notification(post_id, platform, err)
+            await _send_failure_notification(db, post_id, platform, err)
             return {"status": "failed", "reason": "pre_upload_failed"}
 
         if pre_status not in ("ready", "", None):
@@ -279,7 +299,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
                     logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
                     await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
-                    await _send_failure_notification(post_id, platform, err)
+                    await _send_failure_notification(db, post_id, platform, err)
                     return {"status": "failed", "reason": "pre_upload_failed"}
             else:
                 # 10-minute timeout expired
@@ -290,10 +310,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 )
                 logger.error("17.4B: %s for post %s", msg, post_id)
                 await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
-                await _send_failure_notification(post_id, platform, msg)
+                await _send_failure_notification(db, post_id, platform, msg)
                 return {"status": "failed", "reason": "pre_upload_wait_timeout"}
 
     try:
+        # ── Circuit breaker check (Section 20.1) ───────────────────────────────
+        cb_open = await can_attempt(r_cache, platform)
+        if not cb_open:
+            logger.warning("Circuit OPEN for %s — skipping platform call for post %s", platform, post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "retrying",
+                "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
+                "next_retry_at": datetime.utcnow() + timedelta(minutes=5),
+            })
+            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
+
         adapter = get_adapter(platform)
         result = await adapter.publish(post)
 
@@ -316,6 +347,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         }
         await r_cache.setex(confirm_key, 86400, json.dumps(confirmation_payload))
 
+        # ── Circuit breaker: record success (Section 20.1) ────────────────────
+        await record_success(r_cache, platform)
+
         # Then update MongoDB
         await _update_platform_result(db, post_id, platform, {
             "status": "published",
@@ -325,7 +359,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         })
 
         # Recompute aggregate status
-        updated_post = await db.posts.find_one({"id": post_id}, {"platform_results": 1})
+        updated_post = await db.posts.find_one({"id": post_id}, {"platform_results": 1, "status": 1, "user_id": 1})
+        prev_agg_status = updated_post.get("status") if updated_post else None
         if updated_post:
             agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
             await db.posts.update_one({"id": post_id}, {"$set": {"status": agg_status}})
@@ -337,6 +372,14 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     countdown=300,  # 5-minute delay
                     queue="default",
                 )
+
+            # 18.8: Per-platform success notification
+            user_id = updated_post.get("user_id", "")
+            await _send_success_notification(db, post_id, platform, post_url or "", user_id)
+
+            # 18.8: Partial-recovery notification — fires when last failed platform publishes
+            if agg_status == "published" and prev_agg_status == "partial":
+                await _send_recovery_notification(db, post_id, user_id)
 
         return {"status": "published", "platform": platform}
 
@@ -381,7 +424,10 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 except ImportError:
                     pass
 
-            await _send_failure_notification(post_id, platform, str(exc))
+            # ── Circuit breaker: record failure (Section 20.1) ────────────────
+            await record_failure(r_cache, platform)
+
+            await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
             return {"status": "permanent_failure"}
 
         elif error_class == ErrorClass.RATE_LIMITED:
@@ -402,8 +448,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
             if attempt >= MAX_RETRIES:
                 logger.error("Max retries exceeded for %s/%s — DLQ", post_id, platform)
+                await record_failure(r_cache, platform)  # Section 20.1
                 await _move_to_dlq(post_id, str(exc), platform=platform)
-                await _send_failure_notification(post_id, platform, str(exc))
+                await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "dlq"}
 
             logger.warning("Retry %d for %s/%s in %ds: %s", attempt + 1, post_id, platform, countdown, exc)
@@ -584,31 +631,96 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
     db = client[os.environ["DB_NAME"]]
     update: dict = {"dlq_reason": reason, "status": "failed"}
     if platform:
-        update[f"platform_results.{platform}.status"] = "failed"
-    await db.posts.update_one({"id": post_id}, {"$set": update})
+        update[f"platform_results.{platform}.status"] = "permanently_failed"
+    post = await db.posts.find_one_and_update(
+        {"id": post_id},
+        {"$set": update},
+        return_document=True,
+        projection={"user_id": 1},
+    )
+    # 18.8: DLQ notification — "permanently failed — [Reschedule]"
+    if post and platform:
+        user_id = post.get("user_id", "")
+        try:
+            from celery_workers.tasks.media import send_notification
+            send_notification.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "type": "publish_permanently_failed",
+                    "platform": platform,
+                    "error": (
+                        f"Your post permanently failed on {platform.capitalize()} after "
+                        f"{MAX_RETRIES} attempts — please reschedule or edit the post."
+                    ),
+                    "user_id": user_id,
+                },
+                queue="default",
+            )
+        except Exception as notify_exc:
+            logger.warning("18.8: Failed to send DLQ notification for %s/%s: %s", post_id, platform, notify_exc)
 
 
-async def _send_failure_notification(post_id: str, platform: str, error: str) -> None:
-    # 20.12: Check user notification preferences before sending
-    try:
-        from db.mongo import get_client as _get_client
-        import os as _os
-        from utils.notification_prefs import should_notify
-        _client = await _get_client()
-        _db = _client[_os.environ["DB_NAME"]]
-        post_doc = await _db.posts.find_one({"id": post_id}, {"user_id": 1})
-        user_id = (post_doc or {}).get("user_id", "")
-        if user_id:
-            email_ok = await should_notify(_db, user_id, "post.failed", "email")
-            in_app_ok = await should_notify(_db, user_id, "post.failed", "in_app")
-            if not email_ok and not in_app_ok:
-                logger.debug("20.12: User %s has notifications disabled for post.failed — skipping", user_id)
+async def _send_failure_notification(db, post_id: str, platform: str, error: str, user_id: str = "") -> None:
+    # Section 20.12: check user notification preferences before sending
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.failed", "email"):
+                logger.debug("Notification suppressed for user %s event post.failed", user_id)
                 return
-    except Exception:
-        pass  # Preference check failure must not block notification
-
+        except Exception:
+            pass  # never block notifications on pref lookup failure
     from celery_workers.tasks.media import send_notification
     send_notification.apply_async(
         kwargs={"post_id": post_id, "type": "publish_failed", "platform": platform, "error": error},
         queue="default",
     )
+
+
+# 18.8: Per-platform success notification
+async def _send_success_notification(db, post_id: str, platform: str, post_url: str, user_id: str = "") -> None:
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.published", "email"):
+                logger.debug("Notification suppressed for user %s event post.published", user_id)
+                return
+        except Exception:
+            pass
+    try:
+        from celery_workers.tasks.media import send_notification
+        send_notification.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "type": "publish_success",
+                "platform": platform,
+                "post_url": post_url,
+                "user_id": user_id,
+            },
+            queue="default",
+        )
+    except Exception as exc:
+        logger.warning("18.8: Failed to send success notification for %s/%s: %s", post_id, platform, exc)
+
+
+# 18.8: Partial-recovery notification — all platforms now published
+async def _send_recovery_notification(db, post_id: str, user_id: str = "") -> None:
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.published", "email"):
+                return
+        except Exception:
+            pass
+    try:
+        from celery_workers.tasks.media import send_notification
+        send_notification.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "type": "publish_recovered",
+                "user_id": user_id,
+            },
+            queue="default",
+        )
+    except Exception as exc:
+        logger.warning("18.8: Failed to send recovery notification for %s: %s", post_id, exc)
