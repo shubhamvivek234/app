@@ -258,7 +258,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         })
 
         # Recompute aggregate status
-        updated_post = await db.posts.find_one({"id": post_id}, {"platform_results": 1})
+        updated_post = await db.posts.find_one({"id": post_id}, {"platform_results": 1, "status": 1, "user_id": 1})
+        prev_agg_status = updated_post.get("status") if updated_post else None
         if updated_post:
             agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
             await db.posts.update_one({"id": post_id}, {"$set": {"status": agg_status}})
@@ -270,6 +271,14 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     countdown=300,  # 5-minute delay
                     queue="default",
                 )
+
+            # 18.8: Per-platform success notification
+            user_id = updated_post.get("user_id", "")
+            await _send_success_notification(db, post_id, platform, post_url or "", user_id)
+
+            # 18.8: Partial-recovery notification — fires when last failed platform publishes
+            if agg_status == "published" and prev_agg_status == "partial":
+                await _send_recovery_notification(db, post_id, user_id)
 
         return {"status": "published", "platform": platform}
 
@@ -441,8 +450,33 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
     db = client[os.environ["DB_NAME"]]
     update: dict = {"dlq_reason": reason, "status": "failed"}
     if platform:
-        update[f"platform_results.{platform}.status"] = "failed"
-    await db.posts.update_one({"id": post_id}, {"$set": update})
+        update[f"platform_results.{platform}.status"] = "permanently_failed"
+    post = await db.posts.find_one_and_update(
+        {"id": post_id},
+        {"$set": update},
+        return_document=True,
+        projection={"user_id": 1},
+    )
+    # 18.8: DLQ notification — "permanently failed — [Reschedule]"
+    if post and platform:
+        user_id = post.get("user_id", "")
+        try:
+            from celery_workers.tasks.media import send_notification
+            send_notification.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "type": "publish_permanently_failed",
+                    "platform": platform,
+                    "error": (
+                        f"Your post permanently failed on {platform.capitalize()} after "
+                        f"{MAX_RETRIES} attempts — please reschedule or edit the post."
+                    ),
+                    "user_id": user_id,
+                },
+                queue="default",
+            )
+        except Exception as notify_exc:
+            logger.warning("18.8: Failed to send DLQ notification for %s/%s: %s", post_id, platform, notify_exc)
 
 
 async def _send_failure_notification(db, post_id: str, platform: str, error: str, user_id: str = "") -> None:
@@ -460,3 +494,52 @@ async def _send_failure_notification(db, post_id: str, platform: str, error: str
         kwargs={"post_id": post_id, "type": "publish_failed", "platform": platform, "error": error},
         queue="default",
     )
+
+
+# 18.8: Per-platform success notification
+async def _send_success_notification(db, post_id: str, platform: str, post_url: str, user_id: str = "") -> None:
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.published", "email"):
+                logger.debug("Notification suppressed for user %s event post.published", user_id)
+                return
+        except Exception:
+            pass
+    try:
+        from celery_workers.tasks.media import send_notification
+        send_notification.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "type": "publish_success",
+                "platform": platform,
+                "post_url": post_url,
+                "user_id": user_id,
+            },
+            queue="default",
+        )
+    except Exception as exc:
+        logger.warning("18.8: Failed to send success notification for %s/%s: %s", post_id, platform, exc)
+
+
+# 18.8: Partial-recovery notification — all platforms now published
+async def _send_recovery_notification(db, post_id: str, user_id: str = "") -> None:
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.published", "email"):
+                return
+        except Exception:
+            pass
+    try:
+        from celery_workers.tasks.media import send_notification
+        send_notification.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "type": "publish_recovered",
+                "user_id": user_id,
+            },
+            queue="default",
+        )
+    except Exception as exc:
+        logger.warning("18.8: Failed to send recovery notification for %s: %s", post_id, exc)
