@@ -665,9 +665,9 @@ async def delete_post(post_id: str, current_user: User = Depends(get_current_use
 
 @api_router.get("/posts/failed")
 async def get_failed_posts(current_user: User = Depends(get_current_user)):
-    """Get posts that permanently failed to publish (Dead Letter Queue)"""
+    """Get posts with any failed platforms (DLQ view) — includes 'failed' and 'partial' status"""
     posts = await db.posts.find(
-        {"user_id": current_user.user_id, "status": "failed"},
+        {"user_id": current_user.user_id, "status": {"$in": ["failed", "partial"]}},
         {"_id": 0}
     ).sort("updated_at", -1).to_list(100)
 
@@ -682,29 +682,65 @@ async def get_failed_posts(current_user: User = Depends(get_current_user)):
     return posts
 
 @api_router.post("/posts/{post_id}/retry")
-async def retry_failed_post(post_id: str, current_user: User = Depends(get_current_user)):
-    """Retry a failed post by putting it back in the scheduled queue"""
+async def retry_failed_post(post_id: str, current_user: User = Depends(get_current_user), platform: Optional[str] = None):
+    """
+    Retry failed platforms for a post.
+    - If `platform` param given: retry only that platform
+    - If no param: retry ALL permanently_failed platforms
+    Succeeded platforms are NEVER retried (no duplicates).
+    """
     post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    if post.get('status') != 'failed':
-        raise HTTPException(status_code=400, detail="Only failed posts can be retried")
+    if post.get('status') not in ('failed', 'partial'):
+        raise HTTPException(status_code=400, detail="Only failed/partial posts can be retried")
 
-    # Reset retry count and move back to scheduled (for next minute's job)
+    platform_results = post.get('platform_results', {})
+    retried_platforms = []
+
+    if platform:
+        # Retry single platform
+        pr = platform_results.get(platform)
+        if not pr:
+            raise HTTPException(status_code=400, detail=f"Platform '{platform}' not found on this post")
+        if pr.get('status') != 'permanently_failed':
+            raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not in failed state (current: {pr.get('status')})")
+        pr['status'] = 'pending'
+        pr['retries'] = 0
+        pr['error'] = None
+        platform_results[platform] = pr
+        retried_platforms.append(platform)
+    else:
+        # Retry ALL permanently failed platforms
+        for p, pr in platform_results.items():
+            if pr.get('status') == 'permanently_failed':
+                pr['status'] = 'pending'
+                pr['retries'] = 0
+                pr['error'] = None
+                platform_results[p] = pr
+                retried_platforms.append(p)
+
+    if not retried_platforms:
+        raise HTTPException(status_code=400, detail="No failed platforms to retry")
+
     now = datetime.now(timezone.utc)
-    retry_time = now + timedelta(minutes=2)
+    retry_time = now + timedelta(minutes=1)
 
     await db.posts.update_one(
         {"id": post_id},
         {"$set": {
-            "status": "scheduled",
+            "status": "publishing",
             "scheduled_time": retry_time.isoformat(),
-            "retry_count": 0,
+            "platform_results": platform_results,
             "failure_reason": None,
             "updated_at": now.isoformat()
         }}
     )
-    return {"message": "Post queued for retry", "scheduled_time": retry_time.isoformat()}
+    return {
+        "message": f"Retrying {len(retried_platforms)} platform(s): {', '.join(retried_platforms)}",
+        "retried_platforms": retried_platforms,
+        "scheduled_time": retry_time.isoformat()
+    }
 
 # ==================== AI CONTENT GENERATION ====================
 
@@ -1028,7 +1064,7 @@ async def get_stats(current_user: User = Depends(get_current_user)):
     scheduled_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "scheduled"})
     published_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "published"})
     connected_accounts = await db.social_accounts.count_documents({"user_id": current_user.user_id, "is_active": True})
-    failed_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "failed"})
+    failed_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": {"$in": ["failed", "partial"]}})
 
     return {
         "total_posts": total_posts,
@@ -1050,80 +1086,268 @@ async def get_privacy():
 
 # ==================== SCHEDULED POST PROCESSOR ====================
 
+async def publish_to_platform(platform: str, account: dict, post_doc: dict, trace_id: str) -> dict:
+    """
+    Publish content to a single platform using the real social adapters.
+    Returns: {"status": "success", "platform_post_id": "..."} or {"status": "failed", "error": "..."}
+    """
+    access_token = account.get('access_token', '')
+    content = post_doc.get('content', '')
+    media_urls = post_doc.get('media_urls', [])
+    video_url = post_doc.get('video_url')
+    media_url = media_urls[0] if media_urls else video_url
+
+    try:
+        if platform == 'twitter':
+            from app.social.twitter import TwitterAuth
+            twitter = TwitterAuth()
+            result = await twitter.publish_tweet(access_token, content)
+            return {"status": "success", "platform_post_id": result.get('id', '')}
+
+        elif platform == 'instagram':
+            from app.social.instagram import InstagramAuth
+            ig = InstagramAuth()
+            ig_user_id = account.get('platform_user_id', '')
+            media_type = "VIDEO" if video_url else "IMAGE"
+            pub_url = media_url or ''
+            result = await ig.publish_to_instagram(access_token, ig_user_id, pub_url, content, media_type)
+            return {"status": "success", "platform_post_id": str(result)}
+
+        elif platform == 'facebook':
+            from app.social.facebook import FacebookAuth
+            fb = FacebookAuth()
+            page_id = account.get('platform_user_id', '')
+            page_token = account.get('page_access_token', access_token)
+            if media_url:
+                result = await fb.publish_to_facebook(page_token, page_id, media_url, content)
+            else:
+                # Text-only post via Graph API
+                async with httpx.AsyncClient() as http_client:
+                    resp = await http_client.post(
+                        f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                        data={"message": content, "access_token": page_token}
+                    )
+                    resp.raise_for_status()
+                    result = resp.json().get('id', '')
+            return {"status": "success", "platform_post_id": str(result)}
+
+        elif platform == 'linkedin':
+            from app.social.linkedin import LinkedInAuth
+            li = LinkedInAuth()
+            person_urn = account.get('platform_user_id', '')
+            result = await li.publish_post(access_token, person_urn, content, media_urls)
+            return {"status": "success", "platform_post_id": str(result)}
+
+        elif platform == 'youtube':
+            from app.social.google import GoogleAuth
+            yt = GoogleAuth()
+            if video_url:
+                title = post_doc.get('video_title', 'Untitled')
+                cover_image = post_doc.get('cover_image_url')
+                result = await yt.upload_video(access_token, video_url, title, content, cover_image_path=cover_image)
+                return {"status": "success", "platform_post_id": str(result)}
+            else:
+                return {"status": "failed", "error": "YouTube requires a video file"}
+
+        elif platform == 'tiktok':
+            # TikTok API publish — placeholder until credentials configured
+            return {"status": "failed", "error": "TikTok publishing not yet configured"}
+
+        elif platform == 'bluesky':
+            return {"status": "failed", "error": "Bluesky publishing not yet configured"}
+
+        elif platform == 'threads':
+            return {"status": "failed", "error": "Threads publishing not yet configured"}
+
+        else:
+            return {"status": "failed", "error": f"Unknown platform: {platform}"}
+
+    except Exception as e:
+        logging.error(f"[{trace_id}] Platform {platform} publish error: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
 async def process_scheduled_posts():
-    """Background job: publish scheduled posts with retry and DLQ"""
+    """
+    Background job: per-platform publish with independent retry.
+
+    Each post tracks per-platform state in `platform_results`:
+      {
+        "instagram": {"status": "success", "platform_post_id": "123"},
+        "twitter":   {"status": "failed", "error": "rate limit", "retries": 2},
+        "linkedin":  {"status": "pending"}
+      }
+
+    - Only platforms with status "pending" or "failed" (retries < MAX) get attempted
+    - Successfully published platforms are NEVER retried (no duplicates)
+    - Post status:
+        "publishing" = at least one platform still pending
+        "published"  = all platforms succeeded or permanently failed, at least one succeeded
+        "partial"    = some succeeded, some permanently failed
+        "failed"     = ALL platforms permanently failed (DLQ)
+    """
     MAX_RETRIES = 3
     try:
         now = datetime.now(timezone.utc)
 
+        # Find posts that are ready to publish (scheduled or still publishing)
         posts = await db.posts.find({
-            "status": "scheduled",
+            "status": {"$in": ["scheduled", "publishing"]},
             "scheduled_time": {"$lte": now.isoformat()}
         }).to_list(100)
 
         for post_doc in posts:
             post_id = post_doc['id']
-            retry_count = post_doc.get('retry_count', 0)
-            trace_id = post_doc.get('trace_id', str(uuid.uuid4())[:8])
+            user_id = post_doc['user_id']
+            trace_id = post_doc.get('trace_id') or str(uuid.uuid4())[:8]
+            platforms = post_doc.get('platforms', [])
+            platform_results = post_doc.get('platform_results', {})
 
-            try:
-                # Simulate publish attempt — real platform calls would go here
-                # For now mark as published (actual platform integration uses social adapters)
-                await db.posts.update_one(
-                    {"id": post_id},
-                    {"$set": {
-                        "status": "published",
-                        "published_at": now.isoformat(),
-                        "updated_at": now.isoformat(),
-                        "trace_id": trace_id
-                    }}
-                )
-                logging.info(f"[{trace_id}] Published post {post_id}")
+            # Initialize platform_results for any new platforms
+            for p in platforms:
+                if p not in platform_results:
+                    platform_results[p] = {"status": "pending", "retries": 0}
 
-            except Exception as publish_error:
-                logging.error(f"[{trace_id}] Failed to publish post {post_id} (attempt {retry_count + 1}): {publish_error}")
+            # Get all connected accounts for this user (needed for tokens)
+            user_accounts = await db.social_accounts.find(
+                {"user_id": user_id, "is_active": True},
+                {"_id": 0}
+            ).to_list(100)
+            accounts_by_platform = {}
+            for acc in user_accounts:
+                accounts_by_platform[acc['platform']] = acc
 
-                if retry_count + 1 >= MAX_RETRIES:
-                    # Move to DLQ
-                    await db.posts.update_one(
-                        {"id": post_id},
-                        {"$set": {
-                            "status": "failed",
-                            "updated_at": now.isoformat(),
-                            "failure_reason": str(publish_error),
-                            "trace_id": trace_id
-                        }}
-                    )
-                    logging.error(f"[{trace_id}] Post {post_id} moved to DLQ after {MAX_RETRIES} attempts")
+            # Attempt each platform independently
+            for platform in platforms:
+                pr = platform_results.get(platform, {"status": "pending", "retries": 0})
 
-                    # Send failure notification email
-                    user_doc = await db.users.find_one({"user_id": post_doc['user_id']}, {"_id": 0, "email": 1, "name": 1})
-                    if user_doc and RESEND_API_KEY:
-                        await send_dlq_notification(user_doc, post_doc, publish_error, trace_id)
+                # Skip already succeeded or permanently failed
+                if pr["status"] == "success":
+                    continue
+                if pr["status"] == "permanently_failed":
+                    continue
+                # Skip if retries exhausted but not yet marked permanent
+                if pr.get("retries", 0) >= MAX_RETRIES:
+                    pr["status"] = "permanently_failed"
+                    platform_results[platform] = pr
+                    continue
+
+                account = accounts_by_platform.get(platform)
+                if not account:
+                    pr["status"] = "permanently_failed"
+                    pr["error"] = f"No connected {platform} account found"
+                    platform_results[platform] = pr
+                    logging.warning(f"[{trace_id}] No {platform} account for post {post_id}")
+                    continue
+
+                # Attempt publish
+                logging.info(f"[{trace_id}] Publishing post {post_id} to {platform} (attempt {pr.get('retries', 0) + 1}/{MAX_RETRIES})")
+                result = await publish_to_platform(platform, account, post_doc, trace_id)
+
+                if result["status"] == "success":
+                    pr["status"] = "success"
+                    pr["platform_post_id"] = result.get("platform_post_id", "")
+                    pr["published_at"] = now.isoformat()
+                    logging.info(f"[{trace_id}] ✓ {platform} succeeded for post {post_id}")
                 else:
-                    # Increment retry count, keep scheduled
-                    await db.posts.update_one(
-                        {"id": post_id},
-                        {"$set": {
-                            "retry_count": retry_count + 1,
-                            "updated_at": now.isoformat(),
-                            "last_error": str(publish_error),
-                            "trace_id": trace_id
-                        }}
-                    )
+                    pr["retries"] = pr.get("retries", 0) + 1
+                    pr["error"] = result.get("error", "Unknown error")
+                    pr["last_attempt"] = now.isoformat()
+
+                    if pr["retries"] >= MAX_RETRIES:
+                        pr["status"] = "permanently_failed"
+                        logging.error(f"[{trace_id}] ✗ {platform} permanently failed for post {post_id} after {MAX_RETRIES} attempts: {pr['error']}")
+                    else:
+                        pr["status"] = "failed"
+                        logging.warning(f"[{trace_id}] ✗ {platform} failed for post {post_id} (attempt {pr['retries']}): {pr['error']}")
+
+                platform_results[platform] = pr
+
+            # Determine overall post status
+            statuses = [pr["status"] for pr in platform_results.values()]
+            all_success = all(s == "success" for s in statuses)
+            all_terminal = all(s in ("success", "permanently_failed") for s in statuses)
+            any_success = any(s == "success" for s in statuses)
+            any_still_retrying = any(s == "failed" for s in statuses)
+
+            if all_success:
+                post_status = "published"
+            elif all_terminal and any_success:
+                post_status = "partial"
+            elif all_terminal and not any_success:
+                post_status = "failed"  # ALL platforms permanently failed → DLQ
+            elif any_still_retrying:
+                post_status = "publishing"  # Some still have retries left
+            else:
+                post_status = "publishing"
+
+            update_fields = {
+                "platform_results": platform_results,
+                "status": post_status,
+                "updated_at": now.isoformat(),
+                "trace_id": trace_id
+            }
+            if post_status == "published":
+                update_fields["published_at"] = now.isoformat()
+
+            # Build failure_reason from permanently failed platforms only
+            failed_platforms = {
+                p: pr["error"]
+                for p, pr in platform_results.items()
+                if pr["status"] == "permanently_failed"
+            }
+            if failed_platforms:
+                update_fields["failure_reason"] = "; ".join(
+                    f"{p}: {err}" for p, err in failed_platforms.items()
+                )
+
+            await db.posts.update_one({"id": post_id}, {"$set": update_fields})
+
+            # Send notification ONLY for platforms that just permanently failed
+            if post_status in ("failed", "partial") and all_terminal:
+                user_doc = await db.users.find_one(
+                    {"user_id": user_id},
+                    {"_id": 0, "email": 1, "name": 1}
+                )
+                if user_doc and RESEND_API_KEY:
+                    await send_dlq_notification(user_doc, post_doc, failed_platforms, trace_id, platform_results)
+
     except Exception as e:
         logging.error(f"Scheduled post processing error: {e}")
 
 
-async def send_dlq_notification(user_doc: dict, post_doc: dict, error: Exception, trace_id: str):
-    """Send email when a post permanently fails to publish"""
+async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms: dict, trace_id: str, platform_results: dict):
+    """
+    Send email showing per-platform results.
+    Only reports on platforms that permanently failed, and shows which succeeded.
+    """
     if not RESEND_API_KEY:
         return
 
     email = user_doc.get('email')
     name = user_doc.get('name', 'there')
-    platforms = ', '.join(post_doc.get('platforms', []))
     content_preview = (post_doc.get('content', '') or '')[:100]
+
+    # Build per-platform status rows
+    platform_rows = ""
+    for platform, pr in platform_results.items():
+        if pr["status"] == "success":
+            platform_rows += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{platform.title()}</td><td style="padding:8px;border-bottom:1px solid #eee;color:#16A34A;">✓ Published</td></tr>'
+        elif pr["status"] == "permanently_failed":
+            err = pr.get("error", "Unknown error")[:120]
+            platform_rows += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{platform.title()}</td><td style="padding:8px;border-bottom:1px solid #eee;color:#DC2626;">✗ Failed after 3 attempts: {err}</td></tr>'
+        else:
+            platform_rows += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{platform.title()}</td><td style="padding:8px;border-bottom:1px solid #eee;color:#D97706;">⟳ Retrying ({pr.get("retries", 0)}/3)</td></tr>'
+
+    failed_count = len(failed_platforms)
+    total_count = len(platform_results)
+    succeeded_count = sum(1 for pr in platform_results.values() if pr["status"] == "success")
+
+    subject_line = (
+        f"Post failed on {failed_count} platform{'s' if failed_count > 1 else ''} - SocialEntangler"
+        if succeeded_count > 0
+        else "Post failed to publish - SocialEntangler"
+    )
 
     html_content = f"""
     <!DOCTYPE html>
@@ -1133,23 +1357,31 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, error: Exception
             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
             .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
             .alert {{ background: #FEF2F2; border-left: 4px solid #EF4444; padding: 16px; border-radius: 4px; margin: 16px 0; }}
+            .success {{ background: #F0FDF4; border-left: 4px solid #16A34A; padding: 16px; border-radius: 4px; margin: 16px 0; }}
             .code {{ background: #F3F4F6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }}
-            .button {{ display: inline-block; padding: 12px 24px; background: #6366F1; color: white; text-decoration: none; border-radius: 6px; }}
+            table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>Post Failed to Publish</h2>
+            <h2>Publishing Report</h2>
             <p>Hi {name},</p>
-            <p>We tried to publish your post 3 times but it failed. Here are the details:</p>
+            <p>Your post was published to <strong>{succeeded_count}/{total_count}</strong> platforms.
+               {f'{failed_count} platform{"s" if failed_count > 1 else ""} failed after 3 retry attempts.' if failed_count else ''}</p>
+
             <div class="alert">
-                <p><strong>Platforms:</strong> {platforms}</p>
                 <p><strong>Content:</strong> {content_preview}{'...' if len(post_doc.get('content', '')) > 100 else ''}</p>
-                <p><strong>Error:</strong> {str(error)[:200]}</p>
                 <p><strong>Trace ID:</strong> <span class="code">{trace_id}</span></p>
             </div>
-            <p>You can view and retry failed posts from your <a href="{FRONTEND_URL}/content">Content Library</a>.</p>
-            <p>If this keeps happening, please contact support with the Trace ID above.</p>
+
+            <h3>Platform Results</h3>
+            <table>
+                <thead><tr><th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Platform</th><th style="text-align:left;padding:8px;border-bottom:2px solid #ddd;">Status</th></tr></thead>
+                <tbody>{platform_rows}</tbody>
+            </table>
+
+            <p>You can retry failed platforms from your <a href="{FRONTEND_URL}/content">Content Library</a>.</p>
+            <p style="color:#888;font-size:12px;">If this keeps happening, contact support with Trace ID: <span class="code">{trace_id}</span></p>
         </div>
     </body>
     </html>
@@ -1159,7 +1391,7 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, error: Exception
         params = {
             "from": SENDER_EMAIL,
             "to": [email],
-            "subject": "Post failed to publish - SocialEntangler",
+            "subject": subject_line,
             "html": html_content
         }
         await asyncio.to_thread(resend.Emails.send, params)

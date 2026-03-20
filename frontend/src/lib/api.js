@@ -136,8 +136,11 @@ export const getFailedPosts = async () => {
   return response.data;
 };
 
-export const retryFailedPost = async (postId) => {
-  const response = await axios.post(`${API}/posts/${postId}/retry`, {}, {
+export const retryFailedPost = async (postId, platform = null) => {
+  const url = platform
+    ? `${API}/posts/${postId}/retry?platform=${platform}`
+    : `${API}/posts/${postId}/retry`;
+  const response = await axios.post(url, {}, {
     headers: getAuthHeaders(),
   });
   return response.data;
