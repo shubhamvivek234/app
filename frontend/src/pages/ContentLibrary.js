@@ -1,13 +1,90 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote } from '@/lib/api';
+import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote, retryFailedPost } from '@/lib/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
-import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes } from 'react-icons/fa';
+import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
+import { SiBluesky, SiThreads } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
+
+// 18.7 — Per-platform status colours and icons
+const PLATFORM_ICON_MAP = {
+  youtube: <FaYoutube className="text-red-500" />,
+  instagram: <FaInstagram className="text-pink-500" />,
+  facebook: <FaFacebook className="text-blue-600" />,
+  tiktok: <FaTiktok className="text-gray-900" />,
+  twitter: <FaXTwitter className="text-gray-900" />,
+  linkedin: <FaLinkedin className="text-blue-700" />,
+  bluesky: <SiBluesky className="text-blue-500" />,
+  threads: <SiThreads className="text-gray-900" />,
+};
+
+const PLATFORM_STATUS_STYLE = {
+  published:          'text-emerald-700 bg-emerald-50',
+  failed:             'text-red-600 bg-red-50',
+  permanently_failed: 'text-red-700 bg-red-100',
+  retrying:           'text-amber-700 bg-amber-50',
+  processing:         'text-blue-600 bg-blue-50',
+  queued:             'text-indigo-600 bg-indigo-50',
+  pending:            'text-gray-500 bg-gray-50',
+  paused:             'text-gray-500 bg-gray-50',
+};
+
+// 18.7 — Per-platform status row component
+const PlatformStatusRows = ({ post, onRetry }) => {
+  const results = post.platform_results || {};
+  const platforms = Object.keys(results);
+  if (!platforms.length) return null;
+
+  return (
+    <div className="border-t border-slate-100 px-4 py-2 space-y-1.5">
+      {platforms.map((platform) => {
+        const r = results[platform] || {};
+        const statusStyle = PLATFORM_STATUS_STYLE[r.status] || 'text-gray-500 bg-gray-50';
+        const canRetry = r.status === 'permanently_failed' || r.status === 'failed';
+        const isPublished = r.status === 'published';
+
+        return (
+          <div key={platform} className="flex items-center gap-2 text-[11px]">
+            <span className="flex items-center gap-1 w-20 flex-shrink-0 capitalize font-medium text-gray-700">
+              {PLATFORM_ICON_MAP[platform] || null}
+              {platform}
+            </span>
+            <span className={`px-2 py-0.5 rounded-full font-semibold capitalize ${statusStyle}`}>
+              {r.status || 'pending'}
+            </span>
+            {r.error && !isPublished && (
+              <span className="text-gray-400 truncate max-w-[140px]" title={r.error}>
+                — {r.error}
+              </span>
+            )}
+            {isPublished && r.post_url && (
+              <a
+                href={r.post_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium"
+              >
+                <FaExternalLinkAlt className="text-[9px]" /> View Post
+              </a>
+            )}
+            {canRetry && (
+              <button
+                onClick={() => onRetry(post.id, platform)}
+                className="ml-auto flex items-center gap-1 text-amber-600 hover:text-amber-800 font-medium"
+              >
+                <FaRedo className="text-[9px]" /> Retry
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const platformIcons = {
   youtube: <FaYoutube className="text-red-500" />,
@@ -108,6 +185,26 @@ const ContentLibrary = () => {
       );
     } catch {
       toast.error('Failed to delete note');
+    }
+  };
+
+  // 18.10 — Retry only the failed platform, reset its retry_count to 0
+  const handleRetryPlatform = async (postId, platform) => {
+    try {
+      await retryFailedPost(postId, platform);
+      setPosts((prev) =>
+        prev.map((p) => {
+          if (p.id !== postId) return p;
+          const updatedResults = {
+            ...(p.platform_results || {}),
+            [platform]: { ...(p.platform_results?.[platform] || {}), status: 'pending', error: null },
+          };
+          return { ...p, platform_results: updatedResults, status: 'publishing' };
+        })
+      );
+      toast.success(`Retrying ${platform}…`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || `Failed to retry ${platform}`);
     }
   };
 
@@ -400,6 +497,12 @@ const ContentLibrary = () => {
                       {post.status}
                     </div>
                   </div>
+
+                  {/* 18.7 — Per-platform status rows (published/partial/failed posts) */}
+                  {['published', 'partial', 'failed', 'processing', 'publishing'].includes(post.status) &&
+                    post.platform_results && Object.keys(post.platform_results).length > 0 && (
+                    <PlatformStatusRows post={post} onRetry={handleRetryPlatform} />
+                  )}
 
                   {/* 17.6 — Pre-upload timeline (only for scheduled/queued video posts) */}
                   {['scheduled', 'queued', 'published'].includes(post.status) && (
