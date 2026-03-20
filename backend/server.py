@@ -1,12 +1,15 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header, Cookie, UploadFile, File, Form
 from fastapi.security import HTTPBearer
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
+import hmac
+import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
@@ -17,7 +20,6 @@ from passlib.context import CryptContext
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
 import razorpay
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import resend
 import httpx
 from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment
@@ -27,6 +29,7 @@ import shutil
 import subprocess
 import hashlib
 import tempfile
+import redis.asyncio as aioredis
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -74,8 +77,19 @@ if paypal_client_id and paypal_secret:
     environment = SandboxEnvironment(client_id=paypal_client_id, client_secret=paypal_secret)
     paypal_client = PayPalHttpClient(environment)
 
-# APScheduler for scheduled posts
-scheduler = AsyncIOScheduler()
+# Redis async client (lazy-initialised)
+_redis_client: Optional[aioredis.Redis] = None
+
+
+async def get_redis() -> aioredis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = aioredis.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+    return _redis_client
+
 
 # ==================== RATE LIMITER (in-memory token bucket) ====================
 # Key: "{platform}:{user_id}" → {"tokens": N, "reset_at": float_timestamp}
@@ -798,53 +812,6 @@ async def get_posts(current_user: User = Depends(get_current_user), status: Opti
     
     return posts
 
-@api_router.get("/posts/{post_id}", response_model=Post)
-async def get_post(post_id: str, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    if isinstance(post.get('created_at'), str):
-        post['created_at'] = datetime.fromisoformat(post['created_at'])
-    if post.get('scheduled_time') and isinstance(post['scheduled_time'], str):
-        post['scheduled_time'] = datetime.fromisoformat(post['scheduled_time'])
-    if post.get('published_at') and isinstance(post['published_at'], str):
-        post['published_at'] = datetime.fromisoformat(post['published_at'])
-    
-    return Post(**post)
-
-@api_router.patch("/posts/{post_id}", response_model=Post)
-async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    update_dict = {k: v for k, v in post_data.model_dump(exclude_unset=True).items() if v is not None}
-    
-    if 'scheduled_time' in update_dict and update_dict['scheduled_time']:
-        update_dict['scheduled_time'] = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00')).isoformat()
-    
-    if update_dict:
-        await db.posts.update_one({"id": post_id}, {"$set": update_dict})
-    
-    updated_post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-    
-    if isinstance(updated_post.get('created_at'), str):
-        updated_post['created_at'] = datetime.fromisoformat(updated_post['created_at'])
-    if updated_post.get('scheduled_time') and isinstance(updated_post['scheduled_time'], str):
-        updated_post['scheduled_time'] = datetime.fromisoformat(updated_post['scheduled_time'])
-    if updated_post.get('published_at') and isinstance(updated_post['published_at'], str):
-        updated_post['published_at'] = datetime.fromisoformat(updated_post['published_at'])
-    
-    return Post(**updated_post)
-
-@api_router.delete("/posts/{post_id}")
-async def delete_post(post_id: str, current_user: User = Depends(get_current_user)):
-    result = await db.posts.delete_one({"id": post_id, "user_id": current_user.user_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return {"message": "Post deleted"}
-
 @api_router.get("/posts/failed")
 async def get_failed_posts(current_user: User = Depends(get_current_user)):
     """Get posts with any failed platforms (DLQ view) — includes 'failed' and 'partial' status"""
@@ -862,6 +829,53 @@ async def get_failed_posts(current_user: User = Depends(get_current_user)):
                     pass
 
     return posts
+
+@api_router.get("/posts/{post_id}", response_model=Post)
+async def get_post(post_id: str, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    if isinstance(post.get('created_at'), str):
+        post['created_at'] = datetime.fromisoformat(post['created_at'])
+    if post.get('scheduled_time') and isinstance(post['scheduled_time'], str):
+        post['scheduled_time'] = datetime.fromisoformat(post['scheduled_time'])
+    if post.get('published_at') and isinstance(post['published_at'], str):
+        post['published_at'] = datetime.fromisoformat(post['published_at'])
+
+    return Post(**post)
+
+@api_router.patch("/posts/{post_id}", response_model=Post)
+async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    update_dict = {k: v for k, v in post_data.model_dump(exclude_unset=True).items() if v is not None}
+
+    if 'scheduled_time' in update_dict and update_dict['scheduled_time']:
+        update_dict['scheduled_time'] = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00')).isoformat()
+
+    if update_dict:
+        await db.posts.update_one({"id": post_id}, {"$set": update_dict})
+
+    updated_post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+
+    if isinstance(updated_post.get('created_at'), str):
+        updated_post['created_at'] = datetime.fromisoformat(updated_post['created_at'])
+    if updated_post.get('scheduled_time') and isinstance(updated_post['scheduled_time'], str):
+        updated_post['scheduled_time'] = datetime.fromisoformat(updated_post['scheduled_time'])
+    if updated_post.get('published_at') and isinstance(updated_post['published_at'], str):
+        updated_post['published_at'] = datetime.fromisoformat(updated_post['published_at'])
+
+    return Post(**updated_post)
+
+@api_router.delete("/posts/{post_id}")
+async def delete_post(post_id: str, current_user: User = Depends(get_current_user)):
+    result = await db.posts.delete_one({"id": post_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"message": "Post deleted"}
 
 @api_router.post("/posts/{post_id}/retry")
 async def retry_failed_post(post_id: str, current_user: User = Depends(get_current_user), platform: Optional[str] = None):
@@ -1506,6 +1520,9 @@ async def _finalise_post_status(post_id: str, post_doc: dict, platform_results: 
 
     await db.posts.update_one({"id": post_id}, {"$set": update_fields})
 
+    # Notify frontend via SSE (best-effort)
+    await _notify_post_update(post_doc.get("user_id", ""), post_id, post_status, platform_results)
+
     if post_status in ("failed", "partial") and all_terminal:
         user_doc = await db.users.find_one(
             {"user_id": post_doc["user_id"]},
@@ -1749,6 +1766,222 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     except Exception as e:
         logging.error(f"Failed to send DLQ notification: {e}")
 
+
+# ==================== SSE / REDIS PUBLISH HELPER ====================
+
+async def _notify_post_update(user_id: str, post_id: str, status: str, platform_results: dict):
+    """Publish a post-status change event to Redis for SSE delivery. Best-effort."""
+    try:
+        r = await get_redis()
+        payload = json.dumps({"post_id": post_id, "status": status, "platform_results": platform_results})
+        await r.publish(f"post_updates:{user_id}", payload)
+    except Exception:
+        pass  # SSE is best-effort, never fail a publish because of it
+
+
+# ==================== SSE ENDPOINT ====================
+
+@api_router.get("/stream/post-updates")
+async def stream_post_updates(current_user: User = Depends(get_current_user)):
+    """Server-Sent Events stream — delivers live post status updates to the frontend."""
+    async def event_generator():
+        r = await get_redis()
+        pubsub = r.pubsub()
+        channel = f"post_updates:{current_user.user_id}"
+        await pubsub.subscribe(channel)
+        try:
+            yield "data: connected\n\n"
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    yield f"data: {message['data']}\n\n"
+        finally:
+            await pubsub.unsubscribe(channel)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ==================== WEBHOOK ENDPOINTS ====================
+
+# --- Instagram ---
+
+@api_router.get("/webhooks/instagram")
+async def instagram_webhook_verify(request: Request):
+    """Meta webhook verification challenge."""
+    verify_token = os.environ.get("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
+    hub_mode = request.query_params.get("hub.mode")
+    hub_verify_token = request.query_params.get("hub.verify_token")
+    hub_challenge = request.query_params.get("hub.challenge", "")
+
+    if hub_mode == "subscribe" and hub_verify_token == verify_token:
+        return PlainTextResponse(hub_challenge)
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+
+@api_router.post("/webhooks/instagram")
+async def instagram_webhook_receive(request: Request):
+    """Receive Meta webhook events for Instagram container status changes."""
+    body = await request.body()
+
+    # HMAC-SHA256 signature verification
+    app_secret = os.environ.get("INSTAGRAM_APP_SECRET", "")
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    expected_sig = "sha256=" + hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_sig, sig_header):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return {"status": "ok"}
+
+    r = await get_redis()
+
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            obj_type = change.get("field", "")
+            event_id = value.get("id") or entry.get("id", "")
+
+            # Redis dedup
+            dedup_key = f"webhook:ig:{event_id}"
+            if event_id and await r.get(dedup_key):
+                continue
+            if event_id:
+                await r.set(dedup_key, "1", ex=86400)
+
+            # Only act on finished video containers
+            if obj_type == "video" and value.get("status") == "FINISHED":
+                container_id = value.get("id")
+                if not container_id:
+                    continue
+
+                # Find post with this container_id
+                post_doc = await db.posts.find_one(
+                    {"platform_results.instagram.container_id": container_id},
+                    {"_id": 0}
+                )
+                if not post_doc:
+                    continue
+
+                ig_pr = post_doc.get("platform_results", {}).get("instagram", {})
+                access_token = ig_pr.get("access_token_snapshot", "")
+                ig_user_id = ig_pr.get("ig_user_id_snapshot", "")
+
+                try:
+                    from app.social.instagram import InstagramAuth
+                    ig = InstagramAuth()
+                    publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
+
+                    now = datetime.now(timezone.utc)
+                    ig_pr["status"] = "success"
+                    ig_pr["platform_post_id"] = publish_result
+                    ig_pr["published_at"] = now.isoformat()
+
+                    platform_results = post_doc.get("platform_results", {})
+                    platform_results["instagram"] = ig_pr
+                    await _finalise_post_status(post_doc["id"], post_doc, platform_results, now)
+                    logging.info(f"Instagram webhook: container {container_id} published via webhook")
+                except Exception as e:
+                    logging.error(f"Instagram webhook publish error for container {container_id}: {e}")
+
+    return {"status": "ok"}
+
+
+# --- YouTube PubSubHubbub ---
+
+@api_router.get("/webhooks/youtube")
+async def youtube_webhook_verify(request: Request):
+    """PubSubHubbub subscription verification challenge."""
+    challenge = request.query_params.get("hub.challenge", "")
+    return PlainTextResponse(challenge)
+
+
+@api_router.post("/webhooks/youtube")
+async def youtube_webhook_receive(request: Request):
+    """Receive YouTube activity notifications via PubSubHubbub Atom feed."""
+    body = await request.body()
+
+    # HMAC-SHA1 signature verification
+    pubsub_secret = os.environ.get("YOUTUBE_PUBSUB_SECRET", "")
+    sig_header = request.headers.get("X-Hub-Signature", "")
+    if pubsub_secret:
+        expected_sig = "sha1=" + hmac.new(pubsub_secret.encode(), body, hashlib.sha1).hexdigest()
+        if not hmac.compare_digest(expected_sig, sig_header):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
+    r = await get_redis()
+
+    try:
+        root = ET.fromstring(body.decode("utf-8", errors="replace"))
+        ns = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "yt": "http://www.youtube.com/xml/schemas/2015",
+        }
+        for entry in root.findall("atom:entry", ns):
+            video_id_el = entry.find("yt:videoId", ns)
+            if video_id_el is None:
+                continue
+            video_id = video_id_el.text or ""
+
+            # Redis dedup
+            dedup_key = f"webhook:yt:{video_id}"
+            if await r.get(dedup_key):
+                continue
+            await r.set(dedup_key, "1", ex=86400)
+
+            # Find matching post
+            post_doc = await db.posts.find_one(
+                {"platform_results.youtube.platform_post_id": video_id},
+                {"_id": 0}
+            )
+            if not post_doc:
+                continue
+
+            now = datetime.now(timezone.utc)
+            platform_results = post_doc.get("platform_results", {})
+            yt_pr = platform_results.get("youtube", {})
+            yt_pr["status"] = "success"
+            yt_pr["published_at"] = now.isoformat()
+            platform_results["youtube"] = yt_pr
+
+            await _finalise_post_status(post_doc["id"], post_doc, platform_results, now)
+            logging.info(f"YouTube webhook: video {video_id} confirmed published")
+    except ET.ParseError as e:
+        logging.warning(f"YouTube webhook XML parse error: {e}")
+    except Exception as e:
+        logging.error(f"YouTube webhook error: {e}")
+
+    return PlainTextResponse("ok")
+
+
+# ==================== YOUTUBE PUBSUBHUBBUB SUBSCRIPTION ====================
+
+async def subscribe_youtube_pubsub(channel_id: str, backend_url: str):
+    """Subscribe to YouTube PubSubHubbub for a channel."""
+    callback = f"{backend_url}/api/webhooks/youtube"
+    hub = "https://pubsubhubbub.appspot.com/subscribe"
+    topic = f"https://www.youtube.com/xml/feeds/videos.xml?channel_id={channel_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            await c.post(hub, data={
+                "hub.mode": "subscribe",
+                "hub.topic": topic,
+                "hub.callback": callback,
+                "hub.secret": os.environ.get("YOUTUBE_PUBSUB_SECRET", ""),
+                "hub.lease_seconds": 86400 * 30,
+            })
+        logging.info(f"Subscribed to YouTube PubSubHubbub for channel {channel_id}")
+    except Exception as e:
+        logging.warning(f"YouTube PubSubHubbub subscription failed for {channel_id}: {e}")
+
+
 # ==================== STARTUP & SHUTDOWN ====================
 
 @app.on_event("startup")
@@ -1762,15 +1995,30 @@ async def startup_event():
     await db.users.create_index([("user_id", 1)], unique=True)
     logging.info("MongoDB indexes created")
 
-    # Architecture spec: every 30 seconds (not 60)
-    scheduler.add_job(process_scheduled_posts, 'interval', seconds=30)
-    scheduler.add_job(check_instagram_containers, 'interval', seconds=30)
-    scheduler.start()
-    logging.info("Scheduler started — 30s interval")
+    # Subscribe YouTube PubSubHubbub for all connected YouTube accounts
+    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "http://localhost:8001")
+    try:
+        yt_accounts = await db.social_accounts.find(
+            {"platform": "youtube", "is_active": True},
+            {"_id": 0, "platform_user_id": 1}
+        ).to_list(500)
+        for acc in yt_accounts:
+            channel_id = acc.get("platform_user_id")
+            if channel_id:
+                asyncio.create_task(subscribe_youtube_pubsub(channel_id, backend_url))
+        logging.info(f"Scheduled YouTube PubSubHubbub subscription for {len(yt_accounts)} accounts")
+    except Exception as e:
+        logging.warning(f"YouTube PubSubHubbub startup subscription error: {e}")
+
+    # Scheduling is handled by Celery Beat — no APScheduler needed here
+    logging.info("Startup complete — scheduling delegated to Celery Beat")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    scheduler.shutdown()
+    global _redis_client
+    if _redis_client is not None:
+        await _redis_client.aclose()
     client.close()
     logging.info("Application shutdown")
 

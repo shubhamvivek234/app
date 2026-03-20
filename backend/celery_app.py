@@ -58,12 +58,17 @@ celery_app.conf.update(
         "socket_connect_timeout": 10,
     },
 
-    # Beat schedule (replaces APScheduler polling every 1 minute)
+    # Beat schedule — 30s interval (matches APScheduler spec)
     beat_schedule={
         "process-scheduled-posts": {
             "task": "celery_tasks.process_scheduled_posts_task",
-            "schedule": timedelta(minutes=1),
-            "options": {"expires": 55},  # Expire if not consumed within 55s (next cycle arrives)
+            "schedule": timedelta(seconds=30),
+            "options": {"expires": 28},
+        },
+        "check-instagram-containers": {
+            "task": "celery_tasks.check_instagram_containers_task",
+            "schedule": timedelta(seconds=30),
+            "options": {"expires": 28},
         },
         "expire-pending-review-posts": {
             "task": "celery_tasks.expire_pending_review_task",

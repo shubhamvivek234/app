@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getStats, getPosts, getFailedPosts, retryFailedPost } from '@/lib/api';
+import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useNavigate } from 'react-router-dom';
 import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,37 @@ const Dashboard = () => {
     }
   };
 
+  const handlePostUpdate = useCallback((update) => {
+    const { post_id, status, platform_results } = update;
+
+    // Update recentPosts in-place without mutation
+    setRecentPosts(prev => prev.map(p =>
+      p.id === post_id
+        ? { ...p, status, platform_results }
+        : p
+    ));
+
+    // Sync failedPosts: add/update if failed or partial, remove if now published
+    if (status === 'failed' || status === 'partial') {
+      setFailedPosts(prev => {
+        const exists = prev.find(p => p.id === post_id);
+        if (exists) {
+          return prev.map(p => p.id === post_id ? { ...p, status, platform_results } : p);
+        }
+        return [...prev, { id: post_id, status, platform_results }];
+      });
+    } else if (status === 'published') {
+      setFailedPosts(prev => prev.filter(p => p.id !== post_id));
+    }
+
+    // Toast notifications for status transitions
+    if (status === 'published') toast.success('Post published successfully!');
+    else if (status === 'failed') toast.error('Post failed to publish');
+    else if (status === 'partial') toast.warning('Post partially published — some platforms failed');
+  }, []);
+
+  usePostStatusStream(handlePostUpdate);
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -61,9 +93,13 @@ const Dashboard = () => {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Dashboard
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
+              <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block" />
+                Live
+              </span>
+            </div>
             <p className="text-base text-slate-600 mt-1">Welcome back! Here's your overview.</p>
           </div>
           <Button onClick={() => navigate('/create')} data-testid="create-post-button">
