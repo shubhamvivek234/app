@@ -48,6 +48,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     from media_pipeline.validation import validate_media
     from media_pipeline.ffmpeg_worker import process_video
     from media_pipeline.thumbnail import generate_thumbnail
+    from utils.storage import upload_file_async
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -58,6 +59,8 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
 
     quarantine_path = asset.get("quarantine_path")
     mime_type = asset.get("mime_type")
+    processed_path = None
+    thumbnail_path = None
 
     try:
         await db.media_assets.update_one(
@@ -71,17 +74,49 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         # Step 2: Process (transcode if video)
         if mime_type and mime_type.startswith("video/"):
             processed_path = await process_video(quarantine_path, validation_result)
+            # FFmpeg always outputs mp4 — normalise content-type for upload
+            upload_mime = "video/mp4"
         else:
             processed_path = quarantine_path
+            upload_mime = mime_type or "application/octet-stream"
 
         # Step 3: Generate thumbnail
         thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
 
-        # Step 4: Move to permanent storage
-        # TODO: Upload processed_path to GCS /media/{user_id}/{media_job_id}
-        media_url = f"https://storage.googleapis.com/{os.environ.get('GCS_BUCKET_MEDIA')}/media/{user_id}/{media_job_id}"
-        thumbnail_url = f"https://storage.googleapis.com/{os.environ.get('GCS_BUCKET_THUMBNAILS')}/thumbnails/{user_id}/{media_job_id}.webp"
+        # Step 4: Upload processed file to permanent storage (R2 or Firebase)
+        # Derive a safe filename: media_job_id + extension inferred from processed path
+        ext = os.path.splitext(processed_path)[1] or (
+            ".mp4" if upload_mime.startswith("video/") else ".bin"
+        )
+        media_filename = f"{media_job_id}{ext}"
 
+        loop = asyncio.get_event_loop()
+        media_bytes = await loop.run_in_executor(
+            None, lambda: open(processed_path, "rb").read()
+        )
+        media_url = await upload_file_async(
+            media_bytes,
+            media_filename,
+            upload_mime,
+            folder=f"media/{user_id}",
+        )
+        logger.info("Media uploaded: media_id=%s url=%s", media_job_id, media_url)
+
+        # Step 5: Upload thumbnail to permanent storage
+        thumbnail_url = None
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            thumb_bytes = await loop.run_in_executor(
+                None, lambda: open(thumbnail_path, "rb").read()
+            )
+            thumbnail_url = await upload_file_async(
+                thumb_bytes,
+                f"{media_job_id}.webp",
+                "image/webp",
+                folder=f"thumbnails/{user_id}",
+            )
+            logger.info("Thumbnail uploaded: media_id=%s url=%s", media_job_id, thumbnail_url)
+
+        # Step 6: Persist real URLs and mark asset ready
         await db.media_assets.update_one(
             {"media_id": media_job_id},
             {"$set": {
@@ -95,7 +130,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             }},
         )
 
-        logger.info("Media %s processed successfully", media_job_id)
+        logger.info("Media %s processed and uploaded successfully", media_job_id)
         return {"status": "ready", "media_url": media_url, "thumbnail_url": thumbnail_url}
 
     except Exception as exc:
@@ -105,6 +140,29 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             {"$set": {"status": "failed", "error_message": str(exc)}},
         )
         raise task.retry(countdown=30, exc=exc)
+
+    finally:
+        # Always clean up local temp files — prevents disk fill on high volume
+        _cleanup_temp_files(quarantine_path, processed_path, thumbnail_path)
+
+
+def _cleanup_temp_files(
+    quarantine_path: str | None,
+    processed_path: str | None,
+    thumbnail_path: str | None,
+) -> None:
+    """
+    Delete all local temp files created during media processing.
+    Called in finally block so disk is always freed even on failure/retry.
+    """
+    for path in (quarantine_path, processed_path, thumbnail_path):
+        if path and os.path.exists(path):
+            try:
+                os.unlink(path)
+                logger.debug("Cleaned up temp file: %s", path)
+            except OSError as exc:
+                # Non-fatal — log and continue
+                logger.warning("Failed to delete temp file %s: %s", path, exc)
 
 
 # ── Section 18.8 — Per-platform publish notification ──────────────────────────
