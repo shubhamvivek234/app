@@ -2,11 +2,24 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "backend",
+      "runtimeExecutable": "/opt/homebrew/bin/python3",
+      "runtimeArgs": [
+        "-c",
+        "import sys; sys.path[:0] = ['/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto', '/Users/shubham/Documents/Workspace/SocialEntangler/app/backend/venv/lib/python3.14/site-packages']; import dotenv; dotenv.load_dotenv('/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto/.env'); import uvicorn; uvicorn.run('api.main:create_app', factory=True, host='0.0.0.0', port=8000, reload=True, reload_dirs=['/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto'])"
+      ],
+      "port": 8000,
+      "cwd": "."
+    },
+    {
       "name": "frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
+      "runtimeExecutable": "/opt/homebrew/bin/node",
+      "runtimeArgs": [
+        "-e",
+        "process.chdir('/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend'); process.env.NODE_PATH = '/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend/node_modules'; require('module').Module._initPaths(); require('/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend/node_modules/@craco/craco/dist/scripts/start.js')"
+      ],
       "port": 3000,
-      "cwd": "/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto/frontend"
+      "cwd": "."
     }
   ]
 }
