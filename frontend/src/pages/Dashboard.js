@@ -127,7 +127,7 @@ const Dashboard = () => {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Total Posts</p>
@@ -139,7 +139,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Scheduled</p>
@@ -151,7 +151,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Published</p>
@@ -163,7 +163,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-border p-6">
+          <div className="bg-offwhite rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Connected Accounts</p>
@@ -200,7 +200,7 @@ const Dashboard = () => {
                 return (
                   <div
                     key={post.id}
-                    className="bg-white rounded-md p-4 border border-red-100"
+                    className="bg-offwhite rounded-md p-4 border border-red-100"
                   >
                     <div className="flex items-start justify-between mb-2">
                       <p className="text-sm text-slate-800 truncate flex-1">{post.content || 'No content'}</p>
@@ -261,7 +261,7 @@ const Dashboard = () => {
         )}
 
         {/* Recent Posts */}
-        <div className="bg-white rounded-lg border border-border">
+        <div className="bg-offwhite rounded-lg border border-border">
           <div className="p-6 border-b border-border">
             <h2 className="text-xl font-semibold text-slate-900">Recent Posts</h2>
           </div>
