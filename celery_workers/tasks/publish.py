@@ -173,6 +173,44 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     db = client[os.environ["DB_NAME"]]
     r_cache = get_cache_redis()
 
+    # 20.14: Feature flag kill-switch — bail out immediately if platform disabled
+    try:
+        from utils.feature_flags import is_enabled
+        flag_name = f"{platform}_publishing"
+        if not is_enabled(flag_name):
+            logger.warning("20.14: Feature flag %s is OFF — skipping publish for post %s", flag_name, post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "paused",
+                "error": f"Platform {platform} is currently disabled via feature flag",
+            })
+            return {"status": "feature_disabled", "platform": platform}
+    except ImportError:
+        pass
+
+    # 20.5: Per-platform poison pill guard — each platform has its own delivery counter
+    r_queue = get_queue_redis()
+    pp_key = f"delivery_count:{task.request.id}:{platform}"
+    pp_count = await r_queue.incr(pp_key)
+    await r_queue.expire(pp_key, 86400)
+    if int(pp_count) > MAX_DELIVERY_COUNT:
+        logger.error("20.5: Poison pill on %s/%s (delivered %d times) — moving to DLQ", post_id, platform, pp_count)
+        await _move_to_dlq(post_id, "poison_pill_exceeded", platform=platform)
+        return {"status": "dlq", "reason": "poison_pill", "platform": platform}
+
+    # 20.1: Circuit breaker — fail fast if platform is known-down
+    try:
+        from utils.circuit_breaker import can_attempt
+        if not await can_attempt(r_cache, platform):
+            logger.warning("20.1: Circuit OPEN for %s — requeuing post %s (5-min backoff)", platform, post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "retrying",
+                "error": f"Platform {platform} circuit breaker OPEN — requeued",
+                "next_retry_at": datetime.utcnow() + timedelta(seconds=300),
+            })
+            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN for {platform}"))
+    except ImportError:
+        pass
+
     # EC17: Check Redis confirmation cache first — may already be done
     confirm_key = f"confirmed:{post_id}:{platform}"
     cached = await r_cache.get(confirm_key)
@@ -202,6 +240,13 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     try:
         adapter = get_adapter(platform)
         result = await adapter.publish(post)
+
+        # 20.1: Record success — close circuit if it was half-open
+        try:
+            from utils.circuit_breaker import record_success
+            await record_success(r_cache, platform)
+        except ImportError:
+            pass
 
         post_url = result.get("post_url")
         platform_post_id = result.get("platform_post_id")
@@ -241,6 +286,13 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
     except Exception as exc:
         from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
+
+        # 20.1: Record failure — may trip circuit breaker if threshold exceeded
+        try:
+            from utils.circuit_breaker import record_failure
+            await record_failure(r_cache, platform)
+        except ImportError:
+            pass
 
         error_class = classify_error(exc)
 
@@ -408,6 +460,24 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
 
 
 async def _send_failure_notification(post_id: str, platform: str, error: str) -> None:
+    # 20.12: Check user notification preferences before sending
+    try:
+        from db.mongo import get_client as _get_client
+        import os as _os
+        from utils.notification_prefs import should_notify
+        _client = await _get_client()
+        _db = _client[_os.environ["DB_NAME"]]
+        post_doc = await _db.posts.find_one({"id": post_id}, {"user_id": 1})
+        user_id = (post_doc or {}).get("user_id", "")
+        if user_id:
+            email_ok = await should_notify(_db, user_id, "post.failed", "email")
+            in_app_ok = await should_notify(_db, user_id, "post.failed", "in_app")
+            if not email_ok and not in_app_ok:
+                logger.debug("20.12: User %s has notifications disabled for post.failed — skipping", user_id)
+                return
+    except Exception:
+        pass  # Preference check failure must not block notification
+
     from celery_workers.tasks.media import send_notification
     send_notification.apply_async(
         kwargs={"post_id": post_id, "type": "publish_failed", "platform": platform, "error": error},

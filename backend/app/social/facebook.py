@@ -7,8 +7,9 @@ import urllib.parse
 
 class FacebookAuth:
     """Helper class for Facebook/Instagram OAuth and Graph API"""
-    
-    BASE_URL = "https://graph.facebook.com/v19.0"
+
+    _API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
+    BASE_URL = f"https://graph.facebook.com/{_API_VERSION}"
     
     def __init__(self):
         self.app_id = os.environ.get('FACEBOOK_APP_ID')
@@ -36,7 +37,7 @@ class FacebookAuth:
             "response_type": "code"
         }
         
-        auth_url = f"https://www.facebook.com/v19.0/dialog/oauth?{urllib.parse.urlencode(params)}"
+        auth_url = f"https://www.facebook.com/{self._API_VERSION}/dialog/oauth?{urllib.parse.urlencode(params)}"
         logging.info(f"[Facebook] Generated Auth URL: {auth_url}")
         return auth_url
         

@@ -16,7 +16,7 @@ from utils.encryption import decrypt
 
 logger = logging.getLogger(__name__)
 
-GRAPH_BASE = "https://graph.facebook.com/v19.0"
+GRAPH_BASE = f"https://graph.facebook.com/{os.environ.get('FACEBOOK_API_VERSION', 'v21.0')}"
 _CONTAINER_EXPIRY_HOURS = 24
 _MAX_POLL_RETRIES = 30         # 30 × 10s = 5 minutes max polling time
 _POLL_COUNTDOWN_SECONDS = 10

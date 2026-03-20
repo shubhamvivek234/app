@@ -363,7 +363,7 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             else:
                 async with httpx.AsyncClient() as http_client:
                     resp = await http_client.post(
-                        f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                        f"https://graph.facebook.com/{os.environ.get('FACEBOOK_API_VERSION', 'v21.0')}/{page_id}/feed",
                         data={"message": content, "access_token": page_token}
                     )
                     resp.raise_for_status()

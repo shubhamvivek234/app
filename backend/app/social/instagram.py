@@ -13,9 +13,10 @@ import urllib.parse
 class InstagramAuth:
     """Instagram Business Login standalone (no Facebook Page required)"""
 
+    _API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
     OAUTH_URL = "https://api.instagram.com/oauth/authorize"
     TOKEN_URL = "https://api.instagram.com/oauth/access_token"
-    GRAPH_URL = "https://graph.instagram.com/v19.0"
+    GRAPH_URL = f"https://graph.instagram.com/{_API_VERSION}"
 
     def __init__(self):
         self.app_id = os.environ.get("INSTAGRAM_APP_ID") or os.environ.get("FACEBOOK_APP_ID")

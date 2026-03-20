@@ -1450,6 +1450,19 @@ async def stripe_webhook(request: Request):
                 plan_info = PRICING[transaction['plan']]
                 end_date = datetime.now(timezone.utc) + timedelta(days=plan_info['duration'])
 
+                # 20.8: Handle plan change (upgrade/downgrade) via billing util
+                try:
+                    from utils.billing import handle_plan_change, handle_payment_success
+                    user_doc = await db.users.find_one({"user_id": transaction['user_id']}, {"plan": 1})
+                    old_plan = (user_doc or {}).get("plan", "free")
+                    new_plan = transaction['plan']
+                    if old_plan != new_plan:
+                        await handle_plan_change(db, transaction['user_id'], old_plan, new_plan)
+                    # Clear any prior payment failure state and resume paused posts
+                    await handle_payment_success(db, transaction['user_id'])
+                except ImportError:
+                    pass
+
                 await db.users.update_one(
                     {"user_id": transaction['user_id']},
                     {"$set": {
@@ -1480,6 +1493,76 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logging.error(f"Webhook error: {e}")
         return {"status": "error", "message": str(e)}
+
+# ==================== GDPR & USER ACCOUNT (20.3) ====================
+
+@api_router.post("/user/data-export")
+async def request_data_export(current_user: User = Depends(get_current_user)):
+    """20.3 GDPR Article 20 — Request a ZIP export of all user data."""
+    export_id = str(uuid.uuid4())
+    await db.data_exports.insert_one({
+        "_id": export_id,
+        "user_id": current_user.user_id,
+        "status": "pending",
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        from celery_workers.tasks.gdpr import generate_data_export
+        generate_data_export.apply_async(
+            kwargs={
+                "user_id": current_user.user_id,
+                "workspace_id": current_user.user_id,
+                "export_id": export_id,
+            },
+            queue="default",
+        )
+    except ImportError:
+        logging.warning("GDPR export task not available")
+    return {"status": "queued", "export_id": export_id, "message": "Export will be emailed when ready (up to 15 minutes)."}
+
+
+@api_router.delete("/user/account")
+async def delete_account(current_user: User = Depends(get_current_user)):
+    """20.3 GDPR Article 17 — Right to erasure. Enqueues full data deletion."""
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": {"deletion_requested_at": datetime.now(timezone.utc).isoformat(), "status": "deletion_pending"}},
+    )
+    try:
+        from celery_workers.tasks.gdpr import process_erasure_request
+        process_erasure_request.apply_async(
+            kwargs={"user_id": current_user.user_id, "workspace_id": current_user.user_id},
+            queue="default",
+        )
+    except ImportError:
+        logging.warning("GDPR erasure task not available")
+    return {"status": "queued", "message": "Account deletion has been queued. All data will be removed within 30 days."}
+
+
+@api_router.get("/user/notification-preferences")
+async def get_notification_preferences(current_user: User = Depends(get_current_user)):
+    """20.12 — Get user notification preferences."""
+    try:
+        from utils.notification_prefs import get_user_prefs
+        prefs = await get_user_prefs(db, current_user.user_id)
+        return {"preferences": prefs}
+    except ImportError:
+        return {"preferences": {}}
+
+
+@api_router.patch("/user/notification-preferences")
+async def update_notification_preferences(
+    preferences: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+):
+    """20.12 — Update user notification preferences."""
+    await db.notification_prefs.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": {"prefs": preferences, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"status": "updated", "preferences": preferences}
+
 
 # ==================== STATS ====================
 
@@ -1583,7 +1666,7 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             else:
                 async with httpx.AsyncClient() as http_client:
                     resp = await http_client.post(
-                        f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                        f"https://graph.facebook.com/{os.environ.get('FACEBOOK_API_VERSION', 'v21.0')}/{page_id}/feed",
                         data={"message": content, "access_token": page_token}
                     )
                     resp.raise_for_status()

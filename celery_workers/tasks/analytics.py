@@ -149,7 +149,7 @@ async def _fetch_facebook_metrics(post_id: str, access_token: str) -> dict:
     fields = "likes.summary(true),comments.summary(true),shares,impressions"
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
-            f"https://graph.facebook.com/v19.0/{post_id}",
+            f"https://graph.facebook.com/{os.environ.get('FACEBOOK_API_VERSION', 'v21.0')}/{post_id}",
             params={"fields": fields, "access_token": access_token},
         )
     if resp.status_code != 200:
