@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getPosts } from '@/lib/api';
+import { getStats, getPosts, getFailedPosts, retryFailedPost } from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
-import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink } from 'react-icons/fa';
+import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -12,6 +12,7 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentPosts, setRecentPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [failedPosts, setFailedPosts] = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -19,16 +20,28 @@ const Dashboard = () => {
 
   const fetchData = async () => {
     try {
-      const [statsData, postsData] = await Promise.all([
+      const [statsData, postsData, failedData] = await Promise.all([
         getStats(),
         getPosts(),
+        getFailedPosts().catch(() => []),
       ]);
       setStats(statsData);
       setRecentPosts(postsData.slice(0, 5));
+      setFailedPosts(failedData);
     } catch (error) {
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRetry = async (postId) => {
+    try {
+      await retryFailedPost(postId);
+      toast.success('Post queued for retry');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to retry post');
     }
   };
 
@@ -109,6 +122,57 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
+
+        {/* Failed Posts Alert */}
+        {failedPosts.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FaExclamationTriangle className="text-red-500" />
+                <h3 className="font-semibold text-red-800">
+                  {failedPosts.length} Post{failedPosts.length > 1 ? 's' : ''} Failed to Publish
+                </h3>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {failedPosts.slice(0, 3).map((post) => (
+                <div
+                  key={post.id}
+                  className="flex items-center justify-between bg-white rounded-md p-3 border border-red-100"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-800 truncate">{post.content || 'No content'}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-slate-500">
+                        Platforms: {(post.platforms || []).join(', ')}
+                      </span>
+                      {post.trace_id && (
+                        <span className="text-xs text-slate-400 font-mono">
+                          #{post.trace_id}
+                        </span>
+                      )}
+                    </div>
+                    {post.failure_reason && (
+                      <p className="text-xs text-red-500 mt-1 truncate">{post.failure_reason}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleRetry(post.id)}
+                    className="ml-3 flex items-center gap-1 text-xs bg-red-600 text-white px-3 py-1.5 rounded-md hover:bg-red-700 transition-colors flex-shrink-0"
+                  >
+                    <FaRedo className="text-xs" />
+                    Retry
+                  </button>
+                </div>
+              ))}
+              {failedPosts.length > 3 && (
+                <p className="text-xs text-red-600 text-center mt-1">
+                  +{failedPosts.length - 3} more failed posts in Content Library
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Recent Posts */}
         <div className="bg-white rounded-lg border border-border">

@@ -112,3 +112,33 @@ export const getStats = async () => {
   });
   return response.data;
 };
+
+// Media Upload with progress tracking
+export const uploadMedia = async (file, onProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await axios.post(`${API}/upload`, formData, {
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: onProgress,
+  });
+  return response.data;
+};
+
+// Failed Posts (Dead Letter Queue)
+export const getFailedPosts = async () => {
+  const response = await axios.get(`${API}/posts/failed`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const retryFailedPost = async (postId) => {
+  const response = await axios.post(`${API}/posts/${postId}/retry`, {}, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};

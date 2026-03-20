@@ -76,6 +76,12 @@ scheduler = AsyncIOScheduler()
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
+# ==================== PLAN LIMITS ====================
+PLAN_MONTHLY_POST_LIMITS = {
+    "free": 10,        # 10 posts/month on free plan
+    "active": None,    # unlimited on paid plans
+}
+
 # ==================== MODELS ====================
 
 class UserSignup(BaseModel):
@@ -484,7 +490,23 @@ async def logout(session_token: Optional[str] = Cookie(None)):
 async def create_post(post_data: PostCreate, current_user: User = Depends(get_current_user)):
     if post_data.scheduled_time and current_user.subscription_status != "active":
         raise HTTPException(status_code=403, detail="Scheduling requires active subscription")
-    
+
+    # Plan enforcement: monthly post limit for free users
+    if current_user.subscription_status != "active":
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        monthly_count = await db.posts.count_documents({
+            "user_id": current_user.user_id,
+            "created_at": {"$gte": month_start.isoformat()}
+        })
+        limit = PLAN_MONTHLY_POST_LIMITS.get("free", 10)
+        if monthly_count >= limit:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Monthly post limit of {limit} reached. Upgrade to continue posting."
+            )
+
     scheduled_time = None
     status = "draft"
     if post_data.scheduled_time:
@@ -514,20 +536,67 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
 
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
-    """Upload media files (images/videos)"""
-    file_ext = file.filename.split('.')[-1]
-    file_id = uuid.uuid4().hex[:12]
-    file_url = f"/uploads/{file_id}.{file_ext}"
-    
+    """Upload media files to R2 or local filesystem"""
+    import mimetypes
+
+    file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'bin'
+    file_id = uuid.uuid4().hex[:16]
+    safe_filename = f"{file_id}.{file_ext}"
+
+    content = await file.read()
+
+    # Try R2 storage first, fall back to local
+    storage_backend = os.environ.get('STORAGE_BACKEND', 'local')
+
+    if storage_backend == 'r2':
+        try:
+            import boto3
+            from botocore.client import Config
+
+            r2_endpoint = os.environ.get('CLOUDFLARE_R2_ENDPOINT', '')
+            r2_access_key = os.environ.get('CLOUDFLARE_R2_ACCESS_KEY_ID', '')
+            r2_secret_key = os.environ.get('CLOUDFLARE_R2_SECRET_ACCESS_KEY', '')
+            r2_bucket = os.environ.get('CLOUDFLARE_R2_BUCKET_NAME', 'socialentangler-media')
+            cdn_domain = os.environ.get('CLOUDFLARE_CDN_DOMAIN', '')
+
+            s3 = boto3.client(
+                's3',
+                endpoint_url=r2_endpoint,
+                aws_access_key_id=r2_access_key,
+                aws_secret_access_key=r2_secret_key,
+                config=Config(signature_version='s3v4'),
+                region_name='auto'
+            )
+
+            content_type = mimetypes.guess_type(file.filename)[0] or 'application/octet-stream'
+            object_key = f"uploads/{current_user.user_id}/{safe_filename}"
+
+            import io
+            s3.upload_fileobj(
+                io.BytesIO(content),
+                r2_bucket,
+                object_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+
+            if cdn_domain:
+                file_url = f"https://{cdn_domain}/{object_key}"
+            else:
+                file_url = f"{r2_endpoint}/{r2_bucket}/{object_key}"
+
+            return {"success": True, "url": file_url, "filename": file.filename}
+        except Exception as e:
+            logging.warning(f"R2 upload failed, falling back to local: {e}")
+
+    # Local filesystem fallback
     upload_dir = Path("/app/uploads")
-    upload_dir.mkdir(exist_ok=True)
-    
-    file_path = upload_dir / f"{file_id}.{file_ext}"
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
-    return {"url": file_url, "filename": file.filename}
+    upload_dir.mkdir(exist_ok=True, parents=True)
+
+    file_path = upload_dir / safe_filename
+    file_path.write_bytes(content)
+
+    file_url = f"/uploads/{safe_filename}"
+    return {"success": True, "url": file_url, "filename": file.filename}
 
 @api_router.get("/posts", response_model=List[Post])
 async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None):
@@ -593,6 +662,49 @@ async def delete_post(post_id: str, current_user: User = Depends(get_current_use
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
     return {"message": "Post deleted"}
+
+@api_router.get("/posts/failed")
+async def get_failed_posts(current_user: User = Depends(get_current_user)):
+    """Get posts that permanently failed to publish (Dead Letter Queue)"""
+    posts = await db.posts.find(
+        {"user_id": current_user.user_id, "status": "failed"},
+        {"_id": 0}
+    ).sort("updated_at", -1).to_list(100)
+
+    for post in posts:
+        for field in ('created_at', 'scheduled_time', 'published_at', 'updated_at'):
+            if post.get(field) and isinstance(post[field], str):
+                try:
+                    post[field] = datetime.fromisoformat(post[field])
+                except Exception:
+                    pass
+
+    return posts
+
+@api_router.post("/posts/{post_id}/retry")
+async def retry_failed_post(post_id: str, current_user: User = Depends(get_current_user)):
+    """Retry a failed post by putting it back in the scheduled queue"""
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.get('status') != 'failed':
+        raise HTTPException(status_code=400, detail="Only failed posts can be retried")
+
+    # Reset retry count and move back to scheduled (for next minute's job)
+    now = datetime.now(timezone.utc)
+    retry_time = now + timedelta(minutes=2)
+
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {
+            "status": "scheduled",
+            "scheduled_time": retry_time.isoformat(),
+            "retry_count": 0,
+            "failure_reason": None,
+            "updated_at": now.isoformat()
+        }}
+    )
+    return {"message": "Post queued for retry", "scheduled_time": retry_time.isoformat()}
 
 # ==================== AI CONTENT GENERATION ====================
 
@@ -916,12 +1028,14 @@ async def get_stats(current_user: User = Depends(get_current_user)):
     scheduled_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "scheduled"})
     published_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "published"})
     connected_accounts = await db.social_accounts.count_documents({"user_id": current_user.user_id, "is_active": True})
-    
+    failed_posts = await db.posts.count_documents({"user_id": current_user.user_id, "status": "failed"})
+
     return {
         "total_posts": total_posts,
         "scheduled_posts": scheduled_posts,
         "published_posts": published_posts,
-        "connected_accounts": connected_accounts
+        "connected_accounts": connected_accounts,
+        "failed_posts": failed_posts
     }
 
 # ==================== CONTENT PAGES ====================
@@ -937,26 +1051,121 @@ async def get_privacy():
 # ==================== SCHEDULED POST PROCESSOR ====================
 
 async def process_scheduled_posts():
-    """Background job to publish scheduled posts"""
+    """Background job: publish scheduled posts with retry and DLQ"""
+    MAX_RETRIES = 3
     try:
         now = datetime.now(timezone.utc)
-        
+
         posts = await db.posts.find({
             "status": "scheduled",
             "scheduled_time": {"$lte": now.isoformat()}
         }).to_list(100)
-        
+
         for post_doc in posts:
-            await db.posts.update_one(
-                {"id": post_doc['id']},
-                {"$set": {
-                    "status": "published",
-                    "published_at": now.isoformat()
-                }}
-            )
-            logging.info(f"Published post {post_doc['id']}")
+            post_id = post_doc['id']
+            retry_count = post_doc.get('retry_count', 0)
+            trace_id = post_doc.get('trace_id', str(uuid.uuid4())[:8])
+
+            try:
+                # Simulate publish attempt — real platform calls would go here
+                # For now mark as published (actual platform integration uses social adapters)
+                await db.posts.update_one(
+                    {"id": post_id},
+                    {"$set": {
+                        "status": "published",
+                        "published_at": now.isoformat(),
+                        "updated_at": now.isoformat(),
+                        "trace_id": trace_id
+                    }}
+                )
+                logging.info(f"[{trace_id}] Published post {post_id}")
+
+            except Exception as publish_error:
+                logging.error(f"[{trace_id}] Failed to publish post {post_id} (attempt {retry_count + 1}): {publish_error}")
+
+                if retry_count + 1 >= MAX_RETRIES:
+                    # Move to DLQ
+                    await db.posts.update_one(
+                        {"id": post_id},
+                        {"$set": {
+                            "status": "failed",
+                            "updated_at": now.isoformat(),
+                            "failure_reason": str(publish_error),
+                            "trace_id": trace_id
+                        }}
+                    )
+                    logging.error(f"[{trace_id}] Post {post_id} moved to DLQ after {MAX_RETRIES} attempts")
+
+                    # Send failure notification email
+                    user_doc = await db.users.find_one({"user_id": post_doc['user_id']}, {"_id": 0, "email": 1, "name": 1})
+                    if user_doc and RESEND_API_KEY:
+                        await send_dlq_notification(user_doc, post_doc, publish_error, trace_id)
+                else:
+                    # Increment retry count, keep scheduled
+                    await db.posts.update_one(
+                        {"id": post_id},
+                        {"$set": {
+                            "retry_count": retry_count + 1,
+                            "updated_at": now.isoformat(),
+                            "last_error": str(publish_error),
+                            "trace_id": trace_id
+                        }}
+                    )
     except Exception as e:
         logging.error(f"Scheduled post processing error: {e}")
+
+
+async def send_dlq_notification(user_doc: dict, post_doc: dict, error: Exception, trace_id: str):
+    """Send email when a post permanently fails to publish"""
+    if not RESEND_API_KEY:
+        return
+
+    email = user_doc.get('email')
+    name = user_doc.get('name', 'there')
+    platforms = ', '.join(post_doc.get('platforms', []))
+    content_preview = (post_doc.get('content', '') or '')[:100]
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .alert {{ background: #FEF2F2; border-left: 4px solid #EF4444; padding: 16px; border-radius: 4px; margin: 16px 0; }}
+            .code {{ background: #F3F4F6; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }}
+            .button {{ display: inline-block; padding: 12px 24px; background: #6366F1; color: white; text-decoration: none; border-radius: 6px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>Post Failed to Publish</h2>
+            <p>Hi {name},</p>
+            <p>We tried to publish your post 3 times but it failed. Here are the details:</p>
+            <div class="alert">
+                <p><strong>Platforms:</strong> {platforms}</p>
+                <p><strong>Content:</strong> {content_preview}{'...' if len(post_doc.get('content', '')) > 100 else ''}</p>
+                <p><strong>Error:</strong> {str(error)[:200]}</p>
+                <p><strong>Trace ID:</strong> <span class="code">{trace_id}</span></p>
+            </div>
+            <p>You can view and retry failed posts from your <a href="{FRONTEND_URL}/content">Content Library</a>.</p>
+            <p>If this keeps happening, please contact support with the Trace ID above.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    try:
+        params = {
+            "from": SENDER_EMAIL,
+            "to": [email],
+            "subject": "Post failed to publish - SocialEntangler",
+            "html": html_content
+        }
+        await asyncio.to_thread(resend.Emails.send, params)
+        logging.info(f"DLQ notification sent to {email} for post {post_doc.get('id')}")
+    except Exception as e:
+        logging.error(f"Failed to send DLQ notification: {e}")
 
 # ==================== STARTUP & SHUTDOWN ====================
 
