@@ -14,8 +14,15 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import jwt
 from passlib.context import CryptContext
-from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
+import firebase_admin
+from firebase_admin import credentials as firebase_credentials, auth as firebase_auth
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
+    _emergent_available = True
+except ImportError:
+    _emergent_available = False
+    logging.warning("emergentintegrations not available — AI/Stripe features disabled")
 import razorpay
 import resend
 import httpx
@@ -42,6 +49,20 @@ JWT_EXPIRATION_HOURS = int(os.environ.get('JWT_EXPIRATION_HOURS', 720))
 
 # Frontend URL
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# Firebase Admin SDK initialization
+_firebase_initialized = False
+_service_account_path = ROOT_DIR / 'serviceAccountKey.json'
+if _service_account_path.exists():
+    try:
+        _cred = firebase_credentials.Certificate(str(_service_account_path))
+        firebase_admin.initialize_app(_cred)
+        _firebase_initialized = True
+        logging.info("Firebase Admin SDK initialized from serviceAccountKey.json")
+    except Exception as _e:
+        logging.warning(f"Firebase Admin SDK init failed: {_e}")
+else:
+    logging.warning("serviceAccountKey.json not found — Firebase ID token verification disabled")
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -311,26 +332,8 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
 
     return User(**user_doc)
 
-async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
-    # Try cookie first
-    if session_token:
-        return await get_current_user_from_cookie(session_token)
-
-    # Fallback to Authorization header
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    token = authorization.replace("Bearer ", "")
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except (jwt.PyJWTError, Exception):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-
+async def _resolve_user_doc(user_id: str) -> dict:
+    """Fetch user doc from MongoDB and auto-expire subscription if needed."""
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if user_doc is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
@@ -349,7 +352,85 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
             {"user_id": user_id},
             {"$set": {"subscription_status": "expired"}}
         )
+    return user_doc
 
+
+async def _get_or_create_user_from_firebase(decoded_token: dict) -> str:
+    """Return user_id for a verified Firebase token, creating the MongoDB user if needed."""
+    email = decoded_token.get("email", "")
+    firebase_uid = decoded_token.get("uid", "")
+
+    # Look up by email first, then by firebase_uid
+    user_doc = await db.users.find_one(
+        {"$or": [{"email": email}, {"firebase_uid": firebase_uid}]},
+        {"_id": 0}
+    )
+
+    if user_doc:
+        # Keep firebase_uid synced
+        if not user_doc.get("firebase_uid"):
+            await db.users.update_one(
+                {"user_id": user_doc["user_id"]},
+                {"$set": {"firebase_uid": firebase_uid}}
+            )
+        return user_doc["user_id"]
+
+    # New user — create MongoDB record from Firebase data
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    name = decoded_token.get("name") or email.split("@")[0]
+    picture = decoded_token.get("picture")
+    new_user = {
+        "user_id": user_id,
+        "firebase_uid": firebase_uid,
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "email_verified": decoded_token.get("email_verified", True),
+        "subscription_status": "free",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(new_user)
+    logging.info(f"Created new user from Firebase login: {user_id} ({email})")
+    return user_id
+
+
+async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
+    # Try cookie first
+    if session_token:
+        return await get_current_user_from_cookie(session_token)
+
+    # Fallback to Authorization header
+    if not authorization:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    token = authorization.replace("Bearer ", "")
+
+    # 1. Try Firebase ID token verification first (Google Sign-In)
+    if _firebase_initialized:
+        try:
+            decoded = firebase_auth.verify_id_token(token)
+            user_id = await _get_or_create_user_from_firebase(decoded)
+            user_doc = await _resolve_user_doc(user_id)
+            return User(**user_doc)
+        except firebase_auth.ExpiredIdTokenError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        except firebase_auth.InvalidIdTokenError:
+            pass  # Not a Firebase token — fall through to custom JWT
+        except Exception as e:
+            logging.debug(f"Firebase token check failed (may be custom JWT): {e}")
+
+    # 2. Fall back to custom JWT (email/password login)
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+    except (jwt.PyJWTError, Exception):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    user_doc = await _resolve_user_doc(user_id)
     return User(**user_doc)
 
 async def send_verification_email(email: str, verification_token: str):
