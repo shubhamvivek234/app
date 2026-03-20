@@ -137,6 +137,27 @@ def is_revocation_error(error_str: str, platform: str) -> bool:
     return any(p in s for p in patterns)
 
 
+# EC16: Ghost account — platform banned/suspended the account. Must never retry,
+# must mark account inactive and cascade all queued posts on that platform.
+GHOST_ACCOUNT_ERRORS: Dict[str, list] = {
+    "instagram": ["account disabled", "user not found", "#368", "user_not_found"],
+    "facebook": ["account disabled", "#368", "page removed", "account blocked"],
+    "twitter": ["account suspended", "326", "account is suspended", "user is suspended"],
+    "linkedin": ["account restricted", "account suspended", "member account is suspended"],
+    "youtube": ["account suspended", "channel has been terminated", "suspended account"],
+    "tiktok": ["account banned", "account suspended", "account has been suspended"],
+    "default": ["account suspended", "account banned", "account disabled", "account blocked",
+                "account terminated", "account has been suspended"],
+}
+
+
+def is_ghost_account_error(error_str: str, platform: str) -> bool:
+    """Return True if the platform has banned or suspended the linked account (EC16)."""
+    s = error_str.lower()
+    patterns = GHOST_ACCOUNT_ERRORS.get(platform, []) + GHOST_ACCOUNT_ERRORS["default"]
+    return any(p in s for p in patterns)
+
+
 # ── EC14: Account-level rate limit (shared social accounts across team users) ─
 # Key is per-social_account_id so shared accounts share the same budget.
 _account_rate_limit_paused: Dict[str, float] = {}
@@ -473,6 +494,34 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             except Exception:
                 pass
             return {"status": "failed", "error": f"Permission revoked on {platform}: {error_str}", "permanent": True}
+
+        # EC16: Ghost account — platform banned/suspended the linked account.
+        # Mark account inactive and cascade all queued posts on this platform to permanently_failed.
+        if is_ghost_account_error(error_str, platform) and account_id:
+            try:
+                _db = get_db()
+                account_doc = await _db.social_accounts.find_one({"id": account_id}, {"_id": 0, "user_id": 1})
+                user_id = (account_doc or {}).get("user_id")
+                await _db.social_accounts.update_one(
+                    {"id": account_id},
+                    {"$set": {"is_active": False, "disconnected_reason": "account_banned_by_platform",
+                              "disconnected_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                logger.warning(f"[{trace_id}] EC16: {platform} account {account_id} marked inactive — account banned/suspended by platform")
+                # Cascade: mark all queued/publishing posts on this platform as permanently_failed
+                if user_id:
+                    result = await _db.posts.update_many(
+                        {"user_id": user_id, "platforms": platform, "status": {"$in": ["scheduled", "publishing"]}},
+                        {"$set": {
+                            f"platform_results.{platform}.status": "permanently_failed",
+                            f"platform_results.{platform}.error": f"Account banned/suspended by {platform}",
+                            f"platform_results.{platform}.permanent_reason": "ghost_account_detected",
+                        }}
+                    )
+                    logger.warning(f"[{trace_id}] EC16: Cascaded {result.modified_count} queued posts to permanently_failed — ghost account on {platform}")
+            except Exception as _ghost_err:
+                logger.error(f"[{trace_id}] EC16: Ghost account cascade error: {_ghost_err}")
+            return {"status": "failed", "error": f"Account banned/suspended on {platform}: {error_str}", "permanent": True}
 
         if is_rate_limit_error(error_str):
             record_account_rate_limit(account_id, platform)
