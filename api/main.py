@@ -35,6 +35,9 @@ from api.routes.stream import router as stream_router
 from api.routes.public_api import router as public_api_router
 from api.routes.user_webhooks import router as user_webhooks_router
 from api.routes.admin import router as admin_router
+from api.routes.user import router as user_router
+from api.routes.payments import router as payments_router
+from api.routes.ai import router as ai_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -156,6 +159,9 @@ def create_app() -> FastAPI:
     app.include_router(public_api_router, prefix="/api/v1")    # Phase 5.8
     app.include_router(user_webhooks_router, prefix="/api/v1") # Phase 5.8
     app.include_router(admin_router, prefix="/api/v1")         # Phase 9
+    app.include_router(user_router, prefix="/api/v1")          # user account / GDPR
+    app.include_router(payments_router, prefix="/api/v1")      # checkout + billing
+    app.include_router(ai_router, prefix="/api/v1")            # AI content generation
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(
