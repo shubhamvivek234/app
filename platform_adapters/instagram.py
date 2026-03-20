@@ -23,7 +23,10 @@ from utils.circuit_breaker import can_attempt, record_success, record_failure
 
 logger = logging.getLogger(__name__)
 
-GRAPH_BASE = "https://graph.facebook.com/v19.0"
+import os
+
+_FB_API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
+GRAPH_BASE = f"https://graph.facebook.com/{_FB_API_VERSION}"
 CONTAINER_POLL_INTERVAL = 10   # seconds (Celery retry countdown)
 OAUTH_TOKEN_URL = "https://graph.facebook.com/oauth/access_token"
 

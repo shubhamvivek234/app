@@ -20,7 +20,10 @@ from utils.idempotency import make_idempotency_key
 
 logger = logging.getLogger(__name__)
 
-GRAPH_BASE = "https://graph.facebook.com/v19.0"
+import os
+
+_FB_API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
+GRAPH_BASE = f"https://graph.facebook.com/{_FB_API_VERSION}"
 
 
 class FacebookAdapter(PlatformAdapter):

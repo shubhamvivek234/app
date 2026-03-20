@@ -1450,14 +1450,26 @@ async def stripe_webhook(request: Request):
                 plan_info = PRICING[transaction['plan']]
                 end_date = datetime.now(timezone.utc) + timedelta(days=plan_info['duration'])
 
+                user = await db.users.find_one({"user_id": transaction['user_id']}, {"plan": 1})
+                old_plan = (user or {}).get("plan", "free")
+                new_plan = transaction['plan']
+
                 await db.users.update_one(
                     {"user_id": transaction['user_id']},
                     {"$set": {
                         "subscription_status": "active",
-                        "subscription_plan": transaction['plan'],
+                        "subscription_plan": new_plan,
                         "subscription_end_date": end_date.isoformat()
                     }}
                 )
+
+                # Section 20.8: trigger plan change cascade (upgrade/downgrade)
+                try:
+                    from utils.billing import handle_plan_change, handle_payment_success
+                    await handle_plan_change(db, transaction['user_id'], old_plan, new_plan)
+                    await handle_payment_success(db, transaction['user_id'])
+                except Exception as billing_exc:
+                    logging.warning(f"Billing cascade error (non-fatal): {billing_exc}")
 
                 await db.payment_transactions.update_one(
                     {"session_id": session_id},
@@ -1498,6 +1510,72 @@ async def get_stats(current_user: User = Depends(get_current_user)):
         "connected_accounts": connected_accounts,
         "failed_posts": failed_posts
     }
+
+
+# ==================== GDPR (Section 20.3) ====================
+
+@api_router.post("/user/data-export")
+async def request_data_export(current_user: User = Depends(get_current_user)):
+    """Section 20.3 — GDPR right to data portability: enqueues a ZIP export task."""
+    try:
+        from celery_workers.tasks.gdpr import export_user_data
+        task = export_user_data.apply_async(
+            kwargs={"user_id": current_user.user_id},
+            queue="default",
+        )
+        logging.info(f"GDPR data export enqueued for user {current_user.user_id}, task_id={task.id}")
+        return {
+            "message": "Your data export has been queued. You will receive an email with a download link within 24 hours.",
+            "task_id": task.id,
+        }
+    except Exception as e:
+        logging.error(f"GDPR data export error for user {current_user.user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue data export. Please try again later.")
+
+
+@api_router.delete("/user/account")
+async def delete_account(current_user: User = Depends(get_current_user)):
+    """Section 20.3 — GDPR right to erasure: enqueues full account deletion cascade."""
+    try:
+        from celery_workers.tasks.gdpr import erase_user_data
+        task = erase_user_data.apply_async(
+            kwargs={"user_id": current_user.user_id},
+            queue="default",
+        )
+        logging.info(f"GDPR erasure enqueued for user {current_user.user_id}, task_id={task.id}")
+        return {
+            "message": "Account deletion has been queued. All your data will be permanently erased within 30 days.",
+            "task_id": task.id,
+        }
+    except Exception as e:
+        logging.error(f"GDPR erasure error for user {current_user.user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to queue account deletion. Please try again later.")
+
+
+@api_router.get("/user/notification-preferences")
+async def get_notification_prefs(current_user: User = Depends(get_current_user)):
+    """Section 20.12 — Get user notification preferences."""
+    try:
+        from utils.notification_prefs import get_user_prefs
+        prefs = await get_user_prefs(db, current_user.user_id)
+        return prefs
+    except Exception as e:
+        logging.error(f"Error fetching notification prefs: {e}")
+        return {}
+
+
+@api_router.patch("/user/notification-preferences")
+async def update_notification_prefs(prefs: dict, current_user: User = Depends(get_current_user)):
+    """Section 20.12 — Update user notification preferences."""
+    # Whitelist of allowed pref keys
+    allowed_keys = {"publish_failed", "publish_success", "payment_failed", "weekly_digest", "system_alerts"}
+    filtered = {k: v for k, v in prefs.items() if k in allowed_keys}
+    await db.users.update_one(
+        {"user_id": current_user.user_id},
+        {"$set": {f"notification_prefs.{k}": v for k, v in filtered.items()}}
+    )
+    return {"message": "Notification preferences updated.", "updated": list(filtered.keys())}
+
 
 # ==================== CONTENT PAGES ====================
 
@@ -1582,8 +1660,9 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                 result = await fb.publish_to_facebook(page_token, page_id, media_url, content)
             else:
                 async with httpx.AsyncClient() as http_client:
+                    _fb_api_version = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
                     resp = await http_client.post(
-                        f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                        f"https://graph.facebook.com/{_fb_api_version}/{page_id}/feed",
                         data={"message": content, "access_token": page_token}
                     )
                     resp.raise_for_status()
@@ -1655,6 +1734,17 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     """
     if not RESEND_API_KEY:
         return
+
+    # Section 20.12: respect notification preferences
+    user_id = user_doc.get("user_id", "")
+    if user_id:
+        try:
+            from utils.notification_prefs import should_notify
+            if not await should_notify(db, user_id, "post.dlq", "email"):
+                logging.info(f"DLQ notification suppressed by user prefs for {user_id}")
+                return
+        except Exception:
+            pass  # never block notification on pref lookup failure
 
     email = user_doc.get('email')
     name = user_doc.get('name', 'there')
