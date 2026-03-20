@@ -43,11 +43,43 @@ IG_MAX_ASPECT_RATIO = 1.91           # landscape max
 IG_MIN_ASPECT_RATIO = 0.5            # portrait min (4:5 ~ 0.8, allowed down to 9:16 ~ 0.56)
 
 
+# EC23: Content type × platform compatibility matrix
+# Keys: platform name; values: set of allowed media_type strings
+PLATFORM_CONTENT_COMPAT: dict[str, set[str]] = {
+    "instagram":  {"image", "video"},
+    "facebook":   {"image", "video"},
+    "twitter":    {"image", "video"},
+    "linkedin":   {"image", "video", "document"},
+    "youtube":    {"video"},
+    "tiktok":     {"video"},
+    "pinterest":  {"image", "video"},
+}
+
 # ── Legacy error class kept for backward-compatibility with existing callers ──
 class MediaValidationError(ValueError):
     def __init__(self, message: str, error_code: str = "EC5:INVALID_MEDIA_FORMAT"):
         super().__init__(message)
         self.error_code = error_code
+
+
+def check_platform_content_compat(media_type: str, platforms: list[str]) -> None:
+    """EC23: Raise 422 if the uploaded content type is unsupported on any target platform."""
+    for platform in platforms:
+        allowed = PLATFORM_CONTENT_COMPAT.get(platform)
+        if allowed is not None and media_type not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "CONTENT_TYPE_PLATFORM_MISMATCH",
+                    "message": (
+                        f"{media_type.capitalize()} content is not supported on "
+                        f"{platform.capitalize()}. Supported types: {', '.join(sorted(allowed))}."
+                    ),
+                    "platform": platform,
+                    "media_type": media_type,
+                    "allowed_types": sorted(allowed),
+                }
+            )
 
 
 def get_file_ext(filename: str) -> str:
@@ -169,6 +201,16 @@ def get_video_metadata(file_path: str) -> Optional[dict]:
         except Exception:
             fps = 0
 
+        # EC22: HDR detection via color_transfer / color_space tags
+        color_transfer = video_stream.get("color_transfer", "")
+        color_space = video_stream.get("color_space", "")
+        hdr_transfers = {"smpte2084", "arib-std-b67", "smpte428"}
+        is_hdr = color_transfer in hdr_transfers or "bt2020" in color_space
+
+        # EC22: Audio stream presence
+        audio_streams = [s for s in data.get("streams", []) if s.get("codec_type") == "audio"]
+        has_audio = len(audio_streams) > 0
+
         return {
             "duration_sec": round(duration, 2),
             "width": width,
@@ -176,6 +218,10 @@ def get_video_metadata(file_path: str) -> Optional[dict]:
             "codec": codec,
             "fps": fps,
             "aspect_ratio": round(width / height, 3) if height > 0 else 0,
+            "is_hdr": is_hdr,
+            "has_audio": has_audio,
+            "color_transfer": color_transfer,
+            "color_space": color_space,
         }
     except Exception:
         return None
@@ -190,6 +236,30 @@ def validate_video_for_platform(metadata: dict, platform: str) -> None:
     width = metadata.get("width", 0)
     height = metadata.get("height", 0)
     aspect = metadata.get("aspect_ratio", 1.0)
+    is_hdr = metadata.get("is_hdr", False)
+    has_audio = metadata.get("has_audio", True)
+
+    # EC22: HDR videos are unsupported on Instagram, TikTok, Facebook, LinkedIn, Twitter
+    HDR_UNSUPPORTED_PLATFORMS = {"instagram", "tiktok", "facebook", "linkedin", "twitter"}
+    if is_hdr and platform in HDR_UNSUPPORTED_PLATFORMS:
+        raise HTTPException(400, detail={
+            "error_code": "UPLOAD_HDR_NOT_SUPPORTED",
+            "message": (
+                f"HDR video is not supported on {platform.capitalize()}. "
+                "Please convert to SDR (BT.709) before uploading."
+            ),
+        })
+
+    # EC22: Platforms that require an audio track
+    AUDIO_REQUIRED_PLATFORMS = {"instagram", "tiktok", "facebook"}
+    if not has_audio and platform in AUDIO_REQUIRED_PLATFORMS:
+        raise HTTPException(400, detail={
+            "error_code": "UPLOAD_NO_AUDIO_STREAM",
+            "message": (
+                f"{platform.capitalize()} requires videos to have an audio track. "
+                "Please add an audio stream before uploading."
+            ),
+        })
 
     if platform == "youtube":
         if duration > YT_MAX_DURATION_SEC:
@@ -211,11 +281,17 @@ def validate_video_for_platform(metadata: dict, platform: str) -> None:
             })
 
 
-async def validate_upload(file: UploadFile, content: bytes, platform: Optional[str] = None) -> dict:
+async def validate_upload(
+    file: UploadFile,
+    content: bytes,
+    platform: Optional[str] = None,
+    platforms: Optional[list] = None,
+) -> dict:
     """
     Full validation pipeline for an uploaded file.
     Returns metadata dict with media_type, size_bytes, and optionally video_metadata.
     Call this BEFORE saving the file to storage.
+    `platforms` accepts a list of target platforms for EC23 compatibility checking.
     """
     filename = file.filename or "upload"
     content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -227,6 +303,15 @@ async def validate_upload(file: UploadFile, content: bytes, platform: Optional[s
     # 2. File size validation
     validate_file_size(size_bytes, media_type)
 
+    # 3. EC23: Content type × platform compatibility
+    target_platforms: list[str] = []
+    if platforms:
+        target_platforms = [p for p in platforms if p]
+    elif platform:
+        target_platforms = [platform]
+    if target_platforms:
+        check_platform_content_compat(media_type, target_platforms)
+
     result = {
         "media_type": media_type,
         "size_bytes": size_bytes,
@@ -235,7 +320,7 @@ async def validate_upload(file: UploadFile, content: bytes, platform: Optional[s
         "filename": filename,
     }
 
-    # 3. Video metadata validation (if video and ffprobe available)
+    # 4. Video metadata validation (if video and ffprobe available)
     if media_type == "video":
         import tempfile, uuid as _uuid
         ext = get_file_ext(filename) or ".mp4"
@@ -246,7 +331,10 @@ async def validate_upload(file: UploadFile, content: bytes, platform: Optional[s
             metadata = get_video_metadata(tmp_path)
             if metadata:
                 result["video_metadata"] = metadata
-                if platform:
+                # Validate against each target platform (EC22 + platform constraints)
+                for p in target_platforms:
+                    validate_video_for_platform(metadata, p)
+                if not target_platforms and platform:
                     validate_video_for_platform(metadata, platform)
         finally:
             if os.path.exists(tmp_path):

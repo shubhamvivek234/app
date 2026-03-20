@@ -33,6 +33,8 @@ import shutil
 import subprocess
 import hashlib
 import tempfile
+import re
+import time
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -203,6 +205,7 @@ class Post(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     published_at: Optional[datetime] = None
     ai_generated: bool = False
+    version: int = 1  # EC3 + EC25: optimistic locking version field
 
 class PostCreate(BaseModel):
     content: str
@@ -222,6 +225,7 @@ class PostUpdate(BaseModel):
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
     scheduled_time: Optional[str] = None
+    version: Optional[int] = None  # EC25: client must send current version to detect conflicts
     status: Optional[str] = None
 
 class AIContentRequest(BaseModel):
@@ -329,8 +333,24 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
             {"user_id": user_doc["user_id"]},
             {"$set": {"subscription_status": "expired"}}
         )
+        # EC15: Cancel all queued/scheduled posts when subscription expires
+        await _cancel_queued_posts_on_expiry(user_doc["user_id"])
 
     return User(**user_doc)
+
+async def _cancel_queued_posts_on_expiry(user_id: str) -> None:
+    """EC15: Mark all scheduled/queued posts as cancelled when subscription expires."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await db.posts.update_many(
+        {"user_id": user_id, "status": {"$in": ["scheduled", "queued"]}},
+        {"$set": {
+            "status": "cancelled",
+            "cancel_reason": "subscription_expired",
+            "updated_at": now_iso,
+        }}
+    )
+    if result.modified_count:
+        logging.info(f"EC15: Cancelled {result.modified_count} queued posts for user {user_id} — subscription expired")
 
 async def _resolve_user_doc(user_id: str) -> dict:
     """Fetch user doc from MongoDB and auto-expire subscription if needed."""
@@ -352,6 +372,8 @@ async def _resolve_user_doc(user_id: str) -> dict:
             {"user_id": user_id},
             {"$set": {"subscription_status": "expired"}}
         )
+        # EC15: Cancel all queued/scheduled posts when subscription expires
+        await _cancel_queued_posts_on_expiry(user_id)
     return user_doc
 
 
@@ -668,6 +690,15 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
     status = "draft"
     if post_data.scheduled_time:
         scheduled_time = datetime.fromisoformat(post_data.scheduled_time.replace('Z', '+00:00'))
+        if scheduled_time.tzinfo is None:
+            scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
+        # EC19: Reject posts scheduled more than 5 minutes in the past
+        grace_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+        if scheduled_time < grace_cutoff:
+            raise HTTPException(
+                status_code=422,
+                detail=f"scheduled_time is in the past. Please choose a future time."
+            )
         status = "scheduled"
     
     post = Post(
@@ -916,14 +947,29 @@ async def update_post(post_id: str, post_data: PostUpdate, current_user: User = 
     post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    
+
+    # EC25: Optimistic locking — reject stale writes to prevent last-write-wins data loss
+    if post_data.version is not None and post.get("version", 1) != post_data.version:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Post was modified by another request (version mismatch: expected {post.get('version', 1)}, got {post_data.version}). Refresh and try again."
+        )
+
     update_dict = {k: v for k, v in post_data.model_dump(exclude_unset=True).items() if v is not None}
-    
+    update_dict.pop("version", None)  # don't store the client-sent version as a field value
+
     if 'scheduled_time' in update_dict and update_dict['scheduled_time']:
-        update_dict['scheduled_time'] = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00')).isoformat()
-    
+        new_st = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00'))
+        if new_st.tzinfo is None:
+            new_st = new_st.replace(tzinfo=timezone.utc)
+        # EC19: Also validate scheduled_time on updates
+        if new_st < datetime.now(timezone.utc) - timedelta(minutes=5):
+            raise HTTPException(status_code=422, detail="scheduled_time is in the past.")
+        update_dict['scheduled_time'] = new_st.isoformat()
+
     if update_dict:
-        await db.posts.update_one({"id": post_id}, {"$set": update_dict})
+        # EC3: Increment version so in-flight workers detect stale data
+        await db.posts.update_one({"id": post_id}, {"$set": update_dict, "$inc": {"version": 1}})
     
     updated_post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     
@@ -1092,12 +1138,57 @@ async def get_social_accounts(current_user: User = Depends(get_current_user)):
     
     return accounts
 
+@api_router.get("/social-accounts/{account_id}/disconnect-impact")
+async def get_disconnect_impact(account_id: str, current_user: User = Depends(get_current_user)):
+    """EC7: Pre-disconnect impact check — tell user how many queued posts will be affected."""
+    account = await db.social_accounts.find_one({"id": account_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    platform = account.get("platform", "")
+    queued_count = await db.posts.count_documents({
+        "user_id": current_user.user_id,
+        "platforms": platform,
+        "status": {"$in": ["scheduled", "publishing"]},
+    })
+    return {
+        "account_id": account_id,
+        "platform": platform,
+        "queued_posts_affected": queued_count,
+        "warning": (
+            f"Disconnecting this account will cause {queued_count} scheduled post(s) to fail on {platform}."
+            if queued_count > 0 else None
+        ),
+    }
+
+
 @api_router.delete("/social-accounts/{account_id}")
 async def disconnect_social_account(account_id: str, current_user: User = Depends(get_current_user)):
+    # EC7: Cancel queued posts on this platform when account is disconnected
+    account = await db.social_accounts.find_one({"id": account_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    platform = account.get("platform", "")
     result = await db.social_accounts.delete_one({"id": account_id, "user_id": current_user.user_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Account not found")
-    return {"message": "Account disconnected"}
+
+    # EC16: Mark account inactive instead of full delete + cascade fail queued posts
+    affected = await db.posts.count_documents({
+        "user_id": current_user.user_id,
+        "platforms": platform,
+        "status": {"$in": ["scheduled", "publishing"]},
+    })
+    if affected > 0:
+        # Mark platform result as permanently_failed for in-flight posts
+        await db.posts.update_many(
+            {"user_id": current_user.user_id, "platforms": platform, "status": {"$in": ["scheduled", "publishing"]}},
+            {"$set": {f"platform_results.{platform}.status": "permanently_failed",
+                      f"platform_results.{platform}.error": "Social account disconnected by user"}}
+        )
+        logging.warning(f"EC7/EC16: {affected} queued posts on {platform} marked failed after account disconnect")
+
+    return {"message": "Account disconnected", "posts_affected": affected}
+
 
 # ==================== PAYMENTS ====================
 
@@ -1299,21 +1390,35 @@ async def get_payment_status(session_id: str, current_user: User = Depends(get_c
 async def stripe_webhook(request: Request):
     try:
         body = await request.body()
-        signature = request.headers.get("Stripe-Signature", "")
-        
+        sig_header = request.headers.get("Stripe-Signature", "")
+
+        # EC13: Replay attack protection — reject if webhook timestamp > 5 minutes old
+        ts_match = re.search(r"t=(\d+)", sig_header)
+        if ts_match:
+            webhook_ts = int(ts_match.group(1))
+            if abs(time.time() - webhook_ts) > 300:
+                logging.warning("Stripe webhook rejected — timestamp too old (possible replay attack)")
+                raise HTTPException(status_code=400, detail="Webhook timestamp too old — possible replay attack")
+
         webhook_url = ""
         stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
-        
-        webhook_response = await stripe_checkout.handle_webhook(body, signature)
-        
+
+        webhook_response = await stripe_checkout.handle_webhook(body, sig_header)
+
         if webhook_response.event_type == "checkout.session.completed":
             session_id = webhook_response.session_id
-            
+
+            # EC28: Idempotent webhook — skip if already processed
+            already_processed = await db.processed_webhooks.find_one({"event_id": session_id})
+            if already_processed:
+                logging.info(f"Stripe webhook already processed: {session_id}")
+                return {"status": "already_processed"}
+
             transaction = await db.payment_transactions.find_one({"session_id": session_id})
             if transaction and transaction['payment_status'] != "paid":
                 plan_info = PRICING[transaction['plan']]
                 end_date = datetime.now(timezone.utc) + timedelta(days=plan_info['duration'])
-                
+
                 await db.users.update_one(
                     {"user_id": transaction['user_id']},
                     {"$set": {
@@ -1322,7 +1427,7 @@ async def stripe_webhook(request: Request):
                         "subscription_end_date": end_date.isoformat()
                     }}
                 )
-                
+
                 await db.payment_transactions.update_one(
                     {"session_id": session_id},
                     {"$set": {
@@ -1330,8 +1435,17 @@ async def stripe_webhook(request: Request):
                         "updated_at": datetime.now(timezone.utc).isoformat()
                     }}
                 )
-        
+
+            # EC28: Record this webhook as processed to prevent double-grants
+            await db.processed_webhooks.insert_one({
+                "event_id": session_id,
+                "event_type": webhook_response.event_type,
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            })
+
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Webhook error: {e}")
         return {"status": "error", "message": str(e)}

@@ -76,6 +76,87 @@ PLATFORM_HOURLY_LIMITS = {
 BACKOFF_MINUTES = [5, 15, 60]
 MAX_RETRIES = 3
 
+# ── EC5 + EC8: Permanent error classification ─────────────────────────────────
+# Errors that should NEVER be retried — retrying causes platform account bans.
+PERMANENT_ERRORS: Dict[str, list] = {
+    "instagram": [
+        "invalid parameter", "media type", "media posted", "not a valid",
+        "oauthexception", "error validating application", "permission denied",
+        "content policy", "#100", "#200", "#10", "account disabled",
+        "user not found", "business account required", "spam", "inappropriate",
+    ],
+    "facebook": [
+        "invalid oauth", "#200", "#190", "#10", "application request limit",
+        "permission denied", "content policy", "spam", "account disabled",
+        "invalid parameter", "oauthexception",
+    ],
+    "twitter": [
+        "duplicate content", "187", "261", "326", "suspended",
+        "account suspended", "read-only", "content policy",
+    ],
+    "linkedin": [
+        "unauthorized", "forbidden", "revoked", "content policy",
+        "invalid share", "cannot create", "permission denied",
+    ],
+    "youtube": [
+        "content policy", "community guidelines", "duplicate video",
+        "account suspended", "forbidden", "quotaexceeded", "invalid credentials",
+    ],
+    "tiktok": [
+        "content policy", "spam", "account banned", "unauthorized",
+        "permission denied", "forbidden",
+    ],
+    "default": [
+        "account suspended", "account banned", "content policy", "spam",
+        "permanently blocked", "invalid credentials",
+    ],
+}
+
+# EC24: Permission revocation error patterns — mark account inactive on match.
+REVOCATION_ERRORS: Dict[str, list] = {
+    "instagram": ["#190", "token has expired", "session has been invalidated", "access revoked"],
+    "facebook": ["#190", "invalid_token", "token has expired", "access_token"],
+    "twitter": ["89", "invalid or expired token", "could not authenticate"],
+    "linkedin": ["401", "revoked", "expired"],
+    "youtube": ["invalid_grant", "token has been expired or revoked"],
+    "tiktok": ["access_token_invalid", "permission denied"],
+}
+
+
+def is_permanent_error(error_str: str, platform: str) -> bool:
+    """Return True if this error must never be retried (EC5 + EC8)."""
+    s = error_str.lower()
+    patterns = PERMANENT_ERRORS.get(platform, []) + PERMANENT_ERRORS["default"]
+    return any(p in s for p in patterns)
+
+
+def is_revocation_error(error_str: str, platform: str) -> bool:
+    """Return True if the user revoked app permissions on the platform (EC24)."""
+    s = error_str.lower()
+    patterns = REVOCATION_ERRORS.get(platform, [])
+    return any(p in s for p in patterns)
+
+
+# ── EC14: Account-level rate limit (shared social accounts across team users) ─
+# Key is per-social_account_id so shared accounts share the same budget.
+_account_rate_limit_paused: Dict[str, float] = {}
+
+
+def check_account_rate_limit(account_id: str, platform: str) -> bool:
+    """Block if this specific social account is rate-limited (EC14)."""
+    key = f"acct:{platform}:{account_id}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if key in _account_rate_limit_paused:
+        if now_ts < _account_rate_limit_paused[key]:
+            return False
+        del _account_rate_limit_paused[key]
+    return True
+
+
+def record_account_rate_limit(account_id: str, platform: str, retry_after_seconds: int = 3600):
+    key = f"acct:{platform}:{account_id}"
+    _account_rate_limit_paused[key] = datetime.now(timezone.utc).timestamp() + retry_after_seconds
+
 
 def check_rate_limit(user_id: str, platform: str) -> bool:
     """Returns True if OK to call platform API, False if rate limited."""
@@ -179,6 +260,26 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
     # Resolve URLs so Celery workers can reach local/localhost media
     media_url = _resolve_media_url(media_url) if media_url else None
     video_url = _resolve_media_url(video_url) if video_url else None
+    post_id = post_doc.get("id", "")
+    account_id = account.get("id", "")
+
+    # EC1: Idempotency key — check Redis before hitting the platform API.
+    # Key is deterministic: if this worker already published, return cached result.
+    idem_key = f"idempotency:{post_id}:{platform}"
+    try:
+        import json as _json
+        r = await _get_redis()
+        cached = await r.get(idem_key)
+        if cached:
+            data = _json.loads(cached)
+            logger.info(f"[{trace_id}] EC1: idempotency hit for {platform}/{post_id} → {data}")
+            return {"status": "success", "platform_post_id": data.get("platform_post_id", "")}
+    except Exception as _ie:
+        logger.warning(f"[{trace_id}] EC1: idempotency Redis check failed: {_ie}")
+
+    # EC14: Account-level rate limit (shared accounts across team users)
+    if not check_account_rate_limit(account_id, platform):
+        return {"status": "failed", "error": f"Account-level rate limit active for {platform}", "rate_limited": True, "retry_after_seconds": 3600}
 
     def is_rate_limit_error(error_str: str) -> bool:
         s = error_str.lower()
@@ -192,7 +293,21 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
         if platform == "twitter":
             from app.social.twitter import TwitterAuth
             twitter = TwitterAuth()
-            result = await twitter.publish_tweet(access_token, content, media_urls or [])
+
+            # EC30: GIF → MP4 conversion for Twitter (Twitter requires native GIF upload, not URL).
+            # Animated GIFs uploaded as image URLs are rejected; convert to MP4 first.
+            processed_media_urls: list = list(media_urls or [])
+            for idx, url in enumerate(processed_media_urls):
+                if url and url.lower().endswith(".gif"):
+                    try:
+                        converted = await _convert_gif_to_mp4(url, trace_id)
+                        if converted:
+                            processed_media_urls[idx] = converted
+                            logger.info(f"[{trace_id}] EC30: GIF→MP4 converted for Twitter: {url} → {converted}")
+                    except Exception as _ge:
+                        logger.warning(f"[{trace_id}] EC30: GIF conversion failed ({url}): {_ge} — using original")
+
+            result = await twitter.publish_tweet(access_token, content, processed_media_urls)
             return {"status": "success", "platform_post_id": str(result or "")}
 
         elif platform == "instagram":
@@ -202,11 +317,20 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
 
             if video_url:
                 container_id = await ig.create_video_container(access_token, ig_user_id, video_url, content)
-                return {"status": "awaiting_ig_processing", "container_id": container_id}
+                return {
+                    "status": "awaiting_ig_processing",
+                    "container_id": container_id,
+                    "container_created_at": datetime.now(timezone.utc).isoformat(),  # EC4
+                }
             else:
                 pub_url = media_url or ""
                 result = await ig.publish_to_instagram(access_token, ig_user_id, pub_url, content, "IMAGE")
-                return {"status": "success", "platform_post_id": str(result)}
+                # EC20/EC21: Check for error in response body even on apparent success
+                if isinstance(result, dict) and result.get("error"):
+                    raise Exception(str(result["error"]))
+                platform_post_id = str(result.get("id", result) if isinstance(result, dict) else result)
+                await _write_idempotency_key(idem_key, platform_post_id)
+                return {"status": "success", "platform_post_id": platform_post_id}
 
         elif platform == "facebook":
             from app.social.facebook import FacebookAuth
@@ -222,15 +346,23 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                         data={"message": content, "access_token": page_token}
                     )
                     resp.raise_for_status()
-                    result = resp.json().get("id", "")
-            return {"status": "success", "platform_post_id": str(result)}
+                    result = resp.json()
+            # EC20: Facebook returns HTTP 200 with {"error": {...}} on soft failures
+            if isinstance(result, dict) and result.get("error"):
+                err = result["error"]
+                raise Exception(f"Facebook API error: {err.get('message', str(err))}")
+            platform_post_id = str(result.get("id", result) if isinstance(result, dict) else result)
+            await _write_idempotency_key(idem_key, platform_post_id)
+            return {"status": "success", "platform_post_id": platform_post_id}
 
         elif platform == "linkedin":
             from app.social.linkedin import LinkedInAuth
             li = LinkedInAuth()
             person_urn = account.get("platform_user_id", "")
             result = await li.publish_post(access_token, person_urn, content, media_urls)
-            return {"status": "success", "platform_post_id": str(result)}
+            platform_post_id = str(result or "")
+            await _write_idempotency_key(idem_key, platform_post_id)
+            return {"status": "success", "platform_post_id": platform_post_id}
 
         elif platform == "youtube":
             from app.social.google import GoogleAuth
@@ -251,23 +383,39 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                 privacy = post_doc.get("youtube_privacy", "public")
                 try:
                     result = await yt.upload_video(access_token, tmp_path, title, content, cover_image_path=cover_image, privacy_status=privacy)
-                    return {"status": "success", "platform_post_id": str(result)}
+                    platform_post_id = str(result or "")
+                    await _write_idempotency_key(idem_key, platform_post_id)
+                    return {"status": "success", "platform_post_id": platform_post_id}
                 except ValueError as e:
                     if "AuthError" in str(e):
-                        # Token expired — try refresh
+                        # EC18: Distributed lock prevents concurrent token refresh race
                         refresh_token = account.get("refresh_token", "")
                         if refresh_token:
+                            lock_key = f"token_refresh_lock:{account_id}"
                             try:
-                                new_tokens = await yt.refresh_access_token(refresh_token)
-                                new_access = new_tokens.get("access_token", "")
-                                if new_access:
+                                r = await _get_redis()
+                                acquired = await r.set(lock_key, "1", nx=True, ex=30)
+                                if not acquired:
+                                    # Another worker is refreshing — wait then re-read token from DB
+                                    await asyncio.sleep(5)
                                     _db = get_db()
-                                    await _db.social_accounts.update_one(
-                                        {"id": account.get("id")},
-                                        {"$set": {"access_token": new_access}}
-                                    )
+                                    fresh_acct = await _db.social_accounts.find_one({"id": account_id}, {"_id": 0})
+                                    new_access = (fresh_acct or {}).get("access_token", access_token)
+                                else:
+                                    new_tokens = await yt.refresh_access_token(refresh_token)
+                                    new_access = new_tokens.get("access_token", "")
+                                    if new_access:
+                                        _db = get_db()
+                                        await _db.social_accounts.update_one(
+                                            {"id": account_id},
+                                            {"$set": {"access_token": new_access, "token_refreshed_at": datetime.now(timezone.utc).isoformat()}}
+                                        )
+                                    await r.delete(lock_key)
+                                if new_access:
                                     result = await yt.upload_video(new_access, tmp_path, title, content, cover_image_path=cover_image, privacy_status=privacy)
-                                    return {"status": "success", "platform_post_id": str(result)}
+                                    platform_post_id = str(result or "")
+                                    await _write_idempotency_key(idem_key, platform_post_id)
+                                    return {"status": "success", "platform_post_id": platform_post_id}
                             except Exception as refresh_err:
                                 return {"status": "failed", "error": f"Token refresh failed: {refresh_err}"}
                     raise  # re-raise for outer handler
@@ -296,7 +444,11 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                 allow_stitch=tiktok_allow_stitch,
                 allow_comments=tiktok_allow_comment,
             )
+            # EC20/EC21: TikTok error check in body
+            if isinstance(result, dict) and result.get("error", {}).get("code", 0) != 0:
+                raise Exception(f"TikTok error: {result['error']}")
             publish_id = result.get("publish_id", "") if isinstance(result, dict) else str(result or "")
+            await _write_idempotency_key(idem_key, publish_id)
             return {"status": "success", "platform_post_id": publish_id}
 
         elif platform in ("bluesky", "threads"):
@@ -309,7 +461,21 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
         error_str = str(e)
         logger.error(f"[{trace_id}] Platform {platform} publish error: {error_str}")
 
+        # EC24: Revocation → mark account inactive (don't retry)
+        if is_revocation_error(error_str, platform) and account_id:
+            try:
+                _db = get_db()
+                await _db.social_accounts.update_one(
+                    {"id": account_id},
+                    {"$set": {"is_active": False, "disconnected_reason": "permission_revoked", "disconnected_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                logger.warning(f"[{trace_id}] EC24: {platform} account {account_id} marked inactive — permission revoked")
+            except Exception:
+                pass
+            return {"status": "failed", "error": f"Permission revoked on {platform}: {error_str}", "permanent": True}
+
         if is_rate_limit_error(error_str):
+            record_account_rate_limit(account_id, platform)
             return {
                 "status": "failed",
                 "error": error_str,
@@ -393,6 +559,21 @@ async def _finalise_post_status(db, post_id: str, post_doc: dict, platform_resul
     if failed_platforms:
         update_fields["failure_reason"] = "; ".join(f"{p}: {err}" for p, err in failed_platforms.items())
 
+    # EC17: Write Redis confirmation BEFORE MongoDB so a Mongo timeout after a
+    # successful publish never causes a phantom re-publish on the next worker run.
+    try:
+        r = await _get_redis()
+        import json as _json
+        for plat, pr in platform_results.items():
+            if pr["status"] == "success":
+                await r.setex(
+                    f"published:{post_id}:{plat}",
+                    172800,  # 48-hour TTL
+                    _json.dumps({"platform_post_id": pr.get("platform_post_id", ""), "at": now.isoformat()}),
+                )
+    except Exception as _re:
+        logger.warning(f"Redis confirmation write failed for {post_id}: {_re}")
+
     await db.posts.update_one({"id": post_id}, {"$set": update_fields})
 
     # Clean up media files when post reaches a terminal state
@@ -428,6 +609,62 @@ async def _get_redis():
             decode_responses=True,
         )
     return aioredis.Redis(connection_pool=_redis_pool)
+
+
+async def _write_idempotency_key(idem_key: str, platform_post_id: str):
+    """EC1: Write idempotency key after successful publish so duplicate runs are no-ops."""
+    try:
+        import json as _json
+        r = await _get_redis()
+        await r.setex(idem_key, 86400, _json.dumps({"platform_post_id": platform_post_id}))
+    except Exception as e:
+        logger.warning(f"EC1: Failed to write idempotency key {idem_key}: {e}")
+
+
+async def _convert_gif_to_mp4(gif_url: str, trace_id: str) -> Optional[str]:
+    """
+    EC30: Download a GIF and convert it to MP4 using ffmpeg.
+    Returns path to the converted MP4 (in /tmp) or None on failure.
+    Twitter's media upload API accepts native GIF or MP4; MP4 is preferred for animated content.
+    ffmpeg args are passed as a fixed list — no shell interpolation, no injection risk.
+    """
+    import uuid as _uuid
+    import asyncio as _asyncio
+    import httpx as _httpx
+
+    tmp_gif = f"/tmp/gif_{_uuid.uuid4().hex}.gif"
+    tmp_mp4 = f"/tmp/gif_{_uuid.uuid4().hex}.mp4"
+
+    try:
+        async with _httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(gif_url)
+            resp.raise_for_status()
+            with open(tmp_gif, "wb") as f:
+                f.write(resp.content)
+
+        # Safe: using create_subprocess_exec with a fixed argument list (no shell=True)
+        ffmpeg_args = [
+            "ffmpeg", "-y", "-i", tmp_gif,
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            tmp_mp4,
+        ]
+        proc = await _asyncio.create_subprocess_exec(
+            *ffmpeg_args,
+            stdout=_asyncio.subprocess.DEVNULL,
+            stderr=_asyncio.subprocess.DEVNULL,
+        )
+        await proc.communicate()
+        if proc.returncode == 0 and os.path.exists(tmp_mp4):
+            return tmp_mp4
+    except Exception as e:
+        logger.warning(f"[{trace_id}] EC30: GIF conversion error: {e}")
+    finally:
+        if os.path.exists(tmp_gif):
+            os.remove(tmp_gif)
+
+    return None
 
 
 async def _notify_post_update_task(db, user_id: str, post_id: str, status: str, platform_results: dict):
@@ -672,8 +909,12 @@ async def process_scheduled_posts_task(self):
                     pr["error"] = result.get("error", "Unknown error")
                     pr["last_attempt"] = now.isoformat()
 
-                    if pr["retries"] >= MAX_RETRIES:
+                    # EC5: Classify permanent errors — never retry, prevents account bans
+                    is_perm = result.get("permanent", False) or is_permanent_error(pr["error"], platform)
+
+                    if is_perm or pr["retries"] >= MAX_RETRIES:
                         pr["status"] = "permanently_failed"
+                        pr["permanent_reason"] = "error_classified_permanent" if is_perm else "max_retries_exceeded"
                         logger.error(
                             f"[{trace_id}] {platform} permanently failed for post {post_id}: {pr['error']}"
                         )
@@ -733,19 +974,46 @@ async def check_instagram_containers_task(self):
             if not container_id:
                 continue
 
+            # EC4: Container expiry — Instagram containers expire after 24h.
+            # If expired, mark permanently failed so a new container is created on retry.
+            container_created_at_str = ig_pr.get("container_created_at")
+            if container_created_at_str:
+                try:
+                    container_created_at = datetime.fromisoformat(container_created_at_str)
+                    if container_created_at.tzinfo is None:
+                        container_created_at = container_created_at.replace(tzinfo=timezone.utc)
+                    if (now - container_created_at).total_seconds() > 82800:  # 23h safety margin
+                        ig_pr["status"] = "permanently_failed"
+                        ig_pr["error"] = "Instagram video container expired (24h limit) — requeue to re-create"
+                        platform_results["instagram"] = ig_pr
+                        await _finalise_post_status(db, post_id, post_doc, platform_results, now)
+                        logger.warning(f"[{trace_id}] EC4: Instagram container {container_id} expired for post {post_id}")
+                        continue
+                except Exception:
+                    pass
+
             try:
                 from app.social.instagram import InstagramAuth
                 ig = InstagramAuth()
                 status_code = await ig.check_container_status(access_token, container_id)
 
                 if status_code == "FINISHED":
-                    publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
-                    ig_pr["status"] = "success"
-                    ig_pr["platform_post_id"] = publish_result
-                    ig_pr["published_at"] = now.isoformat()
-                    logger.info(
-                        f"[{trace_id}] Instagram container {container_id} published for post {post_id}"
-                    )
+                    try:
+                        publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
+                        ig_pr["status"] = "success"
+                        ig_pr["platform_post_id"] = str(publish_result or "")
+                        ig_pr["published_at"] = now.isoformat()
+                        logger.info(f"[{trace_id}] Instagram container {container_id} published for post {post_id}")
+                    except Exception as pub_err:
+                        err_str = str(pub_err)
+                        # EC29: Error code 9007 = media already published — treat as success
+                        if "9007" in err_str or "already been published" in err_str.lower():
+                            logger.info(f"[{trace_id}] EC29: Instagram container already published (9007) — treating as success")
+                            ig_pr["status"] = "success"
+                            ig_pr["platform_post_id"] = container_id  # use container_id as fallback post ID
+                            ig_pr["published_at"] = now.isoformat()
+                        else:
+                            raise
 
                 elif status_code == "ERROR":
                     ig_pr["retries"] = ig_pr.get("retries", 0) + 1
@@ -756,15 +1024,11 @@ async def check_instagram_containers_task(self):
                         ig_pr["status"] = "failed"
                         ig_pr["error"] = "Instagram video processing error — will retry"
                         ig_pr["next_retry_at"] = get_next_retry_at(ig_pr["retries"]).isoformat()
-                    logger.error(
-                        f"[{trace_id}] Instagram container {container_id} ERROR for post {post_id}"
-                    )
+                    logger.error(f"[{trace_id}] Instagram container {container_id} ERROR for post {post_id}")
 
                 else:
                     # Still IN_PROGRESS — check again next tick
-                    logger.debug(
-                        f"[{trace_id}] Instagram container {container_id} still processing ({status_code})"
-                    )
+                    logger.debug(f"[{trace_id}] Instagram container {container_id} still processing ({status_code})")
                     continue
 
             except Exception as e:
@@ -826,3 +1090,180 @@ async def beat_heartbeat_task(self):
     """Write beat_tick_at to Redis. If this key is older than 90s, Beat is unhealthy."""
     r = await _get_redis()
     await r.set("beat_tick_at", datetime.now(timezone.utc).isoformat(), ex=120)
+
+
+# ── EC6: Proactive OAuth Token Refresh ───────────────────────────────────────
+
+@celery_app.task(
+    name="celery_tasks.refresh_expiring_tokens_task",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=120,
+    time_limit=150,
+)
+@async_task
+async def refresh_expiring_tokens_task(self):
+    """
+    EC6: Proactively refresh OAuth tokens expiring within the next 24 hours.
+    Runs every 30 minutes via Beat. Covers Instagram, Facebook, LinkedIn,
+    Twitter, and TikTok (YouTube token refresh already happens inline in
+    publish_to_platform).
+    """
+    db = _get_db()
+    now = datetime.now(timezone.utc)
+    refresh_window = now + timedelta(hours=24)
+
+    # Find active accounts with tokens expiring soon
+    cursor = db.social_accounts.find({
+        "is_active": True,
+        "refresh_token": {"$exists": True, "$ne": None},
+        "token_expiry": {"$gt": now.isoformat(), "$lt": refresh_window.isoformat()},
+        "platform": {"$in": ["instagram", "facebook", "linkedin", "twitter", "tiktok"]},
+    })
+
+    refreshed = failed = 0
+    async for account in cursor:
+        platform = account.get("platform", "")
+        account_id = account.get("id", "")
+        refresh_token = account.get("refresh_token", "")
+        if not refresh_token or not account_id:
+            continue
+
+        # Distributed lock so only one worker refreshes at a time per account (EC18)
+        lock_key = f"token_refresh_lock:{account_id}"
+        try:
+            r = await _get_redis()
+            acquired = await r.set(lock_key, "1", nx=True, ex=60)
+            if not acquired:
+                continue  # Another worker is handling this account
+
+            new_access = new_refresh = new_expiry = None
+
+            if platform == "instagram":
+                import httpx as _httpx
+                async with _httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        "https://graph.instagram.com/refresh_access_token",
+                        params={"grant_type": "ig_refresh_token", "access_token": account.get("access_token", "")},
+                    )
+                    data = resp.json()
+                if data.get("access_token"):
+                    new_access = data["access_token"]
+                    expires_in = int(data.get("expires_in", 5184000))  # 60 days default
+                    new_expiry = (now + timedelta(seconds=expires_in)).isoformat()
+
+            elif platform == "facebook":
+                import httpx as _httpx
+                fb_app_id = os.environ.get("FACEBOOK_APP_ID", "")
+                fb_app_secret = os.environ.get("FACEBOOK_APP_SECRET", "")
+                if fb_app_id and fb_app_secret:
+                    async with _httpx.AsyncClient() as client:
+                        resp = await client.get(
+                            "https://graph.facebook.com/oauth/access_token",
+                            params={
+                                "grant_type": "fb_exchange_token",
+                                "client_id": fb_app_id,
+                                "client_secret": fb_app_secret,
+                                "fb_exchange_token": account.get("access_token", ""),
+                            },
+                        )
+                        data = resp.json()
+                    if data.get("access_token"):
+                        new_access = data["access_token"]
+                        expires_in = int(data.get("expires_in", 5184000))
+                        new_expiry = (now + timedelta(seconds=expires_in)).isoformat()
+
+            elif platform == "linkedin":
+                import httpx as _httpx
+                li_client_id = os.environ.get("LINKEDIN_CLIENT_ID", "")
+                li_client_secret = os.environ.get("LINKEDIN_CLIENT_SECRET", "")
+                if li_client_id and li_client_secret:
+                    async with _httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            "https://www.linkedin.com/oauth/v2/accessToken",
+                            data={
+                                "grant_type": "refresh_token",
+                                "refresh_token": refresh_token,
+                                "client_id": li_client_id,
+                                "client_secret": li_client_secret,
+                            },
+                        )
+                        data = resp.json()
+                    if data.get("access_token"):
+                        new_access = data["access_token"]
+                        new_refresh = data.get("refresh_token", refresh_token)
+                        expires_in = int(data.get("expires_in", 5184000))
+                        new_expiry = (now + timedelta(seconds=expires_in)).isoformat()
+
+            elif platform == "twitter":
+                import httpx as _httpx
+                import base64 as _base64
+                tw_client_id = os.environ.get("TWITTER_CLIENT_ID", "")
+                tw_client_secret = os.environ.get("TWITTER_CLIENT_SECRET", "")
+                if tw_client_id and tw_client_secret:
+                    creds = _base64.b64encode(f"{tw_client_id}:{tw_client_secret}".encode()).decode()
+                    async with _httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            "https://api.twitter.com/2/oauth2/token",
+                            headers={"Authorization": f"Basic {creds}"},
+                            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+                        )
+                        data = resp.json()
+                    if data.get("access_token"):
+                        new_access = data["access_token"]
+                        new_refresh = data.get("refresh_token", refresh_token)
+                        expires_in = int(data.get("expires_in", 7200))
+                        new_expiry = (now + timedelta(seconds=expires_in)).isoformat()
+
+            elif platform == "tiktok":
+                import httpx as _httpx
+                tk_client_key = os.environ.get("TIKTOK_CLIENT_KEY", "")
+                tk_client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "")
+                if tk_client_key and tk_client_secret:
+                    async with _httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            "https://open.tiktokapis.com/v2/oauth/token/",
+                            data={
+                                "client_key": tk_client_key,
+                                "client_secret": tk_client_secret,
+                                "grant_type": "refresh_token",
+                                "refresh_token": refresh_token,
+                            },
+                        )
+                        data = resp.json()
+                    if data.get("data", {}).get("access_token"):
+                        new_access = data["data"]["access_token"]
+                        new_refresh = data["data"].get("refresh_token", refresh_token)
+                        expires_in = int(data["data"].get("expires_in", 86400))
+                        new_expiry = (now + timedelta(seconds=expires_in)).isoformat()
+
+            if new_access:
+                update_fields: dict = {
+                    "access_token": new_access,
+                    "updated_at": now.isoformat(),
+                }
+                if new_refresh:
+                    update_fields["refresh_token"] = new_refresh
+                if new_expiry:
+                    update_fields["token_expiry"] = new_expiry
+                await db.social_accounts.update_one(
+                    {"id": account_id},
+                    {"$set": update_fields}
+                )
+                refreshed += 1
+                logger.info(f"EC6: Proactively refreshed {platform} token for account {account_id}")
+            else:
+                failed += 1
+                logger.warning(f"EC6: Token refresh skipped/failed for {platform} account {account_id}")
+
+        except Exception as exc:
+            failed += 1
+            logger.error(f"EC6: Token refresh error for account {account_id}: {exc}")
+        finally:
+            try:
+                r = await _get_redis()
+                await r.delete(lock_key)
+            except Exception:
+                pass
+
+    logger.info(f"EC6: Token refresh sweep done — refreshed={refreshed} failed={failed}")

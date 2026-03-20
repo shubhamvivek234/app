@@ -18,13 +18,19 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.resolve()
 load_dotenv(ROOT_DIR / ".env")
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+# EC26: Separate broker and result-backend Redis instances/DBs so a result-backend
+# storm (e.g., many task results piling up) cannot starve the broker queue.
+# In production, point REDIS_BROKER_URL at a dedicated Redis instance.
+# Fall back to the same REDIS_URL so local dev keeps working with a single Redis.
+_REDIS_DEFAULT = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_BROKER_URL = os.environ.get("REDIS_BROKER_URL", _REDIS_DEFAULT)
+REDIS_BACKEND_URL = os.environ.get("REDIS_BACKEND_URL", _REDIS_DEFAULT)
 
 # ── App ──────────────────────────────────────────────────────────────────────
 celery_app = Celery(
     "social_entangler",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
+    broker=REDIS_BROKER_URL,
+    backend=REDIS_BACKEND_URL,
     include=["celery_tasks"],
 )
 
@@ -79,6 +85,12 @@ celery_app.conf.update(
             "task": "celery_tasks.beat_heartbeat_task",
             "schedule": timedelta(seconds=30),
             "options": {"expires": 28},
+        },
+        # EC6: Proactive OAuth token refresh — every 30 minutes
+        "refresh-expiring-tokens": {
+            "task": "celery_tasks.refresh_expiring_tokens_task",
+            "schedule": timedelta(minutes=30),
+            "options": {"expires": 1790},
         },
     },
 )
