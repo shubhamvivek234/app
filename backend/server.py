@@ -9,7 +9,7 @@ import logging
 import asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 import uuid
 from datetime import datetime, timezone, timedelta
 import jwt
@@ -159,6 +159,18 @@ api_router = APIRouter(prefix="/api")
 PLAN_MONTHLY_POST_LIMITS = {
     "free": 30,        # 30 posts/month on free plan (Starter tier per architecture)
     "active": None,    # unlimited on paid plans
+}
+
+# EC23: Content type × platform compatibility matrix.
+# post_type values: "text", "image", "video", "reel", "story", "gif"
+# Any platform not listed here accepts all types.
+PLATFORM_CONTENT_COMPAT: Dict[str, Set[str]] = {
+    "twitter":   {"text", "image", "video", "gif"},
+    "instagram": {"image", "video", "reel", "story"},   # no plain text-only posts
+    "facebook":  {"text", "image", "video", "reel", "story"},
+    "linkedin":  {"text", "image", "video"},
+    "youtube":   {"video"},                              # YouTube is video-only
+    "tiktok":    {"video"},                              # TikTok is video-only
 }
 
 # ==================== MODELS ====================
@@ -685,6 +697,25 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
                 status_code=403,
                 detail=f"Monthly post limit of {limit} reached. Upgrade to continue posting."
             )
+
+    # EC23: Validate content type is compatible with every target platform
+    post_type = post_data.post_type or "text"
+    incompatible = [
+        p for p in post_data.platforms
+        if p in PLATFORM_CONTENT_COMPAT and post_type not in PLATFORM_CONTENT_COMPAT[p]
+    ]
+    if incompatible:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"post_type '{post_type}' is not supported on: {', '.join(incompatible)}. "
+                f"Supported types — "
+                + ", ".join(
+                    f"{p}: {sorted(PLATFORM_CONTENT_COMPAT[p])}"
+                    for p in incompatible
+                )
+            )
+        )
 
     scheduled_time = None
     status = "draft"
