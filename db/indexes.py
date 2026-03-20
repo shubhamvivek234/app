@@ -34,6 +34,18 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("created_at", -1)])
     await _safe_create_index(db.posts, [("workspace_id", 1), ("status", 1), ("scheduled_time", 1)])
     await _safe_create_index(db.posts, [("deleted_at", 1)], expireAfterSeconds=2592000)  # 30-day TTL
+    # Subscription grace period: paused post queries (user_id + status + paused_reason)
+    await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("paused_reason", 1)])
+    await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("paused_reason", 1), ("scheduled_time", 1)])
+
+    # users — subscription lifecycle queries (full table scans without these)
+    await _safe_create_index(db.users, [("subscription_expires_at", 1), ("subscription_status", 1)])
+    await _safe_create_index(db.users, [("subscription_cleanup_date", 1), ("subscription_status", 1)])
+    await _safe_create_index(db.users, [("subscription_status", 1), ("subscription_expires_at", 1)])
+    # Webhook lookup indexes (Stripe + Razorpay match by customer ID and email)
+    await _safe_create_index(db.users, [("email", 1)], unique=True)
+    await _safe_create_index(db.users, [("stripe_customer_id", 1)])
+    await _safe_create_index(db.users, [("razorpay_customer_id", 1)])
 
     # notifications
     await _safe_create_index(db.notifications, [("user_id", 1), ("is_read", 1), ("created_at", -1)])

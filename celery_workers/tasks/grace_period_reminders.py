@@ -14,10 +14,14 @@ from db.redis_client import get_cache_redis
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="celery_workers.tasks.grace_period_reminders.send_grace_period_reminders")
+@celery_app.task(
+    name="celery_workers.tasks.grace_period_reminders.send_grace_period_reminders",
+    time_limit=1800,       # hard kill after 30 min
+    soft_time_limit=1680,  # SoftTimeLimitExceeded raised at 28 min for clean shutdown
+)
 def send_grace_period_reminders() -> dict:
     """Beat task that runs every 2 days to send grace period reminder emails."""
-    return asyncio.get_event_loop().run_until_complete(_async_send_reminders())
+    return asyncio.run(_async_send_reminders())
 
 
 async def _async_send_reminders() -> dict:
@@ -39,17 +43,13 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
     reminders_sent = 0
     final_warnings_sent = 0
 
-    # Find all users with expired subscriptions
-    expired_users = await db.users.find({
+    # Stream users one at a time — never load all expired users into memory at once
+    cursor = db.users.find({
         "subscription_status": "expired",
         "subscription_expires_at": {"$exists": True},
-    }).to_list(None)
+    })
 
-    if not expired_users:
-        logger.info("No expired users to remind")
-        return {"reminders_sent": 0, "final_warnings_sent": 0}
-
-    for user in expired_users:
+    async for user in cursor:
         user_id = user.get("user_id")
         if not user_id:
             continue
@@ -69,14 +69,13 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
             is_new = await cache_redis.set(dedup_key, "1", ex=86400 * 21, nx=True)
 
             if is_new:
-                # Count paused posts at risk
-                paused_posts = await db.posts.find({
+                # Use count_documents instead of fetching all posts — no memory allocation
+                posts_at_risk = await db.posts.count_documents({
                     "user_id": user_id,
                     "status": "paused",
                     "paused_reason": "subscription_expired",
-                }).to_list(None)
+                })
 
-                posts_at_risk = len(paused_posts)
                 # Calculate days remaining until cleanup (should be set by subscription_check.py)
                 if subscription_cleanup_date:
                     days_until_cleanup = (subscription_cleanup_date - now).days
@@ -120,15 +119,13 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
                 is_new = await cache_redis.set(dedup_key, "1", ex=86400 * 30, nx=True)
 
                 if is_new:
-                    # Count posts that will be deleted
-                    paused_posts = await db.posts.find({
+                    # Count future posts at risk — no need to fetch full documents
+                    posts_at_risk = await db.posts.count_documents({
                         "user_id": user_id,
                         "status": "paused",
                         "paused_reason": "subscription_expired",
                         "scheduled_time": {"$gt": now},
-                    }).to_list(None)
-
-                    posts_at_risk = len(paused_posts)
+                    })
 
                     # Insert final warning notification
                     await db.notifications.insert_one({

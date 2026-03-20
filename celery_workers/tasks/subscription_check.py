@@ -16,10 +16,14 @@ _GRACE_PERIOD_DAYS = 7
 _WARNING_DAYS_BEFORE = 7
 
 
-@celery_app.task(name="celery_workers.tasks.subscription_check.check_expiring_subscriptions")
+@celery_app.task(
+    name="celery_workers.tasks.subscription_check.check_expiring_subscriptions",
+    time_limit=3600,       # hard kill after 60 min
+    soft_time_limit=3480,  # SoftTimeLimitExceeded raised at 58 min for clean shutdown
+)
 def check_expiring_subscriptions() -> dict:
     """Daily Beat task: warn users about expiring subscriptions, pause expired posts."""
-    return asyncio.get_event_loop().run_until_complete(_async_check())
+    return asyncio.run(_async_check())
 
 
 async def _async_check() -> dict:
@@ -119,27 +123,39 @@ async def _async_check() -> dict:
     )
     async for user in cleanup_cursor:
         user_id = user.get("user_id") or user.get("id")
+        user_cleanup_posts = 0
+        user_media_deleted = 0
 
-        # Find all paused posts that are scheduled for the future
-        paused_posts = await db.posts.find({
+        # Stream paused posts — never load all into memory at once
+        post_cursor = db.posts.find({
             "user_id": user_id,
             "status": "paused",
             "paused_reason": "subscription_expired",
             "scheduled_time": {"$gt": now},
-        }).to_list(None)
+        })
 
-        # Delete each paused post and its media
-        for post in paused_posts:
-            # Delete media from Cloudflare
+        async for post in post_cursor:
+            # Delete all media for this post in parallel
             media_ids = post.get("media_ids", [])
-            for media_id in media_ids:
-                media = await db.media_assets.find_one({"_id": media_id})
-                if media and media.get("url"):
-                    try:
-                        await delete_file_async(media["url"])
-                        media_deleted += 1
-                    except Exception as exc:
-                        logger.error("Failed to delete media: media_id=%s error=%s", media_id, exc)
+            if media_ids:
+                media_docs = await db.media_assets.find(
+                    {"_id": {"$in": media_ids}},
+                    {"url": 1},
+                ).to_list(len(media_ids))
+
+                delete_tasks = [
+                    delete_file_async(m["url"])
+                    for m in media_docs if m.get("url")
+                ]
+                results = await asyncio.gather(*delete_tasks, return_exceptions=True)
+                for idx, res in enumerate(results):
+                    if isinstance(res, Exception):
+                        logger.error(
+                            "Failed to delete media: url=%s error=%s",
+                            media_docs[idx].get("url"), res,
+                        )
+                    else:
+                        user_media_deleted += 1
 
             # Cancel the post
             await db.posts.update_one(
@@ -151,10 +167,13 @@ async def _async_check() -> dict:
                     "updated_at": now,
                 }},
             )
-            cleanup_posts += 1
+            user_cleanup_posts += 1
 
-        if paused_posts:
+        if user_cleanup_posts > 0:
             cleanup_users += 1
+            cleanup_posts += user_cleanup_posts
+            media_deleted += user_media_deleted
+
             # Clear subscription_cleanup_date to prevent re-notification on next daily run
             await db.users.update_one(
                 {"id": user_id},
@@ -165,19 +184,19 @@ async def _async_check() -> dict:
                 "type": "subscription.posts_deleted",
                 "channel": "email",
                 "message": (
-                    f"Your {len(paused_posts)} scheduled posts have been permanently deleted "
+                    f"Your {user_cleanup_posts} scheduled posts have been permanently deleted "
                     f"to free up storage. Resubscribe to schedule new posts."
                 ),
                 "metadata": {
-                    "posts_deleted": len(paused_posts),
-                    "media_deleted": media_deleted,
+                    "posts_deleted": user_cleanup_posts,
+                    "media_deleted": user_media_deleted,
                 },
                 "created_at": now,
             })
 
             logger.info(
                 "Cleanup complete: user=%s posts_deleted=%d media_deleted=%d",
-                user_id, len(paused_posts), media_deleted
+                user_id, user_cleanup_posts, user_media_deleted
             )
 
     logger.info(

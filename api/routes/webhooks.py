@@ -4,6 +4,7 @@ Stores raw payload. Updates post status from platform event data.
 Platform-specific signature logic: Facebook/Instagram use X-Hub-Signature-256,
 YouTube uses a different auth header.
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -559,17 +560,27 @@ async def _handle_subscription_reactivation(db, user_id: str, plan: str, now: da
             )
             cancelled_count += 1
 
-            # Delete media from Cloudflare
+            # Delete all media for this post in parallel (batch fetch + gather)
             media_ids = post.get("media_ids", [])
-            for media_id in media_ids:
-                media = await db.media_assets.find_one({"_id": media_id})
-                if media and media.get("url"):
-                    try:
-                        await delete_file_async(media["url"])
+            if media_ids:
+                media_docs = await db.media_assets.find(
+                    {"_id": {"$in": media_ids}},
+                    {"url": 1},
+                ).to_list(len(media_ids))
+
+                delete_tasks = [
+                    delete_file_async(m["url"])
+                    for m in media_docs if m.get("url")
+                ]
+                results = await asyncio.gather(*delete_tasks, return_exceptions=True)
+                for idx, res in enumerate(results):
+                    if isinstance(res, Exception):
+                        logger.error(
+                            "Failed to delete media: url=%s error=%s",
+                            media_docs[idx].get("url"), res,
+                        )
+                    else:
                         media_deleted_count += 1
-                        logger.info("Media deleted: media_id=%s", media_id)
-                    except Exception as exc:
-                        logger.error("Failed to delete media: media_id=%s error=%s", media_id, exc)
 
             logger.info("Post cancelled (missed window): post_id=%s scheduled_time=%s", post["_id"], post_scheduled_time)
 
