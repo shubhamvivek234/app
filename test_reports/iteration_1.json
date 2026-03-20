@@ -1,48 +1,62 @@
 {
-  "summary": "Completed comprehensive testing of Social Media Scheduler app. All backend APIs (13/13 tests passed) and frontend features working correctly. Landing page, Create Post page (3 post types with platform icons), Connections page (9 platforms with mock accounts), Calendar page (monthly view with navigation), and Video Post creation flow all functional.",
+  "summary": "Completed comprehensive testing of social media scheduler web app. Backend APIs (10/10 tests passed), frontend UI flows, and core integrations are working correctly.",
+  
   "backend_issues": {
-    "critical": [],
-    "minor": []
+    "critical_bugs": [],
+    "flaky_endpoints": []
   },
+
   "frontend_issues": {
-    "ui_bugs": [],
+    "ui_bugs": [
+      {
+        "component": "Billing Page",
+        "issue": "Stripe payment button selector may need data-testid for better testing",
+        "selector": "text='Pay with Stripe'",
+        "fix_priority": "LOW"
+      },
+      {
+        "component": "Connected Accounts",
+        "issue": "Social account connection buttons need data-testid attributes for robust testing",
+        "affected_selectors": ["connect buttons for platforms"],
+        "fix_priority": "LOW"
+      }
+    ],
     "integration_issues": [],
     "design_issues": []
   },
-  "test_report_links": [
-    "/app/backend/tests/test_social_scheduler.py",
-    "/app/test_reports/pytest/pytest_results.xml"
+
+  "passed_tests": [
+    "Landing page loads with navigation, hero, features, pricing",
+    "User signup flow with email, password, name",
+    "User login with valid credentials",
+    "Dashboard displays correct stats (1 total post, 0 scheduled, 0 published, 0 connected accounts)",
+    "Create post page with text area and platform selection",
+    "AI content generation using GPT-5.2 (692 characters generated)",
+    "Post creation saves as draft and shows in content library",
+    "Content library displays posts with filters",
+    "Calendar view page loads",
+    "Connected Accounts page loads",
+    "Billing page shows pricing plans with Stripe and Razorpay options",
+    "Settings page accessible",
+    "Backend API authentication with JWT tokens",
+    "Backend stats endpoint returns correct counts",
+    "Backend post CRUD operations",
+    "Backend AI content generation",
+    "Backend social accounts mock connections",
+    "Backend Stripe checkout session creation"
   ],
-  "action_items": [],
-  "critical_code_review_comments": [
-    "Social OAuth connections are MOCKED - shows demo data, not real OAuth flow. Settings page clearly indicates this.",
-    "App uses Emergent Google Auth for user authentication - working correctly"
-  ],
-  "updated_files": [
-    "/app/backend/tests/test_social_scheduler.py"
-  ],
-  "success_rate": {
-    "backend": "100% (13/13 tests passed)",
-    "frontend": "100% (all pages and features working)"
+  
+  "test_report_links": ["/app/backend_test.py"],
+  
+  "success_percentage": {
+    "backend": "100% (10/10 API tests passed)",
+    "frontend": "95% (All core flows working, minor selector improvements needed)"
   },
-  "test_credentials": {
-    "email": "testdemo@example.com",
-    "password": "test123",
-    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzJmNzQxNGFhYjUyMyIsImVtYWlsIjoidGVzdGRlbW9AZXhhbXBsZS5jb20iLCJleHAiOjE3NzMzNTc1MDZ9.fCNICZfzfWZLmCx7ysFJ_PF1saIj9dBr4cj08WWWLc8"
-  },
-  "seed_data_creation": "Test user already exists with onboarding_completed=true",
-  "retest_needed": false,
-  "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "All features tested and working. Backend APIs: auth, posts CRUD, social-accounts, stats all passing. Frontend pages: /create (3 post types), /accounts (9 platforms), /calendar (monthly view), /create/video (video post form) all working. Social OAuth is MOCKED for demo purposes.",
-  "features_tested": {
-    "landing_page": "✓ Loads correctly with 'post bridge' branding",
-    "create_post_page": "✓ Shows 3 post type cards (Text, Image, Video) with platform icons",
-    "connections_page": "✓ Displays all 9 platforms (Bluesky, Facebook, Instagram, LinkedIn, Pinterest, Threads, TikTok, Twitter, YouTube) with Connect buttons and mock connected accounts",
-    "calendar_page": "✓ Shows monthly calendar view with navigation arrows and Month/Week toggle",
-    "sidebar_navigation": "✓ All 7 navigation links working correctly",
-    "video_post_form": "✓ Account selection, media upload area, platform-specific captions, scheduling options all present",
-    "api_posts": "✓ CRUD operations working",
-    "api_social_accounts": "✓ Get/Connect/Disconnect working",
-    "api_auth": "✓ Login, get current user, unauthorized access handling working"
-  }
+  
+  "updated_files": ["/app/backend_test.py"],
+  
+  "action_item_for_main_agent": "",
+  
+  "should_call_test_agent_after_fix": "false",
+  "should_main_agent_test_itself": "true"
 }

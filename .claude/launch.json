@@ -2,26 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "backend",
-      "runtimeExecutable": "backend/venv/bin/uvicorn",
-      "runtimeArgs": [
-        "api.main:create_app",
-        "--factory",
-        "--app-dir", ".claude/worktrees/stupefied-matsumoto",
-        "--host", "0.0.0.0",
-        "--port", "8000",
-        "--reload",
-        "--reload-dir", ".claude/worktrees/stupefied-matsumoto"
-      ],
-      "port": 8000,
-      "cwd": "."
-    },
-    {
       "name": "frontend",
-      "runtimeExecutable": "yarn",
+      "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 3000,
-      "cwd": "frontend"
+      "cwd": "/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto/frontend"
     }
   ]
 }

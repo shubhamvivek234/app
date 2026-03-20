@@ -16,7 +16,7 @@ class GoogleAuth:
         self.client_id = os.environ.get('GOOGLE_CLIENT_ID')
         self.client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
         self.redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI')
-        self.youtube_redirect_uri = os.environ.get('YOUTUBE_REDIRECT_URI', 'http://localhost:3000/oauth/callback')
+        self.youtube_redirect_uri = os.environ.get('YOUTUBE_REDIRECT_URI', 'http://localhost:9500/oauth/callback')
         
         if not self.client_id:
              logging.error(f"DEBUG: GOOGLE_CLIENT_ID NOT FOUND. ENV VARS KEYS: {[k for k in os.environ.keys() if 'GOOGLE' in k]}")
@@ -32,8 +32,8 @@ class GoogleAuth:
         if not self.client_id or not self.youtube_redirect_uri:
             raise HTTPException(status_code=500, detail="Google/YouTube credentials not configured")
             
-        # Scopes for YouTube upload and channel management (include profile scopes for account identification)
-        scope = "openid email profile https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+        # Scopes for YouTube upload and channel management
+        scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
         
         return (
             f"{self.AUTH_URL}"
@@ -301,110 +301,103 @@ class GoogleAuth:
 
             return response.json()
 
-    async def fetch_channel_videos(self, access_token: str, limit: int = 20) -> list:
-        """Fetch the authenticated user's uploaded YouTube videos with view/like/comment stats"""
+    async def fetch_youtube_feed(self, access_token: str, channel_id: str, limit: int = 25) -> list:
+        """Fetch recent videos from YouTube channel"""
         async with httpx.AsyncClient() as client:
-            # Step 1: Search for the user's own videos ordered by date
-            search_response = await client.get(
-                f"{self.YOUTUBE_URL}/search",
+            # Get uploads playlist
+            ch_resp = await client.get(
+                f"{self.YOUTUBE_URL}/channels",
+                params={"part": "contentDetails", "id": channel_id},
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={
-                    "part": "snippet",
-                    "forMine": "true",
-                    "type": "video",
-                    "maxResults": min(limit, 50),
-                    "order": "date",
-                },
             )
-
-            logging.info(f"[YouTube] fetch_channel_videos search status: {search_response.status_code}")
-
-            if search_response.status_code != 200:
-                logging.error(f"[YouTube] fetch_channel_videos failed: {search_response.text}")
+            if ch_resp.status_code != 200:
                 return []
-
-            items = search_response.json().get("items", [])
+            items = ch_resp.json().get("items", [])
             if not items:
                 return []
+            uploads_id = items[0].get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
+            if not uploads_id:
+                return []
 
-            video_ids = [
-                item["id"]["videoId"]
-                for item in items
-                if item.get("id", {}).get("videoId")
-            ]
+            # Get playlist items
+            pl_resp = await client.get(
+                f"{self.YOUTUBE_URL}/playlistItems",
+                params={"part": "snippet,contentDetails", "playlistId": uploads_id, "maxResults": limit},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if pl_resp.status_code != 200:
+                return []
+
+            video_ids = [item["contentDetails"]["videoId"] for item in pl_resp.json().get("items", [])]
             if not video_ids:
                 return []
 
-            # Step 2: Fetch statistics for each video
-            stats_response = await client.get(
+            # Get video stats
+            stats_resp = await client.get(
                 f"{self.YOUTUBE_URL}/videos",
+                params={"part": "snippet,statistics", "id": ",".join(video_ids)},
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={
-                    "part": "statistics",
-                    "id": ",".join(video_ids),
-                },
             )
+            if stats_resp.status_code != 200:
+                return []
 
-            stats_map = {}
-            if stats_response.status_code == 200:
-                for v in stats_response.json().get("items", []):
-                    stats_map[v["id"]] = v.get("statistics", {})
-
-            # Step 3: Normalize
-            normalized = []
-            for item in items:
-                video_id = item.get("id", {}).get("videoId")
-                if not video_id:
-                    continue
-
-                snippet = item.get("snippet", {})
-                stats = stats_map.get(video_id, {})
-                thumbnails = snippet.get("thumbnails", {})
-                thumb_url = (
-                    thumbnails.get("high")
-                    or thumbnails.get("medium")
-                    or thumbnails.get("default")
-                    or {}
-                ).get("url")
-
-                normalized.append({
-                    "platform_post_id": video_id,
+            posts = []
+            for v in stats_resp.json().get("items", []):
+                snippet = v.get("snippet", {})
+                stats = v.get("statistics", {})
+                posts.append({
+                    "id": v["id"],
                     "content": snippet.get("title", ""),
-                    "media_url": thumb_url,
+                    "media_url": snippet.get("thumbnails", {}).get("high", {}).get("url"),
                     "media_type": "VIDEO",
-                    "post_url": f"https://www.youtube.com/watch?v={video_id}",
-                    "metrics": {
-                        "views": int(stats.get("viewCount", 0)),
-                        "likes": int(stats.get("likeCount", 0)),
-                        "comments": int(stats.get("commentCount", 0)),
-                    },
-                    "published_at": snippet.get("publishedAt"),
+                    "timestamp": snippet.get("publishedAt"),
+                    "likes": int(stats.get("likeCount", 0)),
+                    "comments_count": int(stats.get("commentCount", 0)),
+                    "views": int(stats.get("viewCount", 0)),
+                    "permalink": f"https://youtube.com/watch?v={v['id']}",
+                    "platform": "youtube",
                 })
+            return posts
 
-            return normalized
-
-    async def fetch_comments(self, access_token: str, video_id: str, limit: int = 50) -> list:
-        """Fetch comments on a YouTube video (read-only, requires youtube.readonly scope)"""
+    async def fetch_youtube_engagement(self, access_token: str, channel_id: str) -> dict:
+        """Fetch YouTube channel engagement metrics"""
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                "https://www.googleapis.com/youtube/v3/commentThreads",
+                f"{self.YOUTUBE_URL}/channels",
+                params={"part": "statistics,snippet", "id": channel_id},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if response.status_code != 200:
+                return {}
+            items = response.json().get("items", [])
+            if not items:
+                return {}
+            stats = items[0].get("statistics", {})
+            return {
+                "subscribers": int(stats.get("subscriberCount", 0)),
+                "total_views": int(stats.get("viewCount", 0)),
+                "video_count": int(stats.get("videoCount", 0)),
+                "platform": "youtube",
+            }
+
+    async def fetch_youtube_comments(self, access_token: str, video_id: str, limit: int = 50) -> list:
+        """Fetch comments on a YouTube video (read-only)"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.YOUTUBE_URL}/commentThreads",
                 params={
                     "part": "snippet",
                     "videoId": video_id,
                     "maxResults": min(limit, 100),
-                    "order": "relevance",
-                    "textFormat": "plainText",
+                    "order": "time",
                 },
                 headers={"Authorization": f"Bearer {access_token}"},
             )
-            logging.info(f"[YouTube] fetch_comments status: {response.status_code}")
             if response.status_code != 200:
-                logging.error(f"[YouTube] fetch_comments failed: {response.text}")
+                logging.warning(f"[YouTube] Comments fetch failed: {response.text}")
                 return []
-
-            items = response.json().get("items", [])
             comments = []
-            for item in items:
+            for item in response.json().get("items", []):
                 snippet = item.get("snippet", {}).get("topLevelComment", {}).get("snippet", {})
                 comments.append({
                     "id": item.get("id"),
@@ -413,7 +406,7 @@ class GoogleAuth:
                     "content": snippet.get("textDisplay", ""),
                     "timestamp": snippet.get("publishedAt"),
                     "likes": snippet.get("likeCount", 0),
-                    "can_reply": False,  # Requires youtube.force-ssl scope which we don't have yet
+                    "can_reply": False,
                     "platform": "youtube",
                 })
             return comments

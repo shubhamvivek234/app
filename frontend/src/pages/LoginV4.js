@@ -245,7 +245,7 @@ const LoginV4 = () => {
       ══════════════════════════════════════════════════════ */}
       <div style={{
         flex: '0 0 55%',
-        background: '#fffffb',
+        background: '#ffffff',
         position: 'relative',
         display: 'flex',
         flexDirection: 'column',
@@ -395,7 +395,7 @@ const LoginV4 = () => {
       ══════════════════════════════════════════════════════ */}
       <div style={{
         flex: '0 0 45%',
-        background: '#fffffb',
+        background: '#ffffff',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',

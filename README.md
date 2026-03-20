@@ -1,4 +1,4 @@
-# SocialEntangler - Social Media Scheduler
+# SocialSync - Social Media Scheduler
 
 A production-ready social media scheduling platform inspired by Post-Bridge. Schedule and publish content across Twitter/X, Instagram, and LinkedIn with AI-powered content generation.
 

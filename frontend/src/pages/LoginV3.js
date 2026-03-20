@@ -318,7 +318,7 @@ const LoginV3 = () => {
         ══════════════════════════════════════════════════════ */}
         <div style={{
           flex: '0 0 40%',
-          background: '#fffffb',
+          background: '#ffffff',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',

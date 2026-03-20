@@ -1,0 +1,118 @@
+{
+  "identity": {
+    "name": "Post-Bridge Inspired Scheduler",
+    "tone": "Professional, Zen, Efficient, Minimalist",
+    "mission": "Create a distraction-free environment for social media scheduling.",
+    "aesthetics": "Clean lines, ample whitespace, subtle borders, high legibility."
+  },
+  "typography": {
+    "primary_font": "Inter",
+    "secondary_font": "Manrope",
+    "mono_font": "JetBrains Mono",
+    "weights": {
+      "light": 300,
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight",
+      "h2": "text-3xl md:text-4xl font-semibold tracking-tight",
+      "h3": "text-2xl font-medium tracking-tight",
+      "body": "text-base leading-relaxed text-slate-600",
+      "small": "text-sm text-slate-500",
+      "tiny": "text-xs font-medium uppercase tracking-wider text-slate-400"
+    }
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#6366F1",
+      "foreground": "#FFFFFF",
+      "hover": "#4F46E5"
+    },
+    "secondary": {
+      "DEFAULT": "#F1F5F9",
+      "foreground": "#0F172A"
+    },
+    "accent": {
+      "DEFAULT": "#F43F5E",
+      "success": "#10B981",
+      "warning": "#F59E0B"
+    },
+    "background": {
+      "default": "#FFFFFF",
+      "subtle": "#F8FAFC",
+      "dark": "#0F172A"
+    },
+    "border": {
+      "default": "#E2E8F0",
+      "active": "#CBD5E1"
+    }
+  },
+  "layout_strategies": {
+    "landing_page": {
+      "grid": "Tetris Grid (Mode A)",
+      "spacing": "Generous (p-8 to p-24)",
+      "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+      "alignment": "Asymmetric",
+      "hero_style": "Split screen or Center focus with generous margins"
+    },
+    "dashboard": {
+      "structure": "Sidebar Navigation (Left) + Top Header + Main Content Area",
+      "grid": "High Density Grid (Mode B)",
+      "spacing": "Tight but breathable (gap-4 or gap-6)",
+      "card_style": "Flat, 1px border, no shadow (default), shadow-sm (hover)"
+    }
+  },
+  "components": {
+    "buttons": {
+      "style": "rounded-md font-medium transition-all active:scale-95",
+      "variants": {
+        "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
+        "secondary": "bg-white border border-input hover:bg-slate-50 text-slate-900",
+        "ghost": "hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+      }
+    },
+    "cards": {
+      "style": "bg-white rounded-lg border border-border overflow-hidden",
+      "usage": "Use for stats, post previews, and content blocks. Avoid heavy shadows."
+    },
+    "inputs": {
+      "style": "rounded-md border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+    },
+    "calendar": {
+      "note": "Use a custom grid for the main 'Calendar View'. Use Shadcn Calendar only for date pickers."
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Use sparingly. backdrop-blur-md bg-white/80 border-b border-white/20 for Sticky Headers.",
+    "gradients": "Avoid strong gradients. Use subtle mesh gradients in hero backgrounds if needed.",
+    "icons": "Use 'lucide-react' for UI icons. Use 'react-icons/fa' or 'react-icons/bs' for Social Brand Logos (Twitter, LinkedIn, Instagram)."
+  },
+  "image_assets": {
+    "hero_background": "https://images.unsplash.com/photo-1648994517761-a35b826d5456?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "features_collaboration": "https://images.unsplash.com/photo-1758873268379-39301764793f?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "features_workspace": "https://images.unsplash.com/photo-1757447247468-fe0962f638fa?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "testimonial_1": "https://images.unsplash.com/photo-1770058428154-9eee8a6a1fbb?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "testimonial_2": "https://images.unsplash.com/photo-1764084051438-369ad6a09334?crop=entropy&cs=srgb&fm=jpg&q=85"
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: Do NOT use the default 'Vercel' look. Customize the Shadcn components to match the 'Post-Bridge' minimal aesthetic.",
+    "Use 'react-icons' for all social media brand logos (Twitter, LinkedIn, Instagram). Do NOT use generic icons.",
+    "For the 'Calendar View' page, build a proper full-month grid layout where users can see posts on specific days. Do not just put a small date picker.",
+    "Ensure 'Create Post' page has a clear preview of how the post will look on different platforms (Twitter vs LinkedIn vs Instagram).",
+    "Dashboard should be dense but legible. Use the 'High Density Grid' rules.",
+    "Implement a 'Dark Mode' toggle in the dashboard settings.",
+    "For the Landing Page, use the 'Tetris Grid' to create an asymmetric, interesting layout. Do not just stack centered text.",
+    "Ensure all interactive elements have 'data-testid' attributes.",
+    "Use the provided image URLs for specific sections. Do not use placeholders."
+  ],
+  "universal_guidelines": [
+    "You tend to converge toward generic outputs. Avoid this.",
+    "Don't make generic centered layouts. Use asymmetry.",
+    "Create depth through layered design elements.",
+    "Every interaction needs micro-animations (hover, focus, active).",
+    "Use 2-3x more spacing than feels comfortable."
+  ]
+}

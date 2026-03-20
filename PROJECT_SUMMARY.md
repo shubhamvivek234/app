@@ -1,4 +1,4 @@
-# SocialEntangler - Production Ready Social Media Scheduler
+# SocialSync - Production Ready Social Media Scheduler
 
 **Version:** 2.0 Enhanced Edition  
 **Status:** Production Ready (MVP + Enhanced Backend)  
@@ -73,7 +73,7 @@ The app is **100% functional** with all MVP features working:
 
 ```bash
 # Frontend: http://localhost:3000
-# Backend API: https://postflow-25.preview.emergentagent.com/api
+# Backend API: https://social-queue-3.preview.emergentagent.com/api
 
 # Services running:
 - Backend: Port 8001 (FastAPI)
@@ -136,7 +136,7 @@ CORS_ORIGINS="*"
 ### Frontend (.env) - Auto-Configured
 
 ```bash
-REACT_APP_BACKEND_URL=https://postflow-25.preview.emergentagent.com
+REACT_APP_BACKEND_URL=https://social-queue-3.preview.emergentagent.com
 ```
 
 ---

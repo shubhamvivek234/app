@@ -1,126 +1,106 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import Footer from '@/components/Footer';
 
 const Privacy = () => {
   return (
-    <div className="min-h-screen bg-offwhite">
-      <nav className="bg-offwhite border-b border-gray-100">
+    <div className="min-h-screen bg-white">
+      <nav className="border-b border-border backdrop-blur-md bg-white/80 sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-lg">C</span>
-              </div>
-              <span className="text-xl font-semibold text-gray-900">SocialEntangler</span>
-            </Link>
+          <div className="flex justify-between items-center h-16">
+            <Link to="/" className="text-2xl font-semibold text-slate-900">SocialSync</Link>
+            <Link to="/" className="text-slate-600 hover:text-slate-900">Back to Home</Link>
           </div>
         </div>
       </nav>
-
+      
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-8">Privacy Policy for SocialEntangler</h1>
-
+        <h1 className="text-4xl font-semibold tracking-tight text-slate-900 mb-8">Privacy Policy</h1>
+        
         <div className="prose prose-slate max-w-none">
-          <p className="text-gray-600 mb-6">Last Updated: 2026-02-11</p>
-
-          <p className="text-gray-700 leading-relaxed mb-6">
-            Thank you for using SocialEntangler ("we," "us," or "our"). This Privacy Policy outlines how we collect, use, and protect your personal and non-personal information when you use our website located at https://crosspost.com (the "Website").
+          <p className="text-lg text-slate-600 mb-8">Last updated: February 10, 2026</p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">1. Information We Collect</h2>
+          <p className="text-slate-700 mb-4">
+            We collect information you provide directly to us, including:
           </p>
-          <p className="text-gray-700 leading-relaxed mb-6">
-            By accessing or using the Website, you agree to the terms of this Privacy Policy. If you do not agree with the practices described in this policy, please do not use the Website.
+          <ul className="list-disc pl-6 text-slate-700 mb-4">
+            <li>Account information (name, email, password)</li>
+            <li>Social media account credentials and access tokens</li>
+            <li>Content you create and schedule through our platform</li>
+            <li>Payment information (processed securely by Stripe, Razorpay, or PayPal)</li>
+          </ul>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">2. How We Use Your Information</h2>
+          <p className="text-slate-700 mb-4">
+            We use the information we collect to:
           </p>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">1. Information We Collect</h2>
-
-            <h3 className="text-xl font-semibold text-gray-900 mb-2 mt-4">1.1 Personal Data</h3>
-            <p className="text-gray-700 leading-relaxed mb-2">We collect the following personal information from you:</p>
-            <ul className="list-disc pl-6 space-y-2 text-gray-700 mb-4">
-              <li><strong>Name:</strong> We collect your name to personalize your experience and communicate with you effectively.</li>
-              <li><strong>Email:</strong> We collect your email address to send you important information regarding your account, updates, and communication.</li>
-              <li><strong>Payment Information:</strong> We collect payment details to process your orders securely.</li>
-              <li><strong>Social Media Authentication Access Keys:</strong> We collect these to enable cross-posting functionality to your social media accounts.</li>
-            </ul>
-
-            <h3 className="text-xl font-semibold text-gray-900 mb-2 mt-4">1.2 Non-Personal Data</h3>
-            <p className="text-gray-700 leading-relaxed">
-              We use web cookies to collect non-personal information such as your IP address, browser type, device information, and browsing patterns. This information helps us to enhance your browsing experience, analyze trends, and improve our services.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">2. Purpose of Data Collection</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We collect and use your personal data for order processing and social media posting. This includes processing your orders, enabling cross-posting functionality, sending confirmations, providing customer support, and keeping you updated about the status of your account and posts.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">3. YouTube API Services</h2>
-            <p className="text-gray-700 leading-relaxed">
-              SocialEntangler uses YouTube API Services to enable cross-posting functionality to YouTube. By using our service to interact with YouTube, you are also subject to the YouTube Terms of Service (https://www.youtube.com/t/terms).
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">4. Google Privacy Policy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              As we use YouTube API Services, your data may also be subject to Google's Privacy Policy. For more information on how Google collects and processes data, please refer to the Google Privacy Policy at http://www.google.com/policies/privacy.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">5. Data Sharing</h2>
-            <p className="text-gray-700 leading-relaxed mb-4">
-              We do not share your personal data with any other parties except as required for order processing and social media posting functionality. This may include sharing necessary data with the social media platforms you choose to post to, including YouTube through the YouTube API Services.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">6. Children's Privacy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              SocialEntangler is not intended for children, and we do not collect any data from children.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">7. Updates to the Privacy Policy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We may update this Privacy Policy from time to time. Users will be notified of any changes via email.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">8. Contact Information</h2>
-            <p className="text-gray-700 leading-relaxed mb-2">
-              If you have any questions, concerns, or requests related to this Privacy Policy, you can contact us at:
-            </p>
-            <p className="text-gray-700 leading-relaxed font-medium">
-              Email: support@crosspost.com
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">9. Data Protection Mechanisms</h2>
-            <p className="text-gray-700 leading-relaxed mb-4">
-              We take the protection of your sensitive data seriously and have implemented the following security measure:
-            </p>
-            <p className="text-gray-700 leading-relaxed mb-4">
-              <strong>a) Encryption:</strong> Your Google OAuth access keys are encrypted using industry-standard encryption protocols both in transit and at rest.
-            </p>
-            <p className="text-gray-700 leading-relaxed">
-              While we implement this security measure to protect your sensitive information, please be aware that no method of transmission over the Internet or method of electronic storage is 100% secure. We strive to use commercially acceptable means to protect your personal information, but we cannot guarantee its absolute security.
-            </p>
-          </section>
-
-          <p className="text-gray-700 leading-relaxed mt-8 font-semibold">
-            By using SocialEntangler, you consent to the terms of this Privacy Policy.
+          <ul className="list-disc pl-6 text-slate-700 mb-4">
+            <li>Provide, maintain, and improve our services</li>
+            <li>Process your transactions</li>
+            <li>Send you technical notices and support messages</li>
+            <li>Communicate with you about products, services, and events</li>
+            <li>Monitor and analyze trends and usage</li>
+          </ul>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">3. Information Sharing</h2>
+          <p className="text-slate-700 mb-4">
+            We do not sell your personal information. We may share your information with:
+          </p>
+          <ul className="list-disc pl-6 text-slate-700 mb-4">
+            <li>Social media platforms (Twitter/X, Instagram, LinkedIn) to post content on your behalf</li>
+            <li>Payment processors to handle transactions</li>
+            <li>Service providers who assist in operating our platform</li>
+            <li>Law enforcement when required by law</li>
+          </ul>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">4. Data Security</h2>
+          <p className="text-slate-700 mb-4">
+            We implement appropriate technical and organizational measures to protect your personal information. However, no method of transmission over the Internet is 100% secure.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">5. Social Media Access</h2>
+          <p className="text-slate-700 mb-4">
+            When you connect your social media accounts, we request the minimum permissions necessary to post content on your behalf. You can revoke these permissions at any time through your social media account settings.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">6. Cookies</h2>
+          <p className="text-slate-700 mb-4">
+            We use cookies and similar tracking technologies to track activity on our service and store certain information. You can instruct your browser to refuse all cookies or to indicate when a cookie is being sent.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">7. Data Retention</h2>
+          <p className="text-slate-700 mb-4">
+            We retain your personal information for as long as necessary to provide our services and comply with legal obligations. You can request deletion of your account and data at any time.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">8. Your Rights</h2>
+          <p className="text-slate-700 mb-4">
+            You have the right to:
+          </p>
+          <ul className="list-disc pl-6 text-slate-700 mb-4">
+            <li>Access and receive a copy of your personal data</li>
+            <li>Correct inaccurate or incomplete data</li>
+            <li>Request deletion of your data</li>
+            <li>Object to or restrict processing of your data</li>
+            <li>Data portability</li>
+          </ul>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">9. Children's Privacy</h2>
+          <p className="text-slate-700 mb-4">
+            Our service is not directed to children under 13. We do not knowingly collect personal information from children under 13.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">10. Changes to Privacy Policy</h2>
+          <p className="text-slate-700 mb-4">
+            We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Last updated" date.
+          </p>
+          
+          <h2 className="text-2xl font-semibold text-slate-900 mt-8 mb-4">11. Contact Us</h2>
+          <p className="text-slate-700 mb-4">
+            If you have any questions about this Privacy Policy, please contact us at privacy@socialsync.com.
           </p>
         </div>
       </div>
-
-      <Footer />
     </div>
   );
 };
