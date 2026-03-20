@@ -22,6 +22,11 @@ import resend
 import httpx
 from paypalcheckoutsdk.core import PayPalHttpClient, SandboxEnvironment
 from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest
+import random
+import shutil
+import subprocess
+import hashlib
+import tempfile
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -72,13 +77,67 @@ if paypal_client_id and paypal_secret:
 # APScheduler for scheduled posts
 scheduler = AsyncIOScheduler()
 
+# ==================== RATE LIMITER (in-memory token bucket) ====================
+# Key: "{platform}:{user_id}" → {"tokens": N, "reset_at": float_timestamp}
+_rate_limit_buckets: Dict[str, Dict] = {}
+# Key: "{platform}:{user_id}" → pause_until float_timestamp (after 429)
+_rate_limit_paused: Dict[str, float] = {}
+
+# Platform hourly post limits (conservative — below actual limits to be safe)
+PLATFORM_HOURLY_LIMITS = {
+    "instagram": 25, "facebook": 25, "twitter": 50,
+    "linkedin": 100, "youtube": 10, "tiktok": 20,
+    "bluesky": 100, "threads": 25, "default": 50,
+}
+
+# Exponential backoff delays in minutes: attempt 1,2,3,4 → DLQ
+BACKOFF_MINUTES = [5, 15, 60, 180]
+MAX_RETRIES = 5  # 5 attempts before DLQ
+
+
+def check_rate_limit(user_id: str, platform: str) -> bool:
+    """Returns True if OK to call platform API, False if rate limited."""
+    key = f"{platform}:{user_id}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    # Check if paused due to 429
+    if key in _rate_limit_paused:
+        if now_ts < _rate_limit_paused[key]:
+            return False
+        del _rate_limit_paused[key]
+
+    bucket = _rate_limit_buckets.get(key)
+    if not bucket or now_ts > bucket["reset_at"]:
+        limit = PLATFORM_HOURLY_LIMITS.get(platform, PLATFORM_HOURLY_LIMITS["default"])
+        _rate_limit_buckets[key] = {"tokens": limit, "reset_at": now_ts + 3600}
+        bucket = _rate_limit_buckets[key]
+
+    if bucket["tokens"] <= 0:
+        return False
+
+    bucket["tokens"] -= 1
+    return True
+
+
+def record_rate_limit_hit(user_id: str, platform: str, retry_after_seconds: int = 3600):
+    """Record a 429 response — pause this (user, platform) pair."""
+    key = f"{platform}:{user_id}"
+    _rate_limit_paused[key] = datetime.now(timezone.utc).timestamp() + retry_after_seconds
+    logging.warning(f"Rate limit recorded for {platform}:{user_id}, paused for {retry_after_seconds}s")
+
+
+def get_next_retry_at(retry_count: int) -> datetime:
+    """Exponential backoff: 5min → 15min → 60min → 180min."""
+    idx = min(retry_count, len(BACKOFF_MINUTES) - 1)
+    return datetime.now(timezone.utc) + timedelta(minutes=BACKOFF_MINUTES[idx])
+
 # Create the main app
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
 # ==================== PLAN LIMITS ====================
 PLAN_MONTHLY_POST_LIMITS = {
-    "free": 10,        # 10 posts/month on free plan
+    "free": 30,        # 30 posts/month on free plan (Starter tier per architecture)
     "active": None,    # unlimited on paid plans
 }
 
@@ -534,69 +593,192 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
     await db.posts.insert_one(post_dict)
     return post
 
+# ==================== MEDIA PROCESSING ====================
+
+# File size limits
+MAX_IMAGE_SIZE_MB = 50
+MAX_VIDEO_SIZE_MB = 500
+MAX_IMAGE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
+MAX_VIDEO_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024
+
+# Allowed extensions
+ALLOWED_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "heic", "bmp"}
+ALLOWED_VIDEO_EXTS = {"mp4", "mov", "avi", "mkv", "webm", "m4v", "3gp", "flv"}
+ALLOWED_EXTS = ALLOWED_IMAGE_EXTS | ALLOWED_VIDEO_EXTS
+
+# Platform format requirements
+# Instagram/TikTok/Threads require MP4 H.264; most platforms accept jpg/png
+PLATFORMS_REQUIRING_MP4 = {"instagram", "tiktok", "threads", "youtube"}
+
+FFMPEG_PATH = shutil.which("ffmpeg") or shutil.which("ffmpeg3")
+
+
+async def _transcode_to_mp4(input_path: str, output_path: str) -> bool:
+    """
+    Convert video to MP4 H.264 + AAC audio using FFmpeg.
+    Returns True if successful, False if FFmpeg not available or failed.
+    """
+    if not FFMPEG_PATH:
+        logging.warning("FFmpeg not found — skipping transcoding")
+        return False
+
+    cmd = [
+        FFMPEG_PATH, "-i", input_path,
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+        "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p",         # maximum compatibility
+        "-movflags", "+faststart",     # web-optimised (moov atom at start)
+        "-map_metadata", "-1",         # strip unnecessary metadata
+        "-y", output_path
+    ]
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run, cmd,
+            capture_output=True, timeout=300
+        )
+        if result.returncode != 0:
+            logging.error(f"FFmpeg failed: {result.stderr.decode()[:500]}")
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        logging.error("FFmpeg transcoding timed out after 300s")
+        return False
+    except Exception as e:
+        logging.error(f"FFmpeg error: {e}")
+        return False
+
+
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
-    """Upload media files to R2 or local filesystem"""
+    """
+    Upload media with validation + FFmpeg transcoding.
+    - Images: max 50MB, allowed formats validated
+    - Videos: max 500MB, .mov/.avi etc. converted to MP4 H.264
+    - Returns: {success, url, filename, media_type, transcoded}
+    """
     import mimetypes
 
-    file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else 'bin'
-    file_id = uuid.uuid4().hex[:16]
-    safe_filename = f"{file_id}.{file_ext}"
+    # --- 1. Extension validation ---
+    original_filename = file.filename or "upload"
+    file_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+    if not file_ext or file_ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
+        )
 
+    is_video = file_ext in ALLOWED_VIDEO_EXTS
+    media_type = "video" if is_video else "image"
+
+    # --- 2. Read content + size validation ---
     content = await file.read()
+    file_size = len(content)
 
-    # Try R2 storage first, fall back to local
-    storage_backend = os.environ.get('STORAGE_BACKEND', 'local')
+    if is_video and file_size > MAX_VIDEO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Video too large: {file_size // (1024*1024)}MB. Maximum is {MAX_VIDEO_SIZE_MB}MB."
+        )
+    if not is_video and file_size > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large: {file_size // (1024*1024)}MB. Maximum is {MAX_IMAGE_SIZE_MB}MB."
+        )
 
-    if storage_backend == 'r2':
+    # --- 3. FFmpeg transcoding for videos ---
+    transcoded = False
+    final_ext = file_ext
+    final_content = content
+
+    if is_video:
+        needs_conversion = file_ext != "mp4"
+        if needs_conversion or FFMPEG_PATH:
+            # Write original to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_in:
+                tmp_in.write(content)
+                tmp_in_path = tmp_in.name
+
+            tmp_out_path = tmp_in_path.replace(f".{file_ext}", "_transcoded.mp4")
+
+            try:
+                transcoded = await _transcode_to_mp4(tmp_in_path, tmp_out_path)
+                if transcoded:
+                    with open(tmp_out_path, "rb") as f:
+                        final_content = f.read()
+                    final_ext = "mp4"
+                    logging.info(f"Transcoded {file_ext} → mp4 for user {current_user.user_id} ({file_size // 1024}KB → {len(final_content) // 1024}KB)")
+            finally:
+                for p in [tmp_in_path, tmp_out_path]:
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    # --- 4. Generate safe filename ---
+    file_id = uuid.uuid4().hex[:16]
+    safe_filename = f"{file_id}.{final_ext}"
+
+    # --- 5. Upload to R2 or local ---
+    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
+    file_url = None
+
+    if storage_backend == "r2":
         try:
             import boto3
             from botocore.client import Config
+            import io
 
-            r2_endpoint = os.environ.get('CLOUDFLARE_R2_ENDPOINT', '')
-            r2_access_key = os.environ.get('CLOUDFLARE_R2_ACCESS_KEY_ID', '')
-            r2_secret_key = os.environ.get('CLOUDFLARE_R2_SECRET_ACCESS_KEY', '')
-            r2_bucket = os.environ.get('CLOUDFLARE_R2_BUCKET_NAME', 'socialentangler-media')
-            cdn_domain = os.environ.get('CLOUDFLARE_CDN_DOMAIN', '')
+            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
+            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
+            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
+            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
 
             s3 = boto3.client(
-                's3',
+                "s3",
                 endpoint_url=r2_endpoint,
                 aws_access_key_id=r2_access_key,
                 aws_secret_access_key=r2_secret_key,
-                config=Config(signature_version='s3v4'),
-                region_name='auto'
+                config=Config(signature_version="s3v4"),
+                region_name="auto"
             )
 
-            content_type = mimetypes.guess_type(file.filename)[0] or 'application/octet-stream'
+            content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
             object_key = f"uploads/{current_user.user_id}/{safe_filename}"
 
-            import io
             s3.upload_fileobj(
-                io.BytesIO(content),
+                io.BytesIO(final_content),
                 r2_bucket,
                 object_key,
-                ExtraArgs={'ContentType': content_type}
+                ExtraArgs={"ContentType": content_type}
             )
 
-            if cdn_domain:
-                file_url = f"https://{cdn_domain}/{object_key}"
-            else:
-                file_url = f"{r2_endpoint}/{r2_bucket}/{object_key}"
-
-            return {"success": True, "url": file_url, "filename": file.filename}
+            file_url = (
+                f"https://{cdn_domain}/{object_key}" if cdn_domain
+                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
+            )
         except Exception as e:
             logging.warning(f"R2 upload failed, falling back to local: {e}")
 
-    # Local filesystem fallback
-    upload_dir = Path("/app/uploads")
-    upload_dir.mkdir(exist_ok=True, parents=True)
+    if not file_url:
+        # Local filesystem fallback
+        upload_dir = Path("/app/uploads")
+        upload_dir.mkdir(exist_ok=True, parents=True)
+        file_path = upload_dir / safe_filename
+        file_path.write_bytes(final_content)
+        file_url = f"/uploads/{safe_filename}"
 
-    file_path = upload_dir / safe_filename
-    file_path.write_bytes(content)
-
-    file_url = f"/uploads/{safe_filename}"
-    return {"success": True, "url": file_url, "filename": file.filename}
+    return {
+        "success": True,
+        "url": file_url,
+        "filename": original_filename,
+        "media_type": media_type,
+        "transcoded": transcoded,
+        "original_format": file_ext,
+        "final_format": final_ext,
+        "size_bytes": len(final_content),
+    }
 
 @api_router.get("/posts", response_model=List[Post])
 async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None):
@@ -1086,161 +1268,358 @@ async def get_privacy():
 
 # ==================== SCHEDULED POST PROCESSOR ====================
 
+async def _download_url_to_temp(url: str, suffix: str = ".mp4") -> Optional[str]:
+    """Download a URL to a temp file, return local path. Caller must delete."""
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            async with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    tmp.write(chunk)
+        tmp.close()
+        return tmp.name
+    except Exception as e:
+        logging.error(f"Failed to download {url}: {e}")
+        return None
+
+
 async def publish_to_platform(platform: str, account: dict, post_doc: dict, trace_id: str) -> dict:
     """
-    Publish content to a single platform using the real social adapters.
-    Returns: {"status": "success", "platform_post_id": "..."} or {"status": "failed", "error": "..."}
+    Publish content to a single platform.
+    Returns:
+      {"status": "success", "platform_post_id": "..."}
+      {"status": "awaiting_ig_processing", "container_id": "..."}  — Instagram video
+      {"status": "failed", "error": "...", "rate_limited": True, "retry_after_seconds": N}
+      {"status": "failed", "error": "..."}
     """
-    access_token = account.get('access_token', '')
-    content = post_doc.get('content', '')
-    media_urls = post_doc.get('media_urls', [])
-    video_url = post_doc.get('video_url')
+    access_token = account.get("access_token", "")
+    content = post_doc.get("content", "")
+    media_urls = post_doc.get("media_urls", [])
+    video_url = post_doc.get("video_url")
     media_url = media_urls[0] if media_urls else video_url
 
+    def is_rate_limit_error(error_str: str) -> bool:
+        s = error_str.lower()
+        return any(k in s for k in ["429", "rate limit", "too many requests", "quota", "ratelimit"])
+
+    def extract_retry_after(error_str: str) -> int:
+        import re
+        m = re.search(r"retry.after[:\s]+(\d+)", error_str, re.IGNORECASE)
+        return int(m.group(1)) if m else 3600
+
     try:
-        if platform == 'twitter':
+        if platform == "twitter":
             from app.social.twitter import TwitterAuth
             twitter = TwitterAuth()
-            result = await twitter.publish_tweet(access_token, content)
-            return {"status": "success", "platform_post_id": result.get('id', '')}
+            result = await twitter.publish_tweet(access_token, content, media_urls or [])
+            return {"status": "success", "platform_post_id": str(result or "")}
 
-        elif platform == 'instagram':
+        elif platform == "instagram":
             from app.social.instagram import InstagramAuth
             ig = InstagramAuth()
-            ig_user_id = account.get('platform_user_id', '')
-            media_type = "VIDEO" if video_url else "IMAGE"
-            pub_url = media_url or ''
-            result = await ig.publish_to_instagram(access_token, ig_user_id, pub_url, content, media_type)
-            return {"status": "success", "platform_post_id": str(result)}
+            ig_user_id = account.get("platform_user_id", "")
 
-        elif platform == 'facebook':
+            if video_url:
+                # Non-blocking: create container only, return container_id
+                # check_instagram_containers() will poll status and publish
+                container_id = await ig.create_video_container(access_token, ig_user_id, video_url, content)
+                return {"status": "awaiting_ig_processing", "container_id": container_id}
+            else:
+                pub_url = media_url or ""
+                result = await ig.publish_to_instagram(access_token, ig_user_id, pub_url, content, "IMAGE")
+                return {"status": "success", "platform_post_id": str(result)}
+
+        elif platform == "facebook":
             from app.social.facebook import FacebookAuth
             fb = FacebookAuth()
-            page_id = account.get('platform_user_id', '')
-            page_token = account.get('page_access_token', access_token)
+            page_id = account.get("platform_user_id", "")
+            page_token = account.get("page_access_token", access_token)
             if media_url:
                 result = await fb.publish_to_facebook(page_token, page_id, media_url, content)
             else:
-                # Text-only post via Graph API
                 async with httpx.AsyncClient() as http_client:
                     resp = await http_client.post(
                         f"https://graph.facebook.com/v19.0/{page_id}/feed",
                         data={"message": content, "access_token": page_token}
                     )
                     resp.raise_for_status()
-                    result = resp.json().get('id', '')
+                    result = resp.json().get("id", "")
             return {"status": "success", "platform_post_id": str(result)}
 
-        elif platform == 'linkedin':
+        elif platform == "linkedin":
             from app.social.linkedin import LinkedInAuth
             li = LinkedInAuth()
-            person_urn = account.get('platform_user_id', '')
+            person_urn = account.get("platform_user_id", "")
             result = await li.publish_post(access_token, person_urn, content, media_urls)
             return {"status": "success", "platform_post_id": str(result)}
 
-        elif platform == 'youtube':
+        elif platform == "youtube":
             from app.social.google import GoogleAuth
             yt = GoogleAuth()
-            if video_url:
-                title = post_doc.get('video_title', 'Untitled')
-                cover_image = post_doc.get('cover_image_url')
-                result = await yt.upload_video(access_token, video_url, title, content, cover_image_path=cover_image)
-                return {"status": "success", "platform_post_id": str(result)}
-            else:
+            if not video_url:
                 return {"status": "failed", "error": "YouTube requires a video file"}
 
-        elif platform == 'tiktok':
-            # TikTok API publish — placeholder until credentials configured
-            return {"status": "failed", "error": "TikTok publishing not yet configured"}
+            title = post_doc.get("video_title") or "Untitled"
+            cover_image = post_doc.get("cover_image_url")
+            tmp_path = None
 
-        elif platform == 'bluesky':
-            return {"status": "failed", "error": "Bluesky publishing not yet configured"}
+            try:
+                # YouTube needs local file path — download from R2/URL to /tmp/
+                ext = video_url.rsplit(".", 1)[-1].lower() if "." in video_url.split("/")[-1] else "mp4"
+                tmp_path = await _download_url_to_temp(video_url, suffix=f".{ext}")
+                if not tmp_path:
+                    return {"status": "failed", "error": "Failed to download video for YouTube upload"}
 
-        elif platform == 'threads':
-            return {"status": "failed", "error": "Threads publishing not yet configured"}
+                result = await yt.upload_video(access_token, tmp_path, title, content, cover_image_path=cover_image)
+                return {"status": "success", "platform_post_id": str(result)}
+            finally:
+                # Always clean up temp file
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+        elif platform == "tiktok":
+            return {"status": "failed", "error": "TikTok publishing not yet configured — add credentials"}
+
+        elif platform in ("bluesky", "threads"):
+            return {"status": "failed", "error": f"{platform.title()} publishing not yet configured"}
 
         else:
             return {"status": "failed", "error": f"Unknown platform: {platform}"}
 
     except Exception as e:
-        logging.error(f"[{trace_id}] Platform {platform} publish error: {e}")
-        return {"status": "failed", "error": str(e)}
+        error_str = str(e)
+        logging.error(f"[{trace_id}] Platform {platform} publish error: {error_str}")
+
+        if is_rate_limit_error(error_str):
+            return {
+                "status": "failed",
+                "error": error_str,
+                "rate_limited": True,
+                "retry_after_seconds": extract_retry_after(error_str)
+            }
+        return {"status": "failed", "error": error_str}
+
+
+async def check_instagram_containers():
+    """
+    Separate 30s job: check Instagram video containers that are still processing.
+    Non-blocking — never holds the thread waiting for Instagram.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        # Find posts with platforms in "awaiting_ig_processing" state
+        posts = await db.posts.find(
+            {"status": "publishing", "platform_results.instagram.status": "awaiting_ig_processing"},
+            {"_id": 0}
+        ).to_list(50)
+
+        for post_doc in posts:
+            post_id = post_doc["id"]
+            trace_id = post_doc.get("trace_id", "")
+            platform_results = post_doc.get("platform_results", {})
+            ig_pr = platform_results.get("instagram", {})
+            container_id = ig_pr.get("container_id")
+            access_token = ig_pr.get("access_token_snapshot", "")
+            ig_user_id = ig_pr.get("ig_user_id_snapshot", "")
+
+            if not container_id:
+                continue
+
+            try:
+                from app.social.instagram import InstagramAuth
+                ig = InstagramAuth()
+                status_code = await ig.check_container_status(access_token, container_id)
+
+                if status_code == "FINISHED":
+                    # Publish now
+                    publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
+                    ig_pr["status"] = "success"
+                    ig_pr["platform_post_id"] = publish_result
+                    ig_pr["published_at"] = now.isoformat()
+                    logging.info(f"[{trace_id}] ✓ Instagram container {container_id} published for post {post_id}")
+
+                elif status_code == "ERROR":
+                    ig_pr["retries"] = ig_pr.get("retries", 0) + 1
+                    if ig_pr["retries"] >= MAX_RETRIES:
+                        ig_pr["status"] = "permanently_failed"
+                        ig_pr["error"] = "Instagram video processing failed"
+                    else:
+                        ig_pr["status"] = "failed"
+                        ig_pr["error"] = "Instagram video processing error — will retry"
+                        ig_pr["next_retry_at"] = get_next_retry_at(ig_pr["retries"]).isoformat()
+                    logging.error(f"[{trace_id}] Instagram container {container_id} ERROR for post {post_id}")
+
+                else:
+                    # Still IN_PROGRESS — check again next tick
+                    logging.debug(f"[{trace_id}] Instagram container {container_id} still processing ({status_code})")
+                    continue
+
+            except Exception as e:
+                logging.error(f"[{trace_id}] Instagram container check failed: {e}")
+                continue
+
+            platform_results["instagram"] = ig_pr
+            await _finalise_post_status(post_id, post_doc, platform_results, now)
+
+    except Exception as e:
+        logging.error(f"Instagram container check error: {e}")
+
+
+async def _finalise_post_status(post_id: str, post_doc: dict, platform_results: dict, now: datetime):
+    """
+    Compute overall post status from platform_results and write to MongoDB.
+    Sends DLQ notification if all terminal and any permanently failed.
+    """
+    statuses = [pr["status"] for pr in platform_results.values()]
+    all_success = all(s == "success" for s in statuses)
+    all_terminal = all(s in ("success", "permanently_failed") for s in statuses)
+    any_success = any(s == "success" for s in statuses)
+
+    if all_success:
+        post_status = "published"
+    elif all_terminal and any_success:
+        post_status = "partial"
+    elif all_terminal and not any_success:
+        post_status = "failed"
+    else:
+        post_status = "publishing"
+
+    update_fields = {
+        "platform_results": platform_results,
+        "status": post_status,
+        "updated_at": now.isoformat(),
+    }
+    if post_status == "published":
+        update_fields["published_at"] = now.isoformat()
+
+    failed_platforms = {
+        p: pr.get("error", "Unknown")
+        for p, pr in platform_results.items()
+        if pr["status"] == "permanently_failed"
+    }
+    if failed_platforms:
+        update_fields["failure_reason"] = "; ".join(f"{p}: {err}" for p, err in failed_platforms.items())
+
+    await db.posts.update_one({"id": post_id}, {"$set": update_fields})
+
+    if post_status in ("failed", "partial") and all_terminal:
+        user_doc = await db.users.find_one(
+            {"user_id": post_doc["user_id"]},
+            {"_id": 0, "email": 1, "name": 1}
+        )
+        if user_doc and RESEND_API_KEY:
+            trace_id = post_doc.get("trace_id", "")
+            await send_dlq_notification(user_doc, post_doc, failed_platforms, trace_id, platform_results)
 
 
 async def process_scheduled_posts():
     """
-    Background job: per-platform publish with independent retry.
-
-    Each post tracks per-platform state in `platform_results`:
-      {
-        "instagram": {"status": "success", "platform_post_id": "123"},
-        "twitter":   {"status": "failed", "error": "rate limit", "retries": 2},
-        "linkedin":  {"status": "pending"}
-      }
-
-    - Only platforms with status "pending" or "failed" (retries < MAX) get attempted
-    - Successfully published platforms are NEVER retried (no duplicates)
-    - Post status:
-        "publishing" = at least one platform still pending
-        "published"  = all platforms succeeded or permanently failed, at least one succeeded
-        "partial"    = some succeeded, some permanently failed
-        "failed"     = ALL platforms permanently failed (DLQ)
+    Background job (every 30s): per-platform publish with:
+    - Atomic claim (findOneAndUpdate) prevents double-enqueue
+    - Jitter (0-15s random delay) spreads burst load
+    - Exponential backoff (5→15→60→180 min) between retries
+    - Rate limit token bucket (skip, not fail, on 429)
+    - Instagram video: non-blocking — stores container_id, checked by separate job
     """
-    MAX_RETRIES = 3
     try:
         now = datetime.now(timezone.utc)
 
-        # Find posts that are ready to publish (scheduled or still publishing)
-        posts = await db.posts.find({
-            "status": {"$in": ["scheduled", "publishing"]},
-            "scheduled_time": {"$lte": now.isoformat()}
-        }).to_list(100)
+        # Atomically claim up to 50 posts due for processing.
+        # findOneAndUpdate prevents two scheduler ticks from claiming the same post.
+        claimed_posts = []
+        for _ in range(50):
+            claimed = await db.posts.find_one_and_update(
+                {
+                    "status": {"$in": ["scheduled", "publishing"]},
+                    "scheduled_time": {"$lte": now.isoformat()},
+                    # Don't re-claim posts already being processed this tick
+                    "$or": [
+                        {"claimed_at": {"$exists": False}},
+                        {"claimed_at": {"$lte": (now - timedelta(minutes=5)).isoformat()}}
+                    ]
+                },
+                {"$set": {"claimed_at": now.isoformat()}},
+                return_document=True
+            )
+            if not claimed:
+                break
+            claimed_posts.append(claimed)
 
-        for post_doc in posts:
-            post_id = post_doc['id']
-            user_id = post_doc['user_id']
-            trace_id = post_doc.get('trace_id') or str(uuid.uuid4())[:8]
-            platforms = post_doc.get('platforms', [])
-            platform_results = post_doc.get('platform_results', {})
+        if not claimed_posts:
+            return
 
-            # Initialize platform_results for any new platforms
+        logging.info(f"Scheduler claimed {len(claimed_posts)} posts for processing")
+
+        for post_doc in claimed_posts:
+            post_id = post_doc["id"]
+            user_id = post_doc["user_id"]
+            trace_id = post_doc.get("trace_id") or str(uuid.uuid4())[:8]
+            platforms = post_doc.get("platforms", [])
+            platform_results = post_doc.get("platform_results", {})
+
+            # Initialise missing platform entries
             for p in platforms:
                 if p not in platform_results:
                     platform_results[p] = {"status": "pending", "retries": 0}
 
-            # Get all connected accounts for this user (needed for tokens)
+            # Load user's connected accounts
             user_accounts = await db.social_accounts.find(
-                {"user_id": user_id, "is_active": True},
-                {"_id": 0}
+                {"user_id": user_id, "is_active": True}, {"_id": 0}
             ).to_list(100)
-            accounts_by_platform = {}
-            for acc in user_accounts:
-                accounts_by_platform[acc['platform']] = acc
+            accounts_by_platform = {acc["platform"]: acc for acc in user_accounts}
 
-            # Attempt each platform independently
+            # Process each platform independently
             for platform in platforms:
                 pr = platform_results.get(platform, {"status": "pending", "retries": 0})
 
-                # Skip already succeeded or permanently failed
-                if pr["status"] == "success":
+                # Skip terminal states
+                if pr["status"] in ("success", "permanently_failed"):
                     continue
-                if pr["status"] == "permanently_failed":
+
+                # Skip awaiting Instagram container — handled by check_instagram_containers()
+                if pr["status"] == "awaiting_ig_processing":
                     continue
-                # Skip if retries exhausted but not yet marked permanent
+
+                # Respect exponential backoff: skip if next_retry_at is in the future
+                next_retry_at = pr.get("next_retry_at")
+                if next_retry_at:
+                    try:
+                        retry_dt = datetime.fromisoformat(next_retry_at)
+                        if retry_dt.tzinfo is None:
+                            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+                        if retry_dt > now:
+                            logging.debug(f"[{trace_id}] {platform}: backoff until {next_retry_at}, skipping")
+                            continue
+                    except Exception:
+                        pass
+
+                # Check retry cap
                 if pr.get("retries", 0) >= MAX_RETRIES:
                     pr["status"] = "permanently_failed"
                     platform_results[platform] = pr
                     continue
 
+                # Check rate limit token bucket
+                if not check_rate_limit(user_id, platform):
+                    logging.warning(f"[{trace_id}] {platform} rate limit — skipping (not a failure)")
+                    continue  # Don't count as a retry failure
+
+                # Check connected account exists
                 account = accounts_by_platform.get(platform)
                 if not account:
                     pr["status"] = "permanently_failed"
                     pr["error"] = f"No connected {platform} account found"
                     platform_results[platform] = pr
-                    logging.warning(f"[{trace_id}] No {platform} account for post {post_id}")
                     continue
 
-                # Attempt publish
+                # Apply jitter (0-15s) to spread burst load
+                jitter_secs = random.uniform(0, 15)
+                await asyncio.sleep(jitter_secs)
+
                 logging.info(f"[{trace_id}] Publishing post {post_id} to {platform} (attempt {pr.get('retries', 0) + 1}/{MAX_RETRIES})")
                 result = await publish_to_platform(platform, account, post_doc, trace_id)
 
@@ -1248,7 +1627,23 @@ async def process_scheduled_posts():
                     pr["status"] = "success"
                     pr["platform_post_id"] = result.get("platform_post_id", "")
                     pr["published_at"] = now.isoformat()
+                    pr.pop("next_retry_at", None)
                     logging.info(f"[{trace_id}] ✓ {platform} succeeded for post {post_id}")
+
+                elif result["status"] == "awaiting_ig_processing":
+                    # Non-blocking Instagram video — container created, will check next tick
+                    pr["status"] = "awaiting_ig_processing"
+                    pr["container_id"] = result.get("container_id")
+                    pr["access_token_snapshot"] = account.get("access_token", "")
+                    pr["ig_user_id_snapshot"] = account.get("platform_user_id", "")
+                    logging.info(f"[{trace_id}] Instagram video container {result.get('container_id')} created — awaiting processing")
+
+                elif result.get("rate_limited"):
+                    # 429 from platform — record pause, do NOT count as retry
+                    retry_after = result.get("retry_after_seconds", 3600)
+                    record_rate_limit_hit(user_id, platform, retry_after)
+                    logging.warning(f"[{trace_id}] {platform} 429 — paused {retry_after}s, not counted as retry")
+
                 else:
                     pr["retries"] = pr.get("retries", 0) + 1
                     pr["error"] = result.get("error", "Unknown error")
@@ -1256,61 +1651,16 @@ async def process_scheduled_posts():
 
                     if pr["retries"] >= MAX_RETRIES:
                         pr["status"] = "permanently_failed"
-                        logging.error(f"[{trace_id}] ✗ {platform} permanently failed for post {post_id} after {MAX_RETRIES} attempts: {pr['error']}")
+                        logging.error(f"[{trace_id}] ✗ {platform} permanently failed for post {post_id}: {pr['error']}")
                     else:
                         pr["status"] = "failed"
-                        logging.warning(f"[{trace_id}] ✗ {platform} failed for post {post_id} (attempt {pr['retries']}): {pr['error']}")
+                        pr["next_retry_at"] = get_next_retry_at(pr["retries"]).isoformat()
+                        logging.warning(f"[{trace_id}] ✗ {platform} attempt {pr['retries']}/{MAX_RETRIES}, next retry at {pr['next_retry_at']}")
 
                 platform_results[platform] = pr
 
-            # Determine overall post status
-            statuses = [pr["status"] for pr in platform_results.values()]
-            all_success = all(s == "success" for s in statuses)
-            all_terminal = all(s in ("success", "permanently_failed") for s in statuses)
-            any_success = any(s == "success" for s in statuses)
-            any_still_retrying = any(s == "failed" for s in statuses)
-
-            if all_success:
-                post_status = "published"
-            elif all_terminal and any_success:
-                post_status = "partial"
-            elif all_terminal and not any_success:
-                post_status = "failed"  # ALL platforms permanently failed → DLQ
-            elif any_still_retrying:
-                post_status = "publishing"  # Some still have retries left
-            else:
-                post_status = "publishing"
-
-            update_fields = {
-                "platform_results": platform_results,
-                "status": post_status,
-                "updated_at": now.isoformat(),
-                "trace_id": trace_id
-            }
-            if post_status == "published":
-                update_fields["published_at"] = now.isoformat()
-
-            # Build failure_reason from permanently failed platforms only
-            failed_platforms = {
-                p: pr["error"]
-                for p, pr in platform_results.items()
-                if pr["status"] == "permanently_failed"
-            }
-            if failed_platforms:
-                update_fields["failure_reason"] = "; ".join(
-                    f"{p}: {err}" for p, err in failed_platforms.items()
-                )
-
-            await db.posts.update_one({"id": post_id}, {"$set": update_fields})
-
-            # Send notification ONLY for platforms that just permanently failed
-            if post_status in ("failed", "partial") and all_terminal:
-                user_doc = await db.users.find_one(
-                    {"user_id": user_id},
-                    {"_id": 0, "email": 1, "name": 1}
-                )
-                if user_doc and RESEND_API_KEY:
-                    await send_dlq_notification(user_doc, post_doc, failed_platforms, trace_id, platform_results)
+            # Write final status
+            await _finalise_post_status(post_id, post_doc, platform_results, now)
 
     except Exception as e:
         logging.error(f"Scheduled post processing error: {e}")
@@ -1403,9 +1753,20 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
 
 @app.on_event("startup")
 async def startup_event():
-    scheduler.add_job(process_scheduled_posts, 'interval', minutes=1)
+    # MongoDB indexes — critical for scheduler performance at scale
+    await db.posts.create_index([("user_id", 1), ("status", 1), ("scheduled_time", 1)])
+    await db.posts.create_index([("status", 1), ("scheduled_time", 1)])
+    await db.posts.create_index([("user_id", 1), ("created_at", -1)])
+    await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
+    await db.users.create_index([("email", 1)], unique=True)
+    await db.users.create_index([("user_id", 1)], unique=True)
+    logging.info("MongoDB indexes created")
+
+    # Architecture spec: every 30 seconds (not 60)
+    scheduler.add_job(process_scheduled_posts, 'interval', seconds=30)
+    scheduler.add_job(check_instagram_containers, 'interval', seconds=30)
     scheduler.start()
-    logging.info("Scheduler started")
+    logging.info("Scheduler started — 30s interval")
 
 @app.on_event("shutdown")
 async def shutdown_event():
