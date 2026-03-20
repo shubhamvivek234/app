@@ -35,13 +35,13 @@ const Dashboard = () => {
     }
   };
 
-  const handleRetry = async (postId) => {
+  const handleRetry = async (postId, platform = null) => {
     try {
-      await retryFailedPost(postId);
-      toast.success('Post queued for retry');
+      const result = await retryFailedPost(postId, platform);
+      toast.success(result.message || 'Post queued for retry');
       fetchData();
     } catch (error) {
-      toast.error('Failed to retry post');
+      toast.error(error?.response?.data?.detail || 'Failed to retry post');
     }
   };
 
@@ -123,51 +123,84 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Failed Posts Alert */}
+        {/* Failed Posts Alert — per-platform status */}
         {failedPosts.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <FaExclamationTriangle className="text-red-500" />
                 <h3 className="font-semibold text-red-800">
-                  {failedPosts.length} Post{failedPosts.length > 1 ? 's' : ''} Failed to Publish
+                  {failedPosts.length} Post{failedPosts.length > 1 ? 's' : ''} with Failed Platforms
                 </h3>
               </div>
             </div>
-            <div className="space-y-2">
-              {failedPosts.slice(0, 3).map((post) => (
-                <div
-                  key={post.id}
-                  className="flex items-center justify-between bg-white rounded-md p-3 border border-red-100"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-800 truncate">{post.content || 'No content'}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs text-slate-500">
-                        Platforms: {(post.platforms || []).join(', ')}
-                      </span>
+            <div className="space-y-3">
+              {failedPosts.slice(0, 3).map((post) => {
+                const platformResults = post.platform_results || {};
+                const failedPlatforms = Object.entries(platformResults).filter(
+                  ([, pr]) => pr.status === 'permanently_failed'
+                );
+                const succeededPlatforms = Object.entries(platformResults).filter(
+                  ([, pr]) => pr.status === 'success'
+                );
+
+                return (
+                  <div
+                    key={post.id}
+                    className="bg-white rounded-md p-4 border border-red-100"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="text-sm text-slate-800 truncate flex-1">{post.content || 'No content'}</p>
                       {post.trace_id && (
-                        <span className="text-xs text-slate-400 font-mono">
+                        <span className="text-xs text-slate-400 font-mono ml-2 flex-shrink-0">
                           #{post.trace_id}
                         </span>
                       )}
                     </div>
-                    {post.failure_reason && (
-                      <p className="text-xs text-red-500 mt-1 truncate">{post.failure_reason}</p>
+
+                    {/* Per-platform results */}
+                    <div className="space-y-1.5 mt-2">
+                      {succeededPlatforms.map(([platform]) => (
+                        <div key={platform} className="flex items-center gap-2 text-xs">
+                          <span className="text-green-600">✓</span>
+                          <span className="text-slate-700 capitalize">{platform}</span>
+                          <span className="text-green-600">Published</span>
+                        </div>
+                      ))}
+                      {failedPlatforms.map(([platform, pr]) => (
+                        <div key={platform} className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-red-500">✗</span>
+                            <span className="text-slate-700 capitalize">{platform}</span>
+                            <span className="text-red-500 truncate">{pr.error || 'Failed'}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleRetry(post.id, platform); }}
+                            className="flex items-center gap-1 text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 transition-colors flex-shrink-0"
+                          >
+                            <FaRedo className="text-[10px]" />
+                            Retry
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Retry all failed button */}
+                    {failedPlatforms.length > 1 && (
+                      <button
+                        onClick={() => handleRetry(post.id)}
+                        className="mt-2 w-full flex items-center justify-center gap-1 text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900 transition-colors"
+                      >
+                        <FaRedo className="text-[10px]" />
+                        Retry All {failedPlatforms.length} Failed Platforms
+                      </button>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleRetry(post.id)}
-                    className="ml-3 flex items-center gap-1 text-xs bg-red-600 text-white px-3 py-1.5 rounded-md hover:bg-red-700 transition-colors flex-shrink-0"
-                  >
-                    <FaRedo className="text-xs" />
-                    Retry
-                  </button>
-                </div>
-              ))}
+                );
+              })}
               {failedPosts.length > 3 && (
                 <p className="text-xs text-red-600 text-center mt-1">
-                  +{failedPosts.length - 3} more failed posts in Content Library
+                  +{failedPosts.length - 3} more in Content Library
                 </p>
               )}
             </div>
