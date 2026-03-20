@@ -56,6 +56,12 @@ celery_app.conf.beat_schedule.update({
         "schedule": 7 * 24 * 3600,  # weekly
         "options": {"queue": "default"},
     },
+    # 17.4D: Detect pre_upload tasks stuck > 30 min → DLQ + notify user
+    "pre-upload-timeout-scan": {
+        "task": "celery_workers.tasks.scheduler.scan_pre_upload_timeouts",
+        "schedule": 60.0,  # every minute
+        "options": {"queue": "default"},
+    },
 })
 
 
@@ -147,22 +153,43 @@ async def _async_scan_and_enqueue() -> dict:
         enqueued += 1
         logger.info("Enqueued post %s to %s queue", post_id, queue)
 
-    # Phase 1.5.3: Trigger pre-upload for posts with video that are due within 20 minutes
-    pre_upload_horizon = now + timedelta(minutes=20)
+    # 17.3 + Phase 1.5.3: Trigger pre-upload for video posts whose dynamic window has opened.
+    # Use a wide scan horizon (60 min) and filter per-post using calculate_pre_upload_start.
+    pre_upload_scan_horizon = now + timedelta(minutes=60)
     pre_upload_cursor = db.posts.find(
         {
             "status": "scheduled",
-            "scheduled_time": {"$lte": pre_upload_horizon, "$gt": enqueue_horizon},
+            "scheduled_time": {"$lte": pre_upload_scan_horizon, "$gt": enqueue_horizon},
             "post_type": {"$in": ["video", "reel", "story"]},
             "pre_upload_status": {"$in": [None, "pending"]},
         },
-        {"_id": 0, "id": 1, "platforms": 1},
+        {"_id": 0, "id": 1, "platforms": 1, "scheduled_time": 1, "video_size_mb": 1},
         limit=50,
     )
     pre_uploads_triggered = 0
     async for post in pre_upload_cursor:
-        from celery_workers.tasks.publish import pre_upload_task
+        # 17.3: Only trigger if we've reached the calculated pre_upload start time
+        pre_upload_start = _get_pre_upload_start(post, now)
+        if now < pre_upload_start:
+            continue  # Not yet time to start pre-upload for this post
+
+        from celery_workers.tasks.publish import pre_upload_task, calculate_pre_upload_start
         platforms = post.get("platforms", [])
+
+        # 17.5: Record pre_upload_start_time + estimated_upload_duration on the post
+        file_size_mb = post.get("video_size_mb", 0) or 0
+        if file_size_mb > 0 and post.get("scheduled_time"):
+            _, estimated_secs = calculate_pre_upload_start(
+                post["scheduled_time"], file_size_mb, platforms
+            )
+            await db.posts.update_one(
+                {"id": post["id"], "pre_upload_status": {"$in": [None, "pending"]}},
+                {"$set": {
+                    "pre_upload_start_time": now,
+                    "estimated_upload_duration": estimated_secs,
+                }},
+            )
+
         for p in platforms:
             if p in ("instagram", "youtube"):
                 pre_upload_task.apply_async(
@@ -172,3 +199,102 @@ async def _async_scan_and_enqueue() -> dict:
                 pre_uploads_triggered += 1
 
     return {"enqueued": enqueued, "pre_uploads": pre_uploads_triggered, "scan_time": now.isoformat()}
+
+
+# ── 17.4D: Dynamic pre_upload window using timing formula ─────────────────────
+def _get_pre_upload_start(post: dict, now: datetime) -> datetime:
+    """
+    Use calculate_pre_upload_start() if video_size_mb is known,
+    otherwise fall back to 20-minute fixed window.
+    """
+    from celery_workers.tasks.publish import calculate_pre_upload_start
+    scheduled_time = post.get("scheduled_time")
+    file_size_mb = post.get("video_size_mb", 0) or 0
+    platforms = post.get("platforms", [])
+    if file_size_mb > 0 and scheduled_time:
+        start_time, _ = calculate_pre_upload_start(scheduled_time, file_size_mb, platforms)
+        return start_time
+    # Fallback: 20-minute window
+    return (scheduled_time or now) - timedelta(minutes=20)
+
+
+# ── 17.4D: Timeout scanner — runs every minute via Beat ───────────────────────
+@celery_app.task(name="celery_workers.tasks.scheduler.scan_pre_upload_timeouts")
+def scan_pre_upload_timeouts() -> dict:
+    """
+    17.4 Scenario D — Detect pre_upload tasks stuck > 30 min.
+    Moves timed-out posts to DLQ and notifies the user with a reschedule option.
+    """
+    import asyncio
+    return asyncio.get_event_loop().run_until_complete(_async_scan_pre_upload_timeouts())
+
+
+async def _async_scan_pre_upload_timeouts() -> dict:
+    from celery_workers.tasks.publish import _move_to_dlq
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    now = datetime.utcnow()
+    timeout_threshold = now - timedelta(minutes=30)
+
+    # Find posts stuck in "uploading" for more than 30 minutes
+    cursor = db.posts.find(
+        {
+            "pre_upload_status": "uploading",
+            "pre_upload_started_at": {"$lte": timeout_threshold},
+        },
+        {"_id": 0, "id": 1, "user_id": 1, "platforms": 1, "scheduled_time": 1},
+        limit=50,
+    )
+
+    timed_out = 0
+    async for post in cursor:
+        post_id = post["id"]
+        # Atomically claim — prevent concurrent scanners processing same post
+        result = await db.posts.find_one_and_update(
+            {"id": post_id, "pre_upload_status": "uploading"},
+            {"$set": {
+                "pre_upload_status": "timeout",
+                "pre_upload_error": "Pre-upload timed out after 30 minutes — moved to DLQ",
+                "pre_upload_timed_out_at": now,
+            }},
+        )
+        if result is None:
+            continue  # Already claimed by another scanner instance
+
+        logger.error(
+            "17.4D: pre_upload timeout for post %s (started_at=%s) — moving to DLQ",
+            post_id, result.get("pre_upload_started_at"),
+        )
+
+        # Move to DLQ
+        try:
+            await _move_to_dlq(post_id, "pre_upload_timeout")
+        except Exception as dlq_exc:
+            logger.error("17.4D: Failed to move %s to DLQ: %s", post_id, dlq_exc)
+
+        # Notify user with reschedule option
+        try:
+            from celery_workers.tasks.media import send_notification
+            send_notification.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "type": "pre_upload_timeout",
+                    "platform": ",".join(post.get("platforms", [])),
+                    "error": (
+                        "Your video upload timed out after 30 minutes. "
+                        "Please reschedule the post or try again with a smaller file."
+                    ),
+                },
+                queue="default",
+            )
+        except Exception as notify_exc:
+            logger.warning("17.4D: Failed to notify user for post %s: %s", post_id, notify_exc)
+
+        timed_out += 1
+
+    if timed_out:
+        logger.warning("17.4D: Timed out %d stuck pre_upload tasks", timed_out)
+
+    return {"status": "complete", "timed_out": timed_out, "scan_time": now.isoformat()}

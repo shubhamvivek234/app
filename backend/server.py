@@ -219,11 +219,22 @@ class Post(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
+    video_size_mb: Optional[float] = None  # 17.3: used to calculate dynamic pre_upload window
     scheduled_time: Optional[datetime] = None
     status: str = "draft"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     published_at: Optional[datetime] = None
     media_cleaned_at: Optional[datetime] = None  # 22: set when media lifecycle cleanup completes
+    # 17.5 — two-phase publishing fields
+    pre_upload_status: Optional[str] = None          # pending | uploading | ready | failed | timeout
+    pre_upload_start_time: Optional[datetime] = None  # when pre_upload_task was triggered
+    pre_upload_started_at: Optional[datetime] = None  # actual worker start time
+    pre_upload_completed_at: Optional[datetime] = None
+    pre_upload_error: Optional[str] = None
+    estimated_upload_duration: Optional[int] = None   # seconds estimated at schedule time (17.3)
+    actual_upload_duration: Optional[int] = None      # seconds measured — feeds future estimates
+    platform_container_ids: Optional[dict] = None     # {instagram: container_id, youtube: video_id}
+    platform_post_urls: Optional[dict] = None         # {instagram: url, youtube: url} set after publish
     ai_generated: bool = False
     version: int = 1  # EC3 + EC25: optimistic locking version field
 
@@ -235,6 +246,7 @@ class PostCreate(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
+    video_size_mb: Optional[float] = None  # 17.3: client passes this after upload to enable dynamic window
     scheduled_time: Optional[str] = None
 
 class PostUpdate(BaseModel):

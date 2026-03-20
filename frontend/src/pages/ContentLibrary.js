@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
 import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
+import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
 
 const platformIcons = {
   youtube: <FaYoutube className="text-red-500" />,
@@ -399,6 +400,11 @@ const ContentLibrary = () => {
                       {post.status}
                     </div>
                   </div>
+
+                  {/* 17.6 — Pre-upload timeline (only for scheduled/queued video posts) */}
+                  {['scheduled', 'queued', 'published'].includes(post.status) && (
+                    <PreUploadTimeline post={post} />
+                  )}
 
                   {/* Notes toggle button */}
                   <button

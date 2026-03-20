@@ -151,6 +151,11 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     return {"status": "dispatched", "platforms": platforms, "jitter_seconds": jitter}
 
 
+# 17.4B: max seconds to wait for pre_upload to become ready at publish time
+_PRE_UPLOAD_POLL_INTERVAL = 5   # seconds between status checks
+_PRE_UPLOAD_MAX_WAIT = 600      # 10 minutes maximum
+
+
 # ── Per-platform task ─────────────────────────────────────────────────────────
 @celery_app.task(
     name="celery_workers.tasks.publish.publish_to_platform",
@@ -236,6 +241,57 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             return {"status": "subscription_expired"}
     except ImportError:
         pass  # subscription module not available — skip check
+
+    # 17.4 Scenario B: pre_upload still running at scheduled publish time.
+    # Poll every 5s for up to 10 minutes before giving up.
+    if platform in ("instagram", "youtube") and post.get("post_type") in ("video", "reel", "story"):
+        pre_status = post.get("pre_upload_status", "")
+        if pre_status == "failed":
+            err = post.get("pre_upload_error", "Pre-upload failed before publish time")
+            logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
+            await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+            await _send_failure_notification(post_id, platform, err)
+            return {"status": "failed", "reason": "pre_upload_failed"}
+
+        if pre_status not in ("ready", "", None):
+            # Still uploading — poll every 5s for up to 10 minutes (17.4B)
+            waited = 0
+            logger.info(
+                "17.4B: pre_upload still %r at publish time for %s/%s — polling up to %ds",
+                pre_status, post_id, platform, _PRE_UPLOAD_MAX_WAIT,
+            )
+            while waited < _PRE_UPLOAD_MAX_WAIT:
+                await asyncio.sleep(_PRE_UPLOAD_POLL_INTERVAL)
+                waited += _PRE_UPLOAD_POLL_INTERVAL
+                refreshed = await db.posts.find_one(
+                    {"id": post_id}, {"pre_upload_status": 1, "pre_upload_error": 1}
+                )
+                current_status = (refreshed or {}).get("pre_upload_status", "")
+                if current_status == "ready":
+                    logger.info(
+                        "17.4B: pre_upload ready after %ds for %s/%s",
+                        waited, post_id, platform,
+                    )
+                    # Reload full post with updated container IDs
+                    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+                    break
+                if current_status == "failed":
+                    err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
+                    logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
+                    await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                    await _send_failure_notification(post_id, platform, err)
+                    return {"status": "failed", "reason": "pre_upload_failed"}
+            else:
+                # 10-minute timeout expired
+                msg = (
+                    f"Timed out waiting for pre_upload on {platform} "
+                    f"(waited {_PRE_UPLOAD_MAX_WAIT}s). "
+                    f"Post published {waited}s late."
+                )
+                logger.error("17.4B: %s for post %s", msg, post_id)
+                await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
+                await _send_failure_notification(post_id, platform, msg)
+                return {"status": "failed", "reason": "pre_upload_wait_timeout"}
 
     try:
         adapter = get_adapter(platform)
@@ -363,7 +419,51 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             })
 
 
-# ── Pre-upload task (Phase 1.5.3) ─────────────────────────────────────────────
+# ── 17.3 Pre-upload timing formula ────────────────────────────────────────────
+
+# Upload speed estimates in seconds-per-MB (tuned from real metrics over time)
+_UPLOAD_RATE_SECS_PER_MB: dict[str, float] = {
+    "instagram": 0.8,
+    "youtube": 0.5,
+}
+# Platform video processing time estimates in seconds
+_PROCESSING_SECS: dict[str, int] = {
+    "instagram": 180,
+    "youtube": 300,
+}
+_SAFETY_BUFFER_SECS = 300  # 5-minute safety margin
+_DEFAULT_PRE_UPLOAD_SECS = 900  # 15-minute fallback when file_size unknown
+
+
+def calculate_pre_upload_start(
+    scheduled_time: datetime,
+    file_size_mb: float,
+    platforms: list,
+) -> tuple:
+    """
+    17.3 — Calculate dynamic pre_upload_start_time based on file size + platforms.
+
+    Returns (pre_upload_start_time: datetime, estimated_duration_secs: int).
+
+    The upload should FINISH at scheduled_time, not START.  This calculates
+    when uploading must BEGIN so that processing completes before the deadline.
+
+    Over time: collect actual_upload_duration from each job and replace
+    _UPLOAD_RATE_SECS_PER_MB with per-user averages from slow connections.
+    """
+    relevant = [p for p in platforms if p in _UPLOAD_RATE_SECS_PER_MB]
+    if not relevant or file_size_mb <= 0:
+        estimated = _DEFAULT_PRE_UPLOAD_SECS
+    else:
+        estimated = int(max(
+            (file_size_mb * _UPLOAD_RATE_SECS_PER_MB[p]) + _PROCESSING_SECS.get(p, 180)
+            for p in relevant
+        )) + _SAFETY_BUFFER_SECS
+
+    return scheduled_time - timedelta(seconds=estimated), estimated
+
+
+# ── Pre-upload task (Phase 1.5.3 + 17.3) ─────────────────────────────────────
 @celery_app.task(
     name="celery_workers.tasks.publish.pre_upload_task",
     bind=True,
@@ -372,9 +472,10 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 )
 def pre_upload_task(self, post_id: str, platform: str) -> dict:
     """
-    Fires 15+ minutes before scheduled_time.
+    Fires at pre_upload_start_time (dynamically calculated, min 15 min ahead).
     Uploads media container (Instagram) or private video (YouTube).
     Stores container_id/video_id for use by publish_task at scheduled_time.
+    Records actual_upload_duration for future estimate calibration (17.3).
     """
     return asyncio.get_event_loop().run_until_complete(
         _async_pre_upload(self, post_id, platform)
@@ -387,9 +488,10 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
+    started_at = datetime.utcnow()
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {"pre_upload_status": "uploading", "pre_upload_started_at": datetime.utcnow()}}
+        {"$set": {"pre_upload_status": "uploading", "pre_upload_started_at": started_at}}
     )
 
     try:
@@ -420,18 +522,25 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             )
             return {"status": "polling", "platform": platform, "container_id": container_id}
 
-        expiry = datetime.utcnow() + timedelta(hours=23)
+        completed_at = datetime.utcnow()
+        actual_duration = int((completed_at - started_at).total_seconds())
+        expiry = completed_at + timedelta(hours=23)
         container_id = container_result.get("container_id") or container_result.get("video_id")
         await db.posts.update_one(
             {"id": post_id},
             {"$set": {
                 "pre_upload_status": "ready",
-                "pre_upload_completed_at": datetime.utcnow(),
+                "pre_upload_completed_at": completed_at,
+                "actual_upload_duration": actual_duration,  # 17.5: feeds future estimates
                 f"platform_container_ids.{platform}": container_id,
                 f"container_expiry_at.{platform}": expiry.isoformat(),
             }}
         )
-        return {"status": "ready", "platform": platform}
+        logger.info(
+            "17.3: pre_upload ready for %s/%s — actual_duration=%ds container=%s",
+            post_id, platform, actual_duration, container_id,
+        )
+        return {"status": "ready", "platform": platform, "actual_duration_secs": actual_duration}
 
     except Exception as exc:
         logger.error("pre_upload_task failed for %s/%s: %s", post_id, platform, exc)
