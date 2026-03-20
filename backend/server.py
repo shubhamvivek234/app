@@ -215,6 +215,7 @@ class Post(BaseModel):
     post_type: str = "text"  # text, image, video
     platforms: List[str]
     media_urls: Optional[List[str]] = []
+    thumbnail_urls: Optional[List[str]] = []  # 22: permanent thumbnails (set after media cleanup)
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
@@ -222,6 +223,7 @@ class Post(BaseModel):
     status: str = "draft"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     published_at: Optional[datetime] = None
+    media_cleaned_at: Optional[datetime] = None  # 22: set when media lifecycle cleanup completes
     ai_generated: bool = False
     version: int = 1  # EC3 + EC25: optimistic locking version field
 

@@ -49,6 +49,13 @@ celery_app.conf.beat_schedule.update({
         "schedule": 86400,  # daily
         "options": {"queue": "default"},
     },
+    # 22: Re-apply GCS lifecycle rules weekly — ensures rules survive bucket ops
+    # and are applied to any new buckets created during deployment.
+    "apply-gcs-lifecycle-rules": {
+        "task": "celery_workers.tasks.cleanup.apply_gcs_lifecycle_rules",
+        "schedule": 7 * 24 * 3600,  # weekly
+        "options": {"queue": "default"},
+    },
 })
 
 
