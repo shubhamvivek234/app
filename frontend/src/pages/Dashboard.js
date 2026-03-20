@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getPosts, getWorkspaceMembers, getWorkspaceActivity } from '@/lib/api';
+import { getStats, getPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
+import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useNavigate } from 'react-router-dom';
-import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink } from 'react-icons/fa';
+import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo, FaBell } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -12,8 +13,8 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [recentPosts, setRecentPosts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [workspaceMembers, setWorkspaceMembers] = useState([]);
-  const [teamActivity, setTeamActivity] = useState([]);
+  const [failedPosts, setFailedPosts] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     fetchData();
@@ -21,30 +22,63 @@ const Dashboard = () => {
 
   const fetchData = async () => {
     try {
-      const [statsData, postsData] = await Promise.all([
+      const [statsData, postsData, failedData] = await Promise.all([
         getStats(),
         getPosts(),
+        getFailedPosts().catch(() => []),
       ]);
       setStats(statsData);
       setRecentPosts(postsData.slice(0, 5));
+      setFailedPosts(failedData);
+      const notifData = await getNotifications(true).catch(() => []);
+      setUnreadCount(notifData.length);
     } catch (error) {
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
+  };
 
-    // Fetch workspace members + activity
+  const handleRetry = async (postId, platform = null) => {
     try {
-      const [membersData, activityData] = await Promise.all([
-        getWorkspaceMembers(),
-        getWorkspaceActivity(10),
-      ]);
-      setWorkspaceMembers(membersData?.members || []);
-      setTeamActivity(activityData?.activity || []);
-    } catch (err) {
-      // Workspace not critical — silent fail
+      const result = await retryFailedPost(postId, platform);
+      toast.success(result.message || 'Post queued for retry');
+      fetchData();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to retry post');
     }
   };
+
+  const handlePostUpdate = useCallback((update) => {
+    const { post_id, status, platform_results } = update;
+
+    // Update recentPosts in-place without mutation
+    setRecentPosts(prev => prev.map(p =>
+      p.id === post_id
+        ? { ...p, status, platform_results }
+        : p
+    ));
+
+    // Sync failedPosts: add/update if failed or partial, remove if now published
+    if (status === 'failed' || status === 'partial') {
+      setFailedPosts(prev => {
+        const exists = prev.find(p => p.id === post_id);
+        if (exists) {
+          return prev.map(p => p.id === post_id ? { ...p, status, platform_results } : p);
+        }
+        return [...prev, { id: post_id, status, platform_results }];
+      });
+    } else if (status === 'published') {
+      setFailedPosts(prev => prev.filter(p => p.id !== post_id));
+    }
+
+    // Toast notifications for status transitions
+    if (status === 'published') toast.success('Post published successfully!');
+    else if (status === 'failed') toast.error('Post failed to publish');
+    else if (status === 'partial') toast.warning('Post partially published — some platforms failed');
+  }, []);
+
+  usePostStatusStream(handlePostUpdate);
 
   if (loading) {
     return (
@@ -62,20 +96,38 @@ const Dashboard = () => {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-              Dashboard
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
+              <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block" />
+                Live
+              </span>
+            </div>
             <p className="text-base text-slate-600 mt-1">Welcome back! Here's your overview.</p>
           </div>
-          <Button onClick={() => navigate('/create')} data-testid="create-post-button">
-            <FaPlus className="mr-2" />
-            Create Post
-          </Button>
+          <div className="flex items-center gap-3">
+            <button
+              className="relative p-2 rounded-lg hover:bg-slate-100 transition-colors"
+              onClick={async () => { await markAllNotificationsRead(); setUnreadCount(0); }}
+              title="Notifications"
+            >
+              <FaBell className="text-slate-600 text-lg" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+            <Button onClick={() => navigate('/create')} data-testid="create-post-button">
+              <FaPlus className="mr-2" />
+              Create Post
+            </Button>
+          </div>
         </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-offwhite rounded-lg border border-border p-6">
+          <div className="bg-white rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Total Posts</p>
@@ -87,7 +139,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-offwhite rounded-lg border border-border p-6">
+          <div className="bg-white rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Scheduled</p>
@@ -99,7 +151,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-offwhite rounded-lg border border-border p-6">
+          <div className="bg-white rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Published</p>
@@ -111,7 +163,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="bg-offwhite rounded-lg border border-border p-6">
+          <div className="bg-white rounded-lg border border-border p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600">Connected Accounts</p>
@@ -124,8 +176,92 @@ const Dashboard = () => {
           </div>
         </div>
 
+        {/* Failed Posts Alert — per-platform status */}
+        {failedPosts.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <FaExclamationTriangle className="text-red-500" />
+                <h3 className="font-semibold text-red-800">
+                  {failedPosts.length} Post{failedPosts.length > 1 ? 's' : ''} with Failed Platforms
+                </h3>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {failedPosts.slice(0, 3).map((post) => {
+                const platformResults = post.platform_results || {};
+                const failedPlatforms = Object.entries(platformResults).filter(
+                  ([, pr]) => pr.status === 'permanently_failed'
+                );
+                const succeededPlatforms = Object.entries(platformResults).filter(
+                  ([, pr]) => pr.status === 'success'
+                );
+
+                return (
+                  <div
+                    key={post.id}
+                    className="bg-white rounded-md p-4 border border-red-100"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="text-sm text-slate-800 truncate flex-1">{post.content || 'No content'}</p>
+                      {post.trace_id && (
+                        <span className="text-xs text-slate-400 font-mono ml-2 flex-shrink-0">
+                          #{post.trace_id}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Per-platform results */}
+                    <div className="space-y-1.5 mt-2">
+                      {succeededPlatforms.map(([platform]) => (
+                        <div key={platform} className="flex items-center gap-2 text-xs">
+                          <span className="text-green-600">✓</span>
+                          <span className="text-slate-700 capitalize">{platform}</span>
+                          <span className="text-green-600">Published</span>
+                        </div>
+                      ))}
+                      {failedPlatforms.map(([platform, pr]) => (
+                        <div key={platform} className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-red-500">✗</span>
+                            <span className="text-slate-700 capitalize">{platform}</span>
+                            <span className="text-red-500 truncate">{pr.error || 'Failed'}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleRetry(post.id, platform); }}
+                            className="flex items-center gap-1 text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 transition-colors flex-shrink-0"
+                          >
+                            <FaRedo className="text-[10px]" />
+                            Retry
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Retry all failed button */}
+                    {failedPlatforms.length > 1 && (
+                      <button
+                        onClick={() => handleRetry(post.id)}
+                        className="mt-2 w-full flex items-center justify-center gap-1 text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900 transition-colors"
+                      >
+                        <FaRedo className="text-[10px]" />
+                        Retry All {failedPlatforms.length} Failed Platforms
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {failedPosts.length > 3 && (
+                <p className="text-xs text-red-600 text-center mt-1">
+                  +{failedPosts.length - 3} more in Content Library
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Recent Posts */}
-        <div className="bg-offwhite rounded-lg border border-border">
+        <div className="bg-white rounded-lg border border-border">
           <div className="p-6 border-b border-border">
             <h2 className="text-xl font-semibold text-slate-900">Recent Posts</h2>
           </div>
@@ -159,7 +295,7 @@ const Dashboard = () => {
                             ? 'bg-green-100 text-green-700'
                             : post.status === 'scheduled'
                             ? 'bg-amber-100 text-amber-700'
-                            : 'bg-offwhite border border-slate-200 text-slate-700'
+                            : 'bg-slate-100 text-slate-700'
                         }`}>
                           {post.status}
                         </span>
@@ -176,41 +312,6 @@ const Dashboard = () => {
             )}
           </div>
         </div>
-
-        {/* Team Activity — only show if workspace has multiple members */}
-        {workspaceMembers.length > 1 && (
-          <div className="bg-offwhite rounded-xl border border-slate-200 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-slate-800">Team Activity</h3>
-              <span className="text-xs text-slate-400">{workspaceMembers.length} members</span>
-            </div>
-            {teamActivity.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-4">No recent team activity</p>
-            ) : (
-              <div className="space-y-3">
-                {teamActivity.slice(0, 5).map((item) => (
-                  <div key={item.id} className="flex items-start gap-3">
-                    <img
-                      src={item.author?.picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(item.author?.name || 'U')}&size=32`}
-                      alt={item.author?.name}
-                      className="w-7 h-7 rounded-full flex-shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <p className="text-xs text-slate-600 truncate">
-                        <span className="font-medium text-slate-800">{item.author?.name}</span>
-                        {' '}
-                        {item.status === 'published' ? 'published to' : item.status === 'scheduled' ? 'scheduled for' : 'post failed on'}
-                        {' '}
-                        <span className="font-medium">{(item.platforms || []).join(', ')}</span>
-                      </p>
-                      <p className="text-xs text-slate-400 truncate mt-0.5">{(item.content || '').slice(0, 60)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </DashboardLayout>
   );

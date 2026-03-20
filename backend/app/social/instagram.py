@@ -112,6 +112,56 @@ class InstagramAuth:
 
             return response.json()
 
+    async def create_video_container(self, access_token: str, ig_user_id: str, video_url: str, caption: str = "") -> str:
+        """
+        Step 1 only: Create Instagram REELS container. Returns container_id.
+        Does NOT poll or publish — non-blocking.
+        check_container_status() and publish_container() are called separately.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.GRAPH_URL}/{ig_user_id}/media",
+                params={
+                    "access_token": access_token,
+                    "caption": caption,
+                    "media_type": "REELS",
+                    "video_url": video_url,
+                }
+            )
+            if response.status_code != 200:
+                raise Exception(f"Failed to create IG video container: {response.text}")
+            container_id = response.json().get("id")
+            if not container_id:
+                raise Exception(f"No container_id returned: {response.text}")
+            return container_id
+
+    async def check_container_status(self, access_token: str, container_id: str) -> str:
+        """
+        Check Instagram media container processing status.
+        Returns status_code: "FINISHED", "IN_PROGRESS", "ERROR", or "EXPIRED".
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.GRAPH_URL}/{container_id}",
+                params={"fields": "status_code", "access_token": access_token}
+            )
+            if response.status_code != 200:
+                return "ERROR"
+            return response.json().get("status_code", "IN_PROGRESS")
+
+    async def publish_container(self, access_token: str, ig_user_id: str, container_id: str) -> str:
+        """
+        Step 3 only: Publish a FINISHED container. Returns media post ID.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.GRAPH_URL}/{ig_user_id}/media_publish",
+                params={"access_token": access_token, "creation_id": container_id}
+            )
+            if response.status_code != 200:
+                raise Exception(f"Failed to publish IG container: {response.text}")
+            return response.json().get("id", "")
+
     async def publish_to_instagram(self, access_token: str, ig_user_id: str, media_url: str, caption: str = "", media_type: str = "IMAGE") -> str:
         """
         Publish media to Instagram using the Standalone API
