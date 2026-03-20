@@ -1,15 +1,12 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header, Cookie, UploadFile, File, Form
 from fastapi.security import HTTPBearer
-from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
-import hmac
-import json
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
@@ -29,21 +26,13 @@ import shutil
 import subprocess
 import hashlib
 import tempfile
-import redis.asyncio as aioredis
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(
-    mongo_url,
-    maxPoolSize=25,
-    minPoolSize=2,
-    serverSelectionTimeoutMS=5000,
-    connectTimeoutMS=5000,
-    socketTimeoutMS=10000,
-)
+client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # JWT Configuration
@@ -83,22 +72,6 @@ paypal_client = None
 if paypal_client_id and paypal_secret:
     environment = SandboxEnvironment(client_id=paypal_client_id, client_secret=paypal_secret)
     paypal_client = PayPalHttpClient(environment)
-
-# Redis async client (lazy-initialised with connection pool)
-_redis_pool: Optional[aioredis.ConnectionPool] = None
-_redis_client: Optional[aioredis.Redis] = None
-
-
-async def get_redis() -> aioredis.Redis:
-    global _redis_pool, _redis_client
-    if _redis_client is None:
-        _redis_pool = aioredis.ConnectionPool.from_url(
-            os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
-            max_connections=20,
-            decode_responses=True,
-        )
-        _redis_client = aioredis.Redis(connection_pool=_redis_pool)
-    return _redis_client
 
 
 # ==================== RATE LIMITER (in-memory token bucket) ====================
@@ -159,41 +132,6 @@ def get_next_retry_at(retry_count: int) -> datetime:
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/ready")
-async def ready():
-    """Readiness probe: checks MongoDB + Redis connectivity."""
-    errors = []
-    try:
-        await db.command("ping")
-    except Exception as e:
-        errors.append(f"mongodb: {e}")
-    try:
-        r = await get_redis()
-        await r.ping()
-    except Exception as e:
-        errors.append(f"redis: {e}")
-    # Check Beat is alive
-    try:
-        r = await get_redis()
-        beat_tick = await r.get("beat_tick_at")
-        if beat_tick:
-            tick_dt = datetime.fromisoformat(beat_tick)
-            age = (datetime.now(timezone.utc) - tick_dt).total_seconds()
-            if age > 90:
-                errors.append(f"beat: last tick {int(age)}s ago (unhealthy >90s)")
-        # Don't fail readiness if Beat hasn't started yet (grace period)
-    except Exception:
-        pass  # Beat check is best-effort
-    if errors:
-        return JSONResponse(status_code=503, content={"status": "not ready", "errors": errors})
-    return {"status": "ready"}
-
 # ==================== PLAN LIMITS ====================
 PLAN_MONTHLY_POST_LIMITS = {
     "free": 30,        # 30 posts/month on free plan (Starter tier per architecture)
@@ -206,7 +144,6 @@ class UserSignup(BaseModel):
     email: EmailStr
     password: str
     name: str
-    timezone: Optional[str] = "UTC"
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -223,12 +160,6 @@ class User(BaseModel):
     subscription_status: str = "free"
     subscription_plan: Optional[str] = None
     subscription_end_date: Optional[datetime] = None
-    timezone: Optional[str] = "UTC"
-    user_type: Optional[str] = "individual"  # "individual" | "agency" | "enterprise"
-    onboarding_completed: Optional[bool] = False
-    has_password: Optional[bool] = True
-    subscription_start_date: Optional[str] = None
-    picture_url: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -246,7 +177,6 @@ class Post(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
-    youtube_privacy: Optional[str] = "public"  # "public", "private", "unlisted"
     scheduled_time: Optional[datetime] = None
     status: str = "draft"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -261,7 +191,6 @@ class PostCreate(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
-    youtube_privacy: Optional[str] = "public"  # "public", "private", "unlisted"
     scheduled_time: Optional[str] = None
 
 class PostUpdate(BaseModel):
@@ -344,12 +273,12 @@ def generate_verification_token() -> str:
 async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(None)) -> User:
     if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
+
     # Check session in database
     session_doc = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session_doc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
-    
+
     # Check expiry
     expires_at = session_doc["expires_at"]
     if isinstance(expires_at, str):
@@ -358,29 +287,39 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
-    
+
     # Get user
     user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
     if not user_doc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    
+
     # Parse dates
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+
+    # Auto-expire subscription if end_date has passed
+    if (user_doc.get('subscription_status') == 'active' and
+        user_doc.get('subscription_end_date') and
+        user_doc['subscription_end_date'] < datetime.now(timezone.utc)):
+        user_doc['subscription_status'] = 'expired'
+        await db.users.update_one(
+            {"user_id": user_doc["user_id"]},
+            {"$set": {"subscription_status": "expired"}}
+        )
+
     return User(**user_doc)
 
 async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
     # Try cookie first
     if session_token:
         return await get_current_user_from_cookie(session_token)
-    
+
     # Fallback to Authorization header
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
+
     token = authorization.replace("Bearer ", "")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -391,16 +330,26 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
     except jwt.JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
+
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if user_doc is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    
+
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+
+    # Auto-expire subscription if end_date has passed
+    if (user_doc.get('subscription_status') == 'active' and
+        user_doc.get('subscription_end_date') and
+        user_doc['subscription_end_date'] < datetime.now(timezone.utc)):
+        user_doc['subscription_status'] = 'expired'
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"subscription_status": "expired"}}
+        )
+
     return User(**user_doc)
 
 async def send_verification_email(email: str, verification_token: str):
@@ -461,17 +410,15 @@ async def signup(user_data: UserSignup):
         user_id=user_id,
         email=user_data.email,
         name=user_data.name,
-        email_verified=False,
-        timezone=user_data.timezone or "UTC"
+        email_verified=False
     )
-
+    
     user_dict = user.model_dump()
     user_dict['password'] = hash_password(user_data.password)
     user_dict['verification_token'] = verification_token
     user_dict['verification_expires'] = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     user_dict['created_at'] = user_dict['created_at'].isoformat()
-    user_dict['timezone'] = user_data.timezone or "UTC"
-
+    
     await db.users.insert_one(user_dict)
     
     # Send verification email
@@ -665,34 +612,6 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
 
 # ==================== MEDIA PROCESSING ====================
 
-# Per-user concurrent upload limits by plan
-UPLOAD_LIMITS = {"free": 2, "starter": 3, "pro": 5, "agency": 10, "enterprise": 20}
-
-
-async def _check_upload_limit(user_id: str, plan: str) -> bool:
-    """Returns True if upload is allowed. Increments counter. Call _release_upload_slot() when done."""
-    limit = UPLOAD_LIMITS.get(plan, 2)
-    r = await get_redis()
-    key = f"upload_slots:{user_id}"
-    current = await r.incr(key)
-    await r.expire(key, 300)  # 5 min TTL safety net
-    if current > limit:
-        await r.decr(key)
-        return False
-    return True
-
-
-async def _release_upload_slot(user_id: str):
-    try:
-        r = await get_redis()
-        key = f"upload_slots:{user_id}"
-        val = await r.decr(key)
-        if val < 0:
-            await r.delete(key)
-    except Exception:
-        pass
-
-
 # File size limits
 MAX_IMAGE_SIZE_MB = 50
 MAX_VIDEO_SIZE_MB = 500
@@ -757,148 +676,126 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
     """
     import mimetypes
 
-    # --- 0. Global queue protection ---
-    try:
-        r = await get_redis()
-        queue_depth = await r.llen("celery")
-        if queue_depth > 200:
-            raise HTTPException(status_code=503, headers={"Retry-After": "120"},
-                                detail="Server busy. Please retry in 2 minutes.")
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # Don't fail if Redis check fails
+    # --- 1. Extension validation ---
+    original_filename = file.filename or "upload"
+    file_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+    if not file_ext or file_ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
+        )
 
-    # --- 0b. Per-user concurrent upload limit ---
-    plan = current_user.subscription_plan or "free"
-    allowed = await _check_upload_limit(current_user.user_id, plan)
-    if not allowed:
-        raise HTTPException(status_code=429, headers={"Retry-After": "30"},
-                            detail=f"Upload limit reached for {plan} plan. Retry after 30 seconds.")
+    is_video = file_ext in ALLOWED_VIDEO_EXTS
+    media_type = "video" if is_video else "image"
 
-    try:
-        # --- 1. Extension validation ---
-        original_filename = file.filename or "upload"
-        file_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
-        if not file_ext or file_ext not in ALLOWED_EXTS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
-            )
+    # --- 2. Read content + size validation ---
+    content = await file.read()
+    file_size = len(content)
 
-        is_video = file_ext in ALLOWED_VIDEO_EXTS
-        media_type = "video" if is_video else "image"
+    if is_video and file_size > MAX_VIDEO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Video too large: {file_size // (1024*1024)}MB. Maximum is {MAX_VIDEO_SIZE_MB}MB."
+        )
+    if not is_video and file_size > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large: {file_size // (1024*1024)}MB. Maximum is {MAX_IMAGE_SIZE_MB}MB."
+        )
 
-        # --- 2. Read content + size validation ---
-        content = await file.read()
-        file_size = len(content)
+    # --- 3. FFmpeg transcoding for videos ---
+    transcoded = False
+    final_ext = file_ext
+    final_content = content
 
-        if is_video and file_size > MAX_VIDEO_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Video too large: {file_size // (1024*1024)}MB. Maximum is {MAX_VIDEO_SIZE_MB}MB."
-            )
-        if not is_video and file_size > MAX_IMAGE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Image too large: {file_size // (1024*1024)}MB. Maximum is {MAX_IMAGE_SIZE_MB}MB."
-            )
+    if is_video:
+        needs_conversion = file_ext != "mp4"
+        if needs_conversion or FFMPEG_PATH:
+            # Write original to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_in:
+                tmp_in.write(content)
+                tmp_in_path = tmp_in.name
 
-        # --- 3. FFmpeg transcoding for videos ---
-        transcoded = False
-        final_ext = file_ext
-        final_content = content
+            tmp_out_path = tmp_in_path.replace(f".{file_ext}", "_transcoded.mp4")
 
-        if is_video:
-            needs_conversion = file_ext != "mp4"
-            if needs_conversion or FFMPEG_PATH:
-                # Write original to temp file
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_in:
-                    tmp_in.write(content)
-                    tmp_in_path = tmp_in.name
-
-                tmp_out_path = tmp_in_path.replace(f".{file_ext}", "_transcoded.mp4")
-
-                try:
-                    transcoded = await _transcode_to_mp4(tmp_in_path, tmp_out_path)
-                    if transcoded:
-                        with open(tmp_out_path, "rb") as f:
-                            final_content = f.read()
-                        final_ext = "mp4"
-                        logging.info(f"Transcoded {file_ext} → mp4 for user {current_user.user_id} ({file_size // 1024}KB → {len(final_content) // 1024}KB)")
-                finally:
-                    for p in [tmp_in_path, tmp_out_path]:
-                        try:
-                            os.unlink(p)
-                        except Exception:
-                            pass
-
-        # --- 4. Generate safe filename ---
-        file_id = uuid.uuid4().hex[:16]
-        safe_filename = f"{file_id}.{final_ext}"
-
-        # --- 5. Upload to R2 or local ---
-        storage_backend = os.environ.get("STORAGE_BACKEND", "local")
-        file_url = None
-
-        if storage_backend == "r2":
             try:
-                import boto3
-                from botocore.client import Config
-                import io
+                transcoded = await _transcode_to_mp4(tmp_in_path, tmp_out_path)
+                if transcoded:
+                    with open(tmp_out_path, "rb") as f:
+                        final_content = f.read()
+                    final_ext = "mp4"
+                    logging.info(f"Transcoded {file_ext} → mp4 for user {current_user.user_id} ({file_size // 1024}KB → {len(final_content) // 1024}KB)")
+            finally:
+                for p in [tmp_in_path, tmp_out_path]:
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
 
-                r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
-                r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-                r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-                r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
-                cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
+    # --- 4. Generate safe filename ---
+    file_id = uuid.uuid4().hex[:16]
+    safe_filename = f"{file_id}.{final_ext}"
 
-                s3 = boto3.client(
-                    "s3",
-                    endpoint_url=r2_endpoint,
-                    aws_access_key_id=r2_access_key,
-                    aws_secret_access_key=r2_secret_key,
-                    config=Config(signature_version="s3v4"),
-                    region_name="auto"
-                )
+    # --- 5. Upload to R2 or local ---
+    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
+    file_url = None
 
-                content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
-                object_key = f"uploads/{current_user.user_id}/{safe_filename}"
+    if storage_backend == "r2":
+        try:
+            import boto3
+            from botocore.client import Config
+            import io
 
-                s3.upload_fileobj(
-                    io.BytesIO(final_content),
-                    r2_bucket,
-                    object_key,
-                    ExtraArgs={"ContentType": content_type}
-                )
+            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
+            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
+            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
+            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
 
-                file_url = (
-                    f"https://{cdn_domain}/{object_key}" if cdn_domain
-                    else f"{r2_endpoint}/{r2_bucket}/{object_key}"
-                )
-            except Exception as e:
-                logging.warning(f"R2 upload failed, falling back to local: {e}")
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=r2_endpoint,
+                aws_access_key_id=r2_access_key,
+                aws_secret_access_key=r2_secret_key,
+                config=Config(signature_version="s3v4"),
+                region_name="auto"
+            )
 
-        if not file_url:
-            # Local filesystem fallback
-            upload_dir = Path("/app/uploads")
-            upload_dir.mkdir(exist_ok=True, parents=True)
-            file_path = upload_dir / safe_filename
-            file_path.write_bytes(final_content)
-            file_url = f"/uploads/{safe_filename}"
+            content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+            object_key = f"uploads/{current_user.user_id}/{safe_filename}"
 
-        return {
-            "success": True,
-            "url": file_url,
-            "filename": original_filename,
-            "media_type": media_type,
-            "transcoded": transcoded,
-            "original_format": file_ext,
-            "final_format": final_ext,
-            "size_bytes": len(final_content),
-        }
-    finally:
-        await _release_upload_slot(current_user.user_id)
+            s3.upload_fileobj(
+                io.BytesIO(final_content),
+                r2_bucket,
+                object_key,
+                ExtraArgs={"ContentType": content_type}
+            )
+
+            file_url = (
+                f"https://{cdn_domain}/{object_key}" if cdn_domain
+                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
+            )
+        except Exception as e:
+            logging.warning(f"R2 upload failed, falling back to local: {e}")
+
+    if not file_url:
+        # Local filesystem fallback
+        upload_dir = Path("/app/uploads")
+        upload_dir.mkdir(exist_ok=True, parents=True)
+        file_path = upload_dir / safe_filename
+        file_path.write_bytes(final_content)
+        file_url = f"/uploads/{safe_filename}"
+
+    return {
+        "success": True,
+        "url": file_url,
+        "filename": original_filename,
+        "media_type": media_type,
+        "transcoded": transcoded,
+        "original_format": file_ext,
+        "final_format": final_ext,
+        "size_bytes": len(final_content),
+    }
 
 @api_router.get("/posts", response_model=List[Post])
 async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None):
@@ -918,6 +815,53 @@ async def get_posts(current_user: User = Depends(get_current_user), status: Opti
     
     return posts
 
+@api_router.get("/posts/{post_id}", response_model=Post)
+async def get_post(post_id: str, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    if isinstance(post.get('created_at'), str):
+        post['created_at'] = datetime.fromisoformat(post['created_at'])
+    if post.get('scheduled_time') and isinstance(post['scheduled_time'], str):
+        post['scheduled_time'] = datetime.fromisoformat(post['scheduled_time'])
+    if post.get('published_at') and isinstance(post['published_at'], str):
+        post['published_at'] = datetime.fromisoformat(post['published_at'])
+    
+    return Post(**post)
+
+@api_router.patch("/posts/{post_id}", response_model=Post)
+async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
+    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    update_dict = {k: v for k, v in post_data.model_dump(exclude_unset=True).items() if v is not None}
+    
+    if 'scheduled_time' in update_dict and update_dict['scheduled_time']:
+        update_dict['scheduled_time'] = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00')).isoformat()
+    
+    if update_dict:
+        await db.posts.update_one({"id": post_id}, {"$set": update_dict})
+    
+    updated_post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    
+    if isinstance(updated_post.get('created_at'), str):
+        updated_post['created_at'] = datetime.fromisoformat(updated_post['created_at'])
+    if updated_post.get('scheduled_time') and isinstance(updated_post['scheduled_time'], str):
+        updated_post['scheduled_time'] = datetime.fromisoformat(updated_post['scheduled_time'])
+    if updated_post.get('published_at') and isinstance(updated_post['published_at'], str):
+        updated_post['published_at'] = datetime.fromisoformat(updated_post['published_at'])
+    
+    return Post(**updated_post)
+
+@api_router.delete("/posts/{post_id}")
+async def delete_post(post_id: str, current_user: User = Depends(get_current_user)):
+    result = await db.posts.delete_one({"id": post_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"message": "Post deleted"}
+
 @api_router.get("/posts/failed")
 async def get_failed_posts(current_user: User = Depends(get_current_user)):
     """Get posts with any failed platforms (DLQ view) — includes 'failed' and 'partial' status"""
@@ -935,53 +879,6 @@ async def get_failed_posts(current_user: User = Depends(get_current_user)):
                     pass
 
     return posts
-
-@api_router.get("/posts/{post_id}", response_model=Post)
-async def get_post(post_id: str, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id}, {"_id": 0})
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-    if isinstance(post.get('created_at'), str):
-        post['created_at'] = datetime.fromisoformat(post['created_at'])
-    if post.get('scheduled_time') and isinstance(post['scheduled_time'], str):
-        post['scheduled_time'] = datetime.fromisoformat(post['scheduled_time'])
-    if post.get('published_at') and isinstance(post['published_at'], str):
-        post['published_at'] = datetime.fromisoformat(post['published_at'])
-
-    return Post(**post)
-
-@api_router.patch("/posts/{post_id}", response_model=Post)
-async def update_post(post_id: str, post_data: PostUpdate, current_user: User = Depends(get_current_user)):
-    post = await db.posts.find_one({"id": post_id, "user_id": current_user.user_id})
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-    update_dict = {k: v for k, v in post_data.model_dump(exclude_unset=True).items() if v is not None}
-
-    if 'scheduled_time' in update_dict and update_dict['scheduled_time']:
-        update_dict['scheduled_time'] = datetime.fromisoformat(update_dict['scheduled_time'].replace('Z', '+00:00')).isoformat()
-
-    if update_dict:
-        await db.posts.update_one({"id": post_id}, {"$set": update_dict})
-
-    updated_post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-
-    if isinstance(updated_post.get('created_at'), str):
-        updated_post['created_at'] = datetime.fromisoformat(updated_post['created_at'])
-    if updated_post.get('scheduled_time') and isinstance(updated_post['scheduled_time'], str):
-        updated_post['scheduled_time'] = datetime.fromisoformat(updated_post['scheduled_time'])
-    if updated_post.get('published_at') and isinstance(updated_post['published_at'], str):
-        updated_post['published_at'] = datetime.fromisoformat(updated_post['published_at'])
-
-    return Post(**updated_post)
-
-@api_router.delete("/posts/{post_id}")
-async def delete_post(post_id: str, current_user: User = Depends(get_current_user)):
-    result = await db.posts.delete_one({"id": post_id, "user_id": current_user.user_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return {"message": "Post deleted"}
 
 @api_router.post("/posts/{post_id}/retry")
 async def retry_failed_post(post_id: str, current_user: User = Depends(get_current_user), platform: Optional[str] = None):
@@ -1524,270 +1421,6 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
         return {"status": "failed", "error": error_str}
 
 
-async def check_instagram_containers():
-    """
-    Separate 30s job: check Instagram video containers that are still processing.
-    Non-blocking — never holds the thread waiting for Instagram.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        # Find posts with platforms in "awaiting_ig_processing" state
-        posts = await db.posts.find(
-            {"status": "publishing", "platform_results.instagram.status": "awaiting_ig_processing"},
-            {"_id": 0}
-        ).to_list(50)
-
-        for post_doc in posts:
-            post_id = post_doc["id"]
-            trace_id = post_doc.get("trace_id", "")
-            platform_results = post_doc.get("platform_results", {})
-            ig_pr = platform_results.get("instagram", {})
-            container_id = ig_pr.get("container_id")
-            access_token = ig_pr.get("access_token_snapshot", "")
-            ig_user_id = ig_pr.get("ig_user_id_snapshot", "")
-
-            if not container_id:
-                continue
-
-            try:
-                from app.social.instagram import InstagramAuth
-                ig = InstagramAuth()
-                status_code = await ig.check_container_status(access_token, container_id)
-
-                if status_code == "FINISHED":
-                    # Publish now
-                    publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
-                    ig_pr["status"] = "success"
-                    ig_pr["platform_post_id"] = publish_result
-                    ig_pr["published_at"] = now.isoformat()
-                    logging.info(f"[{trace_id}] ✓ Instagram container {container_id} published for post {post_id}")
-
-                elif status_code == "ERROR":
-                    ig_pr["retries"] = ig_pr.get("retries", 0) + 1
-                    if ig_pr["retries"] >= MAX_RETRIES:
-                        ig_pr["status"] = "permanently_failed"
-                        ig_pr["error"] = "Instagram video processing failed"
-                    else:
-                        ig_pr["status"] = "failed"
-                        ig_pr["error"] = "Instagram video processing error — will retry"
-                        ig_pr["next_retry_at"] = get_next_retry_at(ig_pr["retries"]).isoformat()
-                    logging.error(f"[{trace_id}] Instagram container {container_id} ERROR for post {post_id}")
-
-                else:
-                    # Still IN_PROGRESS — check again next tick
-                    logging.debug(f"[{trace_id}] Instagram container {container_id} still processing ({status_code})")
-                    continue
-
-            except Exception as e:
-                logging.error(f"[{trace_id}] Instagram container check failed: {e}")
-                continue
-
-            platform_results["instagram"] = ig_pr
-            await _finalise_post_status(post_id, post_doc, platform_results, now)
-
-    except Exception as e:
-        logging.error(f"Instagram container check error: {e}")
-
-
-async def _finalise_post_status(post_id: str, post_doc: dict, platform_results: dict, now: datetime):
-    """
-    Compute overall post status from platform_results and write to MongoDB.
-    Sends DLQ notification if all terminal and any permanently failed.
-    """
-    statuses = [pr["status"] for pr in platform_results.values()]
-    all_success = all(s == "success" for s in statuses)
-    all_terminal = all(s in ("success", "permanently_failed") for s in statuses)
-    any_success = any(s == "success" for s in statuses)
-
-    if all_success:
-        post_status = "published"
-    elif all_terminal and any_success:
-        post_status = "partial"
-    elif all_terminal and not any_success:
-        post_status = "failed"
-    else:
-        post_status = "publishing"
-
-    update_fields = {
-        "platform_results": platform_results,
-        "status": post_status,
-        "updated_at": now.isoformat(),
-    }
-    if post_status == "published":
-        update_fields["published_at"] = now.isoformat()
-
-    failed_platforms = {
-        p: pr.get("error", "Unknown")
-        for p, pr in platform_results.items()
-        if pr["status"] == "permanently_failed"
-    }
-    if failed_platforms:
-        update_fields["failure_reason"] = "; ".join(f"{p}: {err}" for p, err in failed_platforms.items())
-
-    await db.posts.update_one({"id": post_id}, {"$set": update_fields})
-
-    # Notify frontend via SSE (best-effort)
-    await _notify_post_update(post_doc.get("user_id", ""), post_id, post_status, platform_results)
-
-    if post_status in ("failed", "partial") and all_terminal:
-        user_doc = await db.users.find_one(
-            {"user_id": post_doc["user_id"]},
-            {"_id": 0, "email": 1, "name": 1}
-        )
-        if user_doc and RESEND_API_KEY:
-            trace_id = post_doc.get("trace_id", "")
-            await send_dlq_notification(user_doc, post_doc, failed_platforms, trace_id, platform_results)
-
-
-async def process_scheduled_posts():
-    """
-    Background job (every 30s): per-platform publish with:
-    - Atomic claim (findOneAndUpdate) prevents double-enqueue
-    - Jitter (0-15s random delay) spreads burst load
-    - Exponential backoff (5→15→60→180 min) between retries
-    - Rate limit token bucket (skip, not fail, on 429)
-    - Instagram video: non-blocking — stores container_id, checked by separate job
-    """
-    try:
-        now = datetime.now(timezone.utc)
-
-        # Atomically claim up to 50 posts due for processing.
-        # findOneAndUpdate prevents two scheduler ticks from claiming the same post.
-        claimed_posts = []
-        for _ in range(50):
-            claimed = await db.posts.find_one_and_update(
-                {
-                    "status": {"$in": ["scheduled", "publishing"]},
-                    "scheduled_time": {"$lte": now.isoformat()},
-                    # Don't re-claim posts already being processed this tick
-                    "$or": [
-                        {"claimed_at": {"$exists": False}},
-                        {"claimed_at": {"$lte": (now - timedelta(minutes=5)).isoformat()}}
-                    ]
-                },
-                {"$set": {"claimed_at": now.isoformat()}},
-                return_document=True
-            )
-            if not claimed:
-                break
-            claimed_posts.append(claimed)
-
-        if not claimed_posts:
-            return
-
-        logging.info(f"Scheduler claimed {len(claimed_posts)} posts for processing")
-
-        for post_doc in claimed_posts:
-            post_id = post_doc["id"]
-            user_id = post_doc["user_id"]
-            trace_id = post_doc.get("trace_id") or str(uuid.uuid4())[:8]
-            platforms = post_doc.get("platforms", [])
-            platform_results = post_doc.get("platform_results", {})
-
-            # Initialise missing platform entries
-            for p in platforms:
-                if p not in platform_results:
-                    platform_results[p] = {"status": "pending", "retries": 0}
-
-            # Load user's connected accounts
-            user_accounts = await db.social_accounts.find(
-                {"user_id": user_id, "is_active": True}, {"_id": 0}
-            ).to_list(100)
-            accounts_by_platform = {acc["platform"]: acc for acc in user_accounts}
-
-            # Process each platform independently
-            for platform in platforms:
-                pr = platform_results.get(platform, {"status": "pending", "retries": 0})
-
-                # Skip terminal states
-                if pr["status"] in ("success", "permanently_failed"):
-                    continue
-
-                # Skip awaiting Instagram container — handled by check_instagram_containers()
-                if pr["status"] == "awaiting_ig_processing":
-                    continue
-
-                # Respect exponential backoff: skip if next_retry_at is in the future
-                next_retry_at = pr.get("next_retry_at")
-                if next_retry_at:
-                    try:
-                        retry_dt = datetime.fromisoformat(next_retry_at)
-                        if retry_dt.tzinfo is None:
-                            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
-                        if retry_dt > now:
-                            logging.debug(f"[{trace_id}] {platform}: backoff until {next_retry_at}, skipping")
-                            continue
-                    except Exception:
-                        pass
-
-                # Check retry cap
-                if pr.get("retries", 0) >= MAX_RETRIES:
-                    pr["status"] = "permanently_failed"
-                    platform_results[platform] = pr
-                    continue
-
-                # Check rate limit token bucket
-                if not check_rate_limit(user_id, platform):
-                    logging.warning(f"[{trace_id}] {platform} rate limit — skipping (not a failure)")
-                    continue  # Don't count as a retry failure
-
-                # Check connected account exists
-                account = accounts_by_platform.get(platform)
-                if not account:
-                    pr["status"] = "permanently_failed"
-                    pr["error"] = f"No connected {platform} account found"
-                    platform_results[platform] = pr
-                    continue
-
-                # Apply jitter (0-15s) to spread burst load
-                jitter_secs = random.uniform(0, 15)
-                await asyncio.sleep(jitter_secs)
-
-                logging.info(f"[{trace_id}] Publishing post {post_id} to {platform} (attempt {pr.get('retries', 0) + 1}/{MAX_RETRIES})")
-                result = await publish_to_platform(platform, account, post_doc, trace_id)
-
-                if result["status"] == "success":
-                    pr["status"] = "success"
-                    pr["platform_post_id"] = result.get("platform_post_id", "")
-                    pr["published_at"] = now.isoformat()
-                    pr.pop("next_retry_at", None)
-                    logging.info(f"[{trace_id}] ✓ {platform} succeeded for post {post_id}")
-
-                elif result["status"] == "awaiting_ig_processing":
-                    # Non-blocking Instagram video — container created, will check next tick
-                    pr["status"] = "awaiting_ig_processing"
-                    pr["container_id"] = result.get("container_id")
-                    pr["access_token_snapshot"] = account.get("access_token", "")
-                    pr["ig_user_id_snapshot"] = account.get("platform_user_id", "")
-                    logging.info(f"[{trace_id}] Instagram video container {result.get('container_id')} created — awaiting processing")
-
-                elif result.get("rate_limited"):
-                    # 429 from platform — record pause, do NOT count as retry
-                    retry_after = result.get("retry_after_seconds", 3600)
-                    record_rate_limit_hit(user_id, platform, retry_after)
-                    logging.warning(f"[{trace_id}] {platform} 429 — paused {retry_after}s, not counted as retry")
-
-                else:
-                    pr["retries"] = pr.get("retries", 0) + 1
-                    pr["error"] = result.get("error", "Unknown error")
-                    pr["last_attempt"] = now.isoformat()
-
-                    if pr["retries"] >= MAX_RETRIES:
-                        pr["status"] = "permanently_failed"
-                        logging.error(f"[{trace_id}] ✗ {platform} permanently failed for post {post_id}: {pr['error']}")
-                    else:
-                        pr["status"] = "failed"
-                        pr["next_retry_at"] = get_next_retry_at(pr["retries"]).isoformat()
-                        logging.warning(f"[{trace_id}] ✗ {platform} attempt {pr['retries']}/{MAX_RETRIES}, next retry at {pr['next_retry_at']}")
-
-                platform_results[platform] = pr
-
-            # Write final status
-            await _finalise_post_status(post_id, post_doc, platform_results, now)
-
-    except Exception as e:
-        logging.error(f"Scheduled post processing error: {e}")
-
 
 async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms: dict, trace_id: str, platform_results: dict):
     """
@@ -1872,266 +1505,6 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     except Exception as e:
         logging.error(f"Failed to send DLQ notification: {e}")
 
-
-# ==================== SSE / REDIS PUBLISH HELPER ====================
-
-async def _notify_post_update(user_id: str, post_id: str, status: str, platform_results: dict):
-    """Publish a post-status change event to Redis for SSE delivery. Best-effort.
-    Also persists the notification to MongoDB."""
-    try:
-        r = await get_redis()
-        payload = json.dumps({"post_id": post_id, "status": status, "platform_results": platform_results})
-        await r.publish(f"post_updates:{user_id}", payload)
-    except Exception:
-        pass  # SSE is best-effort, never fail a publish because of it
-
-    # Persist notification to MongoDB (best-effort)
-    try:
-        await db.notifications.insert_one({
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "post_id": post_id,
-            "type": "publish_result",
-            "message": "Post {}: {}".format(status, ", ".join("{}={}".format(p, r.get("status")) for p, r in platform_results.items())),
-            "is_read": False,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "status": status,
-            "platform_results": platform_results,
-        })
-    except Exception:
-        pass  # notifications persistence is best-effort
-
-
-@api_router.get("/notifications")
-async def get_notifications(current_user: User = Depends(get_current_user), unread_only: bool = False):
-    query = {"user_id": current_user.user_id}
-    if unread_only:
-        query["is_read"] = False
-    notifs = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
-    return notifs
-
-
-@api_router.patch("/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user)):
-    await db.notifications.update_one(
-        {"id": notification_id, "user_id": current_user.user_id},
-        {"$set": {"is_read": True}}
-    )
-    return {"success": True}
-
-
-@api_router.patch("/notifications/read-all")
-async def mark_all_notifications_read(current_user: User = Depends(get_current_user)):
-    result = await db.notifications.update_many(
-        {"user_id": current_user.user_id, "is_read": False},
-        {"$set": {"is_read": True}}
-    )
-    return {"updated": result.modified_count}
-
-
-# ==================== SSE ENDPOINT ====================
-
-@api_router.get("/stream/post-updates")
-async def stream_post_updates(current_user: User = Depends(get_current_user)):
-    """Server-Sent Events stream — delivers live post status updates to the frontend."""
-    async def event_generator():
-        r = await get_redis()
-        pubsub = r.pubsub()
-        channel = f"post_updates:{current_user.user_id}"
-        await pubsub.subscribe(channel)
-        try:
-            yield "data: connected\n\n"
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    yield f"data: {message['data']}\n\n"
-        finally:
-            await pubsub.unsubscribe(channel)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# ==================== WEBHOOK ENDPOINTS ====================
-
-# --- Instagram ---
-
-@api_router.get("/webhooks/instagram")
-async def instagram_webhook_verify(request: Request):
-    """Meta webhook verification challenge."""
-    verify_token = os.environ.get("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "")
-    hub_mode = request.query_params.get("hub.mode")
-    hub_verify_token = request.query_params.get("hub.verify_token")
-    hub_challenge = request.query_params.get("hub.challenge", "")
-
-    if hub_mode == "subscribe" and hub_verify_token == verify_token:
-        return PlainTextResponse(hub_challenge)
-    raise HTTPException(status_code=403, detail="Verification token mismatch")
-
-
-@api_router.post("/webhooks/instagram")
-async def instagram_webhook_receive(request: Request):
-    """Receive Meta webhook events for Instagram container status changes."""
-    body = await request.body()
-
-    # HMAC-SHA256 signature verification
-    app_secret = os.environ.get("INSTAGRAM_APP_SECRET", "")
-    sig_header = request.headers.get("X-Hub-Signature-256", "")
-    expected_sig = "sha256=" + hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected_sig, sig_header):
-        raise HTTPException(status_code=403, detail="Invalid signature")
-
-    try:
-        payload = json.loads(body)
-    except Exception:
-        return {"status": "ok"}
-
-    r = await get_redis()
-
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            obj_type = change.get("field", "")
-            event_id = value.get("id") or entry.get("id", "")
-
-            # Redis dedup
-            dedup_key = f"webhook:ig:{event_id}"
-            if event_id and await r.get(dedup_key):
-                continue
-            if event_id:
-                await r.set(dedup_key, "1", ex=86400)
-
-            # Only act on finished video containers
-            if obj_type == "video" and value.get("status") == "FINISHED":
-                container_id = value.get("id")
-                if not container_id:
-                    continue
-
-                # Find post with this container_id
-                post_doc = await db.posts.find_one(
-                    {"platform_results.instagram.container_id": container_id},
-                    {"_id": 0}
-                )
-                if not post_doc:
-                    continue
-
-                ig_pr = post_doc.get("platform_results", {}).get("instagram", {})
-                access_token = ig_pr.get("access_token_snapshot", "")
-                ig_user_id = ig_pr.get("ig_user_id_snapshot", "")
-
-                try:
-                    from app.social.instagram import InstagramAuth
-                    ig = InstagramAuth()
-                    publish_result = await ig.publish_container(access_token, ig_user_id, container_id)
-
-                    now = datetime.now(timezone.utc)
-                    ig_pr["status"] = "success"
-                    ig_pr["platform_post_id"] = publish_result
-                    ig_pr["published_at"] = now.isoformat()
-
-                    platform_results = post_doc.get("platform_results", {})
-                    platform_results["instagram"] = ig_pr
-                    await _finalise_post_status(post_doc["id"], post_doc, platform_results, now)
-                    logging.info(f"Instagram webhook: container {container_id} published via webhook")
-                except Exception as e:
-                    logging.error(f"Instagram webhook publish error for container {container_id}: {e}")
-
-    return {"status": "ok"}
-
-
-# --- YouTube PubSubHubbub ---
-
-@api_router.get("/webhooks/youtube")
-async def youtube_webhook_verify(request: Request):
-    """PubSubHubbub subscription verification challenge."""
-    challenge = request.query_params.get("hub.challenge", "")
-    return PlainTextResponse(challenge)
-
-
-@api_router.post("/webhooks/youtube")
-async def youtube_webhook_receive(request: Request):
-    """Receive YouTube activity notifications via PubSubHubbub Atom feed."""
-    body = await request.body()
-
-    # HMAC-SHA1 signature verification
-    pubsub_secret = os.environ.get("YOUTUBE_PUBSUB_SECRET", "")
-    sig_header = request.headers.get("X-Hub-Signature", "")
-    if pubsub_secret:
-        expected_sig = "sha1=" + hmac.new(pubsub_secret.encode(), body, hashlib.sha1).hexdigest()
-        if not hmac.compare_digest(expected_sig, sig_header):
-            raise HTTPException(status_code=403, detail="Invalid signature")
-
-    r = await get_redis()
-
-    try:
-        root = ET.fromstring(body.decode("utf-8", errors="replace"))
-        ns = {
-            "atom": "http://www.w3.org/2005/Atom",
-            "yt": "http://www.youtube.com/xml/schemas/2015",
-        }
-        for entry in root.findall("atom:entry", ns):
-            video_id_el = entry.find("yt:videoId", ns)
-            if video_id_el is None:
-                continue
-            video_id = video_id_el.text or ""
-
-            # Redis dedup
-            dedup_key = f"webhook:yt:{video_id}"
-            if await r.get(dedup_key):
-                continue
-            await r.set(dedup_key, "1", ex=86400)
-
-            # Find matching post
-            post_doc = await db.posts.find_one(
-                {"platform_results.youtube.platform_post_id": video_id},
-                {"_id": 0}
-            )
-            if not post_doc:
-                continue
-
-            now = datetime.now(timezone.utc)
-            platform_results = post_doc.get("platform_results", {})
-            yt_pr = platform_results.get("youtube", {})
-            yt_pr["status"] = "success"
-            yt_pr["published_at"] = now.isoformat()
-            platform_results["youtube"] = yt_pr
-
-            await _finalise_post_status(post_doc["id"], post_doc, platform_results, now)
-            logging.info(f"YouTube webhook: video {video_id} confirmed published")
-    except ET.ParseError as e:
-        logging.warning(f"YouTube webhook XML parse error: {e}")
-    except Exception as e:
-        logging.error(f"YouTube webhook error: {e}")
-
-    return PlainTextResponse("ok")
-
-
-# ==================== YOUTUBE PUBSUBHUBBUB SUBSCRIPTION ====================
-
-async def subscribe_youtube_pubsub(channel_id: str, backend_url: str):
-    """Subscribe to YouTube PubSubHubbub for a channel."""
-    callback = f"{backend_url}/api/webhooks/youtube"
-    hub = "https://pubsubhubbub.appspot.com/subscribe"
-    topic = f"https://www.youtube.com/xml/feeds/videos.xml?channel_id={channel_id}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            await c.post(hub, data={
-                "hub.mode": "subscribe",
-                "hub.topic": topic,
-                "hub.callback": callback,
-                "hub.secret": os.environ.get("YOUTUBE_PUBSUB_SECRET", ""),
-                "hub.lease_seconds": 86400 * 30,
-            })
-        logging.info(f"Subscribed to YouTube PubSubHubbub for channel {channel_id}")
-    except Exception as e:
-        logging.warning(f"YouTube PubSubHubbub subscription failed for {channel_id}: {e}")
-
-
 # ==================== STARTUP & SHUTDOWN ====================
 
 @app.on_event("startup")
@@ -2143,35 +1516,10 @@ async def startup_event():
     await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
     await db.users.create_index([("email", 1)], unique=True)
     await db.users.create_index([("user_id", 1)], unique=True)
-    await db.notifications.create_index([("user_id", 1), ("is_read", 1), ("created_at", -1)])
     logging.info("MongoDB indexes created")
-
-    # Subscribe YouTube PubSubHubbub for all connected YouTube accounts
-    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "http://localhost:8001")
-    try:
-        yt_accounts = await db.social_accounts.find(
-            {"platform": "youtube", "is_active": True},
-            {"_id": 0, "platform_user_id": 1}
-        ).to_list(500)
-        for acc in yt_accounts:
-            channel_id = acc.get("platform_user_id")
-            if channel_id:
-                asyncio.create_task(subscribe_youtube_pubsub(channel_id, backend_url))
-        logging.info(f"Scheduled YouTube PubSubHubbub subscription for {len(yt_accounts)} accounts")
-    except Exception as e:
-        logging.warning(f"YouTube PubSubHubbub startup subscription error: {e}")
-
-    # Scheduling is handled by Celery Beat — no APScheduler needed here
-    logging.info("Startup complete — scheduling delegated to Celery Beat")
-
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global _redis_client, _redis_pool
-    if _redis_client is not None:
-        await _redis_client.aclose()
-    if _redis_pool is not None:
-        await _redis_pool.disconnect()
     client.close()
     logging.info("Application shutdown")
 
@@ -2191,39 +1539,4 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-import structlog
-import structlog.contextvars
-
-# Configure structlog
-structlog.configure(
-    processors=[
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.dev.ConsoleRenderer() if os.environ.get("ENV", "development") != "production"
-        else structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory(),
-)
-
-structlogger = structlog.get_logger()
-
-from starlette.middleware.base import BaseHTTPMiddleware
-
-
-class TraceIDMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4())[:8])
-        structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(trace_id=trace_id)
-        response = await call_next(request)
-        response.headers["X-Trace-ID"] = trace_id
-        return response
-
-
-app.add_middleware(TraceIDMiddleware)
 
