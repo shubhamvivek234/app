@@ -15,7 +15,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -73,8 +73,8 @@ PLATFORM_HOURLY_LIMITS = {
     "bluesky": 100, "threads": 25, "default": 50,
 }
 
-BACKOFF_MINUTES = [5, 15, 60, 180]
-MAX_RETRIES = 5
+BACKOFF_MINUTES = [5, 15, 60]
+MAX_RETRIES = 3
 
 
 def check_rate_limit(user_id: str, platform: str) -> bool:
@@ -115,8 +115,39 @@ def get_next_retry_at(retry_count: int) -> datetime:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _resolve_media_url(url: str) -> str:
+    """
+    Resolve media URLs for use in Celery workers.
+    - https://... → use as-is (R2/CDN)
+    - http://localhost/... or /uploads/... → rewrite to SERVICE_URL or local file path
+    """
+    if not url:
+        return url
+    if url.startswith("https://"):
+        return url
+
+    service_url = os.environ.get("BACKEND_PUBLIC_URL", "http://api:8001")
+
+    if url.startswith("/"):
+        # Relative path → try local file first, then construct full URL
+        local_path = f"/app{url}"  # Docker maps uploads to /app/uploads
+        if os.path.exists(local_path):
+            return f"file://{local_path}"
+        return f"{service_url}{url}"
+
+    if "localhost" in url or "127.0.0.1" in url:
+        # Replace localhost with service hostname
+        return re.sub(r"https?://(localhost|127\.0\.0\.1)(:\d+)?", service_url, url)
+
+    return url
+
+
 async def _download_url_to_temp(url: str, suffix: str = ".mp4") -> Optional[str]:
     """Download a URL to a temp file, return local path. Caller must delete."""
+    if url.startswith("file://"):
+        # Already a local file — just return the path directly (no copy needed)
+        local_path = url[7:]  # strip "file://"
+        return local_path if os.path.exists(local_path) else None
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
@@ -145,6 +176,9 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
     media_urls = post_doc.get("media_urls", [])
     video_url = post_doc.get("video_url")
     media_url = media_urls[0] if media_urls else video_url
+    # Resolve URLs so Celery workers can reach local/localhost media
+    media_url = _resolve_media_url(media_url) if media_url else None
+    video_url = _resolve_media_url(video_url) if video_url else None
 
     def is_rate_limit_error(error_str: str) -> bool:
         s = error_str.lower()
@@ -214,8 +248,29 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                 if not tmp_path:
                     return {"status": "failed", "error": "Failed to download video for YouTube upload"}
 
-                result = await yt.upload_video(access_token, tmp_path, title, content, cover_image_path=cover_image)
-                return {"status": "success", "platform_post_id": str(result)}
+                privacy = post_doc.get("youtube_privacy", "public")
+                try:
+                    result = await yt.upload_video(access_token, tmp_path, title, content, cover_image_path=cover_image, privacy_status=privacy)
+                    return {"status": "success", "platform_post_id": str(result)}
+                except ValueError as e:
+                    if "AuthError" in str(e):
+                        # Token expired — try refresh
+                        refresh_token = account.get("refresh_token", "")
+                        if refresh_token:
+                            try:
+                                new_tokens = await yt.refresh_access_token(refresh_token)
+                                new_access = new_tokens.get("access_token", "")
+                                if new_access:
+                                    _db = get_db()
+                                    await _db.social_accounts.update_one(
+                                        {"id": account.get("id")},
+                                        {"$set": {"access_token": new_access}}
+                                    )
+                                    result = await yt.upload_video(new_access, tmp_path, title, content, cover_image_path=cover_image, privacy_status=privacy)
+                                    return {"status": "success", "platform_post_id": str(result)}
+                            except Exception as refresh_err:
+                                return {"status": "failed", "error": f"Token refresh failed: {refresh_err}"}
+                    raise  # re-raise for outer handler
             finally:
                 if tmp_path:
                     try:
@@ -224,7 +279,25 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                         pass
 
         elif platform == "tiktok":
-            return {"status": "failed", "error": "TikTok publishing not yet configured — add credentials"}
+            from app.social.tiktok import TikTokAuth
+            tiktok = TikTokAuth()
+            if not video_url:
+                return {"status": "failed", "error": "TikTok requires a video file"}
+            tiktok_privacy = post_doc.get("tiktok_privacy", "SELF_ONLY")
+            tiktok_allow_duet = post_doc.get("tiktok_allow_duet", False)
+            tiktok_allow_stitch = post_doc.get("tiktok_allow_stitch", False)
+            tiktok_allow_comment = post_doc.get("tiktok_allow_comment", True)
+            result = await tiktok.publish_video(
+                access_token=access_token,
+                video_url=video_url,
+                caption=content,
+                privacy=tiktok_privacy,
+                allow_duet=tiktok_allow_duet,
+                allow_stitch=tiktok_allow_stitch,
+                allow_comments=tiktok_allow_comment,
+            )
+            publish_id = result.get("publish_id", "") if isinstance(result, dict) else str(result or "")
+            return {"status": "success", "platform_post_id": publish_id}
 
         elif platform in ("bluesky", "threads"):
             return {"status": "failed", "error": f"{platform.title()} publishing not yet configured"}
@@ -244,6 +317,45 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
                 "retry_after_seconds": extract_retry_after(error_str),
             }
         return {"status": "failed", "error": error_str}
+
+
+async def _cleanup_post_media(post_doc: dict):
+    """Delete R2 objects and local files for a post after it reaches terminal state."""
+    import boto3
+    from botocore.client import Config
+
+    media_urls = post_doc.get("media_urls", [])
+    video_url = post_doc.get("video_url")
+    all_urls = [u for u in media_urls + ([video_url] if video_url else []) if u]
+
+    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
+
+    for url in all_urls:
+        try:
+            if storage_backend == "r2" and "r2.cloudflarestorage.com" in url:
+                # Extract object key from URL and delete from R2
+                r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
+                # URL format: https://{endpoint}/{bucket}/{key} or https://{cdn}/{key}
+                parts = url.split(r2_bucket + "/", 1)
+                if len(parts) == 2:
+                    object_key = parts[1].split("?")[0]
+                    s3 = boto3.client(
+                        "s3",
+                        endpoint_url=os.environ.get("CLOUDFLARE_R2_ENDPOINT"),
+                        aws_access_key_id=os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID"),
+                        aws_secret_access_key=os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+                        config=Config(signature_version="s3v4"),
+                        region_name="auto",
+                    )
+                    s3.delete_object(Bucket=r2_bucket, Key=object_key)
+                    logger.info(f"Deleted R2 object: {object_key}")
+            elif url.startswith("/uploads/") or url.startswith("file://"):
+                local_path = url.replace("file://", "").replace("/uploads/", "/app/uploads/")
+                if os.path.exists(local_path):
+                    os.unlink(local_path)
+                    logger.info(f"Deleted local file: {local_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup media {url}: {e}")
 
 
 async def _finalise_post_status(db, post_id: str, post_doc: dict, platform_results: dict, now: datetime):
@@ -283,6 +395,13 @@ async def _finalise_post_status(db, post_id: str, post_doc: dict, platform_resul
 
     await db.posts.update_one({"id": post_id}, {"$set": update_fields})
 
+    # Clean up media files when post reaches a terminal state
+    if post_status in ("published", "failed", "partial") and all_terminal:
+        try:
+            await _cleanup_post_media(post_doc)
+        except Exception as e:
+            logger.warning(f"Media cleanup failed for post {post_id}: {e}")
+
     # Notify via Redis pubsub (best-effort — never fail a publish because of it)
     await _notify_post_update_task(db, post_doc.get("user_id", ""), post_id, post_status, platform_results)
 
@@ -296,16 +415,28 @@ async def _finalise_post_status(db, post_id: str, post_doc: dict, platform_resul
             await _send_dlq_notification(user_doc, post_doc, failed_platforms, trace_id, platform_results)
 
 
+_redis_pool: Optional[Any] = None
+
+
+async def _get_redis():
+    global _redis_pool
+    import redis.asyncio as aioredis
+    if _redis_pool is None:
+        _redis_pool = aioredis.ConnectionPool.from_url(
+            os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            max_connections=10,
+            decode_responses=True,
+        )
+    return aioredis.Redis(connection_pool=_redis_pool)
+
+
 async def _notify_post_update_task(db, user_id: str, post_id: str, status: str, platform_results: dict):
     """Push a post-update event to the Redis pubsub channel for SSE delivery. Best-effort."""
     try:
         import json
-        import redis.asyncio as aioredis
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        r = aioredis.from_url(redis_url, decode_responses=True)
+        r = await _get_redis()
         payload = json.dumps({"post_id": post_id, "status": status, "platform_results": platform_results})
         await r.publish(f"post_updates:{user_id}", payload)
-        await r.aclose()
     except Exception:
         pass  # SSE is best-effort
 
@@ -681,3 +812,17 @@ async def expire_pending_review_task(self):
     except Exception as e:
         logger.error(f"expire_pending_review_task error: {e}", exc_info=True)
         raise
+
+
+@celery_app.task(
+    name="celery_tasks.beat_heartbeat_task",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=5,
+    time_limit=8,
+)
+@async_task
+async def beat_heartbeat_task(self):
+    """Write beat_tick_at to Redis. If this key is older than 90s, Beat is unhealthy."""
+    r = await _get_redis()
+    await r.set("beat_tick_at", datetime.now(timezone.utc).isoformat(), ex=120)

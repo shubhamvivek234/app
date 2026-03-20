@@ -36,7 +36,14 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=25,
+    minPoolSize=2,
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=10000,
+)
 db = client[os.environ['DB_NAME']]
 
 # JWT Configuration
@@ -77,17 +84,20 @@ if paypal_client_id and paypal_secret:
     environment = SandboxEnvironment(client_id=paypal_client_id, client_secret=paypal_secret)
     paypal_client = PayPalHttpClient(environment)
 
-# Redis async client (lazy-initialised)
+# Redis async client (lazy-initialised with connection pool)
+_redis_pool: Optional[aioredis.ConnectionPool] = None
 _redis_client: Optional[aioredis.Redis] = None
 
 
 async def get_redis() -> aioredis.Redis:
-    global _redis_client
+    global _redis_pool, _redis_client
     if _redis_client is None:
-        _redis_client = aioredis.from_url(
+        _redis_pool = aioredis.ConnectionPool.from_url(
             os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+            max_connections=20,
             decode_responses=True,
         )
+        _redis_client = aioredis.Redis(connection_pool=_redis_pool)
     return _redis_client
 
 
@@ -149,6 +159,41 @@ def get_next_retry_at(retry_count: int) -> datetime:
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready():
+    """Readiness probe: checks MongoDB + Redis connectivity."""
+    errors = []
+    try:
+        await db.command("ping")
+    except Exception as e:
+        errors.append(f"mongodb: {e}")
+    try:
+        r = await get_redis()
+        await r.ping()
+    except Exception as e:
+        errors.append(f"redis: {e}")
+    # Check Beat is alive
+    try:
+        r = await get_redis()
+        beat_tick = await r.get("beat_tick_at")
+        if beat_tick:
+            tick_dt = datetime.fromisoformat(beat_tick)
+            age = (datetime.now(timezone.utc) - tick_dt).total_seconds()
+            if age > 90:
+                errors.append(f"beat: last tick {int(age)}s ago (unhealthy >90s)")
+        # Don't fail readiness if Beat hasn't started yet (grace period)
+    except Exception:
+        pass  # Beat check is best-effort
+    if errors:
+        return JSONResponse(status_code=503, content={"status": "not ready", "errors": errors})
+    return {"status": "ready"}
+
 # ==================== PLAN LIMITS ====================
 PLAN_MONTHLY_POST_LIMITS = {
     "free": 30,        # 30 posts/month on free plan (Starter tier per architecture)
@@ -161,6 +206,7 @@ class UserSignup(BaseModel):
     email: EmailStr
     password: str
     name: str
+    timezone: Optional[str] = "UTC"
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -177,6 +223,12 @@ class User(BaseModel):
     subscription_status: str = "free"
     subscription_plan: Optional[str] = None
     subscription_end_date: Optional[datetime] = None
+    timezone: Optional[str] = "UTC"
+    user_type: Optional[str] = "individual"  # "individual" | "agency" | "enterprise"
+    onboarding_completed: Optional[bool] = False
+    has_password: Optional[bool] = True
+    subscription_start_date: Optional[str] = None
+    picture_url: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -194,6 +246,7 @@ class Post(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
+    youtube_privacy: Optional[str] = "public"  # "public", "private", "unlisted"
     scheduled_time: Optional[datetime] = None
     status: str = "draft"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -208,6 +261,7 @@ class PostCreate(BaseModel):
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
+    youtube_privacy: Optional[str] = "public"  # "public", "private", "unlisted"
     scheduled_time: Optional[str] = None
 
 class PostUpdate(BaseModel):
@@ -407,15 +461,17 @@ async def signup(user_data: UserSignup):
         user_id=user_id,
         email=user_data.email,
         name=user_data.name,
-        email_verified=False
+        email_verified=False,
+        timezone=user_data.timezone or "UTC"
     )
-    
+
     user_dict = user.model_dump()
     user_dict['password'] = hash_password(user_data.password)
     user_dict['verification_token'] = verification_token
     user_dict['verification_expires'] = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     user_dict['created_at'] = user_dict['created_at'].isoformat()
-    
+    user_dict['timezone'] = user_data.timezone or "UTC"
+
     await db.users.insert_one(user_dict)
     
     # Send verification email
@@ -609,6 +665,34 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
 
 # ==================== MEDIA PROCESSING ====================
 
+# Per-user concurrent upload limits by plan
+UPLOAD_LIMITS = {"free": 2, "starter": 3, "pro": 5, "agency": 10, "enterprise": 20}
+
+
+async def _check_upload_limit(user_id: str, plan: str) -> bool:
+    """Returns True if upload is allowed. Increments counter. Call _release_upload_slot() when done."""
+    limit = UPLOAD_LIMITS.get(plan, 2)
+    r = await get_redis()
+    key = f"upload_slots:{user_id}"
+    current = await r.incr(key)
+    await r.expire(key, 300)  # 5 min TTL safety net
+    if current > limit:
+        await r.decr(key)
+        return False
+    return True
+
+
+async def _release_upload_slot(user_id: str):
+    try:
+        r = await get_redis()
+        key = f"upload_slots:{user_id}"
+        val = await r.decr(key)
+        if val < 0:
+            await r.delete(key)
+    except Exception:
+        pass
+
+
 # File size limits
 MAX_IMAGE_SIZE_MB = 50
 MAX_VIDEO_SIZE_MB = 500
@@ -673,126 +757,148 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
     """
     import mimetypes
 
-    # --- 1. Extension validation ---
-    original_filename = file.filename or "upload"
-    file_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
-    if not file_ext or file_ext not in ALLOWED_EXTS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
-        )
+    # --- 0. Global queue protection ---
+    try:
+        r = await get_redis()
+        queue_depth = await r.llen("celery")
+        if queue_depth > 200:
+            raise HTTPException(status_code=503, headers={"Retry-After": "120"},
+                                detail="Server busy. Please retry in 2 minutes.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Don't fail if Redis check fails
 
-    is_video = file_ext in ALLOWED_VIDEO_EXTS
-    media_type = "video" if is_video else "image"
+    # --- 0b. Per-user concurrent upload limit ---
+    plan = current_user.subscription_plan or "free"
+    allowed = await _check_upload_limit(current_user.user_id, plan)
+    if not allowed:
+        raise HTTPException(status_code=429, headers={"Retry-After": "30"},
+                            detail=f"Upload limit reached for {plan} plan. Retry after 30 seconds.")
 
-    # --- 2. Read content + size validation ---
-    content = await file.read()
-    file_size = len(content)
+    try:
+        # --- 1. Extension validation ---
+        original_filename = file.filename or "upload"
+        file_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+        if not file_ext or file_ext not in ALLOWED_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File type '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
+            )
 
-    if is_video and file_size > MAX_VIDEO_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Video too large: {file_size // (1024*1024)}MB. Maximum is {MAX_VIDEO_SIZE_MB}MB."
-        )
-    if not is_video and file_size > MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Image too large: {file_size // (1024*1024)}MB. Maximum is {MAX_IMAGE_SIZE_MB}MB."
-        )
+        is_video = file_ext in ALLOWED_VIDEO_EXTS
+        media_type = "video" if is_video else "image"
 
-    # --- 3. FFmpeg transcoding for videos ---
-    transcoded = False
-    final_ext = file_ext
-    final_content = content
+        # --- 2. Read content + size validation ---
+        content = await file.read()
+        file_size = len(content)
 
-    if is_video:
-        needs_conversion = file_ext != "mp4"
-        if needs_conversion or FFMPEG_PATH:
-            # Write original to temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_in:
-                tmp_in.write(content)
-                tmp_in_path = tmp_in.name
+        if is_video and file_size > MAX_VIDEO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Video too large: {file_size // (1024*1024)}MB. Maximum is {MAX_VIDEO_SIZE_MB}MB."
+            )
+        if not is_video and file_size > MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image too large: {file_size // (1024*1024)}MB. Maximum is {MAX_IMAGE_SIZE_MB}MB."
+            )
 
-            tmp_out_path = tmp_in_path.replace(f".{file_ext}", "_transcoded.mp4")
+        # --- 3. FFmpeg transcoding for videos ---
+        transcoded = False
+        final_ext = file_ext
+        final_content = content
 
+        if is_video:
+            needs_conversion = file_ext != "mp4"
+            if needs_conversion or FFMPEG_PATH:
+                # Write original to temp file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp_in:
+                    tmp_in.write(content)
+                    tmp_in_path = tmp_in.name
+
+                tmp_out_path = tmp_in_path.replace(f".{file_ext}", "_transcoded.mp4")
+
+                try:
+                    transcoded = await _transcode_to_mp4(tmp_in_path, tmp_out_path)
+                    if transcoded:
+                        with open(tmp_out_path, "rb") as f:
+                            final_content = f.read()
+                        final_ext = "mp4"
+                        logging.info(f"Transcoded {file_ext} → mp4 for user {current_user.user_id} ({file_size // 1024}KB → {len(final_content) // 1024}KB)")
+                finally:
+                    for p in [tmp_in_path, tmp_out_path]:
+                        try:
+                            os.unlink(p)
+                        except Exception:
+                            pass
+
+        # --- 4. Generate safe filename ---
+        file_id = uuid.uuid4().hex[:16]
+        safe_filename = f"{file_id}.{final_ext}"
+
+        # --- 5. Upload to R2 or local ---
+        storage_backend = os.environ.get("STORAGE_BACKEND", "local")
+        file_url = None
+
+        if storage_backend == "r2":
             try:
-                transcoded = await _transcode_to_mp4(tmp_in_path, tmp_out_path)
-                if transcoded:
-                    with open(tmp_out_path, "rb") as f:
-                        final_content = f.read()
-                    final_ext = "mp4"
-                    logging.info(f"Transcoded {file_ext} → mp4 for user {current_user.user_id} ({file_size // 1024}KB → {len(final_content) // 1024}KB)")
-            finally:
-                for p in [tmp_in_path, tmp_out_path]:
-                    try:
-                        os.unlink(p)
-                    except Exception:
-                        pass
+                import boto3
+                from botocore.client import Config
+                import io
 
-    # --- 4. Generate safe filename ---
-    file_id = uuid.uuid4().hex[:16]
-    safe_filename = f"{file_id}.{final_ext}"
+                r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
+                r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+                r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
+                r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
+                cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
 
-    # --- 5. Upload to R2 or local ---
-    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
-    file_url = None
+                s3 = boto3.client(
+                    "s3",
+                    endpoint_url=r2_endpoint,
+                    aws_access_key_id=r2_access_key,
+                    aws_secret_access_key=r2_secret_key,
+                    config=Config(signature_version="s3v4"),
+                    region_name="auto"
+                )
 
-    if storage_backend == "r2":
-        try:
-            import boto3
-            from botocore.client import Config
-            import io
+                content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+                object_key = f"uploads/{current_user.user_id}/{safe_filename}"
 
-            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
-            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
-            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
+                s3.upload_fileobj(
+                    io.BytesIO(final_content),
+                    r2_bucket,
+                    object_key,
+                    ExtraArgs={"ContentType": content_type}
+                )
 
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=r2_endpoint,
-                aws_access_key_id=r2_access_key,
-                aws_secret_access_key=r2_secret_key,
-                config=Config(signature_version="s3v4"),
-                region_name="auto"
-            )
+                file_url = (
+                    f"https://{cdn_domain}/{object_key}" if cdn_domain
+                    else f"{r2_endpoint}/{r2_bucket}/{object_key}"
+                )
+            except Exception as e:
+                logging.warning(f"R2 upload failed, falling back to local: {e}")
 
-            content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
-            object_key = f"uploads/{current_user.user_id}/{safe_filename}"
+        if not file_url:
+            # Local filesystem fallback
+            upload_dir = Path("/app/uploads")
+            upload_dir.mkdir(exist_ok=True, parents=True)
+            file_path = upload_dir / safe_filename
+            file_path.write_bytes(final_content)
+            file_url = f"/uploads/{safe_filename}"
 
-            s3.upload_fileobj(
-                io.BytesIO(final_content),
-                r2_bucket,
-                object_key,
-                ExtraArgs={"ContentType": content_type}
-            )
-
-            file_url = (
-                f"https://{cdn_domain}/{object_key}" if cdn_domain
-                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
-            )
-        except Exception as e:
-            logging.warning(f"R2 upload failed, falling back to local: {e}")
-
-    if not file_url:
-        # Local filesystem fallback
-        upload_dir = Path("/app/uploads")
-        upload_dir.mkdir(exist_ok=True, parents=True)
-        file_path = upload_dir / safe_filename
-        file_path.write_bytes(final_content)
-        file_url = f"/uploads/{safe_filename}"
-
-    return {
-        "success": True,
-        "url": file_url,
-        "filename": original_filename,
-        "media_type": media_type,
-        "transcoded": transcoded,
-        "original_format": file_ext,
-        "final_format": final_ext,
-        "size_bytes": len(final_content),
-    }
+        return {
+            "success": True,
+            "url": file_url,
+            "filename": original_filename,
+            "media_type": media_type,
+            "transcoded": transcoded,
+            "original_format": file_ext,
+            "final_format": final_ext,
+            "size_bytes": len(final_content),
+        }
+    finally:
+        await _release_upload_slot(current_user.user_id)
 
 @api_router.get("/posts", response_model=List[Post])
 async def get_posts(current_user: User = Depends(get_current_user), status: Optional[str] = None):
@@ -1770,13 +1876,57 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
 # ==================== SSE / REDIS PUBLISH HELPER ====================
 
 async def _notify_post_update(user_id: str, post_id: str, status: str, platform_results: dict):
-    """Publish a post-status change event to Redis for SSE delivery. Best-effort."""
+    """Publish a post-status change event to Redis for SSE delivery. Best-effort.
+    Also persists the notification to MongoDB."""
     try:
         r = await get_redis()
         payload = json.dumps({"post_id": post_id, "status": status, "platform_results": platform_results})
         await r.publish(f"post_updates:{user_id}", payload)
     except Exception:
         pass  # SSE is best-effort, never fail a publish because of it
+
+    # Persist notification to MongoDB (best-effort)
+    try:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "post_id": post_id,
+            "type": "publish_result",
+            "message": "Post {}: {}".format(status, ", ".join("{}={}".format(p, r.get("status")) for p, r in platform_results.items())),
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "platform_results": platform_results,
+        })
+    except Exception:
+        pass  # notifications persistence is best-effort
+
+
+@api_router.get("/notifications")
+async def get_notifications(current_user: User = Depends(get_current_user), unread_only: bool = False):
+    query = {"user_id": current_user.user_id}
+    if unread_only:
+        query["is_read"] = False
+    notifs = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    return notifs
+
+
+@api_router.patch("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user)):
+    await db.notifications.update_one(
+        {"id": notification_id, "user_id": current_user.user_id},
+        {"$set": {"is_read": True}}
+    )
+    return {"success": True}
+
+
+@api_router.patch("/notifications/read-all")
+async def mark_all_notifications_read(current_user: User = Depends(get_current_user)):
+    result = await db.notifications.update_many(
+        {"user_id": current_user.user_id, "is_read": False},
+        {"$set": {"is_read": True}}
+    )
+    return {"updated": result.modified_count}
 
 
 # ==================== SSE ENDPOINT ====================
@@ -1993,6 +2143,7 @@ async def startup_event():
     await db.social_accounts.create_index([("user_id", 1), ("platform", 1), ("is_active", 1)])
     await db.users.create_index([("email", 1)], unique=True)
     await db.users.create_index([("user_id", 1)], unique=True)
+    await db.notifications.create_index([("user_id", 1), ("is_read", 1), ("created_at", -1)])
     logging.info("MongoDB indexes created")
 
     # Subscribe YouTube PubSubHubbub for all connected YouTube accounts
@@ -2016,9 +2167,11 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global _redis_client
+    global _redis_client, _redis_pool
     if _redis_client is not None:
         await _redis_client.aclose()
+    if _redis_pool is not None:
+        await _redis_pool.disconnect()
     client.close()
     logging.info("Application shutdown")
 
@@ -2038,4 +2191,39 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+import structlog
+import structlog.contextvars
+
+# Configure structlog
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.ConsoleRenderer() if os.environ.get("ENV", "development") != "production"
+        else structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+)
+
+structlogger = structlog.get_logger()
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class TraceIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4())[:8])
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+        response = await call_next(request)
+        response.headers["X-Trace-ID"] = trace_id
+        return response
+
+
+app.add_middleware(TraceIDMiddleware)
 

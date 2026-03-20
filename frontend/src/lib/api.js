@@ -145,3 +145,30 @@ export const retryFailedPost = async (postId, platform = null) => {
   });
   return response.data;
 };
+
+// Notifications
+export const getNotifications = async (unreadOnly = false) => {
+  const url = unreadOnly
+    ? `${API}/notifications?unread_only=true`
+    : `${API}/notifications`;
+  const response = await axios.get(url, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const markNotificationRead = async (notificationId) => {
+  const response = await axios.patch(
+    `${API}/notifications/${notificationId}/read`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const markAllNotificationsRead = async () => {
+  const response = await axios.patch(
+    `${API}/notifications/read-all`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};

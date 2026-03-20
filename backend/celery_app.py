@@ -75,6 +75,11 @@ celery_app.conf.update(
             "schedule": timedelta(minutes=5),
             "options": {"expires": 290},
         },
+        "beat-heartbeat": {
+            "task": "celery_tasks.beat_heartbeat_task",
+            "schedule": timedelta(seconds=30),
+            "options": {"expires": 28},
+        },
     },
 )
 

@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getPosts, getFailedPosts, retryFailedPost } from '@/lib/api';
+import { getStats, getPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
 import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useNavigate } from 'react-router-dom';
-import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo } from 'react-icons/fa';
+import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo, FaBell } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -14,6 +14,7 @@ const Dashboard = () => {
   const [recentPosts, setRecentPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [failedPosts, setFailedPosts] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     fetchData();
@@ -29,6 +30,8 @@ const Dashboard = () => {
       setStats(statsData);
       setRecentPosts(postsData.slice(0, 5));
       setFailedPosts(failedData);
+      const notifData = await getNotifications(true).catch(() => []);
+      setUnreadCount(notifData.length);
     } catch (error) {
       toast.error('Failed to load dashboard data');
     } finally {
@@ -102,10 +105,24 @@ const Dashboard = () => {
             </div>
             <p className="text-base text-slate-600 mt-1">Welcome back! Here's your overview.</p>
           </div>
-          <Button onClick={() => navigate('/create')} data-testid="create-post-button">
-            <FaPlus className="mr-2" />
-            Create Post
-          </Button>
+          <div className="flex items-center gap-3">
+            <button
+              className="relative p-2 rounded-lg hover:bg-slate-100 transition-colors"
+              onClick={async () => { await markAllNotificationsRead(); setUnreadCount(0); }}
+              title="Notifications"
+            >
+              <FaBell className="text-slate-600 text-lg" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+            <Button onClick={() => navigate('/create')} data-testid="create-post-button">
+              <FaPlus className="mr-2" />
+              Create Post
+            </Button>
+          </div>
         </div>
 
         {/* Stats Grid */}
