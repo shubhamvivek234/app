@@ -44,6 +44,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 86400,  # daily
         "options": {"queue": "default"},
     },
+    "send-grace-period-reminders": {
+        "task": "celery_workers.tasks.grace_period_reminders.send_grace_period_reminders",
+        "schedule": 172800,  # every 2 days
+        "options": {"queue": "default"},
+    },
     "api-version-monitor": {
         "task": "celery_workers.tasks.api_version_monitor.check_platform_api_versions",
         "schedule": 86400,  # daily

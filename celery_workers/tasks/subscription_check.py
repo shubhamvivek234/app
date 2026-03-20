@@ -23,12 +23,17 @@ def check_expiring_subscriptions() -> dict:
 
 
 async def _async_check() -> dict:
+    from utils.storage import delete_file_async
+
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
     now = datetime.now(timezone.utc)
     warned = 0
     paused_users = 0
+    cleanup_users = 0
+    cleanup_posts = 0
+    media_deleted = 0
 
     # 1. Warn users whose subscription expires within 7 days
     warning_cutoff = now + timedelta(days=_WARNING_DAYS_BEFORE)
@@ -69,12 +74,23 @@ async def _async_check() -> dict:
             "subscription_expires_at": {"$lte": grace_cutoff},
             "subscription_status": {"$in": ["expired", "past_due"]},
         },
-        {"_id": 0, "id": 1},
+        {"_id": 0, "id": 1, "user_id": 1, "subscription_expires_at": 1, "subscription_cleanup_date": 1},
     )
     async for user in expired_cursor:
+        user_id = user.get("user_id") or user.get("id")
+
+        # Initialize cleanup date if not already set
+        subscription_expires_at = user.get("subscription_expires_at")
+        if subscription_expires_at and not user.get("subscription_cleanup_date"):
+            cleanup_date = subscription_expires_at + timedelta(days=20)
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {"subscription_cleanup_date": cleanup_date}},
+            )
+
         result = await db.posts.update_many(
             {
-                "user_id": user["id"],
+                "user_id": user_id,
                 "status": "scheduled",
             },
             {"$set": {
@@ -86,12 +102,92 @@ async def _async_check() -> dict:
         if result.modified_count > 0:
             paused_users += 1
             await db.notifications.insert_one({
-                "user_id": user["id"],
+                "user_id": user_id,
                 "type": "posts_paused",
                 "message": f"{result.modified_count} posts paused due to expired subscription.",
                 "created_at": now,
                 "is_read": False,
             })
 
-    logger.info("subscription_check: warned=%d, paused_users=%d", warned, paused_users)
-    return {"warned": warned, "paused_users": paused_users}
+    # 3. CLEANUP PHASE: Delete paused posts 20+ days after subscription end date
+    cleanup_cursor = db.users.find(
+        {
+            "subscription_cleanup_date": {"$lte": now},
+            "subscription_status": "expired",
+        },
+        {"_id": 0, "id": 1, "user_id": 1},
+    )
+    async for user in cleanup_cursor:
+        user_id = user.get("user_id") or user.get("id")
+
+        # Find all paused posts that are scheduled for the future
+        paused_posts = await db.posts.find({
+            "user_id": user_id,
+            "status": "paused",
+            "paused_reason": "subscription_expired",
+            "scheduled_time": {"$gt": now},
+        }).to_list(None)
+
+        # Delete each paused post and its media
+        for post in paused_posts:
+            # Delete media from Cloudflare
+            media_ids = post.get("media_ids", [])
+            for media_id in media_ids:
+                media = await db.media_assets.find_one({"_id": media_id})
+                if media and media.get("url"):
+                    try:
+                        await delete_file_async(media["url"])
+                        media_deleted += 1
+                    except Exception as exc:
+                        logger.error("Failed to delete media: media_id=%s error=%s", media_id, exc)
+
+            # Cancel the post
+            await db.posts.update_one(
+                {"_id": post["_id"]},
+                {"$set": {
+                    "status": "cancelled",
+                    "cancellation_reason": "cleanup_after_20day_grace",
+                    "paused_reason": None,
+                    "updated_at": now,
+                }},
+            )
+            cleanup_posts += 1
+
+        if paused_posts:
+            cleanup_users += 1
+            # Clear subscription_cleanup_date to prevent re-notification on next daily run
+            await db.users.update_one(
+                {"id": user_id},
+                {"$set": {"subscription_cleanup_date": None}},
+            )
+            await db.notifications.insert_one({
+                "user_id": user_id,
+                "type": "subscription.posts_deleted",
+                "channel": "email",
+                "message": (
+                    f"Your {len(paused_posts)} scheduled posts have been permanently deleted "
+                    f"to free up storage. Resubscribe to schedule new posts."
+                ),
+                "metadata": {
+                    "posts_deleted": len(paused_posts),
+                    "media_deleted": media_deleted,
+                },
+                "created_at": now,
+            })
+
+            logger.info(
+                "Cleanup complete: user=%s posts_deleted=%d media_deleted=%d",
+                user_id, len(paused_posts), media_deleted
+            )
+
+    logger.info(
+        "subscription_check: warned=%d paused_users=%d cleanup_users=%d cleanup_posts=%d media_deleted=%d",
+        warned, paused_users, cleanup_users, cleanup_posts, media_deleted
+    )
+    return {
+        "warned": warned,
+        "paused_users": paused_users,
+        "cleanup_users": cleanup_users,
+        "cleanup_posts": cleanup_posts,
+        "media_deleted": media_deleted,
+    }

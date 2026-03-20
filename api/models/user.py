@@ -29,6 +29,8 @@ class UserResponse(BaseModel):
     subscription_status: SubscriptionStatus = SubscriptionStatus.FREE
     subscription_end_date: datetime | None = None
     subscription_grace_period_end: datetime | None = None
+    subscription_reactivated_at: datetime | None = None
+    subscription_cleanup_date: datetime | None = None
     timezone: str = "UTC"
     created_at: datetime
     mfa_enabled: bool = False

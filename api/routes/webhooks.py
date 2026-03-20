@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -290,27 +290,36 @@ async def _process_stripe_event(event_type: str, event: dict, db) -> None:
         customer_email = data_obj.get("customer_email", "")
         subscription_id = data_obj.get("subscription", "")
         if customer_email:
-            await db.users.update_one(
-                {"email": customer_email},
-                {"$set": {
-                    "subscription_status": "active",
-                    "stripe_subscription_id": subscription_id,
-                    "updated_at": now,
-                }},
-            )
+            user = await db.users.find_one({"email": customer_email})
+            if user:
+                await db.users.update_one(
+                    {"email": customer_email},
+                    {"$set": {
+                        "subscription_status": "active",
+                        "stripe_subscription_id": subscription_id,
+                        "updated_at": now,
+                    }},
+                )
+                # Get plan from payment transaction if available
+                plan = data_obj.get("metadata", {}).get("plan", "pro")
+                await _handle_subscription_reactivation(db, user["user_id"], plan, now)
             logger.info("Checkout completed for %s", customer_email)
 
     elif event_type == "invoice.payment_succeeded":
         customer_id = data_obj.get("customer", "")
         if customer_id:
-            await db.users.update_one(
-                {"stripe_customer_id": customer_id},
-                {"$set": {
-                    "subscription_status": "active",
-                    "payment_failure_count": 0,
-                    "updated_at": now,
-                }},
-            )
+            user = await db.users.find_one({"stripe_customer_id": customer_id})
+            if user:
+                await db.users.update_one(
+                    {"stripe_customer_id": customer_id},
+                    {"$set": {
+                        "subscription_status": "active",
+                        "payment_failure_count": 0,
+                        "updated_at": now,
+                    }},
+                )
+                plan = user.get("plan", "pro")
+                await _handle_subscription_reactivation(db, user["user_id"], plan, now)
             logger.info("Payment succeeded for customer %s", customer_id)
 
     elif event_type == "invoice.payment_failed":
@@ -427,14 +436,18 @@ async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
     if event_type == "payment.captured":
         email = entity.get("email", "")
         if email:
-            await db.users.update_one(
-                {"email": email},
-                {"$set": {
-                    "subscription_status": "active",
-                    "payment_failure_count": 0,
-                    "updated_at": now,
-                }},
-            )
+            user = await db.users.find_one({"email": email})
+            if user:
+                await db.users.update_one(
+                    {"email": email},
+                    {"$set": {
+                        "subscription_status": "active",
+                        "payment_failure_count": 0,
+                        "updated_at": now,
+                    }},
+                )
+                plan = user.get("plan", "pro")
+                await _handle_subscription_reactivation(db, user["user_id"], plan, now)
             logger.info("Razorpay payment captured for %s", email)
 
     elif event_type == "payment.failed":
@@ -453,7 +466,6 @@ async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
         sub_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
         customer_id = sub_entity.get("customer_id", "")
         if customer_id:
-            from datetime import timedelta
             grace_end = now + timedelta(days=7)
             await db.users.update_one(
                 {"razorpay_customer_id": customer_id},
@@ -464,3 +476,116 @@ async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
                 }},
             )
             logger.info("Razorpay subscription cancelled for customer %s", customer_id)
+
+
+# ── Subscription Reactivation Handler ──────────────────────────────────────────
+
+async def _handle_subscription_reactivation(db, user_id: str, plan: str, now: datetime) -> None:
+    """
+    Handle intelligent post reactivation when user purchases during pause period.
+
+    Posts scheduled AFTER purchase time are resumed.
+    Posts scheduled BEFORE purchase time are cancelled + media deleted.
+    """
+    from utils.storage import delete_file_async
+
+    # 1. Set reactivation timestamp and recalculate cleanup date
+    plan_duration = {
+        "pro": 30,
+        "agency": 30,
+        "starter": 7,
+    }.get(plan, 30)
+
+    new_subscription_end = now + timedelta(days=plan_duration)
+    new_cleanup_date = new_subscription_end + timedelta(days=20)
+
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_reactivated_at": now,
+            "subscription_cleanup_date": new_cleanup_date,
+            "subscription_end_date": new_subscription_end,
+            "subscription_expires_at": new_subscription_end,  # Ensure daily checks don't re-expire
+            "subscription_status": "active",  # Explicit status update
+            "updated_at": now,
+        }},
+    )
+
+    logger.info("Subscription reactivated: user=%s cleanup_date=%s", user_id, new_cleanup_date)
+
+    # 2. Fetch all paused posts for this user
+    paused_posts = await db.posts.find({
+        "user_id": user_id,
+        "status": "paused",
+        "paused_reason": "subscription_expired"
+    }).to_list(None)
+
+    if not paused_posts:
+        logger.info("No paused posts to process: user=%s", user_id)
+        return
+
+    resumed_count = 0
+    cancelled_count = 0
+    media_deleted_count = 0
+
+    for post in paused_posts:
+        post_scheduled_time = post.get("scheduled_time")
+        if not post_scheduled_time:
+            continue
+
+        # 3. Compare scheduled time with reactivation time
+        if post_scheduled_time > now:
+            # Post scheduled AFTER purchase — resume it
+            await db.posts.update_one(
+                {"_id": post["_id"]},
+                {"$set": {
+                    "status": "scheduled",
+                    "paused_reason": None,
+                    "updated_at": now,
+                }},
+            )
+            resumed_count += 1
+            logger.info("Post resumed: post_id=%s scheduled_time=%s", post["_id"], post_scheduled_time)
+        else:
+            # Post scheduled BEFORE purchase — cancel and delete media
+            await db.posts.update_one(
+                {"_id": post["_id"]},
+                {"$set": {
+                    "status": "cancelled",
+                    "cancellation_reason": "missed_window_due_to_expired_subscription",
+                    "paused_reason": None,
+                    "updated_at": now,
+                }},
+            )
+            cancelled_count += 1
+
+            # Delete media from Cloudflare
+            media_ids = post.get("media_ids", [])
+            for media_id in media_ids:
+                media = await db.media_assets.find_one({"_id": media_id})
+                if media and media.get("url"):
+                    try:
+                        await delete_file_async(media["url"])
+                        media_deleted_count += 1
+                        logger.info("Media deleted: media_id=%s", media_id)
+                    except Exception as exc:
+                        logger.error("Failed to delete media: media_id=%s error=%s", media_id, exc)
+
+            logger.info("Post cancelled (missed window): post_id=%s scheduled_time=%s", post["_id"], post_scheduled_time)
+
+    # 4. Create notification
+    await db.notifications.insert_one({
+        "user_id": user_id,
+        "type": "subscription.reactivated",
+        "channel": "email",
+        "message": f"Subscription reactivated! {resumed_count} posts resumed, {cancelled_count} posts cancelled (missed window).",
+        "metadata": {
+            "posts_resumed": resumed_count,
+            "posts_cancelled": cancelled_count,
+            "media_deleted": media_deleted_count,
+        },
+        "created_at": now,
+    })
+
+    logger.info("Subscription reactivation complete: user=%s resumed=%d cancelled=%d media_deleted=%d",
+                user_id, resumed_count, cancelled_count, media_deleted_count)
