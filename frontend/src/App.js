@@ -6,8 +6,8 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 
 // Pages
 import LandingPage from '@/pages/LandingPage';
-import Login from '@/pages/Login';
-import Signup from '@/pages/Signup';
+import Login from '@/pages/LoginV1';   // LoginV1 has Cloudflare Turnstile bot protection
+import Signup from '@/pages/SignupV1'; // SignupV1 has Cloudflare Turnstile bot protection
 import AuthCallback from '@/pages/AuthCallback';
 import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';

@@ -1,34 +1,39 @@
 """
 Phase 2 — Media processing Celery task.
-Validates, compresses, thumbnails. Moves from /quarantine/ to /media/ on success.
+Validates, compresses, thumbnails. Moves from /quarantine/ to permanent storage on success.
+
+Section 18.8 — per-platform publish notifications (success, failure, DLQ, recovery).
 """
 import asyncio
 import logging
 import os
+import pathlib
 from datetime import datetime, timezone
 
 from celery_workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Maps internal notification type → notification_prefs event key
+# ── Notification type → notification_prefs event key ─────────────────────────
 _EVENT_MAP: dict[str, str] = {
     "publish_success":            "post.published",
-    "publish_recovered":          "post.published",
     "publish_failed":             "post.failed",
     "publish_permanently_failed": "post.dlq",
-    "pre_upload_timeout":         "post.failed",
+    "publish_partial_recovery":   "post.published",
 }
 
-# Human-readable titles shown in-app
 _TITLES: dict[str, str] = {
-    "publish_success":            "Post published",
-    "publish_recovered":          "All platforms published",
-    "publish_failed":             "Post failed to publish",
-    "publish_permanently_failed": "Post permanently failed",
-    "pre_upload_timeout":         "Video upload timed out",
+    "publish_success":            "Post Published ✓",
+    "publish_failed":             "Post Failed",
+    "publish_permanently_failed": "Post Permanently Failed",
+    "publish_partial_recovery":   "Post Recovered ✓",
 }
 
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+SENDER_EMAIL   = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+
+
+# ── Media Processing ──────────────────────────────────────────────────────────
 
 @celery_app.task(
     name="celery_workers.tasks.media.process_media",
@@ -36,8 +41,8 @@ _TITLES: dict[str, str] = {
     max_retries=2,
     acks_late=True,
     queue="media_processing",
-    time_limit=360,       # hard kill after 6 minutes
-    soft_time_limit=300,  # soft kill after 5 minutes (raises SoftTimeLimitExceeded)
+    time_limit=360,
+    soft_time_limit=300,
 )
 def process_media(self, media_job_id: str, user_id: str) -> dict:
     return asyncio.run(_async_process_media(self, media_job_id, user_id))
@@ -58,9 +63,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         return {"status": "not_found"}
 
     quarantine_path = asset.get("quarantine_path")
-    mime_type = asset.get("mime_type")
-    processed_path = None
-    thumbnail_path = None
+    mime_type = asset.get("mime_type", "application/octet-stream")
 
     try:
         await db.media_assets.update_one(
@@ -71,38 +74,30 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         # Step 1: Validate
         validation_result = await validate_media(quarantine_path, mime_type)
 
-        # Step 2: Process (transcode if video)
+        # Step 2: Transcode if video
         if mime_type and mime_type.startswith("video/"):
             processed_path = await process_video(quarantine_path, validation_result)
-            # FFmpeg always outputs mp4 — normalise content-type for upload
-            upload_mime = "video/mp4"
         else:
             processed_path = quarantine_path
-            upload_mime = mime_type or "application/octet-stream"
 
-        # Step 3: Generate thumbnail
+        # Step 3: Thumbnail
         thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
 
-        # Step 4: Upload processed file to permanent storage (R2 or Firebase)
-        # Derive a safe filename: media_job_id + extension inferred from processed path
-        ext = os.path.splitext(processed_path)[1] or (
-            ".mp4" if upload_mime.startswith("video/") else ".bin"
-        )
-        media_filename = f"{media_job_id}{ext}"
-
+        # Step 4: Upload media to permanent storage (R2 or Firebase)
+        ext = pathlib.Path(processed_path).suffix or ""
         loop = asyncio.get_event_loop()
         media_bytes = await loop.run_in_executor(
             None, lambda: open(processed_path, "rb").read()
         )
         media_url = await upload_file_async(
             media_bytes,
-            media_filename,
-            upload_mime,
+            f"{media_job_id}{ext}",
+            mime_type,
             folder=f"media/{user_id}",
         )
         logger.info("Media uploaded: media_id=%s url=%s", media_job_id, media_url)
 
-        # Step 5: Upload thumbnail to permanent storage
+        # Step 5: Upload thumbnail
         thumbnail_url = None
         if thumbnail_path and os.path.exists(thumbnail_path):
             thumb_bytes = await loop.run_in_executor(
@@ -116,7 +111,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             )
             logger.info("Thumbnail uploaded: media_id=%s url=%s", media_job_id, thumbnail_url)
 
-        # Step 6: Persist real URLs and mark asset ready
+        # Step 6: Persist real URLs to DB
         await db.media_assets.update_one(
             {"media_id": media_job_id},
             {"$set": {
@@ -141,36 +136,14 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         )
         raise task.retry(countdown=30, exc=exc)
 
-    finally:
-        # Always clean up local temp files — prevents disk fill on high volume
-        _cleanup_temp_files(quarantine_path, processed_path, thumbnail_path)
 
-
-def _cleanup_temp_files(
-    quarantine_path: str | None,
-    processed_path: str | None,
-    thumbnail_path: str | None,
-) -> None:
-    """
-    Delete all local temp files created during media processing.
-    Called in finally block so disk is always freed even on failure/retry.
-    """
-    for path in (quarantine_path, processed_path, thumbnail_path):
-        if path and os.path.exists(path):
-            try:
-                os.unlink(path)
-                logger.debug("Cleaned up temp file: %s", path)
-            except OSError as exc:
-                # Non-fatal — log and continue
-                logger.warning("Failed to delete temp file %s: %s", path, exc)
-
-
-# ── Section 18.8 — Per-platform publish notification ──────────────────────────
+# ── Section 18.8 — Per-platform Publish Notifications ────────────────────────
 
 @celery_app.task(
     name="celery_workers.tasks.media.send_notification",
-    time_limit=60,
-    soft_time_limit=45,
+    acks_late=True,
+    queue="default",
+    max_retries=3,
 )
 def send_notification(
     post_id: str,
@@ -178,17 +151,15 @@ def send_notification(
     platform: str | None = None,
     error: str | None = None,
     post_url: str | None = None,
-    user_id: str | None = None,
 ) -> None:
     """
-    18.8: Store in-app and/or email notification records for publish events.
+    18.8: Store in-app and email notification records for publish events.
 
     Notification types:
-      publish_success            — post published on a platform
-      publish_failed             — publish attempt failed (will retry)
+      publish_success            — platform posted successfully
+      publish_failed             — platform failed (retrying)
       publish_permanently_failed — all retries exhausted, moved to DLQ
-      publish_recovered          — all platforms now published after partial failure
-      pre_upload_timeout         — video pre-upload timed out before publish window
+      publish_partial_recovery   — last previously-failed platform now succeeded
     """
     asyncio.run(_async_send_notification(
         post_id=post_id,
@@ -196,7 +167,6 @@ def send_notification(
         platform=platform,
         error=error,
         post_url=post_url,
-        user_id=user_id,
     ))
 
 
@@ -206,121 +176,115 @@ async def _async_send_notification(
     platform: str | None,
     error: str | None,
     post_url: str | None,
-    user_id: str | None,
 ) -> None:
     from db.mongo import get_client
     from utils.notification_prefs import should_notify
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
-    now = datetime.now(timezone.utc)
 
-    # Resolve user_id from post if not supplied by caller
-    resolved_user_id = user_id
-    if not resolved_user_id:
-        post = await db.posts.find_one({"id": post_id}, {"user_id": 1})
-        if post:
-            resolved_user_id = post.get("user_id")
+    # Resolve user_id from post
+    post_doc = await db.posts.find_one({"id": post_id}, {"user_id": 1})
+    user_id = (post_doc or {}).get("user_id", "")
 
-    if not resolved_user_id:
+    if not user_id:
         logger.warning("send_notification: cannot resolve user_id for post=%s type=%s", post_id, notification_type)
         return
 
-    # Map internal type → preference event key
     event_key = _EVENT_MAP.get(notification_type, "post.failed")
-
-    # Build human-readable message
-    platform_label = platform.capitalize() if platform else "your platform"
+    platform_label = platform.capitalize() if platform else "platform"
     message = _build_message(notification_type, platform_label, error, post_url)
     title = _TITLES.get(notification_type, "Notification")
 
-    # Build shared metadata
-    metadata: dict = {"post_id": post_id, "notification_type": notification_type}
-    if platform:
-        metadata["platform"] = platform
-    if error:
-        metadata["error"] = error
-    if post_url:
-        metadata["post_url"] = post_url
+    now = datetime.now(timezone.utc).isoformat()
+    notification_doc = {
+        "user_id": user_id,
+        "type": notification_type,
+        "post_id": post_id,
+        "platform": platform,
+        "title": title,
+        "message": message,
+        "read": False,
+        "created_at": now,
+    }
 
-    # ── In-app notification (stored in DB, read by frontend) ──────────────────
+    # ── In-app (stored in DB, read by frontend /api/inbox) ────────────────────
     try:
-        in_app_enabled = await should_notify(db, resolved_user_id, event_key, "in_app")
+        in_app_ok = await should_notify(db, user_id, event_key, "in_app")
     except Exception:
-        in_app_enabled = True  # fail open — never silently drop notifications
+        in_app_ok = True  # fail-open — never silently drop in-app
 
-    if in_app_enabled:
-        await db.notifications.insert_one({
-            "user_id": resolved_user_id,
-            "type": notification_type,
-            "title": title,
-            "message": message,
-            "channel": "in_app",
-            "is_read": False,
-            "metadata": metadata,
-            "created_at": now,
-        })
+    if in_app_ok:
+        await db.notifications.insert_one({**notification_doc, "channel": "in_app"})
         logger.info(
-            "18.8 in_app notification stored: user=%s type=%s post=%s platform=%s",
-            resolved_user_id, notification_type, post_id, platform,
+            "18.8 in_app stored: user=%s type=%s post=%s platform=%s",
+            user_id, notification_type, post_id, platform,
         )
 
-    # ── Email notification (stored in DB, picked up by email delivery service) ─
+    # ── Email (Resend API) ────────────────────────────────────────────────────
     try:
-        email_enabled = await should_notify(db, resolved_user_id, event_key, "email")
+        email_ok = await should_notify(db, user_id, event_key, "email")
     except Exception:
-        email_enabled = False  # fail closed for email — avoid accidental spam
+        email_ok = False  # fail-closed for email — avoid spam on pref lookup error
 
-    if email_enabled:
-        await db.notifications.insert_one({
-            "user_id": resolved_user_id,
-            "type": notification_type,
-            "title": title,
-            "message": message,
-            "channel": "email",
-            "is_read": False,
-            "metadata": metadata,
-            "created_at": now,
-        })
-        logger.info(
-            "18.8 email notification queued: user=%s type=%s post=%s platform=%s",
-            resolved_user_id, notification_type, post_id, platform,
-        )
+    if email_ok and RESEND_API_KEY:
+        user_doc = await db.users.find_one({"user_id": user_id}, {"email": 1, "name": 1})
+        recipient_email = (user_doc or {}).get("email")
+        recipient_name = (user_doc or {}).get("name", "there")
+
+        if recipient_email:
+            import resend  # noqa: PLC0415 — lazy import
+            resend.api_key = RESEND_API_KEY
+            try:
+                resend.Emails.send({
+                    "from": SENDER_EMAIL,
+                    "to": recipient_email,
+                    "subject": f"SocialEntangler — {title}",
+                    "html": _build_email_html(recipient_name, title, message, post_url),
+                })
+                logger.info(
+                    "18.8 email sent: user=%s type=%s post=%s platform=%s",
+                    user_id, notification_type, post_id, platform,
+                )
+            except Exception as email_exc:
+                logger.warning("18.8 email send failed (non-fatal): %s", email_exc)
+
+        # Always record email attempt in DB for audit
+        await db.notifications.insert_one({**notification_doc, "channel": "email"})
 
 
-def _build_message(
-    notification_type: str,
-    platform_label: str,
-    error: str | None,
-    post_url: str | None,
-) -> str:
-    """Build a human-readable notification message for each publish event type."""
+def _build_message(notification_type: str, platform: str, error: str | None, post_url: str | None) -> str:
     if notification_type == "publish_success":
-        suffix = f" View it here: {post_url}" if post_url else ""
-        return f"Your post was published successfully on {platform_label}.{suffix}"
-
-    if notification_type == "publish_recovered":
-        return "All platforms have now published your post successfully."
-
+        url_part = f" — {post_url}" if post_url else ""
+        return f"Your post was successfully published on {platform}{url_part}."
     if notification_type == "publish_failed":
-        reason = f": {error}" if error else "."
-        return (
-            f"Your post failed to publish on {platform_label}{reason} "
-            f"It will retry automatically."
-        )
-
+        reason = f": {error}" if error else ""
+        return f"Publishing to {platform} failed{reason}. We'll retry automatically."
     if notification_type == "publish_permanently_failed":
-        reason = f": {error}" if error else "."
+        reason = f": {error}" if error else ""
         return (
-            f"Your post permanently failed on {platform_label}{reason} "
-            f"All retry attempts were exhausted — please reschedule or edit the post."
+            f"Your post permanently failed on {platform}{reason} after all retries "
+            f"were exhausted. Please check your connected account and reschedule."
         )
+    if notification_type == "publish_partial_recovery":
+        return f"Your post has now been published on {platform} after a previous failure."
+    return f"An event ({notification_type}) occurred for your post on {platform}."
 
-    if notification_type == "pre_upload_timeout":
-        return (
-            f"Your video upload to {platform_label} timed out after 30 minutes. "
-            f"Please reschedule the post or try again with a smaller file."
-        )
 
-    # Fallback for unknown types
-    return f"Notification: {notification_type} on {platform_label}."
+def _build_email_html(name: str, title: str, message: str, post_url: str | None) -> str:
+    url_block = ""
+    if post_url:
+        url_block = f'<p><a href="{post_url}" style="color:#6366f1">View post →</a></p>'
+    return f"""
+    <div style="font-family:sans-serif;max-width:560px;margin:auto;padding:32px">
+      <h2 style="color:#1e293b">{title}</h2>
+      <p style="color:#475569">Hi {name},</p>
+      <p style="color:#475569">{message}</p>
+      {url_block}
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
+      <p style="font-size:12px;color:#94a3b8">
+        You can manage your email preferences in
+        <a href="https://app.socialentangler.com/settings">Settings → Notifications</a>.
+      </p>
+    </div>
+    """
