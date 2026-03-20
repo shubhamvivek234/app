@@ -276,12 +276,12 @@ def generate_verification_token() -> str:
 async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(None)) -> User:
     if not session_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
+
     # Check session in database
     session_doc = await db.user_sessions.find_one({"session_token": session_token}, {"_id": 0})
     if not session_doc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
-    
+
     # Check expiry
     expires_at = session_doc["expires_at"]
     if isinstance(expires_at, str):
@@ -290,29 +290,39 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
-    
+
     # Get user
     user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
     if not user_doc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    
+
     # Parse dates
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+
+    # Auto-expire subscription if end_date has passed
+    if (user_doc.get('subscription_status') == 'active' and
+        user_doc.get('subscription_end_date') and
+        user_doc['subscription_end_date'] < datetime.now(timezone.utc)):
+        user_doc['subscription_status'] = 'expired'
+        await db.users.update_one(
+            {"user_id": user_doc["user_id"]},
+            {"$set": {"subscription_status": "expired"}}
+        )
+
     return User(**user_doc)
 
 async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
     # Try cookie first
     if session_token:
         return await get_current_user_from_cookie(session_token)
-    
+
     # Fallback to Authorization header
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
+
     token = authorization.replace("Bearer ", "")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -323,16 +333,26 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
     except jwt.JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
+
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if user_doc is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    
+
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
         user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
-    
+
+    # Auto-expire subscription if end_date has passed
+    if (user_doc.get('subscription_status') == 'active' and
+        user_doc.get('subscription_end_date') and
+        user_doc['subscription_end_date'] < datetime.now(timezone.utc)):
+        user_doc['subscription_status'] = 'expired'
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"subscription_status": "expired"}}
+        )
+
     return User(**user_doc)
 
 async def send_verification_email(email: str, verification_token: str):
