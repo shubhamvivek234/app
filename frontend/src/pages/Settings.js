@@ -241,20 +241,16 @@ const Settings = () => {
   const handleExportData = async () => {
     setExportingData(true);
     try {
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/export`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      });
-      if (!response.ok) throw new Error('Export failed');
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'my_socialentangler_data.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Data export downloaded successfully.');
-    } catch {
-      toast.error('Failed to export data. Please try again.');
+      // Export is async — backend queues a Celery task and emails the download link.
+      // Correct endpoint: POST /api/user/data-export (not /api/gdpr/export)
+      await axios.post(
+        `${process.env.REACT_APP_BACKEND_URL}/api/user/data-export`,
+        {},
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
+      );
+      toast.success('Export queued! You will receive an email with your download link within 15 minutes.');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to request data export. Please try again.');
     } finally {
       setExportingData(false);
     }
@@ -268,13 +264,15 @@ const Settings = () => {
     const doubleConfirmed = window.confirm('Final warning: Delete your account permanently?');
     if (!doubleConfirmed) return;
     try {
-      await axios.delete(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/delete-account`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      });
-      toast.success('Account deleted. Goodbye!');
+      // Correct endpoint: DELETE /api/user/account (not /api/gdpr/delete-account)
+      await axios.delete(
+        `${process.env.REACT_APP_BACKEND_URL}/api/user/account`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
+      );
+      toast.success('Account deletion queued. All your data will be removed within 30 days.');
       logout();
-    } catch {
-      toast.error('Failed to delete account. Please contact support.');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to delete account. Please contact support.');
     }
   };
 
