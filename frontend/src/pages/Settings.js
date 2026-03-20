@@ -241,18 +241,17 @@ const Settings = () => {
   const handleExportData = async () => {
     setExportingData(true);
     try {
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/export`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-      });
+      // Correct endpoint: POST /api/user/data-export (not /api/gdpr/export)
+      const response = await fetch(
+        `${process.env.REACT_APP_BACKEND_URL}/api/user/data-export`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        }
+      );
       if (!response.ok) throw new Error('Export failed');
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'my_socialentangler_data.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Data export downloaded successfully.');
+      const data = await response.json();
+      toast.success(data.message || 'Your data export has been queued. You will receive an email with a download link within 24 hours.');
     } catch {
       toast.error('Failed to export data. Please try again.');
     } finally {
@@ -268,7 +267,8 @@ const Settings = () => {
     const doubleConfirmed = window.confirm('Final warning: Delete your account permanently?');
     if (!doubleConfirmed) return;
     try {
-      await axios.delete(`${process.env.REACT_APP_BACKEND_URL}/api/gdpr/delete-account`, {
+      // Correct endpoint: DELETE /api/user/account (not /api/gdpr/delete-account)
+      await axios.delete(`${process.env.REACT_APP_BACKEND_URL}/api/user/account`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       toast.success('Account deleted. Goodbye!');

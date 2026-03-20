@@ -13,7 +13,8 @@ export const usePostStatusStream = (onUpdate) => {
 
     const connect = async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/api/stream/post-updates`, {
+        // Correct endpoint: /api/stream/posts (matches api/routes/stream.py)
+        const response = await fetch(`${BACKEND_URL}/api/v1/stream/posts`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
