@@ -69,16 +69,15 @@ services:
   # ── FastAPI Backend ──────────────────────────────────────────────────────────
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/Dockerfile.api
     restart: unless-stopped
     ports:
       - "8001:8001"
     environment:
       <<: *common-env
     volumes:
-      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
-      - uploads:/app/uploads
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -112,15 +111,14 @@ services:
   # ── Celery Worker ────────────────────────────────────────────────────────────
   worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=100
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter
     environment:
       <<: *common-env
     volumes:
-      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
-      - uploads:/app/uploads
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -132,14 +130,13 @@ services:
   # ── Celery Beat (Scheduler) ──────────────────────────────────────────────────
   beat:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: docker/Dockerfile.beat
     restart: unless-stopped
-    command: celery -A celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
+    command: celery -A celery_workers.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
     environment:
       <<: *common-env
     volumes:
-      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
       - beat_schedule:/app/beat_schedule
     depends_on:
       redis:

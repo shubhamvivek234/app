@@ -131,9 +131,35 @@ async def login(
         display_name = decoded.get("name")
         user = await _auto_create_user(db, uid, email, display_name)
 
+    # Phase 6.5 — MFA check (TOTP required if mfa_enabled)
+    if user.get("mfa_enabled") and user.get("mfa_secret"):
+        totp_code = request.headers.get("X-TOTP-Code", "").strip()
+        if not totp_code:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"mfa_required": True, "message": "TOTP code required"},
+            )
+        from utils.mfa import verify_totp
+        if not verify_totp(user["mfa_secret"], totp_code):
+            await _record_failed_login(cache_redis, email)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid TOTP code",
+            )
+
     # Successful login — clear attempt counter
     await _clear_login_attempts(cache_redis, email)
     logger.info("Login successful: user=%s email=%s", user["user_id"], email)
+
+    # Phase 6.5 — Account takeover detection (fire-and-forget, non-blocking)
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    import asyncio as _asyncio
+    _asyncio.ensure_future(
+        _check_account_takeover(db, user["user_id"], client_ip)
+    )
+
     return UserResponse(**user)
 
 
@@ -235,6 +261,35 @@ async def _ensure_personal_workspace(db, user_id: str, display_name: str | None)
     return ws_id
 
 
+async def _check_account_takeover(db, user_id: str, client_ip: str) -> None:
+    """
+    Phase 6.5 — Background impossible-travel check.
+    Performs a best-effort IP geo lookup then delegates to account_takeover module.
+    Never raises — errors are logged and silently swallowed so login is unaffected.
+    """
+    try:
+        lat: float | None = None
+        lon: float | None = None
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(
+                    f"http://ip-api.com/json/{client_ip}",
+                    params={"fields": "status,lat,lon"},
+                )
+                geo = resp.json()
+                if geo.get("status") == "success":
+                    lat = float(geo["lat"])
+                    lon = float(geo["lon"])
+        except Exception:
+            pass  # Geo lookup is best-effort — proceed with None lat/lon
+
+        from utils.account_takeover import check_and_flag_takeover
+        await check_and_flag_takeover(db, user_id, lat, lon, client_ip)
+    except Exception as exc:
+        logger.warning("Account takeover check failed (non-fatal): %s", exc)
+
+
 async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str | None) -> dict:
     """Bootstrap user record on first Firebase login."""
     now = datetime.now(timezone.utc)
@@ -260,3 +315,114 @@ async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str
     user_doc.pop("_id", None)
     logger.info("User auto-created: %s firebase_uid=%s", user_id, firebase_uid)
     return user_doc
+
+
+# ── MFA routes (Phase 6.5) ────────────────────────────────────────────────────
+
+@router.post("/auth/mfa/setup")
+@limiter.limit("10/minute")
+async def mfa_setup(
+    request: Request,
+    current_user: CurrentUser,
+    db: DB,
+) -> dict:
+    """
+    Generate a TOTP secret and return the otpauth:// URI for QR code display.
+    The secret is stored as pending_mfa_secret until the user calls /mfa/enable
+    to confirm they can generate valid codes.
+    """
+    from utils.mfa import generate_totp_secret, get_totp_uri, encrypt_totp_secret
+
+    secret = generate_totp_secret()
+    uri = get_totp_uri(secret, current_user["email"])
+    encrypted = encrypt_totp_secret(secret)
+
+    await db.users.update_one(
+        {"user_id": current_user["user_id"]},
+        {"$set": {"pending_mfa_secret": encrypted}},
+    )
+    logger.info("MFA setup initiated: user=%s", current_user["user_id"])
+    # Return plain secret so the user can manually enter it in their authenticator app
+    return {"totp_uri": uri, "secret": secret}
+
+
+@router.post("/auth/mfa/enable")
+@limiter.limit("10/minute")
+async def mfa_enable(
+    request: Request,
+    current_user: CurrentUser,
+    db: DB,
+) -> dict:
+    """
+    Confirm MFA setup by verifying a TOTP code against the pending secret.
+    On success, promotes pending_mfa_secret → mfa_secret and sets mfa_enabled=True.
+    """
+    from utils.mfa import verify_totp
+
+    totp_code = request.headers.get("X-TOTP-Code", "").strip()
+    if not totp_code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="X-TOTP-Code header required",
+        )
+
+    user = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    pending = (user or {}).get("pending_mfa_secret")
+    if not pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No pending MFA setup. Call /auth/mfa/setup first.",
+        )
+
+    if not verify_totp(pending, totp_code):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid TOTP code",
+        )
+
+    await db.users.update_one(
+        {"user_id": current_user["user_id"]},
+        {
+            "$set": {"mfa_enabled": True, "mfa_secret": pending},
+            "$unset": {"pending_mfa_secret": ""},
+        },
+    )
+    logger.info("MFA enabled: user=%s", current_user["user_id"])
+    return {"mfa_enabled": True}
+
+
+@router.post("/auth/mfa/disable")
+@limiter.limit("10/minute")
+async def mfa_disable(
+    request: Request,
+    current_user: CurrentUser,
+    db: DB,
+) -> dict:
+    """
+    Disable MFA. Requires a valid TOTP code to prevent unauthorised disablement.
+    """
+    from utils.mfa import verify_totp
+
+    totp_code = request.headers.get("X-TOTP-Code", "").strip()
+    if not totp_code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="X-TOTP-Code header required to disable MFA",
+        )
+
+    user = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    if not (user or {}).get("mfa_enabled"):
+        return {"mfa_enabled": False}  # Already disabled — idempotent
+
+    if not verify_totp(user["mfa_secret"], totp_code):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid TOTP code",
+        )
+
+    await db.users.update_one(
+        {"user_id": current_user["user_id"]},
+        {"$set": {"mfa_enabled": False}, "$unset": {"mfa_secret": "", "pending_mfa_secret": ""}},
+    )
+    logger.info("MFA disabled: user=%s", current_user["user_id"])
+    return {"mfa_enabled": False}

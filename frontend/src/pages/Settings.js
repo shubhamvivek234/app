@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -208,6 +208,50 @@ const Settings = () => {
 
   // ── GDPR state ──
   const [exportingData, setExportingData] = useState(false);
+
+  // ── Notification preferences ──
+  const NOTIF_EVENTS = [
+    { key: 'post.published',   label: 'Post published',        desc: 'When a post successfully publishes to a platform' },
+    { key: 'post.failed',      label: 'Post failed',           desc: 'When a post fails to publish after retries' },
+    { key: 'post.dlq',         label: 'Post permanently failed', desc: 'When a post is moved to dead letter queue' },
+    { key: 'account.expiring', label: 'Subscription expiring', desc: 'Reminder before your plan expires' },
+    { key: 'billing.failed',   label: 'Billing failed',        desc: 'When a payment attempt fails' },
+    { key: 'analytics.weekly', label: 'Weekly analytics',      desc: 'Weekly performance digest' },
+  ];
+  const [notifPrefs, setNotifPrefs] = useState({});
+  const [savingNotif, setSavingNotif] = useState(false);
+
+  useEffect(() => {
+    axios.get(`${BACKEND_URL}/api/v1/user/notification-preferences`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    }).then(res => setNotifPrefs(res.data.preferences || {})).catch(() => {});
+  }, []);
+
+  const toggleNotifChannel = (eventKey, channel) => {
+    setNotifPrefs(prev => {
+      const current = prev[eventKey] || { channels: [], digest: 'immediate' };
+      const channels = current.channels.includes(channel)
+        ? current.channels.filter(c => c !== channel)
+        : [...current.channels, channel];
+      return { ...prev, [eventKey]: { ...current, channels } };
+    });
+  };
+
+  const handleSaveNotifPrefs = async () => {
+    setSavingNotif(true);
+    try {
+      await axios.patch(
+        `${BACKEND_URL}/api/v1/user/notification-preferences`,
+        { preferences: notifPrefs },
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
+      );
+      toast.success('Notification preferences saved');
+    } catch {
+      toast.error('Failed to save preferences');
+    } finally {
+      setSavingNotif(false);
+    }
+  };
 
   // ── Password form ──
   // Guard: treat as indeterminate (null) while user is still loading,
@@ -484,6 +528,51 @@ const Settings = () => {
             </div>
           </div>
         </Card>
+
+        {/* ── Notification Preferences ── */}
+        <div className="bg-offwhite rounded-xl border border-slate-200 p-6">
+          <h2 className="text-lg font-semibold text-slate-800 mb-1">Notification Preferences</h2>
+          <p className="text-sm text-slate-500 mb-5">Choose how you receive updates for each event type.</p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wide px-2 mb-1">
+              <span>Event</span>
+              <span className="text-center">Email</span>
+              <span className="text-center">In-App</span>
+            </div>
+            {NOTIF_EVENTS.map(({ key, label, desc }) => {
+              const pref = notifPrefs[key] || { channels: [] };
+              return (
+                <div key={key} className="grid grid-cols-3 items-center gap-2 px-2 py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{label}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{desc}</p>
+                  </div>
+                  <div className="flex justify-center">
+                    <button
+                      onClick={() => toggleNotifChannel(key, 'email')}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${pref.channels.includes('email') ? 'bg-purple-500' : 'bg-slate-200'}`}
+                    >
+                      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pref.channels.includes('email') ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                  <div className="flex justify-center">
+                    <button
+                      onClick={() => toggleNotifChannel(key, 'in_app')}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${pref.channels.includes('in_app') ? 'bg-purple-500' : 'bg-slate-200'}`}
+                    >
+                      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pref.channels.includes('in_app') ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <Button onClick={handleSaveNotifPrefs} disabled={savingNotif} size="sm">
+              {savingNotif ? 'Saving…' : 'Save Preferences'}
+            </Button>
+          </div>
+        </div>
 
         {/* Privacy & Data (GDPR) */}
         <div className="bg-offwhite rounded-xl border border-slate-200 p-6">

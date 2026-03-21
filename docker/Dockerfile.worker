@@ -11,6 +11,7 @@ RUN groupadd --gid 1001 appgroup && \
 WORKDIR /app
 COPY --from=builder /root/.local /home/appuser/.local
 COPY celery_workers/ celery_workers/
+COPY media_pipeline/ media_pipeline/
 COPY platform_adapters/ platform_adapters/
 COPY utils/ utils/
 COPY db/ db/
