@@ -242,9 +242,9 @@ const Settings = () => {
     setExportingData(true);
     try {
       // Export is async — backend queues a Celery task and emails the download link.
-      // Correct endpoint: POST /api/user/data-export (not /api/gdpr/export)
+      // Correct endpoint: POST /api/v1/user/data-export
       await axios.post(
-        `${process.env.REACT_APP_BACKEND_URL}/api/user/data-export`,
+        `${process.env.REACT_APP_BACKEND_URL}/api/v1/user/data-export`,
         {},
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
       );
@@ -264,9 +264,9 @@ const Settings = () => {
     const doubleConfirmed = window.confirm('Final warning: Delete your account permanently?');
     if (!doubleConfirmed) return;
     try {
-      // Correct endpoint: DELETE /api/user/account (not /api/gdpr/delete-account)
+      // Correct endpoint: DELETE /api/v1/user/account
       await axios.delete(
-        `${process.env.REACT_APP_BACKEND_URL}/api/user/account`,
+        `${process.env.REACT_APP_BACKEND_URL}/api/v1/user/account`,
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
       );
       toast.success('Account deletion queued. All your data will be removed within 30 days.');
