@@ -231,9 +231,12 @@ async def oauth_callback(
 
 def _build_oauth_url(platform: str, state: str) -> str:
     """Build platform-specific OAuth authorization URL."""
+    if platform == "instagram":
+        from utils.instagram_oauth import get_auth_url as _ig_get_auth_url
+        return _ig_get_auth_url(state)
+
     base_urls = {
         "facebook": "https://www.facebook.com/v18.0/dialog/oauth",
-        "instagram": "https://api.instagram.com/oauth/authorize",
         "youtube": "https://accounts.google.com/o/oauth2/v2/auth",
         "twitter": "https://twitter.com/i/oauth2/authorize",
         "linkedin": "https://www.linkedin.com/oauth/v2/authorization",
@@ -247,6 +250,60 @@ def _build_oauth_url(platform: str, state: str) -> str:
 
 async def _exchange_code_for_tokens(platform: str, code: str) -> dict | None:
     """Exchange authorization code for access/refresh tokens. Platform-specific logic."""
-    # TODO: implement per-platform token exchange using httpx
-    logger.info("Token exchange stub called for platform=%s", platform)
+    if platform == "instagram":
+        return await _exchange_instagram_code(code)
+    # Other platforms: TODO implement per-platform token exchange
+    logger.warning("Token exchange not yet implemented for platform=%s", platform)
     return None
+
+
+async def _exchange_instagram_code(code: str) -> dict | None:
+    """
+    Full Instagram Business Login token exchange:
+    1. Short-lived token via POST /oauth/access_token
+    2. Long-lived token (60 days) via GET /access_token?grant_type=ig_exchange_token
+    3. Fetch user profile (id, username) via GET /me
+    """
+    from datetime import timedelta
+
+    try:
+        from utils.instagram_oauth import (
+            exchange_code_for_token as _ig_exchange,
+            get_long_lived_token as _ig_long_token,
+            get_user_profile as _ig_profile,
+        )
+
+        # Step 1 — short-lived token
+        short_data = await _ig_exchange(code)
+        short_token = short_data.get("access_token")
+        if not short_token:
+            logger.error("Instagram token exchange: no access_token in response %s", short_data)
+            return None
+
+        # Step 2 — long-lived token (60 days)
+        long_data = await _ig_long_token(short_token)
+        access_token = long_data.get("access_token", short_token)
+        expires_in_seconds = long_data.get("expires_in")
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=int(expires_in_seconds))
+            if expires_in_seconds
+            else None
+        )
+
+        # Step 3 — user profile
+        profile = await _ig_profile(access_token)
+        platform_user_id = str(profile.get("id", short_data.get("user_id", "")))
+        username = profile.get("username") or profile.get("name") or platform_user_id
+
+        logger.info("Instagram OAuth connected: user_id=%s username=%s", platform_user_id, username)
+        return {
+            "access_token": access_token,
+            "refresh_token": None,
+            "platform_user_id": platform_user_id,
+            "username": username,
+            "scopes": ["instagram_business_basic", "instagram_business_content_publish"],
+            "expires_at": expires_at,
+        }
+    except Exception as exc:
+        logger.error("Instagram token exchange failed: %s", exc)
+        return None
