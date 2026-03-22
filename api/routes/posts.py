@@ -6,16 +6,20 @@ Phase 7.5:  Pre-publish content intelligence (7.5.3) + audit event logging.
 Phase 10.1: Schedule density warning on post save.
 """
 import hashlib
+import io
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from api.deps import CurrentUser, DB, QueueRedis, require_permission
 from api.limiter import limiter
 from api.models.post import (
+    BulkCreateRequest,
+    BulkCreateResponse,
     CreatePostRequest,
     PostResponse,
     PostStatus,
@@ -179,6 +183,108 @@ async def create_post(
 
     logger.info("Post created: %s user=%s workspace=%s", doc["id"], user_id, workspace_id)
     return _doc_to_response(doc)
+
+
+# ── Bulk Create ──────────────────────────────────────────────────────────────
+
+@router.get("/posts/bulk/template", response_class=StreamingResponse)
+async def download_bulk_template():
+    """Download a CSV template for bulk uploading posts."""
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Text", "Image URL", "Tags", "Posting Time"])
+    writer.writerow(["A post with text...", "", "#sample", "2026-03-24 17:30"])
+    writer.writerow(["A post with an image", "https://example.com/image.jpg", "", ""])
+    output.seek(0)
+    
+    headers = {
+        "Content-Disposition": 'attachment; filename="bulk_upload_template.csv"',
+        "Content-Type": "text/csv"
+    }
+    return StreamingResponse(output, headers=headers)
+
+
+@router.post("/posts/bulk", response_model=BulkCreateResponse, status_code=status.HTTP_201_CREATED,
+             dependencies=[require_permission("post:create")])
+@limiter.limit("50/hour")
+async def bulk_create_posts(
+    request: Request,
+    body: BulkCreateRequest,
+    current_user: CurrentUser,
+    db: DB,
+    queue_redis: QueueRedis,
+) -> BulkCreateResponse:
+    sub_status = current_user.get("subscription_status", "free")
+    if sub_status not in _SUBSCRIPTION_ALLOWED:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Active subscription required to schedule posts",
+        )
+
+    workspace_id = body.workspace_id or current_user.get("default_workspace_id")
+    user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
+    
+    created_count = 0
+    skipped_count = 0
+    errors = []
+
+    for index, post_item in enumerate(body.posts):
+        try:
+            for platform in body.platforms:
+                result = check_content_policy(post_item.content or "", platform)
+                if not result.approved:
+                    raise ValueError(f"Policy violation for {platform}: {result.violations}")
+
+            _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000}
+            for platform in body.platforms:
+                limit = _CHAR_LIMITS.get(platform.lower())
+                if limit and len(post_item.content) > limit:
+                    raise ValueError(f"{platform} character limit is {limit}")
+
+            doc = {
+                "id": str(ObjectId()),
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "content": post_item.content,
+                "platforms": body.platforms,
+                "media_ids": [],
+                "post_type": "image" if post_item.media_urls else "text",
+                "timezone": body.timezone,
+                "scheduled_time": post_item.scheduled_time,
+                "status": PostStatus.SCHEDULED if post_item.scheduled_time else PostStatus.DRAFT,
+                "platform_results": {},
+                "platform_post_urls": {},
+                "status_history": [
+                    {"status": PostStatus.SCHEDULED if post_item.scheduled_time else PostStatus.DRAFT, "timestamp": now, "actor": user_id}
+                ],
+                "thumbnail_urls": post_item.media_urls,
+                "pre_upload_status": None,
+                "queue_job_id": None,
+                "jitter_seconds": None,
+                "version": 1,
+                "dlq_reason": None,
+                "content_hash": hashlib.sha256((post_item.content or "").encode()).hexdigest(),
+                "schedule_warnings": [],
+                "created_at": now,
+                "updated_at": now,
+            }
+            
+            await db.posts.insert_one(doc)
+            created_count += 1
+            
+            await log_audit_event(
+                db, action="post.created.bulk", actor_id=user_id, resource_type="post",
+                resource_id=doc["id"], metadata={"platforms": body.platforms}
+            )
+
+        except Exception as e:
+            skipped_count += 1
+            errors.append({"row": index + 1, "message": str(e)})
+
+    return BulkCreateResponse(created=created_count, skipped=skipped_count, errors=errors)
 
 
 # ── List ─────────────────────────────────────────────────────────────────────
