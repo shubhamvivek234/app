@@ -5,13 +5,10 @@ import { bulkCreatePosts, downloadBulkTemplate } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   FaFileUpload, FaDownload, FaCheckCircle, FaExclamationTriangle,
-  FaTimesCircle, FaTimes, FaCloudUploadAlt, FaTable,
+  FaTimesCircle, FaTimes, FaCloudUploadAlt, FaTable, FaExternalLinkAlt
 } from 'react-icons/fa';
 
-const PLATFORM_VALID = new Set([
-  'instagram', 'twitter', 'facebook', 'linkedin', 'youtube',
-  'tiktok', 'pinterest', 'threads', 'bluesky', 'reddit', 'snapchat',
-]);
+const AVAILABLE_PLATFORMS = ['instagram', 'twitter', 'facebook', 'linkedin', 'youtube', 'tiktok'];
 
 // ── CSV Parser ────────────────────────────────────────────────────────────────
 // Handles quoted fields (commas inside quotes), trims whitespace
@@ -54,19 +51,16 @@ const parseCSV = (text) => {
 // ── Per-row validation (client-side preview only) ─────────────────────────────
 const validateRow = (row) => {
   const errors = [];
-  if (!row.content) errors.push('content required');
-  if (!row.platforms) {
-    errors.push('platforms required');
-  } else {
-    const platforms = row.platforms.split('|').map((p) => p.trim().toLowerCase());
-    const invalid = platforms.filter((p) => p && !PLATFORM_VALID.has(p));
-    if (invalid.length) errors.push(`unknown platform: ${invalid.join(', ')}`);
-  }
-  if (row.scheduled_time) {
-    const ts = row.scheduled_time.trim();
+  if (!row.text) errors.push('Text is required');
+  if (row.posting_time) {
+    const ts = row.posting_time.trim();
     if (ts && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(ts) && !/^\d{4}-\d{2}-\d{2}T/.test(ts)) {
-      errors.push('scheduled_time must be YYYY-MM-DD HH:MM');
+      errors.push('Posting Time must be YYYY-MM-DD HH:MM');
     }
+  }
+  // Optional image URL check
+  if (row.image_url && !row.image_url.startsWith('http')) {
+    errors.push('Image URL must start with http/https');
   }
   return errors;
 };
@@ -95,7 +89,7 @@ const DropZone = ({ onFile, dragging, onDragOver, onDragLeave, onDrop }) => (
     onDragOver={onDragOver}
     onDragLeave={onDragLeave}
     onDrop={onDrop}
-    className={`border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center gap-4 transition-colors ${
+    className={`border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center gap-4 transition-colors mt-6 ${
       dragging ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-offwhite hover:border-gray-300'
     }`}
   >
@@ -104,7 +98,7 @@ const DropZone = ({ onFile, dragging, onDragOver, onDragLeave, onDrop }) => (
       <p className="text-sm font-semibold text-gray-600">
         {dragging ? 'Drop your CSV here' : 'Drag & drop a CSV file here'}
       </p>
-      <p className="text-xs text-gray-400 mt-0.5">Only .csv files accepted</p>
+      <p className="text-xs text-gray-400 mt-0.5">We will parse Text, Image URL, Tags, and Posting Time</p>
     </div>
     <button
       onClick={onFile}
@@ -117,11 +111,11 @@ const DropZone = ({ onFile, dragging, onDragOver, onDragLeave, onDrop }) => (
 
 // ── Preview table ─────────────────────────────────────────────────────────────
 const PreviewTable = ({ rows, rowErrors }) => (
-  <div className="overflow-x-auto rounded-xl border border-gray-200">
+  <div className="overflow-x-auto rounded-xl border border-gray-200 mt-4">
     <table className="w-full text-sm min-w-[700px]">
       <thead>
         <tr className="bg-offwhite border-b border-gray-200">
-          {['#', 'Content', 'Platforms', 'Scheduled Time', 'Post Type', 'Status'].map((h) => (
+          {['#', 'Text', 'Image URL', 'Tags', 'Posting Time', 'Status'].map((h) => (
             <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">
               {h}
             </th>
@@ -139,18 +133,16 @@ const PreviewTable = ({ rows, rowErrors }) => (
             >
               <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">{row._row}</td>
               <td className="px-4 py-2.5 text-xs text-gray-700 max-w-[200px]">
-                <span title={row.content}>{truncate(row.content)}</span>
+                <span title={row.text}>{truncate(row.text)}</span>
               </td>
-              <td className="px-4 py-2.5 text-xs text-gray-600">
-                {row.platforms
-                  ? row.platforms.split('|').map((p) => p.trim()).join(', ')
-                  : <span className="text-red-400 italic">missing</span>}
+              <td className="px-4 py-2.5 text-xs text-gray-600 max-w-[150px]">
+                <span title={row.image_url}>{truncate(row.image_url, 30)}</span>
               </td>
               <td className="px-4 py-2.5 text-xs text-gray-500">
-                {row.scheduled_time || <span className="text-gray-300">draft</span>}
+                {row.tags || <span className="text-gray-300">—</span>}
               </td>
               <td className="px-4 py-2.5 text-xs text-gray-500">
-                {row.post_type || 'text'}
+                {row.posting_time || <span className="text-gray-300">draft</span>}
               </td>
               <td className="px-4 py-2.5">
                 <StatusBadge errors={errs} />
@@ -165,7 +157,7 @@ const PreviewTable = ({ rows, rowErrors }) => (
 
 // ── Result card ───────────────────────────────────────────────────────────────
 const ResultCard = ({ result, onReset }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-6 space-y-4">
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-6 space-y-4 shadow-sm mt-6">
     <div className="flex items-center gap-3">
       {result.created > 0 ? (
         <FaCheckCircle className="text-green-500 text-2xl flex-shrink-0" />
@@ -173,41 +165,42 @@ const ResultCard = ({ result, onReset }) => (
         <FaTimesCircle className="text-red-400 text-2xl flex-shrink-0" />
       )}
       <div>
-        <p className="text-base font-semibold text-gray-900">Import complete</p>
+        <p className="text-base font-semibold text-gray-900">Bulk Import Complete</p>
         <p className="text-sm text-gray-500 mt-0.5">
           {result.created > 0
-            ? `${result.created} post${result.created !== 1 ? 's' : ''} created successfully`
-            : 'No posts were created'}
+            ? `${result.created} post${result.created !== 1 ? 's' : ''} successfully queued for automation.`
+            : 'No posts were imported.'}
           {result.skipped > 0 && ` · ${result.skipped} row${result.skipped !== 1 ? 's' : ''} skipped`}
         </p>
       </div>
     </div>
 
     {result.errors?.length > 0 && (
-      <div className="bg-red-50 rounded-lg p-3 space-y-1">
-        <p className="text-xs font-semibold text-red-600 mb-2">Row errors:</p>
+      <div className="bg-red-50 rounded-lg p-4 space-y-1.5 border border-red-100">
+        <p className="text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide">Validation Issues & Errors:</p>
         {result.errors.map((e, i) => (
-          <p key={i} className="text-xs text-red-600">
-            <span className="font-mono font-semibold">Row {e.row}:</span> {e.message}
+          <p key={i} className="text-xs text-red-600 flex items-start">
+            <span className="font-mono font-bold mr-2 w-12 shrink-0">Row {e.row}:</span> 
+            <span>{e.message}</span>
           </p>
         ))}
       </div>
     )}
 
-    <div className="flex items-center gap-3 pt-1">
+    <div className="flex items-center gap-3 pt-2">
       {result.created > 0 && (
         <Link
           to="/content"
-          className="px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+          className="px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
         >
           View in Content Library
         </Link>
       )}
       <button
         onClick={onReset}
-        className="px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg transition-colors"
+        className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-800 border border-gray-200 bg-white hover:bg-gray-50 rounded-lg transition-colors shadow-sm"
       >
-        Upload Another File
+        Upload Another CSV
       </button>
     </div>
   </div>
@@ -221,13 +214,20 @@ const BulkUpload = () => {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [selectedPlatforms, setSelectedPlatforms] = useState([]);
 
   const fileInputRef = useRef(null);
+
+  const togglePlatform = (platform) => {
+    setSelectedPlatforms(prev => 
+      prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform]
+    );
+  };
 
   const processFile = useCallback((file) => {
     if (!file) return;
     if (!file.name.endsWith('.csv')) {
-      toast.error('Please upload a .csv file');
+      toast.error('Please upload a .csv file format');
       return;
     }
     setFileName(file.name);
@@ -238,13 +238,13 @@ const BulkUpload = () => {
       try {
         const parsed = parseCSV(e.target.result);
         if (!parsed.length) {
-          toast.error('CSV is empty or has no data rows');
+          toast.error('CSV appears to be empty or has no data rows');
           return;
         }
         setRows(parsed);
         setRowErrors(parsed.map(validateRow));
       } catch {
-        toast.error('Failed to parse CSV — check the file format');
+        toast.error('Failed to parse CSV file. Ensure it accurately matches the template format.');
       }
     };
     reader.readAsText(file);
@@ -267,16 +267,48 @@ const BulkUpload = () => {
   const errorCount = rows.length - validRows.length;
 
   const handleImport = async () => {
+    if (!selectedPlatforms.length) {
+      toast.error('Please select at least one platform to publish to.');
+      return;
+    }
     if (!validRows.length) return;
+    
     setImporting(true);
     try {
-      // Strip internal _row key before sending
-      const payload = validRows.map(({ _row, ...rest }) => rest);
+      // Map strictly to backend JSON expectation
+      const postsForBackend = validRows.map(row => {
+        let content = row.text || '';
+        if (row.tags) {
+          const formattedTags = row.tags
+            .split(',')
+            .map(t => t.trim())
+            .filter(t => t.length > 0)
+            .map(t => t.startsWith('#') ? t : `#${t}`)
+            .join(' ');
+          
+          if (formattedTags) {
+            content = `${content}\n\n${formattedTags}`;
+          }
+        }
+        const scheduledTime = row.posting_time ? (row.posting_time.includes('T') ? row.posting_time : row.posting_time.replace(' ', 'T') + ':00Z') : null;
+
+        return {
+          content,
+          scheduled_time: scheduledTime,
+          media_urls: row.image_url ? [row.image_url] : []
+        };
+      });
+
+      const payload = {
+        platforms: selectedPlatforms,
+        posts: postsForBackend
+      };
+
       const res = await bulkCreatePosts(payload);
       setResult(res);
-      toast.success(`${res.created} post${res.created !== 1 ? 's' : ''} imported`);
+      toast.success(`${res.created} posts successfully queued via Bulk Upload`);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Import failed');
+      toast.error(err?.response?.data?.detail || 'CSV Data Transmission failed - Check structure');
     } finally {
       setImporting(false);
     }
@@ -291,26 +323,80 @@ const BulkUpload = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+      <div className="max-w-4xl mx-auto pb-12">
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
           <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
               <FaFileUpload className="text-green-500" />
-              Bulk Upload
+              Bulk Upload via CSV
             </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Import multiple posts at once from a CSV file.
+            <p className="text-sm text-gray-500 mt-1">
+              Easily import hundreds of posts at once. Ensure your file matches our native mapping template.
             </p>
           </div>
-          <button
-            onClick={downloadBulkTemplate}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-          >
-            <FaDownload className="text-xs" />
-            Download Template
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <a 
+              href="https://support.buffer.com/article/926-how-to-upload-posts-in-bulk-to-buffer" 
+              target="_blank" 
+              rel="noreferrer"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            >
+              Guide to Bulk Uploading <FaExternalLinkAlt className="text-[10px]" />
+            </a>
+            <button
+              onClick={async () => {
+                try {
+                  const blob = await downloadBulkTemplate();
+                  const url = window.URL.createObjectURL(new Blob([blob]));
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.setAttribute('download', 'bulk_upload_template.csv');
+                  document.body.appendChild(link);
+                  link.click();
+                  link.remove();
+                } catch (e) {
+                  toast.error("Failed to download CSV template");
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 rounded-lg transition-colors shadow-sm"
+            >
+              <FaDownload className="text-xs" />
+              Download Template
+            </button>
+          </div>
         </div>
+
+        {/* Global Platform Selection (Common settings) */}
+        {!result && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Bulk Schedule Settings (Common for all uploads)</h3>
+            <p className="text-xs text-gray-500 mb-4">Select the platforms that all rows within your uploaded CSV will be synced to.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {AVAILABLE_PLATFORMS.map(platform => {
+                const isSelected = selectedPlatforms.includes(platform);
+                return (
+                  <button
+                    key={platform}
+                    onClick={() => togglePlatform(platform)}
+                    className={`px-4 py-2 rounded-full text-xs font-semibold capitalize transition-all border ${
+                      isSelected 
+                        ? 'bg-green-500 text-white border-green-500 shadow-sm' 
+                        : 'bg-offwhite text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                    }`}
+                  >
+                    {platform}
+                  </button>
+                )
+              })}
+            </div>
+            {selectedPlatforms.length === 0 && (
+              <p className="text-xs text-red-500 mt-3 flex items-center gap-1 font-medium">
+                <FaExclamationTriangle /> You must select at least one platform before importing.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Hidden file input */}
         <input
@@ -321,14 +407,10 @@ const BulkUpload = () => {
           onChange={handleFileInput}
         />
 
-        {/* Result card */}
-        {result && (
-          <div className="mb-6">
-            <ResultCard result={result} onReset={handleReset} />
-          </div>
-        )}
+        {/* Import Results Output */}
+        {result && <ResultCard result={result} onReset={handleReset} />}
 
-        {/* Drop zone — shown when no file loaded or after reset */}
+        {/* Drop zone */}
         {!result && rows.length === 0 && (
           <DropZone
             dragging={dragging}
@@ -339,68 +421,65 @@ const BulkUpload = () => {
           />
         )}
 
-        {/* Preview — shown when rows are parsed */}
+        {/* Parse Preview Container */}
         {!result && rows.length > 0 && (
-          <div className="space-y-4">
+          <div className="mt-8 space-y-4">
             {/* File info bar */}
-            <div className="flex items-center justify-between bg-offwhite rounded-xl border border-gray-200 px-4 py-3">
+            <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-5 py-4 shadow-sm">
               <div className="flex items-center gap-3">
-                <FaTable className="text-green-500 text-sm" />
+                <FaTable className="text-green-500 text-lg" />
                 <div>
                   <p className="text-sm font-semibold text-gray-800">{fileName}</p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-500 mt-0.5">
                     {rows.length} row{rows.length !== 1 ? 's' : ''} parsed ·{' '}
-                    <span className="text-green-600 font-medium">{validRows.length} valid</span>
+                    <span className="text-green-600 font-semibold">{validRows.length} valid</span>
                     {errorCount > 0 && (
-                      <span className="text-red-500 font-medium"> · {errorCount} error{errorCount !== 1 ? 's' : ''}</span>
+                      <span className="text-red-500 font-semibold"> · {errorCount} error{errorCount !== 1 ? 's' : ''}</span>
                     )}
                   </p>
                 </div>
               </div>
               <button
                 onClick={handleReset}
-                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-                title="Clear"
+                className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors border border-transparent hover:border-red-100"
+                title="Discard CSV"
               >
                 <FaTimes />
               </button>
             </div>
 
-            {/* Preview table */}
             <PreviewTable rows={rows} rowErrors={rowErrors} />
 
-            {/* CSV column guide */}
-            <div className="bg-blue-50 rounded-xl border border-blue-100 px-4 py-3 text-xs text-blue-700">
-              <span className="font-semibold">Column guide:</span>{' '}
-              <span className="font-mono">content</span> (required) ·{' '}
-              <span className="font-mono">platforms</span> (pipe-separated: instagram|twitter) ·{' '}
-              <span className="font-mono">scheduled_time</span> (YYYY-MM-DD HH:MM UTC, blank = draft) ·{' '}
-              <span className="font-mono">post_type</span> (text/image/video) ·{' '}
-              <span className="font-mono">media_urls</span> (pipe-separated) ·{' '}
-              <span className="font-mono">instagram_first_comment</span>
+            <div className="bg-blue-50 rounded-xl border border-blue-100 px-5 py-3 text-xs text-blue-700 leading-relaxed shadow-sm">
+              <span className="font-semibold block mb-1">Row Column Verification:</span>
+              <span className="font-mono bg-white px-1 py-0.5 rounded border border-blue-200">Text</span> (Required content text) ·{' '}
+              <span className="font-mono bg-white px-1 py-0.5 rounded border border-blue-200">Image URL</span> (Optional direct web image link) ·{' '}
+              <span className="font-mono bg-white px-1 py-0.5 rounded border border-blue-200">Tags</span> (Optional comma separated keywords) ·{' '}
+              <span className="font-mono bg-white px-1 py-0.5 rounded border border-blue-200">Posting Time</span> (YYYY-MM-DD HH:MM format)
             </div>
 
-            {/* Import + clear buttons */}
-            <div className="flex items-center gap-3">
+            {/* Bottom Actions */}
+            <div className="flex items-center gap-4 mt-6 p-5 bg-white rounded-xl border border-gray-200 shadow-sm">
               <button
                 onClick={handleImport}
-                disabled={!validRows.length || importing}
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50"
+                disabled={!validRows.length || importing || selectedPlatforms.length === 0}
+                className="flex items-center justify-center gap-2 px-6 py-3 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow"
               >
-                <FaFileUpload className="text-xs" />
+                <FaFileUpload className="text-sm" />
                 {importing
-                  ? 'Importing…'
-                  : `Import ${validRows.length} Valid Post${validRows.length !== 1 ? 's' : ''}`}
+                  ? 'Transmitting to Server...'
+                  : `Schedule ${validRows.length} Mapped Post${validRows.length !== 1 ? 's' : ''}`}
               </button>
               <button
                 onClick={handleReset}
-                className="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-lg transition-colors"
+                className="px-6 py-3 text-sm font-semibold text-gray-500 hover:text-gray-800 rounded-xl transition-colors bg-offwhite hover:bg-gray-100 border border-transparent hover:border-gray-200"
               >
-                Clear
+                Cancel Process
               </button>
+              
               {errorCount > 0 && (
-                <p className="text-xs text-red-500 ml-auto">
-                  {errorCount} row{errorCount !== 1 ? 's' : ''} with errors will be skipped
+                <p className="text-xs font-semibold text-red-500 ml-auto flex items-center gap-1.5 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100">
+                  <FaExclamationTriangle /> {errorCount} unresolvable row{errorCount !== 1 ? 's' : ''} will be ignored
                 </p>
               )}
             </div>

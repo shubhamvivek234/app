@@ -452,9 +452,9 @@ export const resubmitPost = async (postId, data) => {
 };
 
 // ── Bulk Upload ──
-export const bulkCreatePosts = async (formData) => {
-  const response = await axios.post(`${API}/posts/bulk`, formData, {
-    headers: { ...getAuthHeaders(), 'Content-Type': 'multipart/form-data' },
+export const bulkCreatePosts = async (payload) => {
+  const response = await axios.post(`${API}/posts/bulk`, payload, {
+    headers: getAuthHeaders(),
   });
   return response.data;
 };

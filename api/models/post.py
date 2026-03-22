@@ -90,6 +90,36 @@ class CreatePostRequest(BaseModel):
         return v
 
 
+class BulkPostItem(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    content: str = Field(..., min_length=1, max_length=10000)
+    scheduled_time: datetime | None = None
+    media_urls: list[str] = Field(default_factory=list, max_length=10)
+
+
+class BulkCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    platforms: list[str] = Field(..., min_length=1, max_length=10)
+    posts: list[BulkPostItem] = Field(..., min_length=1, max_length=100)
+    workspace_id: str | None = Field(None, max_length=100)
+    timezone: str = Field(default="UTC", max_length=100)
+
+    @field_validator("platforms")
+    @classmethod
+    def validate_platforms(cls, v: list[str]) -> list[str]:
+        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok"}
+        invalid = set(v) - allowed
+        if invalid:
+            raise ValueError(f"Unsupported platforms: {invalid}")
+        return [p.lower() for p in v]
+
+
+class BulkCreateResponse(BaseModel):
+    created: int
+    skipped: int
+    errors: list[dict]
+
+
 class UpdatePostRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
