@@ -633,6 +633,24 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
         return_document=True,
         projection={"user_id": 1},
     )
+
+    # Write to dead_letter_queue so admin GET /admin/dlq can surface these items
+    import uuid
+    dlq_doc: dict = {
+        "task_id": str(uuid.uuid4()),
+        "post_id": post_id,
+        "user_id": post.get("user_id", "") if post else "",
+        "reason": reason,
+        "platform": platform,
+        "failed_at": datetime.now(timezone.utc),
+        "retry_count": 0,
+        "payload": {"task_name": "celery_workers.tasks.publish.publish_post", "args": [post_id]},
+    }
+    try:
+        await db.dead_letter_queue.insert_one(dlq_doc)
+    except Exception as dlq_err:
+        logger.error("Failed to write DLQ record for post %s: %s", post_id, dlq_err)
+
     # 18.8: DLQ notification — "permanently failed — [Reschedule]"
     if post and platform:
         user_id = post.get("user_id", "")

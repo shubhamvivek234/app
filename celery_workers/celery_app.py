@@ -79,8 +79,8 @@ def create_celery_app() -> Celery:
         # Result expiry
         result_expires=3600,
 
-        # Memory leak prevention — restart worker after 100 tasks
-        worker_max_tasks_per_child=100,
+        # Memory leak prevention — configurable via WORKER_MAX_TASKS_PER_CHILD (default: 100)
+        worker_max_tasks_per_child=int(os.environ.get("WORKER_MAX_TASKS_PER_CHILD", "100")),
 
         # Timezone
         timezone="UTC",
