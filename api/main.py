@@ -40,6 +40,17 @@ from api.routes.payments import router as payments_router
 from api.routes.ai import router as ai_router
 from api.routes.bulk_upload import router as bulk_upload_router
 from api.routes.timeslots import router as timeslots_router
+from api.routes.notifications import router as notifications_router
+from api.routes.hashtags import router as hashtags_router
+from api.routes.stats import router as stats_router
+from api.routes.analytics import router as analytics_router
+from api.routes.api_keys import router as api_keys_router
+from api.routes.team import router as team_router
+from api.routes.recurring import router as recurring_router
+from api.routes.media_assets import router as media_assets_router
+from api.routes.calendar_notes import router as calendar_notes_router
+from api.routes.inbox import router as inbox_router
+from api.routes.support import router as support_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -166,6 +177,17 @@ def create_app() -> FastAPI:
     app.include_router(ai_router, prefix="/api/v1")            # AI content generation
     app.include_router(bulk_upload_router, prefix="/api/v1")   # bulk CSV upload
     app.include_router(timeslots_router, prefix="/api/v1")     # timeslots CRUD
+    app.include_router(notifications_router, prefix="/api/v1") # notifications
+    app.include_router(hashtags_router, prefix="/api/v1")      # hashtag groups
+    app.include_router(stats_router, prefix="/api/v1")         # dashboard stats
+    app.include_router(analytics_router, prefix="/api/v1")     # analytics
+    app.include_router(api_keys_router, prefix="/api/v1")      # API key management
+    app.include_router(team_router, prefix="/api/v1")          # workspace team
+    app.include_router(recurring_router, prefix="/api/v1")     # recurring rules
+    app.include_router(media_assets_router, prefix="/api/v1")  # media library
+    app.include_router(calendar_notes_router, prefix="/api/v1") # calendar notes
+    app.include_router(inbox_router, prefix="/api/v1")         # inbox
+    app.include_router(support_router, prefix="/api/v1")       # support
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(

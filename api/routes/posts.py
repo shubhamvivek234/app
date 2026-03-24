@@ -466,3 +466,165 @@ async def delete_post(
         resource_id=post_id,
         metadata={},
     )
+
+
+# ── Failed / DLQ ──────────────────────────────────────────────────────────────
+
+@router.get("/posts/failed")
+async def list_failed_posts(current_user: CurrentUser, db: DB):
+    """Return posts that failed publishing (DLQ)."""
+    workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+    cursor = db.posts.find(
+        {"workspace_id": workspace_id, "status": "failed", "deleted_at": {"$exists": False}},
+        {"_id": 0},
+    ).sort("updated_at", -1).limit(100)
+    docs = await cursor.to_list(None)
+    return [_doc_to_response(d) for d in docs]
+
+
+@router.post("/posts/{post_id}/retry")
+async def retry_failed_post(
+    post_id: str,
+    current_user: CurrentUser,
+    db: DB,
+    platform: str | None = Query(None),
+):
+    """Re-queue a failed post for publishing."""
+    user_id = current_user["user_id"]
+    post = await db.posts.find_one(
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"_id": 0, "status": 1, "version": 1, "platforms": 1},
+    )
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.get("status") not in ("failed", "dlq"):
+        raise HTTPException(status_code=409, detail="Only failed posts can be retried")
+
+    now = datetime.now(timezone.utc)
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$set": {"status": PostStatus.SCHEDULED, "dlq_reason": None, "updated_at": now},
+         "$inc": {"version": 1}},
+    )
+
+    try:
+        from celery_workers.tasks.publish import publish_post
+        new_version = post.get("version", 1) + 1
+        publish_post.apply_async(
+            kwargs={"post_id": post_id, "version": new_version},
+            queue="default",
+        )
+    except Exception as exc:
+        logger.warning("Failed to enqueue retry for post %s: %s", post_id, exc)
+
+    return {"retried": True, "post_id": post_id}
+
+
+# ── Approval workflow ─────────────────────────────────────────────────────────
+
+@router.post("/posts/{post_id}/approve")
+async def approve_post(post_id: str, current_user: CurrentUser, db: DB):
+    """Approve a post in review status → scheduled."""
+    user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
+    result = await db.posts.find_one_and_update(
+        {"id": post_id, "status": "pending_approval", "deleted_at": {"$exists": False}},
+        {"$set": {"status": PostStatus.SCHEDULED, "approved_by": user_id,
+                  "approved_at": now, "updated_at": now},
+         "$push": {"status_history": {"status": PostStatus.SCHEDULED,
+                                      "timestamp": now, "actor": user_id}}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Post not found or not pending approval")
+    return {"approved": True, "post_id": post_id}
+
+
+@router.post("/posts/{post_id}/reject")
+async def reject_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
+    """Reject a post in review — moves to draft with rejection note."""
+    user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
+    result = await db.posts.find_one_and_update(
+        {"id": post_id, "status": "pending_approval", "deleted_at": {"$exists": False}},
+        {"$set": {"status": PostStatus.DRAFT, "rejected_by": user_id,
+                  "rejected_at": now, "rejection_reason": body.get("reason", ""),
+                  "updated_at": now},
+         "$push": {"status_history": {"status": PostStatus.DRAFT,
+                                      "timestamp": now, "actor": user_id,
+                                      "reason": body.get("reason", "")}}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Post not found or not pending approval")
+    return {"rejected": True, "post_id": post_id}
+
+
+@router.post("/posts/{post_id}/resubmit")
+async def resubmit_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
+    """Resubmit a rejected post for approval."""
+    user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
+    updates: dict = {"status": "pending_approval", "updated_at": now}
+    if body.get("content"):
+        updates["content"] = body["content"]
+    result = await db.posts.find_one_and_update(
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"$set": updates,
+         "$push": {"status_history": {"status": "pending_approval",
+                                      "timestamp": now, "actor": user_id}}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"resubmitted": True, "post_id": post_id}
+
+
+@router.post("/posts/{post_id}/submit-review")
+async def submit_post_for_review(post_id: str, body: dict, current_user: CurrentUser, db: DB):
+    return await resubmit_post(post_id, body, current_user, db)
+
+
+# ── Duplicate ─────────────────────────────────────────────────────────────────
+
+@router.post("/posts/{post_id}/duplicate")
+async def duplicate_post(post_id: str, current_user: CurrentUser, db: DB):
+    """Create a draft copy of an existing post."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    original = await db.posts.find_one(
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"_id": 0},
+    )
+    if not original:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    now = datetime.now(timezone.utc)
+    new_id = str(ObjectId())
+    copy = {**original, "id": new_id, "status": PostStatus.DRAFT,
+            "scheduled_time": None, "created_at": now, "updated_at": now,
+            "platform_results": {}, "queue_job_id": None, "version": 1,
+            "dlq_reason": None, "status_history": [
+                {"status": PostStatus.DRAFT, "timestamp": now, "actor": user_id}
+            ]}
+    copy.pop("_id", None)
+    await db.posts.insert_one(copy)
+    copy.pop("_id", None)
+    return _doc_to_response(copy)
+
+
+# ── Onboarding complete ───────────────────────────────────────────────────────
+
+@router.post("/onboarding/complete")
+async def complete_onboarding(body: dict, current_user: CurrentUser, db: DB):
+    """Mark user onboarding as completed."""
+    user_id = current_user["user_id"]
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"onboarding_completed": True, "updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"completed": True}
