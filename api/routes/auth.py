@@ -80,6 +80,12 @@ async def get_me(
         )
         user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
 
+    # Coerce legacy DB null values so Pydantic validation doesn't crash on log-in
+    if user.get("plan") is None:
+        user["plan"] = "starter"
+    if user.get("subscription_status") is None:
+        user["subscription_status"] = "free"
+
     return UserResponse(**user)
 
 
@@ -257,6 +263,12 @@ async def _ensure_personal_workspace(db, user_id: str, display_name: str | None)
         "created_at": now,
     }
     await db.workspaces.insert_one(ws_doc)
+    await db.workspace_members.insert_one({
+        "workspace_id": ws_id,
+        "user_id": user_id,
+        "role": "owner",
+        "joined_at": now,
+    })
     logger.info("Personal workspace created: %s user=%s", ws_id, user_id)
     return ws_id
 
@@ -307,6 +319,7 @@ async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str
         "subscription_grace_period_end": None,
         "timezone": "UTC",
         "mfa_enabled": False,
+        "onboarding_completed": False,
         "workspace_ids": [],
         "default_workspace_id": None,
         "created_at": now,

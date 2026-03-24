@@ -99,7 +99,7 @@ async def create_post(
     if body.content:
         content_hash = hashlib.sha256(body.content.encode()).hexdigest()
         recent = await db.posts.count_documents({
-            "user_id": user_id,
+            "workspace_id": workspace_id,
             "content_hash": content_hash,
             "status": "published",
         })

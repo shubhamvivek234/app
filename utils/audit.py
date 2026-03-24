@@ -5,8 +5,10 @@ Every significant action (post created/updated/deleted, account connected,
 member invited, billing changed) is recorded here.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from db.audit_events import AUDIT_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ async def log_audit_event(
     if action not in _VALID_ACTIONS:
         logger.warning("Unknown audit action: %s — recording anyway", action)
 
+    now = datetime.now(timezone.utc)
     event = {
         "action": action,
         "actor_id": actor_id,
@@ -60,7 +63,8 @@ async def log_audit_event(
         "resource_type": resource_type,
         "resource_id": resource_id,
         "details": details or {},
-        "created_at": datetime.now(timezone.utc),
+        "created_at": now,
+        "expires_at": now + timedelta(seconds=AUDIT_TTL_SECONDS),
     }
 
     try:

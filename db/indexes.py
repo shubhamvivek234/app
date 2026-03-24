@@ -15,9 +15,10 @@ async def _safe_create_index(collection, keys, **kwargs) -> None:
     try:
         await collection.create_index(keys, **kwargs)
     except Exception as exc:
-        # IndexOptionsConflict (85) — index exists with different name, safe to ignore
-        if "already exists" in str(exc) or getattr(exc, "code", None) in (85, 86):
-            logger.debug("Index already exists on %s, skipping: %s", collection.name, exc)
+        # IndexOptionsConflict (85/86) — index exists with different name, safe to ignore
+        # DuplicateKeyError (11000) - unique index creation failed due to existing duplicates, ignore for local/dev
+        if "already exists" in str(exc) or getattr(exc, "code", None) in (85, 86, 11000):
+            logger.warning("Index creation skipped on %s (code %s): %s", collection.name, getattr(exc, "code", None), exc)
         else:
             raise
 
@@ -59,17 +60,17 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     # user_sessions — TTL 30 days
     await _safe_create_index(db.user_sessions, [("created_at", 1)], expireAfterSeconds=2592000)
 
-    # audit_events
-    await _safe_create_index(db.audit_events, [("workspace_id", 1), ("timestamp", -1)])
-    await _safe_create_index(db.audit_events, [("entity_id", 1), ("timestamp", -1)])
-    await _safe_create_index(db.audit_events, [("timestamp", 1)], expireAfterSeconds=7776000)  # 90-day TTL
+    # audit_events indexes are managed exclusively by db/audit_events.py:ensure_indexes()
+    # which is called separately from api/main.py lifespan. Do not add audit_events
+    # indexes here — the authoritative field is created_at/expires_at, not timestamp.
 
     # media_assets
     await _safe_create_index(db.media_assets, [("user_id", 1), ("status", 1)])
     await _safe_create_index(db.media_assets, [("post_id", 1)])
 
-    # webhook_events (dedup)
-    await _safe_create_index(db.webhook_events, [("event_id", 1)], unique=True)
+    # webhook_events (dedup) — compound index on (platform, event_id) because different
+    # platforms can share the same event_id value. sparse=True skips docs with null event_id.
+    await _safe_create_index(db.webhook_events, [("platform", 1), ("event_id", 1)], unique=True, sparse=True)
     await _safe_create_index(db.webhook_events, [("created_at", 1)], expireAfterSeconds=604800)  # 7-day TTL
 
     # workspaces / workspace_members
