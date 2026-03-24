@@ -8,9 +8,12 @@ lsof -ti:9500 | xargs kill -9 2>/dev/null || true
 pkill -f "python3 -m uvicorn server:app" 2>/dev/null || true
 pkill -f "react-scripts start" 2>/dev/null || true
 
-source venv/bin/activate
-export MONGO_URL="mongodb://localhost:27017" # mocked anyway
+source backend/venv/bin/activate
+export MONGODB_URI="mongodb://localhost:27017"
 export DB_NAME="social_scheduler"
+export REDIS_URL="redis://localhost:6379/0"
+export REDIS_QUEUE_URL="redis://localhost:6379/0"
+export REDIS_CACHE_URL="redis://localhost:6379/1"
 
 # Start Backend
 echo "Starting Backend on port 8001..."

@@ -6,7 +6,7 @@ Phase 2.4.4 — NTP skew check on startup.
 import logging
 import ntplib
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 from celery.signals import beat_init
@@ -88,7 +88,7 @@ async def _async_scan_and_enqueue() -> dict:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     # 10-second buffer compensates for minor clock drift (Phase 2.4.4)
     window_end = now + timedelta(seconds=10)
     # 35-second look-ahead for 30s beat interval with buffer
