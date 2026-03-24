@@ -34,6 +34,7 @@ class UserResponse(BaseModel):
     timezone: str = "UTC"
     created_at: datetime
     mfa_enabled: bool = False
+    role: str = "user"
     onboarding_completed: bool = False
 
 

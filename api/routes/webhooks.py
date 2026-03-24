@@ -97,8 +97,18 @@ def _verify_signature(platform: str, body: bytes, headers) -> None:
         _verify_hub_signature_256(body, headers)
     elif platform == "youtube":
         _verify_youtube_auth(headers)
+    elif platform == "twitter":
+        _verify_twitter_signature(body, headers)
+    elif platform == "linkedin":
+        _verify_linkedin_signature(body, headers)
+    elif platform == "tiktok":
+        _verify_tiktok_signature(body, headers)
     else:
-        logger.warning("No signature verification configured for platform: %s", platform)
+        # Fail closed — do not process payloads from unknown platforms
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported webhook platform: {platform}",
+        )
 
 
 def _verify_hub_signature_256(body: bytes, headers) -> None:
@@ -128,6 +138,67 @@ def _verify_hub_signature_256(body: bytes, headers) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook signature",
         )
+
+
+def _verify_twitter_signature(body: bytes, headers) -> None:
+    """Twitter CRC challenge uses X-Twitter-Webhooks-Signature: sha256=<hmac>."""
+    sig_header = headers.get("x-twitter-webhooks-signature", "")
+    secret = os.environ.get("TWITTER_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TWITTER_WEBHOOK_SECRET not configured",
+        )
+    if not sig_header.startswith("sha256="):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed X-Twitter-Webhooks-Signature",
+        )
+    expected = "sha256=" + hmac.new(
+        secret.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, sig_header):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Twitter webhook signature")
+
+
+def _verify_linkedin_signature(body: bytes, headers) -> None:
+    """LinkedIn uses X-Hub-Signature: sha256=<hmac>."""
+    sig_header = headers.get("x-hub-signature", "")
+    secret = os.environ.get("LINKEDIN_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LINKEDIN_WEBHOOK_SECRET not configured",
+        )
+    if not sig_header.startswith("sha256="):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed X-Hub-Signature",
+        )
+    expected = "sha256=" + hmac.new(
+        secret.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, sig_header):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid LinkedIn webhook signature")
+
+
+def _verify_tiktok_signature(body: bytes, headers) -> None:
+    """TikTok uses X-TikTok-Signature: <hmac> (no prefix)."""
+    sig_header = headers.get("x-tiktok-signature", "")
+    secret = os.environ.get("TIKTOK_WEBHOOK_SECRET", "")
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TIKTOK_WEBHOOK_SECRET not configured",
+        )
+    if not sig_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-TikTok-Signature header",
+        )
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig_header):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid TikTok webhook signature")
 
 
 def _verify_youtube_auth(headers) -> None:

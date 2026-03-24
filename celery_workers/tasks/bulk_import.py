@@ -100,6 +100,11 @@ async def _async_process(
             post_type = (row.get("post_type") or "text").strip().lower()
             media_url = (row.get("media_url") or "").strip() or None
 
+            # Gap 5.4: SSRF guard — reject internal/private URLs in CSV
+            if media_url:
+                from utils.ssrf_guard import assert_safe_url
+                assert_safe_url(media_url)
+
             # Validate platform compatibility + content policy
             for platform in platforms:
                 validate_platform_content_type(platform, post_type)

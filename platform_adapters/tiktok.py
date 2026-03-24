@@ -9,6 +9,8 @@ import os
 
 import httpx
 
+from utils.ssrf_guard import assert_safe_url
+
 from platform_adapters.base import (
     PlatformAdapter,
     PlatformHTTPError,
@@ -72,6 +74,7 @@ class TikTokAdapter(PlatformAdapter):
             "Content-Type": "application/json; charset=UTF-8",
         }
 
+        assert_safe_url(media_url)  # Gap 5.4: SSRF guard before any network fetch
         async with httpx.AsyncClient(timeout=60) as client:
             # Step 1: Fetch video to determine size
             file_resp = await client.get(media_url)

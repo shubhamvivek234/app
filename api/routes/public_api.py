@@ -20,7 +20,13 @@ router = APIRouter(prefix="/public", tags=["public-api"])
 # ── API key auth ──────────────────────────────────────────────────────────────
 
 async def _resolve_workspace(x_api_key: str | None, db) -> dict:
-    """Look up workspace by hashed API key. Returns workspace doc."""
+    """
+    Look up workspace by hashed API key. Returns workspace doc.
+
+    Checks two systems in order:
+    1. api_keys collection (supports multiple keys, scopes, revocation)
+    2. workspaces.api_key_hash (legacy single-key per workspace)
+    """
     if not x_api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -28,15 +34,37 @@ async def _resolve_workspace(x_api_key: str | None, db) -> dict:
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    # Keys stored as SHA-256 hash — never plaintext in DB
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+
+    # Primary: check api_keys collection (multi-key, revocable)
+    api_key_doc = await db.api_keys.find_one({
+        "key_hash": key_hash,
+        "revoked": {"$ne": True},
+    })
+    if api_key_doc:
+        workspace_id = api_key_doc.get("workspace_id")
+        workspace = await db.workspaces.find_one({"_id": workspace_id}) or \
+                    await db.workspaces.find_one({"workspace_id": workspace_id})
+        if workspace:
+            # Update last_used_at (best-effort, non-blocking)
+            try:
+                await db.api_keys.update_one(
+                    {"_id": api_key_doc["_id"]},
+                    {"$set": {"last_used_at": datetime.now(timezone.utc)}},
+                )
+            except Exception:
+                pass
+            return workspace
+
+    # Fallback: legacy single workspace api_key_hash
     workspace = await db.workspaces.find_one({"api_key_hash": key_hash, "active": True})
-    if not workspace:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or revoked API key",
-        )
-    return workspace
+    if workspace:
+        return workspace
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or revoked API key",
+    )
 
 
 # ── Response models ───────────────────────────────────────────────────────────

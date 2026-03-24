@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 
+from utils.ssrf_guard import assert_safe_url
+
 from platform_adapters.base import (
     PlatformAdapter,
     PlatformHTTPError,
@@ -94,6 +96,7 @@ class YouTubeAdapter(PlatformAdapter):
             # EC11 — Chunked resumable upload: stream from media_url, upload in CHUNK_SIZE chunks.
 
             # Step 1: Determine total file size via HEAD request.
+            assert_safe_url(media_url)  # Gap 5.4: SSRF guard
             head_resp = await client.head(media_url, follow_redirects=True)
             if head_resp.status_code != 200:
                 raise PlatformHTTPError(head_resp.status_code, "Could not HEAD media file")
