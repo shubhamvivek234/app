@@ -26,10 +26,14 @@ import {
   FaInbox,
   FaChevronLeft,
   FaChevronRight,
+  FaMoon,
+  FaSun,
+  FaRegClock,
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
+import { useTheme } from '@/context/ThemeContext';
 
 const UserMenu = ({ user, onLogout }) => {
   const [open, setOpen] = useState(false);
@@ -104,6 +108,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { isDarkMode, toggleDarkMode } = useTheme();
 
   const navigation = {
     workspace: [
@@ -111,13 +116,11 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
     ],
     create: [
       { name: 'New post', path: '/create', icon: FaFileAlt },
-      { name: 'Studio', path: '/studio', icon: FaMagic },
       { name: 'Bulk Upload', path: '/bulk-upload', icon: FaFileUpload },
       { name: 'Hashtag Groups', path: '/hashtags', icon: FaHashtag },
       { name: 'Media Library', path: '/media', icon: FaImages },
-      { name: 'Recurring Posts', path: '/recurring', icon: FaRedo },
-      { name: 'Thread Builder', path: '/thread-builder', icon: FaBullhorn },
-      { name: 'Instagram Grid', path: '/tools/instagram-grid', icon: FaThLarge },
+      { name: 'Social Tools', path: '/social-tools', icon: FaThLarge },
+      { name: 'Timeslots', path: '/timeslots', icon: FaRegClock },
     ],
     posts: [
       { name: 'Calendar', path: '/calendar', icon: FaCalendarAlt },
@@ -198,6 +201,13 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
         {/* Right-side controls */}
         <div className="flex items-center gap-4 px-6">
+          <button
+            onClick={toggleDarkMode}
+            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition-colors"
+            title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDarkMode ? <FaSun className="text-sm" /> : <FaMoon className="text-sm" />}
+          </button>
           <NotificationCenter />
           <UserMenu user={user} onLogout={handleLogout} />
         </div>

@@ -1,13 +1,14 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import '@/App.css';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 
 // Pages
 import LandingPage from '@/pages/LandingPage';
-import Login from '@/pages/LoginV1';   // LoginV1 has Cloudflare Turnstile bot protection
-import Signup from '@/pages/SignupV1'; // SignupV1 has Cloudflare Turnstile bot protection
+import Login from '@/pages/Login';
+import Signup from '@/pages/Signup';
 import AuthCallback from '@/pages/AuthCallback';
 import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';
@@ -35,15 +36,18 @@ import Analytics from '@/pages/Analytics';
 import MediaLibrary from '@/pages/MediaLibrary';
 import RecurringPosts from '@/pages/RecurringPosts';
 import BulkUpload from '@/pages/BulkUpload';
+import BulkVideoUpload from '@/pages/BulkVideoUpload';
+import BulkUploadGuide from '@/pages/BulkUploadGuide';
+import Timeslots from '@/pages/Timeslots';
 import ApprovalQueue from '@/pages/ApprovalQueue';
 import ThreadBuilder from '@/pages/ThreadBuilder';
-import InstagramGridPlanner from '@/pages/InstagramGridPlanner';
+import SocialTools from '@/pages/SocialTools';
 import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import CookieConsent from '@/components/CookieConsent';
 
-const PrivateRoute = ({ children }) => {
+const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   const { user, loading } = useAuth();
 
   if (loading) {
@@ -74,11 +78,7 @@ const PrivateRoute = ({ children }) => {
   }
 
   // If onboarding not completed, redirect to main onboarding flow first
-  if (!user.onboarding_completed) {
-    // Allow them to be on onboarding pages
-    if (path.startsWith('/onboarding')) {
-      return children;
-    }
+  if (!user.onboarding_completed && !bypassOnboardingCheck) {
     return <Navigate to="/onboarding" />;
   }
 
@@ -89,11 +89,6 @@ const PrivateRoute = ({ children }) => {
       return children;
     }
     return <Navigate to="/onboarding/pricing" />;
-  }
-
-  // If onboarding not completed, redirect to onboarding
-  if (!user.onboarding_completed) {
-    return <Navigate to="/onboarding" />;
   }
 
   return children;
@@ -117,244 +112,298 @@ const PublicRoute = ({ children }) => {
         return <Navigate to="/onboarding/pricing" />;
       }
       return <Navigate to="/dashboard" />;
-    } else {
-      return <Navigate to="/onboarding" />;
     }
+    return <Navigate to="/onboarding" />;
   }
 
   return children;
 };
 
+const ThemeApplier = () => {
+  const { isDarkMode } = useTheme();
+  const { pathname } = useLocation();
+
+  React.useEffect(() => {
+    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/auth/callback', '/oauth/callback', '/accept-invite'];
+    const isPublicRoute = pathname === '/' || 
+                        publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
+
+    if (isDarkMode && !isPublicRoute) {
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
+    }
+  }, [isDarkMode, pathname]);
+
+  return null;
+}
+
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <div className="App">
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/agent-docs" element={<AgentDocs />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
-            <Route path="/oauth/callback" element={<OAuthCallback />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
-            <Route path="/accept-invite" element={<AcceptInvite />} />
-            <Route path="/terms" element={<Terms />} />
-            <Route path="/privacy" element={<Privacy />} />
-            <Route
-              path="/onboarding"
-              element={
-                <PrivateRoute>
-                  <Onboarding />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/onboarding/connect"
-              element={
-                <PrivateRoute>
-                  <OnboardingConnect />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/onboarding/pricing"
-              element={
-                <PrivateRoute>
-                  <OnboardingPricing />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/login"
-              element={
-                <PublicRoute>
-                  <Login />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/signup"
-              element={
-                <PublicRoute>
-                  <Signup />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/dashboard"
-              element={
-                <PrivateRoute>
-                  <Dashboard />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/create"
-              element={
-                <PrivateRoute>
-                  <CreatePost />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/create/:type"
-              element={
-                <PrivateRoute>
-                  <CreatePostForm />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/publish"
-              element={
-                <PrivateRoute>
-                  <Publish />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/calendar"
-              element={
-                <PrivateRoute>
-                  <CalendarView />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/content"
-              element={
-                <PrivateRoute>
-                  <ContentLibrary />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/accounts"
-              element={
-                <PrivateRoute>
-                  <ConnectedAccounts />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/billing"
-              element={
-                <PrivateRoute>
-                  <Billing />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/subscription-expired"
-              element={
-                <PrivateRoute>
-                  <SubscriptionExpired />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/payment"
-              element={
-                <PrivateRoute>
-                  <PaymentPage />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <PrivateRoute>
-                  <Settings />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/api-keys"
-              element={
-                <PrivateRoute>
-                  <ApiKeys />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/hashtags"
-              element={
-                <PrivateRoute>
-                  <HashtagGroups />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/analytics"
-              element={
-                <PrivateRoute>
-                  <Analytics />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/media"
-              element={
-                <PrivateRoute>
-                  <MediaLibrary />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/recurring"
-              element={
-                <PrivateRoute>
-                  <RecurringPosts />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/bulk-upload"
-              element={
-                <PrivateRoute>
-                  <BulkUpload />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/approvals"
-              element={
-                <PrivateRoute>
-                  <ApprovalQueue />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/team"
-              element={
-                <PrivateRoute>
-                  <TeamMembers />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/inbox"
-              element={
-                <PrivateRoute>
-                  <Inbox />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/tools/instagram-grid"
-              element={
-                <PrivateRoute>
-                  <InstagramGridPlanner />
-                </PrivateRoute>
-              }
-            />
-            {/* Public route — no auth required */}
-            <Route path="/calendar/public/:token" element={<PublicCalendar />} />
-          </Routes>
-          <Toaster />
-          <CookieConsent />
-        </div>
-      </BrowserRouter>
-    </AuthProvider>
+    <BrowserRouter>
+      <ThemeProvider>
+        <AuthProvider>
+          <ThemeApplier />
+          <div className="App flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
+            <Routes>
+              {/* Public routes */}
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/oauth/callback" element={<OAuthCallback />} />
+              <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+
+              {/* Private routes */}
+              <Route
+                path="/onboarding"
+                element={
+                  <PrivateRoute bypassOnboardingCheck={true}>
+                    <Onboarding />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/onboarding/connect"
+                element={
+                  <PrivateRoute bypassOnboardingCheck={true}>
+                    <OnboardingConnect />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/onboarding/pricing"
+                element={
+                  <PrivateRoute bypassOnboardingCheck={true}>
+                    <OnboardingPricing />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/subscription-expired"
+                element={
+                  <PrivateRoute bypassOnboardingCheck={true}>
+                    <SubscriptionExpired />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <PrivateRoute>
+                    <Dashboard />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/analytics"
+                element={
+                  <PrivateRoute>
+                    <Analytics />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/create-post"
+                element={
+                  <PrivateRoute>
+                    <CreatePost />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/create-post/new"
+                element={
+                  <PrivateRoute>
+                    <CreatePostForm />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/publish"
+                element={
+                  <PrivateRoute>
+                    <Publish />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/calendar"
+                element={
+                  <PrivateRoute>
+                    <CalendarView />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/content-library"
+                element={
+                  <PrivateRoute>
+                    <ContentLibrary />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/accounts"
+                element={
+                  <PrivateRoute>
+                    <ConnectedAccounts />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/billing"
+                element={
+                  <PrivateRoute>
+                    <Billing />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/payment"
+                element={
+                  <PrivateRoute>
+                    <PaymentPage />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/api-keys"
+                element={
+                  <PrivateRoute>
+                    <ApiKeys />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <PrivateRoute>
+                    <Settings />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/agent-docs"
+                element={
+                  <PrivateRoute>
+                    <AgentDocs />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/hashtags"
+                element={
+                  <PrivateRoute>
+                    <HashtagGroups />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/media-library"
+                element={
+                  <PrivateRoute>
+                    <MediaLibrary />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/recurring"
+                element={
+                  <PrivateRoute>
+                    <RecurringPosts />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/bulk-upload"
+                element={
+                  <PrivateRoute>
+                    <BulkUpload />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/bulk-video"
+                element={
+                  <PrivateRoute>
+                    <BulkVideoUpload />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/bulk-upload-guide"
+                element={
+                  <PrivateRoute>
+                    <BulkUploadGuide />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/timeslots"
+                element={
+                  <PrivateRoute>
+                    <Timeslots />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/approvals"
+                element={
+                  <PrivateRoute>
+                    <ApprovalQueue />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/threads"
+                element={
+                  <PrivateRoute>
+                    <ThreadBuilder />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/team"
+                element={
+                  <PrivateRoute>
+                    <TeamMembers />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/inbox"
+                element={
+                  <PrivateRoute>
+                    <Inbox />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/social-tools"
+                element={
+                  <PrivateRoute>
+                    <SocialTools />
+                  </PrivateRoute>
+                }
+              />
+              {/* Public route — no auth required */}
+              <Route path="/calendar/public/:token" element={<PublicCalendar />} />
+              
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+            <Toaster />
+            <CookieConsent />
+          </div>
+        </AuthProvider>
+      </ThemeProvider>
+    </BrowserRouter>
   );
 }
 

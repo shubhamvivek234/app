@@ -38,6 +38,8 @@ from api.routes.admin import router as admin_router
 from api.routes.user import router as user_router
 from api.routes.payments import router as payments_router
 from api.routes.ai import router as ai_router
+from api.routes.bulk_upload import router as bulk_upload_router
+from api.routes.timeslots import router as timeslots_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -162,6 +164,8 @@ def create_app() -> FastAPI:
     app.include_router(user_router, prefix="/api/v1")          # user account / GDPR
     app.include_router(payments_router, prefix="/api/v1")      # checkout + billing
     app.include_router(ai_router, prefix="/api/v1")            # AI content generation
+    app.include_router(bulk_upload_router, prefix="/api/v1")   # bulk CSV upload
+    app.include_router(timeslots_router, prefix="/api/v1")     # timeslots CRUD
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(
