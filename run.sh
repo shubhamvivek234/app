@@ -14,13 +14,13 @@ export DB_NAME="social_scheduler"
 export REDIS_URL="redis://localhost:6379/0"
 export REDIS_QUEUE_URL="redis://localhost:6379/0"
 export REDIS_CACHE_URL="redis://localhost:6379/1"
+export FIREBASE_ADMIN_SDK_JSON="backend/serviceAccountKey.json"
+export ALLOWED_ORIGINS="http://localhost:9500,http://localhost:3000,http://127.0.0.1:9500,http://127.0.0.1:3000"
 
 # Start Backend
-echo "Starting Backend on port 8001..."
-cd backend
-python3 -m uvicorn server:app --host 0.0.0.0 --port 8001 &
+echo "Starting Backend v2.9 on port 8001..."
+python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8001 --env-file backend/.env > backend.log 2>&1 &
 BACKEND_PID=$!
-cd ..
 
 # Start Frontend
 echo "Starting Frontend on port 9500..."
