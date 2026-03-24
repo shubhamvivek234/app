@@ -252,6 +252,8 @@ async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str
         "subscription_grace_period_end": None,
         "timezone": "UTC",
         "mfa_enabled": False,
+        "role": "user",
+        "onboarding_completed": False,
         "workspace_ids": [],
         "default_workspace_id": None,
         "created_at": now,

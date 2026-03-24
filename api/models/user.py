@@ -32,6 +32,7 @@ class UserResponse(BaseModel):
     timezone: str = "UTC"
     created_at: datetime
     mfa_enabled: bool = False
+    role: str = "user"
 
 
 class WorkspaceRole(str, Enum):

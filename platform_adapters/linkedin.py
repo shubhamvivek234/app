@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 
+from utils.ssrf_guard import assert_safe_url
+
 from platform_adapters.base import (
     PlatformAdapter,
     PlatformHTTPError,
@@ -61,6 +63,7 @@ class LinkedInAdapter(PlatformAdapter):
             asset_urn: str | None = None
 
             if post_type == "image" and media_url:
+                assert_safe_url(media_url)  # Gap 5.4: SSRF guard
                 asset_urn = await self._register_and_upload_image(
                     client, auth_headers, author_urn, media_url
                 )

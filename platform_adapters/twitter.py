@@ -8,6 +8,8 @@ import logging
 
 import httpx
 
+from utils.ssrf_guard import assert_safe_url
+
 from platform_adapters.base import (
     PlatformAdapter,
     PlatformHTTPError,
@@ -106,6 +108,7 @@ class TwitterAdapter(PlatformAdapter):
         Returns list containing the media_id string.
         TODO: implement chunked APPEND for large files; currently single-segment.
         """
+        assert_safe_url(media_url)  # Gap 5.4: SSRF guard
         file_resp = await client.get(media_url)
         if file_resp.status_code != 200:
             raise PlatformHTTPError(file_resp.status_code, "Could not fetch media for Twitter upload")
