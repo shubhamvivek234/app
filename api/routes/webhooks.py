@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
 from api.deps import DB, CacheRedis
+from api.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -34,6 +35,7 @@ class WebhookAckResponse(BaseModel):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 @router.post("/webhooks/{platform}", response_model=WebhookAckResponse)
+@limiter.limit("200/minute")
 async def receive_webhook(
     platform: str,
     request: Request,
@@ -177,6 +179,12 @@ async def _process_webhook_payload(platform: str, payload: dict, db) -> None:
         await _process_meta_webhook(payload, db)
     elif platform == "youtube":
         await _process_youtube_webhook(payload, db)
+    elif platform == "twitter":
+        await _process_twitter_webhook(payload, db)
+    elif platform == "linkedin":
+        await _process_linkedin_webhook(payload, db)
+    elif platform == "tiktok":
+        await _process_tiktok_webhook(payload, db)
     else:
         logger.info("No status update handler for platform: %s", platform)
 
@@ -205,6 +213,54 @@ async def _process_youtube_webhook(payload: dict, db) -> None:
         )
 
 
+async def _process_twitter_webhook(payload: dict, db) -> None:
+    """Handle Twitter/X activity webhook events."""
+    now = datetime.now(timezone.utc)
+    # Tweet created event
+    for tweet in payload.get("tweet_create_events", []):
+        tweet_id = tweet.get("id_str")
+        if tweet_id:
+            await db.posts.update_one(
+                {"platform_results.twitter.platform_post_id": tweet_id},
+                {"$set": {"platform_results.twitter.status": "published", "updated_at": now}},
+            )
+    # User event — log but don't update post status
+    if "user_event" in payload:
+        logger.info("Twitter user_event received: %s", list(payload["user_event"].keys()))
+
+
+async def _process_linkedin_webhook(payload: dict, db) -> None:
+    """Handle LinkedIn webhook events (organization share status)."""
+    now = datetime.now(timezone.utc)
+    event_type = payload.get("eventType", "")
+    if event_type in ("SHARE_STATUS_CHANGE", "UGC_POST_STATUS_CHANGE"):
+        ugc_post_id = payload.get("ugcPostId") or payload.get("shareId")
+        if ugc_post_id:
+            await db.posts.update_one(
+                {"platform_results.linkedin.platform_post_id": ugc_post_id},
+                {"$set": {"platform_results.linkedin.status": "published", "updated_at": now}},
+            )
+
+
+async def _process_tiktok_webhook(payload: dict, db) -> None:
+    """Handle TikTok webhook events (video publish result)."""
+    now = datetime.now(timezone.utc)
+    event = payload.get("event", "")
+    data = payload.get("data", {})
+    video_id = data.get("video_id") or payload.get("video_id")
+    if video_id:
+        status_map = {
+            "video.publish.success": "published",
+            "video.publish.failed": "failed",
+        }
+        mapped = status_map.get(event)
+        if mapped:
+            await db.posts.update_one(
+                {"platform_results.tiktok.platform_post_id": str(video_id)},
+                {"$set": {"platform_results.tiktok.status": mapped, "updated_at": now}},
+            )
+
+
 # ── EC28 — Stripe webhook (idempotent) ──────────────────────────────────────
 
 _STRIPE_DEDUP_TTL = 86400 * 3  # 72 hours
@@ -218,6 +274,7 @@ _STRIPE_EVENT_HANDLERS: dict[str, str] = {
 
 
 @router.post("/webhooks/stripe", response_model=WebhookAckResponse)
+@limiter.limit("200/minute")
 async def receive_stripe_webhook(
     request: Request,
     db: DB,
@@ -359,6 +416,7 @@ _RAZORPAY_DEDUP_TTL = 86400 * 3  # 72 hours
 
 
 @router.post("/webhooks/razorpay", response_model=WebhookAckResponse)
+@limiter.limit("200/minute")
 async def receive_razorpay_webhook(
     request: Request,
     db: DB,

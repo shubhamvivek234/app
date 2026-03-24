@@ -11,7 +11,7 @@ import logging
 import os
 import random
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from celery import group
 from celery_workers.celery_app import celery_app
@@ -138,7 +138,7 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
         {"$set": {
             "status": "processing",
             "jitter_seconds": jitter,
-            "processing_started_at": datetime.utcnow().isoformat(),
+            "processing_started_at": datetime.now(timezone.utc).isoformat(),
         }},
     )
 
@@ -225,24 +225,6 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         logger.info("Platform %s/%s already confirmed in Redis — skipping API call", post_id, platform)
         return {"status": "already_confirmed"}
 
-    # ── Poison pill guard per platform (Section 20.5) ─────────────────────────
-    poison_key = f"delivery_count:{task.request.id}:{platform}"
-    delivery_count = int(await r_cache.incr(poison_key) or 0)
-    await r_cache.expire(poison_key, 86400)
-    if delivery_count > MAX_DELIVERY_COUNT:
-        logger.error("Poison pill per-platform: %s/%s delivered >%d times — DLQ",
-                     post_id, platform, MAX_DELIVERY_COUNT)
-        await _move_to_dlq(post_id, "poison_pill_per_platform", platform=platform)
-        return {"status": "dlq", "reason": "poison_pill_per_platform"}
-
-    # ── Feature flag gate (Section 20.14) ──────────────────────────────────────
-    if platform == "tiktok" and not is_enabled("tiktok_publishing", default=True):
-        logger.info("Feature flag tiktok_publishing is OFF — skipping TikTok for post %s", post_id)
-        await _update_platform_result(db, post_id, platform, {
-            "status": "cancelled", "error": "TikTok publishing disabled via feature flag"
-        })
-        return {"status": "feature_flagged"}
-
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
         return {"status": "post_deleted"}
@@ -321,9 +303,22 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             await _update_platform_result(db, post_id, platform, {
                 "status": "retrying",
                 "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
-                "next_retry_at": datetime.utcnow() + timedelta(minutes=5),
+                "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
             })
             raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
+
+        # Gap 2.7: Inject decrypted access token so adapter can authenticate
+        try:
+            from utils.encryption import decrypt
+            account_doc = await db.social_accounts.find_one({
+                "user_id": post.get("user_id"),
+                "platform": platform,
+                "is_active": True,
+            })
+            if account_doc and account_doc.get("access_token"):
+                post = {**post, "access_token": decrypt(account_doc["access_token"]), "account": account_doc}
+        except Exception as _token_err:
+            logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
 
         adapter = get_adapter(platform)
         result = await adapter.publish(post)
@@ -343,7 +338,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         confirmation_payload = {
             "post_url": post_url,
             "platform_post_id": platform_post_id,
-            "published_at": datetime.utcnow().isoformat(),
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
         await r_cache.setex(confirm_key, 86400, json.dumps(confirmation_payload))
 
@@ -355,7 +350,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             "status": "published",
             "post_url": post_url,
             "platform_post_id": platform_post_id,
-            "published_at": datetime.utcnow(),
+            "published_at": datetime.now(timezone.utc),
         })
 
         # Recompute aggregate status
@@ -401,7 +396,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "status": "failed",
                 "error": str(exc),
                 "retry_count": attempt,
-                "last_attempt_at": datetime.utcnow(),
+                "last_attempt_at": datetime.now(timezone.utc),
             })
 
             # EC16: Detect account suspension/revocation and trigger ghost cascade
@@ -436,7 +431,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             logger.warning("Rate limited on %s/%s — re-queuing after %ds", post_id, platform, retry_after)
             await _update_platform_result(db, post_id, platform, {
                 "status": "retrying",
-                "next_retry_at": datetime.utcnow() + timedelta(seconds=retry_after),
+                "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
             })
             raise task.retry(countdown=retry_after, exc=exc)
 
@@ -457,8 +452,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             await _update_platform_result(db, post_id, platform, {
                 "status": "retrying",
                 "retry_count": attempt + 1,
-                "last_attempt_at": datetime.utcnow(),
-                "next_retry_at": datetime.utcnow() + timedelta(seconds=countdown),
+                "last_attempt_at": datetime.now(timezone.utc),
+                "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=countdown),
                 "error": str(exc),
             })
             raise task.retry(countdown=countdown, exc=exc, kwargs={
@@ -535,7 +530,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     await db.posts.update_one(
         {"id": post_id},
         {"$set": {"pre_upload_status": "uploading", "pre_upload_started_at": started_at}}
@@ -569,7 +564,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             )
             return {"status": "polling", "platform": platform, "container_id": container_id}
 
-        completed_at = datetime.utcnow()
+        completed_at = datetime.now(timezone.utc)
         actual_duration = int((completed_at - started_at).total_seconds())
         expiry = completed_at + timedelta(hours=23)
         container_id = container_result.get("container_id") or container_result.get("video_id")

@@ -2,7 +2,7 @@
 Phase 0.13 + Phase 1.9 — Post Pydantic models with full v2.9 schema.
 All fields validated. response_model used on all endpoints to prevent field leakage.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -79,7 +79,11 @@ class CreatePostRequest(BaseModel):
     def validate_scheduled_time(cls, v: datetime | None) -> datetime | None:
         if v is None:
             return v
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        # Make v timezone-aware for comparison if it's naive
+        if v.tzinfo is None:
+            from datetime import timezone as _tz
+            v = v.replace(tzinfo=_tz.utc)
         # EC19: Reject past times (> 5 minutes ago)
         if (now - v).total_seconds() > 300:
             raise ValueError("scheduled_time cannot be more than 5 minutes in the past")

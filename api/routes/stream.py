@@ -202,7 +202,7 @@ async def stream_post_updates(
             detail=f"Maximum {_MAX_SSE_PER_USER} concurrent SSE connections",
         )
     await cache_redis.incr(conn_key)
-    await cache_redis.expire(conn_key, 3600)  # auto-cleanup after 1h
+    await cache_redis.expire(conn_key, 300)  # auto-cleanup after 5 min (matches keepalive; prevents stranded counters on crash)
 
     # Last-Event-ID for reconnection (resuming missed events)
     last_event_id = request.headers.get("Last-Event-ID")
