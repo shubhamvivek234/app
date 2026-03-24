@@ -146,7 +146,14 @@ async def _event_generator(
                     logger.debug("Non-JSON message on %s: %s", channel, raw[:100])
 
     except asyncio.CancelledError:
-        logger.info("SSE stream cancelled: user=%s", user_id)
+        logger.info("SSE stream cancelled (graceful shutdown): user=%s", user_id)
+        try:
+            yield _sse_event(
+                json.dumps({"type": "reconnect", "reason": "server_shutdown", "retry_ms": 5000}),
+                event="reconnect",
+            )
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("SSE stream error for user=%s: %s", user_id, exc)
         try:
