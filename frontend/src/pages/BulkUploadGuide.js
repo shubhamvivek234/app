@@ -35,7 +35,7 @@ const COLUMNS = [
     name: 'scheduled_time',
     required: 'No',
     default: 'Auto-queue',
-    format: 'YYYY-MM-DD HH:mm  or  MM/DD/YYYY HH:mm  or  DD/MM/YYYY HH:mm',
+    format: 'DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00. Also accepts YYYY-MM-DD HH:mm and MM/DD/YYYY HH:mm.',
     errors: 'Date is in the past · Unrecognisable format · More than 365 days ahead',
     warnings: 'Within 2 min of now',
   },
@@ -104,7 +104,7 @@ const VALIDATION_LAYERS = [
   { layer: '2 · Structure', checks: 'At least one of content / image_urls / video_url present · image_urls and video_url not both present · platforms not empty · no completely empty rows', when: 'Per row, no DB' },
   { layer: '3 · Platform', checks: 'Platform names valid · post_type compatible with platforms · Instagram requires image or video · content length within each platform\'s limit', when: 'Per row, no DB' },
   { layer: '4 · Content', checks: 'Title within limit for YouTube / LinkedIn · tags format', when: 'Per row, no DB' },
-  { layer: '5 · DateTime', checks: 'Date parseable in one of 4 accepted formats · not in the past · not >365 days ahead · valid IANA timezone · not an ambiguous DST time', when: 'Per row, no DB' },
+  { layer: '5 · DateTime', checks: 'Date parseable — primary: DD/Mon/YYYY HH:mm (e.g. 23/Apr/2026 10:00); legacy: YYYY-MM-DD HH:mm, MM/DD/YYYY HH:mm · not in the past · not >365 days ahead · valid IANA timezone · not an ambiguous DST time', when: 'Per row, no DB' },
   { layer: '6 · URLs', checks: 'Valid URL format · ends in image extension (or Google Drive / Dropbox pattern) · max 10 images · no localhost / 169.254.x.x / private IP (SSRF)', when: 'Per row, no network' },
   { layer: '7 · Schedule', checks: 'Account names exist in workspace · daily platform posting limit not exceeded for any day · scheduling conflict within 30-min window for same account', when: 'Per row, DB call' },
 ];
@@ -243,17 +243,23 @@ const BulkUploadGuide = () => (
       <Section icon={FaCalendarAlt} title="Accepted Date/Time Formats">
         <div className="grid grid-cols-2 gap-3">
           {[
-            { fmt: 'YYYY-MM-DD HH:mm', ex: '2025-06-15 14:30' },
-            { fmt: 'MM/DD/YYYY HH:mm', ex: '06/15/2025 14:30' },
-            { fmt: 'MM/DD/YYYY HH:mmAM/PM', ex: '06/15/2025 02:30PM' },
-            { fmt: 'DD/MM/YYYY HH:mm', ex: '15/06/2025 14:30' },
-          ].map(({ fmt, ex }) => (
-            <div key={fmt} className="bg-gray-50 rounded-xl border border-gray-200 px-4 py-3">
-              <p className="text-xs font-mono font-bold text-green-700 mb-1">{fmt}</p>
+            { fmt: 'DD/Mon/YYYY HH:mm', ex: '23/Apr/2026 10:00', label: 'Recommended' },
+            { fmt: 'DD/Mon/YYYY HH:mm', ex: '26/Sep/2026 14:30', label: 'Recommended' },
+            { fmt: 'YYYY-MM-DD HH:mm', ex: '2026-06-15 14:30', label: 'Legacy' },
+            { fmt: 'MM/DD/YYYY HH:mm', ex: '06/15/2026 14:30', label: 'Legacy' },
+          ].map(({ fmt, ex, label }, idx) => (
+            <div key={idx} className={`rounded-xl border px-4 py-3 ${label === 'Recommended' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className="flex items-center justify-between mb-1">
+                <p className={`text-xs font-mono font-bold ${label === 'Recommended' ? 'text-green-700' : 'text-gray-500'}`}>{fmt}</p>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${label === 'Recommended' ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>{label}</span>
+              </div>
               <p className="text-[11px] text-gray-500">e.g. <span className="font-mono">{ex}</span></p>
             </div>
           ))}
         </div>
+        <p className="text-xs text-gray-500 mt-3 bg-blue-50 rounded-xl px-4 py-3 border border-blue-100">
+          <strong className="text-blue-700">Tip:</strong> Use 3-letter month abbreviations — Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec. Case-insensitive.
+        </p>
       </Section>
 
       {/* Timezone */}

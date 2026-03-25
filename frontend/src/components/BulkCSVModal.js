@@ -59,16 +59,28 @@ const parseCSV = (text) => {
 };
 
 // ── 7-Layer validation ────────────────────────────────────────────────────────
+const MONTH_ABBR = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+
 const parseDateTime = (str) => {
   if (!str) return null;
-  const formats = [
-    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/,          // YYYY-MM-DD HH:mm
-    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/,        // MM/DD/YYYY HH:mm
-    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{1,2}):(\d{2})(AM|PM)$/i, // MM/DD/YYYY HH:mmAM/PM
-    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/,        // DD/MM/YYYY HH:mm
+  const s = str.trim();
+
+  // Primary format: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
+  const mAbbr = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
+  if (mAbbr) {
+    const mo = MONTH_ABBR[mAbbr[2].toLowerCase()];
+    if (mo !== undefined)
+      return new Date(parseInt(mAbbr[3]), mo, parseInt(mAbbr[1]), parseInt(mAbbr[4]), parseInt(mAbbr[5]));
+  }
+
+  // Legacy formats for backwards compatibility
+  const legacyFormats = [
+    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/,
+    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/,
+    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{1,2}):(\d{2})(AM|PM)$/i,
   ];
-  for (const re of formats) {
-    if (re.test(str.trim())) return new Date(str);
+  for (const re of legacyFormats) {
+    if (re.test(s)) return new Date(s);
   }
   return null;
 };
@@ -125,7 +137,7 @@ const validateRow = (row, headers) => {
   if (row.scheduled_time) {
     const dt = parseDateTime(row.scheduled_time);
     if (!dt || isNaN(dt.getTime())) {
-      errors.push('Unrecognisable scheduled_time format — use YYYY-MM-DD HH:mm');
+      errors.push('Unrecognisable scheduled_time format — use DD/Mon/YYYY HH:mm e.g. 23/Apr/2026 10:00');
     } else {
       const now = new Date();
       if (dt < now) errors.push('scheduled_time is in the past');
@@ -283,7 +295,8 @@ const BulkCSVModal = ({ onClose }) => {
     // Use a date 7 days from now so the template is always valid on download
     const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
-    const futureStr = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())} 10:00`;
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
     const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","Asia/Kolkata","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
