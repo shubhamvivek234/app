@@ -193,7 +193,7 @@ class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     user_id: str
     email: EmailStr
-    name: str
+    name: str = ""
     picture: Optional[str] = None
     email_verified: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
