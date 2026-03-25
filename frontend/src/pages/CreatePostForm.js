@@ -499,6 +499,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [aiCaptionTone,         setAiCaptionTone]         = useState('casual');
   const [aiCaptionPlatform,     setAiCaptionPlatform]     = useState('all');
   const [aiCaptionLoading,      setAiCaptionLoading]      = useState(false);
+  const [aiGeneratedText,       setAiGeneratedText]       = useState('');
   const [expandedPlatform,      setExpandedPlatform]      = useState(null);
   const [platformOrder,         setPlatformOrder]         = useState([]);
   const [createAnother,         setCreateAnother]         = useState(false);
@@ -1167,22 +1168,38 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const handleGenerateCaption = async () => {
     if (!aiCaptionPrompt.trim()) return;
     setAiCaptionLoading(true);
+    setAiGeneratedText('');
     try {
       const platform = aiCaptionPlatform === 'all' ? null : aiCaptionPlatform;
       const data = await generateContent(aiCaptionPrompt.trim(), platform, aiCaptionTone);
+      setAiGeneratedText(data.content);
+      // Also inject into caption editors if platforms are selected
       if (aiCaptionPlatform === 'all') {
         const updates = {};
         orderedPlatforms.forEach(p => { updates[p] = data.content; });
-        setPlatformCaptions(prev => ({ ...prev, ...updates }));
+        if (Object.keys(updates).length > 0) {
+          setPlatformCaptions(prev => ({ ...prev, ...updates }));
+        }
       } else {
         setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: data.content }));
       }
-      toast.success('✨ Content generated!');
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'AI generation failed. Check your API keys.');
     } finally {
       setAiCaptionLoading(false);
     }
+  };
+
+  const handleApplyGeneratedText = () => {
+    if (!aiGeneratedText) return;
+    if (aiCaptionPlatform === 'all') {
+      const updates = {};
+      orderedPlatforms.forEach(p => { updates[p] = aiGeneratedText; });
+      setPlatformCaptions(prev => ({ ...prev, ...updates }));
+    } else {
+      setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: aiGeneratedText }));
+    }
+    toast.success('✨ Applied to caption editor!');
   };
 
   /** Right panel: AI Assistant or Preview */
@@ -1292,13 +1309,27 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           Include key points, your target audience and your desired outcome for this post.
         </p>
 
-        {/* Powered-by waterfall note */}
-        <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5">
-          <p className="text-[10px] text-violet-500 font-medium mb-0.5">Powered by AI waterfall</p>
-          <p className="text-[10px] text-violet-400 leading-relaxed">
-            Auto-switches between Gemini · Groq · Cohere · OpenRouter for 18,000+ free generations/day.
-          </p>
-        </div>
+        {/* Generated output */}
+        {aiGeneratedText && (
+          <div className="mt-1 rounded-xl border border-violet-200 bg-violet-50 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-violet-100">
+              <span className="text-[11px] font-semibold text-violet-600">✨ Generated</span>
+              <button
+                onClick={handleApplyGeneratedText}
+                className="text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-700 px-2.5 py-1 rounded-lg transition-colors"
+              >
+                Use this →
+              </button>
+            </div>
+            <textarea
+              readOnly
+              value={aiGeneratedText}
+              rows={6}
+              className="w-full text-xs text-gray-700 bg-violet-50 p-3 resize-none border-none outline-none leading-relaxed"
+            />
+          </div>
+        )}
+
       </div>
     </div>
   );
