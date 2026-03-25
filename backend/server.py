@@ -263,6 +263,7 @@ class PostUpdate(BaseModel):
 class AIContentRequest(BaseModel):
     prompt: str
     platform: Optional[str] = None
+    tone: Optional[str] = None   # casual | professional | fun | promotional
 
 class SocialAccount(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1155,34 +1156,181 @@ async def retry_failed_post(post_id: str, current_user: User = Depends(get_curre
 
 # ==================== AI CONTENT GENERATION ====================
 
+def _build_system_message(platform: Optional[str], tone: Optional[str]) -> str:
+    """Build a rich system prompt based on platform and tone."""
+    base = "You are an expert social media copywriter. Write only the post content — no labels, no explanations, no quotes around the output."
+
+    platform_rules = {
+        "twitter":   "Platform: Twitter/X. Maximum 280 characters. Start with a strong hook. Be punchy and direct.",
+        "linkedin":  "Platform: LinkedIn. Professional and insightful tone. Use short paragraphs. Can be up to 3000 characters. End with a call-to-action.",
+        "instagram": "Platform: Instagram. Engaging and visual storytelling style. Include 5-10 relevant hashtags at the end. Use emoji naturally.",
+        "facebook":  "Platform: Facebook. Conversational and shareable. Can be longer form. Include a call-to-action.",
+        "tiktok":    "Platform: TikTok. Energetic, trendy, use popular phrases. Keep it short and punchy. Include relevant hashtags.",
+        "discord":   "Platform: Discord. Casual, community-friendly, conversational. Like you are talking to friends in a server.",
+        "bluesky":   "Platform: Bluesky. Maximum 300 characters. Thoughtful and conversational.",
+        "youtube":   "Platform: YouTube. Write an engaging video description with keywords. Include timestamps placeholder if relevant.",
+    }
+
+    tone_rules = {
+        "casual":       "Tone: Casual and friendly — like talking to a friend.",
+        "professional": "Tone: Professional and polished — authoritative yet approachable.",
+        "fun":          "Tone: Fun and playful — use humor, energy, and enthusiasm.",
+        "promotional":  "Tone: Promotional — highlight benefits, create urgency, drive action.",
+    }
+
+    parts = [base]
+    if platform and platform in platform_rules:
+        parts.append(platform_rules[platform])
+    if tone and tone in tone_rules:
+        parts.append(tone_rules[tone])
+
+    return " ".join(parts)
+
+
+async def _ai_waterfall(system_message: str, prompt: str) -> str:
+    """
+    Try each AI provider in order. On rate-limit / quota errors move to the next.
+    Non-rate-limit errors propagate immediately (don't try other providers).
+    Order: Gemini 2.0 Flash Lite → Groq LLaMA 3.3 → Cohere Command R → OpenRouter Gemma → EMERGENT fallback
+    """
+    rate_limit_errors: list[str] = []
+
+    def _is_rate_limit(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "429" in msg or "quota" in msg or "rate limit" in msg
+            or "too many requests" in msg or "resource_exhausted" in msg.lower()
+            or type(exc).__name__ in ("ResourceExhausted", "RateLimitError")
+        )
+
+    # ── 1. Google Gemini 2.0 Flash Lite ───────────────────────────────────
+    google_key = os.environ.get("GOOGLE_AI_KEY")
+    if google_key:
+        try:
+            import google.generativeai as genai  # type: ignore
+            genai.configure(api_key=google_key)
+            model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                system_instruction=system_message,
+            )
+            result = model.generate_content(prompt)
+            return result.text
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logging.warning(f"[AI waterfall] Gemini rate-limited: {exc} — trying Groq")
+                rate_limit_errors.append(f"Gemini: {exc}")
+            else:
+                raise
+
+    # ── 2. Groq — llama-3.3-70b-versatile ────────────────────────────────
+    groq_key = os.environ.get("GROQ_API_KEY")
+    if groq_key:
+        try:
+            from groq import AsyncGroq  # type: ignore
+            client = AsyncGroq(api_key=groq_key)
+            resp = await client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user",   "content": prompt},
+                ],
+                max_tokens=1024,
+            )
+            return resp.choices[0].message.content
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logging.warning(f"[AI waterfall] Groq rate-limited: {exc} — trying Cohere")
+                rate_limit_errors.append(f"Groq: {exc}")
+            else:
+                raise
+
+    # ── 3. Cohere Command R ───────────────────────────────────────────────
+    cohere_key = os.environ.get("COHERE_API_KEY")
+    if cohere_key:
+        try:
+            import cohere  # type: ignore
+            co = cohere.AsyncClientV2(api_key=cohere_key)
+            resp = await co.chat(
+                model="command-r",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user",   "content": prompt},
+                ],
+            )
+            return resp.message.content[0].text
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                logging.warning(f"[AI waterfall] Cohere rate-limited: {exc} — trying OpenRouter")
+                rate_limit_errors.append(f"Cohere: {exc}")
+            else:
+                raise
+
+    # ── 4. OpenRouter — google/gemma-3-12b:free ───────────────────────────
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
+        try:
+            async with httpx.AsyncClient(timeout=30) as http:
+                r = await http.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://socialentangler.com",
+                        "X-Title": "SocialEntangler AI",
+                    },
+                    json={
+                        "model": "google/gemma-3-12b:free",
+                        "messages": [
+                            {"role": "system", "content": system_message},
+                            {"role": "user",   "content": prompt},
+                        ],
+                    },
+                )
+                if r.status_code == 429:
+                    logging.warning(f"[AI waterfall] OpenRouter rate-limited — trying EMERGENT")
+                    rate_limit_errors.append("OpenRouter: 429")
+                else:
+                    r.raise_for_status()
+                    return r.json()["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                rate_limit_errors.append(f"OpenRouter: {exc}")
+            else:
+                raise
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                rate_limit_errors.append(f"OpenRouter: {exc}")
+            else:
+                raise
+
+    # ── 5. EMERGENT_LLM_KEY — existing paid fallback ──────────────────────
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
+    if emergent_key:
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"content-gen-{uuid.uuid4()}",
+            system_message=system_message,
+        ).with_model("openai", "gpt-4o-mini")
+        response = await chat.send_message(UserMessage(text=prompt))
+        return response
+
+    # All providers exhausted
+    if rate_limit_errors:
+        raise HTTPException(
+            status_code=429,
+            detail=f"All AI providers are rate-limited. Try again in a moment. Details: {'; '.join(rate_limit_errors)}",
+        )
+    raise HTTPException(status_code=503, detail="No AI provider configured. Add GOOGLE_AI_KEY, GROQ_API_KEY, COHERE_API_KEY, or OPENROUTER_API_KEY to your .env file.")
+
+
 @api_router.post("/ai/generate-content")
 async def generate_content(request: AIContentRequest, current_user: User = Depends(get_current_user)):
     try:
-        api_key = os.environ.get('EMERGENT_LLM_KEY')
-        if not api_key:
-            raise HTTPException(status_code=500, detail="AI service not configured")
-        
-        platform_context = ""
-        if request.platform:
-            if request.platform == "twitter":
-                platform_context = " Keep it under 280 characters for Twitter."
-            elif request.platform == "linkedin":
-                platform_context = " Make it professional for LinkedIn."
-            elif request.platform == "instagram":
-                platform_context = " Make it engaging for Instagram with relevant hashtags."
-        
-        system_message = f"You are a social media content expert. Generate engaging social media posts.{platform_context}"
-        
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"content-gen-{current_user.user_id}-{uuid.uuid4()}",
-            system_message=system_message
-        ).with_model("openai", "gpt-5.2")
-        
-        user_message = UserMessage(text=request.prompt)
-        response = await chat.send_message(user_message)
-        
-        return {"content": response}
+        system_message = _build_system_message(request.platform, request.tone)
+        content = await _ai_waterfall(system_message, request.prompt)
+        return {"content": content}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"AI generation error: {e}")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")

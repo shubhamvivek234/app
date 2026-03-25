@@ -10,12 +10,12 @@ import { Calendar } from '@/components/ui/calendar';
 import { toast } from 'sonner';
 import axios from 'axios';
 import Cropper from 'react-easy-crop';
-import { getSocialAccounts, uploadMedia, generateImage, getHashtagGroups } from '@/lib/api';
+import { getSocialAccounts, uploadMedia, generateImage, getHashtagGroups, generateContent } from '@/lib/api';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
-  FaChevronUp, FaChevronDown, FaMagic,
+  FaChevronUp, FaChevronDown, FaMagic, FaRobot, FaDiscord,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -314,6 +314,7 @@ const platformIcons = {
   tiktok:    { icon: FaTiktok,    color: 'text-gray-900' },
   bluesky:   { icon: SiBluesky,   color: 'text-blue-500' },
   threads:   { icon: SiThreads,   color: 'text-gray-900' },
+  discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
 };
 
 const getAvatarColor = (name) => {
@@ -490,8 +491,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [croppedAreaPixels,setCroppedAreaPixels]= useState(null);
 
   // ── UI state ──────────────────────────────────────────────────────────────
+  const [rightPanelMode,        setRightPanelMode]        = useState('preview'); // 'preview' | 'ai'
   const [previewVisible,        setPreviewVisible]        = useState(true);
   const [activePreviewPlatform, setActivePreviewPlatform] = useState(null);
+  // ── AI Assistant state ─────────────────────────────────────────────────────
+  const [aiCaptionPrompt,       setAiCaptionPrompt]       = useState('');
+  const [aiCaptionTone,         setAiCaptionTone]         = useState('casual');
+  const [aiCaptionPlatform,     setAiCaptionPlatform]     = useState('all');
+  const [aiCaptionLoading,      setAiCaptionLoading]      = useState(false);
   const [expandedPlatform,      setExpandedPlatform]      = useState(null);
   const [platformOrder,         setPlatformOrder]         = useState([]);
   const [createAnother,         setCreateAnother]         = useState(false);
@@ -937,7 +944,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         )}
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" className="text-gray-600 gap-1.5 text-xs">
+        <Button
+          variant={rightPanelMode === 'ai' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setRightPanelMode(m => m === 'ai' ? 'preview' : 'ai')}
+          className={`gap-1.5 text-xs ${rightPanelMode === 'ai' ? 'bg-violet-600 hover:bg-violet-700 text-white' : 'text-gray-600'}`}
+        >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round"
               d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
@@ -945,12 +957,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           AI Assistant
         </Button>
         <Button
-          variant={previewVisible ? 'default' : 'outline'}
+          variant={rightPanelMode === 'preview' && previewVisible ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setPreviewVisible(v => !v)}
+          onClick={() => { setRightPanelMode('preview'); setPreviewVisible(v => !v); }}
           className="gap-1.5 text-xs"
         >
-          {previewVisible ? <FaEye className="text-xs" /> : <FaEyeSlash className="text-xs" />}
+          {previewVisible && rightPanelMode === 'preview' ? <FaEye className="text-xs" /> : <FaEyeSlash className="text-xs" />}
           Preview
         </Button>
         {/* Close button in modal mode */}
@@ -1151,8 +1163,147 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     </div>
   );
 
-  /** Right panel: single-platform preview */
-  const rightPanel = previewVisible && (
+  /** AI caption generation handler */
+  const handleGenerateCaption = async () => {
+    if (!aiCaptionPrompt.trim()) return;
+    setAiCaptionLoading(true);
+    try {
+      const platform = aiCaptionPlatform === 'all' ? null : aiCaptionPlatform;
+      const data = await generateContent(aiCaptionPrompt.trim(), platform, aiCaptionTone);
+      if (aiCaptionPlatform === 'all') {
+        const updates = {};
+        orderedPlatforms.forEach(p => { updates[p] = data.content; });
+        setPlatformCaptions(prev => ({ ...prev, ...updates }));
+      } else {
+        setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: data.content }));
+      }
+      toast.success('✨ Content generated!');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'AI generation failed. Check your API keys.');
+    } finally {
+      setAiCaptionLoading(false);
+    }
+  };
+
+  /** Right panel: AI Assistant or Preview */
+  const AI_TONES = [
+    { id: 'casual',       label: 'Casual' },
+    { id: 'professional', label: 'Professional' },
+    { id: 'fun',          label: 'Fun' },
+    { id: 'promotional',  label: 'Promotional' },
+  ];
+
+  const aiPanel = (
+    <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center">
+            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round"
+                d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+            </svg>
+          </div>
+          <span className="text-sm font-semibold text-gray-800">AI Assistant</span>
+        </div>
+        {/* Active platform icon badge */}
+        {activePlatform && platformIcons[activePlatform] && (() => {
+          const { icon: Icon, color } = platformIcons[activePlatform];
+          return <Icon className={`text-xl ${color}`} />;
+        })()}
+      </div>
+
+      {/* Body */}
+      <div className="p-5 space-y-4">
+        {/* Prompt textarea */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+            What do you want to write about?
+          </label>
+          <textarea
+            value={aiCaptionPrompt}
+            onChange={e => setAiCaptionPrompt(e.target.value)}
+            placeholder="Eg. Promote my photography course to get new signups. Registration closes in 3 days."
+            rows={5}
+            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 placeholder:text-gray-300 resize-none bg-white"
+          />
+        </div>
+
+        {/* Platform selector */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1.5">Generate for</label>
+          <select
+            value={aiCaptionPlatform}
+            onChange={e => setAiCaptionPlatform(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-300 text-gray-700"
+          >
+            <option value="all">All selected platforms</option>
+            {orderedPlatforms.map(p => (
+              <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Tone pills */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tone</label>
+          <div className="flex flex-wrap gap-2">
+            {AI_TONES.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setAiCaptionTone(t.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  aiCaptionTone === t.id
+                    ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:text-violet-600'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Generate button */}
+        <button
+          disabled={aiCaptionLoading || !aiCaptionPrompt.trim()}
+          onClick={handleGenerateCaption}
+          className="w-full py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm"
+        >
+          {aiCaptionLoading ? (
+            <>
+              <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              Generating…
+            </>
+          ) : (
+            <>
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+              </svg>
+              Generate
+            </>
+          )}
+        </button>
+
+        {/* Pro tip */}
+        <p className="text-[11px] text-gray-400 leading-relaxed">
+          <span className="font-semibold text-gray-500">Pro tip:</span>{' '}
+          Include key points, your target audience and your desired outcome for this post.
+        </p>
+
+        {/* Powered-by waterfall note */}
+        <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2.5">
+          <p className="text-[10px] text-violet-500 font-medium mb-0.5">Powered by AI waterfall</p>
+          <p className="text-[10px] text-violet-400 leading-relaxed">
+            Auto-switches between Gemini · Groq · Cohere · OpenRouter for 18,000+ free generations/day.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
+  const previewPanelContent = (
     <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0">
       <div className="p-5">
         {activePlatform ? (
@@ -1187,6 +1338,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       </div>
     </div>
   );
+
+  const rightPanel = rightPanelMode === 'ai'
+    ? aiPanel
+    : (previewVisible ? previewPanelContent : null);
 
   /** Fixed bottom action bar */
   const bottomBar = (
