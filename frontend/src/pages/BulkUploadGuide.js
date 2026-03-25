@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   FaArrowLeft, FaCheckCircle, FaExclamationTriangle, FaDownload,
-  FaTable, FaShieldAlt, FaCalendarAlt, FaGlobe,
+  FaTable, FaShieldAlt, FaCalendarAlt,
 } from 'react-icons/fa';
 
 const COLUMNS = [
@@ -38,14 +38,6 @@ const COLUMNS = [
     format: 'DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00. Also accepts YYYY-MM-DD HH:mm and MM/DD/YYYY HH:mm.',
     errors: 'Date is in the past · Unrecognisable format · More than 365 days ahead',
     warnings: 'Within 2 min of now',
-  },
-  {
-    name: 'timezone',
-    required: 'No',
-    default: 'Workspace default',
-    format: 'IANA string e.g. America/New_York, Asia/Kolkata',
-    errors: 'Invalid IANA timezone string',
-    warnings: '—',
   },
   {
     name: 'image_urls',
@@ -104,7 +96,7 @@ const VALIDATION_LAYERS = [
   { layer: '2 · Structure', checks: 'At least one of content / image_urls / video_url present · image_urls and video_url not both present · platforms not empty · no completely empty rows', when: 'Per row, no DB' },
   { layer: '3 · Platform', checks: 'Platform names valid · post_type compatible with platforms · Instagram requires image or video · content length within each platform\'s limit', when: 'Per row, no DB' },
   { layer: '4 · Content', checks: 'Title within limit for YouTube / LinkedIn · tags format', when: 'Per row, no DB' },
-  { layer: '5 · DateTime', checks: 'Date parseable — primary: DD/Mon/YYYY HH:mm (e.g. 23/Apr/2026 10:00); legacy: YYYY-MM-DD HH:mm, MM/DD/YYYY HH:mm · not in the past · not >365 days ahead · valid IANA timezone · not an ambiguous DST time', when: 'Per row, no DB' },
+  { layer: '5 · DateTime', checks: 'Date parseable — primary: DD/Mon/YYYY HH:mm (e.g. 23/Apr/2026 10:00); legacy: YYYY-MM-DD HH:mm, MM/DD/YYYY HH:mm · not in the past · not >365 days ahead', when: 'Per row, no DB' },
   { layer: '6 · URLs', checks: 'Valid URL format · ends in image extension (or Google Drive / Dropbox pattern) · max 10 images · no localhost / 169.254.x.x / private IP (SSRF)', when: 'Per row, no network' },
   { layer: '7 · Schedule', checks: 'Account names exist in workspace · daily platform posting limit not exceeded for any day · scheduling conflict within 30-min window for same account', when: 'Per row, DB call' },
 ];
@@ -259,24 +251,6 @@ const BulkUploadGuide = () => (
         </div>
         <p className="text-xs text-gray-500 mt-3 bg-blue-50 rounded-xl px-4 py-3 border border-blue-100">
           <strong className="text-blue-700">Tip:</strong> Use 3-letter month abbreviations — Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec. Case-insensitive.
-        </p>
-      </Section>
-
-      {/* Timezone */}
-      <Section icon={FaGlobe} title="Timezone Examples">
-        <div className="grid grid-cols-3 gap-2">
-          {['UTC', 'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Kolkata', 'Asia/Tokyo', 'Australia/Sydney'].map((tz) => (
-            <div key={tz} className="text-xs font-mono text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              {tz}
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-gray-500 mt-3">
-          Use any valid{' '}
-          <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">
-            IANA timezone string
-          </a>
-          . If omitted, your workspace default timezone is used.
         </p>
       </Section>
 

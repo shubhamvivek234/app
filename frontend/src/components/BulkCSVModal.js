@@ -18,8 +18,6 @@ const PLATFORM_CHAR_LIMITS = {
   linkedin: 3000, youtube: 5000, bluesky: 300,
 };
 const TITLE_LIMITS = { youtube: 100, linkedin: 150 };
-// Very basic IANA format check — full list would be a large lookup
-const IANA_RE = /^[A-Za-z_]+\/[A-Za-z_]+$/;
 const PRIVATE_IP_RE = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/;
 
 // ── CSV parser ────────────────────────────────────────────────────────────────
@@ -147,9 +145,6 @@ const validateRow = (row, headers) => {
       if (dt > now && dt < twoMin) warnings.push('scheduled_time is within 2 minutes of now');
     }
   }
-  if (row.timezone && !IANA_RE.test(row.timezone)) {
-    errors.push(`Invalid timezone format: "${row.timezone}" — use IANA string e.g. America/New_York`);
-  }
 
   // Layer 6 — URLs (format only, no network)
   if (row.image_urls) {
@@ -255,7 +250,6 @@ const BulkCSVModal = ({ onClose }) => {
           platforms: row.platforms.toLowerCase().split(',').map((p) => p.trim()),
           accounts: row.accounts || 'all',
           scheduled_time: scheduledTime,
-          timezone: row.timezone || 'UTC',
           image_urls: row.image_urls ? row.image_urls.split('||').map((u) => u.trim()) : [],
           video_url: row.video_url || null,
           title: row.title || null,
@@ -291,13 +285,13 @@ const BulkCSVModal = ({ onClose }) => {
   };
 
   const downloadTemplate = () => {
-    const cols = 'content,platforms,accounts,scheduled_time,timezone,image_urls,video_url,title,tags,post_type';
+    const cols = 'content,platforms,accounts,scheduled_time,image_urls,video_url,title,tags,post_type';
     // Use a date 7 days from now so the template is always valid on download
     const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
-    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","Asia/Kolkata","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
