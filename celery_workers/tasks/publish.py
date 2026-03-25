@@ -498,6 +498,16 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
     except Exception as dlq_err:
         logger.error("Failed to write DLQ record for post %s: %s", post_id, dlq_err)
 
+    # Trigger media cleanup if all platforms are now in terminal state
+    if post:
+        try:
+            updated = await db.posts.find_one({"id": post_id}, {"platform_results": 1})
+            if updated and should_cleanup_media(updated.get("platform_results", {})):
+                from celery_workers.tasks.cleanup import schedule_media_cleanup
+                schedule_media_cleanup.apply_async(args=[post_id], countdown=300)
+        except Exception as _cleanup_err:
+            logger.warning("DLQ: failed to schedule media cleanup for %s: %s", post_id, _cleanup_err)
+
     # 18.8: DLQ notification — "permanently failed — [Reschedule]"
     if post and platform:
         user_id = post.get("user_id", "")

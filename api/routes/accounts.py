@@ -112,6 +112,18 @@ async def disconnect_account(
 
     # Proceed: cancel future posts, notify, deactivate
     if future_count > 0:
+        cancelled_cursor = db.posts.find(
+            {
+                "user_id": user_id,
+                "social_account_ids": account_id,
+                "scheduled_time": {"$gt": now},
+                "status": {"$in": ["draft", "scheduled"]},
+                "deleted_at": {"$exists": False},
+            },
+            {"_id": 0, "id": 1},
+        )
+        cancelled_post_ids = [p["id"] async for p in cancelled_cursor]
+
         await db.posts.update_many(
             {
                 "user_id": user_id,
@@ -126,6 +138,15 @@ async def disconnect_account(
             "Cancelled %d future posts for account %s (force disconnect)",
             future_count, account_id,
         )
+
+        # Schedule media cleanup for each cancelled post
+        try:
+            from celery_workers.tasks.cleanup import schedule_media_cleanup
+            for pid in cancelled_post_ids:
+                schedule_media_cleanup.apply_async(args=[pid], countdown=300)
+        except Exception as exc:
+            logger.warning("Failed to schedule media cleanup after disconnect for account %s: %s", account_id, exc)
+
         # Notify user about the disconnection directly (9.5: send_notification is post-only)
         try:
             await db.notifications.insert_one({
