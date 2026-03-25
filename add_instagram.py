@@ -76,7 +76,7 @@ async def add_instagram_account(access_token: str, user_email: str):
 
     if result.upserted_id or result.modified_count:
         print(f"\n🎉 Successfully saved @{username} to database!")
-        print(f"   → Refresh http://localhost:9500/accounts to see it appear")
+        print(f"   → Refresh http://localhost:3000/accounts to see it appear")
     else:
         print("\n⚠️  No changes made to database")
 

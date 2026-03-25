@@ -103,14 +103,14 @@ FIREBASE_STORAGE_BUCKET=your-bucket.appspot.com
 # Google OAuth + YouTube
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=http://localhost:8001/api/oauth/google/callback
-YOUTUBE_REDIRECT_URI=http://localhost:9500/oauth/callback
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/oauth/google/callback
+YOUTUBE_REDIRECT_URI=http://localhost:3000/oauth/callback
 MOCK_GOOGLE_AUTH=false              # Set to "true" in dev to skip real OAuth
 
 # Twitter / X
 TWITTER_CLIENT_ID=
 TWITTER_CLIENT_SECRET=
-TWITTER_REDIRECT_URI=http://localhost:8001/api/oauth/twitter/callback
+TWITTER_REDIRECT_URI=http://localhost:8000/api/oauth/twitter/callback
 
 # LinkedIn
 LINKEDIN_CLIENT_ID=

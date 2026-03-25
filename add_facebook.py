@@ -67,7 +67,7 @@ async def add_facebook(token: str):
 
         if result.upserted_id or result.modified_count:
             print(f"\n🎉 Facebook account '{name}' saved to database!")
-            print("   → Refresh http://localhost:9500/accounts to see it")
+            print("   → Refresh http://localhost:3000/accounts to see it")
         else:
             print("\n⚠️  No changes made (already exists?)")
 
