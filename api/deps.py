@@ -34,12 +34,14 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db: Annotated[AsyncIOMotorDatabase, Depends(get_db)],
 ) -> dict:
     """
     Verify Firebase JWT. Returns the MongoDB user document.
     Raises 401 if token is missing/invalid.
+    Sets request.state.user_id so the rate limiter can key by user.
     """
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
@@ -56,6 +58,7 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    request.state.user_id = user["user_id"]
     return user
 
 
@@ -67,6 +70,7 @@ async def get_current_user_from_cookie(
     Alternative auth dependency using HttpOnly session cookie instead of
     Authorization header. Verifies the Firebase session cookie and checks
     the JTI against the Redis blocklist.
+    Sets request.state.user_id so the rate limiter can key by user.
     """
     get_firebase_app()
     claims = await verify_session_cookie(request)
@@ -79,6 +83,7 @@ async def get_current_user_from_cookie(
             detail="User not found",
         )
 
+    request.state.user_id = user["user_id"]
     return user
 
 
