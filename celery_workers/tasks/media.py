@@ -119,7 +119,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 "status": "ready",
                 "media_url": media_url,
                 "thumbnail_url": thumbnail_url,
-                "processed_at": datetime.utcnow().isoformat(),
+                "processed_at": datetime.now(timezone.utc).isoformat(),
                 "duration_seconds": validation_result.get("duration"),
                 "width": validation_result.get("width"),
                 "height": validation_result.get("height"),

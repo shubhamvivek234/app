@@ -11,7 +11,7 @@ Section 22 fixes:
 """
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from celery_workers.celery_app import celery_app
 
@@ -100,18 +100,16 @@ async def _async_cleanup(post_id: str) -> dict:
             {"media_id": media_id},
             {"$set": {
                 "status": "archived" if plan in ("pro", "agency", "enterprise") else "cleaned",
-                "media_cleaned_at": datetime.utcnow().isoformat(),
+                "media_cleaned_at": datetime.now(timezone.utc).isoformat(),
                 # thumbnail_url is intentionally NOT touched — permanent
             }},
         )
         cleaned += 1
 
     # 22 BUG FIX: Clear media_urls (now stale/dead) + store permanent thumbnail_urls.
-    # Previously only set media_cleaned_at, leaving dead media_urls in place — this
-    # caused 404s on dashboard previews and review workflows.
     post_update: dict = {
         "$set": {
-            "media_cleaned_at": datetime.utcnow().isoformat(),
+            "media_cleaned_at": datetime.now(timezone.utc).isoformat(),
         },
         "$unset": {"media_urls": ""},  # remove dead file references
     }
