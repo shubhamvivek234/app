@@ -124,11 +124,15 @@ const DIMENSION_GUIDE = [
   { label: '3×6 Grid', ratio: '2:5 ratio',  cols: 3, rows: 6 },
 ];
 const CAROUSEL_DIMS = [
-  { slides: 3, width: 1080, height: 1350, label: '3 slides' },
-  { slides: 4, width: 1440, height: 1350, label: '4 slides' },
-  { slides: 5, width: 1800, height: 1350, label: '5 slides' },
-  { slides: 6, width: 2160, height: 1350, label: '6 slides' },
-  { slides: 7, width: 2520, height: 1350, label: '7 slides' },
+  { slides: 2,  width: 2160,  height: 1350, label: '2 slides' },
+  { slides: 3,  width: 3240,  height: 1350, label: '3 slides' },
+  { slides: 4,  width: 4320,  height: 1350, label: '4 slides' },
+  { slides: 5,  width: 5400,  height: 1350, label: '5 slides' },
+  { slides: 6,  width: 6480,  height: 1350, label: '6 slides' },
+  { slides: 7,  width: 7560,  height: 1350, label: '7 slides' },
+  { slides: 8,  width: 8640,  height: 1350, label: '8 slides' },
+  { slides: 9,  width: 9720,  height: 1350, label: '9 slides' },
+  { slides: 10, width: 10800, height: 1350, label: '10 slides' },
 ];
 
 // ── Tools grid ────────────────────────────────────────────────────────────────
@@ -695,7 +699,7 @@ const InstagramCarouselSplitter = ({ onBack }) => {
   const [downloading, setDownloading] = useState(false);
   const fileInputRef = useRef(null);
 
-  const idealDim = CAROUSEL_DIMS.find((d) => d.slides === numSlides) || CAROUSEL_DIMS[0];
+  const idealDim = CAROUSEL_DIMS.find((d) => d.slides === numSlides) || CAROUSEL_DIMS[1];
 
   const loadImage = (file) => {
     if (!file || !file.type.startsWith('image/')) {
@@ -743,18 +747,29 @@ const InstagramCarouselSplitter = ({ onBack }) => {
   };
 
   return (
-    <div>
-      {/* Sub-page header */}
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-        >
-          <FaArrowLeft />
+    <div className="max-w-3xl mx-auto">
+
+      {/* Header */}
+      <div className="mb-6">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 mb-5 transition-colors group">
+          <FaArrowLeft className="text-xs group-hover:-translate-x-0.5 transition-transform" /> Back to Tools
         </button>
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">Instagram Carousel Splitter</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Split images into seamless Instagram carousel posts. Create stunning swipeable panoramas.</p>
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-md">
+            <MdViewCarousel className="text-white text-2xl" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center gap-1 bg-pink-50 text-pink-600 text-[10px] font-bold px-2 py-0.5 rounded-full border border-pink-100">
+                <SiInstagram className="text-[9px]" /> Instagram
+              </span>
+              <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-100">
+                Free · Client-side
+              </span>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900">Instagram Carousel Splitter</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Split any wide image into a seamless swipeable carousel. Your images never leave your device.</p>
+          </div>
         </div>
       </div>
 
@@ -762,142 +777,207 @@ const InstagramCarouselSplitter = ({ onBack }) => {
         <div>
           {/* Upload zone */}
           <div
-            className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-colors max-w-lg mx-auto"
+            className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-5 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-all group"
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); }}
           >
-            <FaUpload className="text-4xl text-gray-300" />
-            <div className="text-center">
-              <p className="text-sm font-semibold text-gray-600">Drop your image here</p>
-              <p className="text-xs text-gray-400 mt-1">or click to browse</p>
-              <p className="text-xs text-gray-400 mt-0.5">Supports JPG, PNG, WEBP</p>
+            <div className="w-16 h-16 rounded-2xl bg-gray-100 group-hover:bg-green-100 flex items-center justify-center transition-colors">
+              <FaUpload className="text-2xl text-gray-400 group-hover:text-green-500 transition-colors" />
             </div>
-            <button className="px-5 py-2 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors">
+            <div className="text-center">
+              <p className="text-sm font-bold text-gray-700">Drop your image here</p>
+              <p className="text-xs text-gray-400 mt-1">or click to browse files</p>
+              <p className="text-xs text-gray-300 mt-0.5">Supports JPG, PNG, WEBP · max 10MB</p>
+            </div>
+            <button className="px-6 py-2.5 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors shadow-sm">
               Choose Image
             </button>
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-            onChange={(e) => { loadImage(e.target.files?.[0]); e.target.value = ''; }} />
 
           {/* Recommended dimensions */}
-          <div className="mt-8">
-            <p className="text-xs font-semibold text-gray-500 text-center mb-4">
-              For best results, use these dimensions:
-            </p>
-            <div className="flex flex-wrap justify-center gap-3">
-              {CAROUSEL_DIMS.map((d) => (
-                <div key={d.slides} className="text-center bg-white rounded-xl border border-gray-200 px-4 py-3 min-w-[100px]">
+          <div className="mt-6 bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+            <p className="text-xs font-bold text-gray-700 text-center mb-5">For best results, use these dimensions:</p>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              {CAROUSEL_DIMS.slice(0, 6).map((d) => (
+                <div key={d.slides} className="text-center bg-gray-50 border border-gray-100 rounded-xl px-3 py-3">
                   <div className="flex gap-0.5 justify-center mb-2">
                     {Array.from({ length: d.slides }).map((_, i) => (
-                      <div key={i} className="bg-green-400 rounded-sm" style={{ width: 10, height: 18 }} />
+                      <div key={i} className="bg-green-400 rounded-sm flex-shrink-0" style={{ width: Math.max(4, Math.floor(36 / d.slides)), height: 18 }} />
                     ))}
                   </div>
                   <p className="text-[10px] font-bold text-gray-700">{d.label}</p>
-                  <p className="text-[10px] text-gray-400 font-mono">{d.width} × {d.height}px</p>
+                  <p className="text-[10px] text-gray-400 font-mono mt-0.5">{d.width} × {d.height}px</p>
                 </div>
               ))}
+            </div>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {CAROUSEL_DIMS.slice(6).map((d) => (
+                <div key={d.slides} className="text-center bg-gray-50 border border-gray-100 rounded-xl px-3 py-3">
+                  <div className="flex gap-0.5 justify-center mb-2">
+                    {Array.from({ length: d.slides }).map((_, i) => (
+                      <div key={i} className="bg-green-400 rounded-sm flex-shrink-0" style={{ width: Math.max(4, Math.floor(36 / d.slides)), height: 18 }} />
+                    ))}
+                  </div>
+                  <p className="text-[10px] font-bold text-gray-700">{d.label}</p>
+                  <p className="text-[10px] text-gray-400 font-mono mt-0.5">{d.width} × {d.height}px</p>
+                </div>
+              ))}
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-2.5">
+              <span className="text-blue-500 text-sm mt-0.5">💡</span>
+              <p className="text-xs text-blue-700">
+                <span className="font-bold">Don't have the right dimensions?</span> No worries! Upload any image and our tool will automatically crop it into equal slides to create the perfect carousel.
+              </p>
             </div>
           </div>
         </div>
       ) : (
-        <div>
-          {/* Configure carousel */}
-          <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm mb-6">
-            <h3 className="text-sm font-bold text-gray-800 mb-4">Configure Your Carousel</h3>
+        /* Configure + preview */
+        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+          {/* Slide count picker */}
+          <div className="mb-5">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Number of Slides</p>
+            <div className="flex gap-1.5 flex-wrap">
+              {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setNumSlides(n)}
+                  className={`w-9 h-9 rounded-lg text-xs font-bold border transition-all ${
+                    numSlides === n
+                      ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-green-400 hover:text-gray-800'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            {/* Preview */}
-            <div className="rounded-xl overflow-hidden border border-gray-200 mb-5 relative"
-              style={{ display: 'flex', gap: '2px', background: '#e5e7eb' }}>
+          {/* Fixed carousel preview — each tile shows its exact slice */}
+          <div className="mb-2">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Preview</p>
+            <div
+              className="rounded-xl overflow-hidden border border-gray-200"
+              style={{ display: 'grid', gridTemplateColumns: `repeat(${numSlides}, 1fr)`, gap: '2px', background: '#e5e7eb' }}
+            >
               {Array.from({ length: numSlides }).map((_, i) => (
-                <div key={i} className="flex-1 relative overflow-hidden" style={{ paddingBottom: `${100 / numSlides}%` }}>
+                <div
+                  key={i}
+                  className="relative overflow-hidden"
+                  style={{ aspectRatio: '4/5' }}
+                >
                   <img
                     src={image.src}
-                    alt=""
-                    className="absolute inset-0 w-full h-full object-cover"
-                    style={{ objectPosition: `${(i / (numSlides - 1)) * 100}% center` }}
+                    alt={`slide ${i + 1}`}
+                    style={{
+                      width: `${numSlides * 100}%`,
+                      height: '100%',
+                      objectFit: 'cover',
+                      position: 'absolute',
+                      left: `${-i * 100}%`,
+                    }}
                   />
-                  <div className="absolute inset-0 flex items-end justify-center pb-1">
-                    <span className="text-white text-xs font-bold drop-shadow">{i + 1}</span>
+                  <div className="absolute bottom-1.5 left-0 right-0 flex justify-center pointer-events-none">
+                    <span className="text-white text-[9px] font-bold bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-md">{i + 1}</span>
                   </div>
                 </div>
               ))}
             </div>
+            <p className="text-[10px] text-gray-400 mt-1.5 text-center">Each slice shows the exact portion that will be downloaded</p>
+          </div>
 
-            {/* Slide count picker */}
-            <div className="mb-4">
-              <label className="text-xs font-semibold text-gray-600 block mb-2">Number of Slides</label>
-              <div className="flex gap-2">
-                {[2, 3, 4, 5, 6, 7].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setNumSlides(n)}
-                    className={`w-9 h-9 rounded-lg text-xs font-bold border transition-all ${
-                      numSlides === n
-                        ? 'bg-green-500 text-white border-green-500'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-green-400'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Ideal dimensions */}
-            <div className="bg-gray-50 rounded-xl border border-gray-200 px-4 py-3 mb-5 text-xs text-gray-600">
-              <p className="font-semibold text-gray-700 mb-1">Ideal dimensions to openness in slides carousel</p>
-              <p className="font-mono text-base text-gray-800 font-bold">
-                {idealDim.width} × {idealDim.height}px
-              </p>
-              <div className="flex gap-1 mt-2">
-                {Array.from({ length: numSlides }).map((_, i) => (
-                  <div key={i} className="bg-green-400 rounded-sm" style={{ width: 14, height: 22 }} />
-                ))}
-              </div>
-            </div>
-
+          {/* Ideal dimensions */}
+          <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 my-4">
             <div className="flex items-center justify-between">
-              <button
-                onClick={() => { setImage(null); setImageName(''); }}
-                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <FaRedo className="inline mr-1.5" />New Image
-              </button>
-              <button
-                onClick={downloadCarousel}
-                disabled={downloading}
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors disabled:opacity-50 shadow"
-              >
-                <FaDownload />
-                {downloading ? 'Generating…' : `Split into ${numSlides} Slides`}
-              </button>
+              <div>
+                <p className="text-xs font-bold text-gray-700">Ideal dimensions for {numSlides} slides</p>
+                <p className="font-mono text-sm text-gray-800 font-bold mt-0.5">{idealDim.width} × {idealDim.height}px</p>
+              </div>
+              <div className="flex gap-0.5">
+                {Array.from({ length: numSlides }).map((_, i) => (
+                  <div key={i} className="bg-green-400 rounded-sm" style={{ width: Math.max(4, Math.floor(56 / numSlides)), height: 22 }} />
+                ))}
+              </div>
             </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => { setImage(null); setImageName(''); }}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <FaRedo className="text-[10px]" /> New Image
+            </button>
+            <button
+              onClick={downloadCarousel}
+              disabled={downloading}
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl transition-colors disabled:opacity-50 shadow-sm"
+            >
+              <FaDownload className="text-xs" />
+              {downloading ? 'Generating…' : `Split into ${numSlides} Slides`}
+            </button>
           </div>
         </div>
       )}
+
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
         onChange={(e) => { loadImage(e.target.files?.[0]); e.target.value = ''; }} />
 
-      {/* How it works */}
-      <div className="mt-8 pt-8 border-t border-gray-100">
-        <h3 className="text-sm font-bold text-gray-800 text-center mb-6">How It Works</h3>
-        <div className="grid grid-cols-3 gap-6">
+      {/* How It Works */}
+      <div className="mt-10">
+        <div className="text-center mb-7">
+          <h3 className="text-xl font-bold text-gray-900">How It Works</h3>
+          <p className="text-sm text-gray-400 mt-1">Three simple steps to your perfect Instagram carousel</p>
+        </div>
+        <div className="grid grid-cols-3 gap-4 relative">
+          <div className="absolute top-10 left-[calc(33%+1rem)] right-[calc(33%+1rem)] h-px bg-gray-200 hidden md:block pointer-events-none" />
           {[
-            { icon: FaUpload, title: 'Upload your image', desc: 'Upload your wide panoramic image. High resolution images provide better quality for each slide.' },
-            { icon: MdViewCarousel, title: 'Choose slide count', desc: 'Select how many slides you want (2–7). Use the recommended dimensions for perfect Instagram proportions.' },
-            { icon: FaDownload, title: 'Download & post', desc: 'Download all slides as a ZIP and upload them to Instagram as a carousel. Each slide connects seamlessly.' },
-          ].map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="text-center">
-              <div className="w-12 h-12 rounded-2xl bg-green-100 flex items-center justify-center mx-auto mb-3">
-                <Icon className="text-green-600 text-xl" />
+            { step: '01', emoji: '📤', title: 'Upload your image', desc: 'Upload any panoramic image, landscape photo, or wide design you want to turn into a carousel.' },
+            { step: '02', emoji: '🎯', title: 'Choose slide count', desc: 'Select how many slides you want (2–10). Each slide will be perfectly sized at 1080×1350px for Instagram.' },
+            { step: '03', emoji: '✨', title: 'Download & post', desc: 'Download all slides and post them in order on Instagram. Your followers can swipe through the seamless panorama!' },
+          ].map(({ step, emoji, title, desc }) => (
+            <div key={step} className="bg-white border border-gray-200 rounded-2xl p-5 text-center shadow-sm relative z-10 hover:border-gray-300 hover:shadow-md transition-all">
+              <div className="w-9 h-9 bg-gray-900 text-white text-xs font-bold rounded-xl flex items-center justify-center mx-auto mb-4 shadow-sm">
+                {step}
               </div>
-              <h4 className="text-sm font-bold text-gray-800 mb-1.5">{title}</h4>
-              <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
+              <div className="text-2xl mb-3">{emoji}</div>
+              <h4 className="text-xs font-bold text-gray-900 mb-2">{title}</h4>
+              <p className="text-[11px] text-gray-500 leading-relaxed">{desc}</p>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Pro Tips */}
+      <div className="mt-6 mb-10 bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-center text-lg">💡</div>
+          <div>
+            <h3 className="text-sm font-bold text-gray-900">Pro Tips</h3>
+            <p className="text-[10px] text-gray-400">Get the most out of your Instagram carousel</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+          {[
+            'Use high-resolution images for best quality',
+            'Keep important content away from slide edges',
+            '2–3 slides work best for engagement',
+            '4–5 slides are perfect for panoramic landscapes',
+            'Upload slides in numerical order',
+            "Don't apply different filters to each slide",
+            'Preview before posting to check alignment',
+            'Use carousel for before/after transformations',
+          ].map((tip, i) => (
+            <div key={i} className="flex items-start gap-2.5 py-2 px-3 rounded-xl hover:bg-gray-50 transition-colors cursor-default">
+              <span className="w-5 h-5 bg-green-100 text-green-700 text-[9px] font-bold rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+              <span className="text-xs text-gray-600 leading-relaxed">{tip}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
     </div>
   );
 };
