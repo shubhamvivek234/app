@@ -697,9 +697,32 @@ const InstagramCarouselSplitter = ({ onBack }) => {
   const [imageName, setImageName] = useState('');
   const [numSlides, setNumSlides] = useState(3);
   const [downloading, setDownloading] = useState(false);
+  const [previewTiles, setPreviewTiles] = useState([]);
   const fileInputRef = useRef(null);
 
   const idealDim = CAROUSEL_DIMS.find((d) => d.slides === numSlides) || CAROUSEL_DIMS[1];
+
+  // ── Generate canvas-based preview tiles ──────────────────────────────────────
+  useEffect(() => {
+    if (!image) { setPreviewTiles([]); return; }
+    const OUT_W = 300;
+    const OUT_H = Math.round(OUT_W * 5 / 4); // 4:5 ratio
+    const pieceW = Math.floor(image.width / numSlides);
+    const pieceH = image.height;
+    const tiles = [];
+    for (let i = 0; i < numSlides; i++) {
+      const tc = document.createElement('canvas');
+      tc.width = OUT_W; tc.height = OUT_H;
+      const ctx = tc.getContext('2d');
+      // Scale to fill width, center vertically
+      const scale = OUT_W / pieceW;
+      const scaledH = pieceH * scale;
+      const offsetY = (OUT_H - scaledH) / 2;
+      ctx.drawImage(image, i * pieceW, 0, pieceW, pieceH, 0, offsetY, OUT_W, scaledH);
+      tiles.push(tc.toDataURL('image/jpeg', 0.82));
+    }
+    setPreviewTiles(tiles);
+  }, [image, numSlides]);
 
   const loadImage = (file) => {
     if (!file || !file.type.startsWith('image/')) {
@@ -855,7 +878,7 @@ const InstagramCarouselSplitter = ({ onBack }) => {
             </div>
           </div>
 
-          {/* Fixed carousel preview — each tile shows its exact slice */}
+          {/* Canvas-based preview — each tile is the exact slice that will be downloaded */}
           <div className="mb-2">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Preview</p>
             <div
@@ -863,22 +886,14 @@ const InstagramCarouselSplitter = ({ onBack }) => {
               style={{ display: 'grid', gridTemplateColumns: `repeat(${numSlides}, 1fr)`, gap: '2px', background: '#e5e7eb' }}
             >
               {Array.from({ length: numSlides }).map((_, i) => (
-                <div
-                  key={i}
-                  className="relative overflow-hidden"
-                  style={{ aspectRatio: '4/5' }}
-                >
-                  <img
-                    src={image.src}
-                    alt={`slide ${i + 1}`}
-                    style={{
-                      width: `${numSlides * 100}%`,
-                      height: '100%',
-                      objectFit: 'cover',
-                      position: 'absolute',
-                      left: `${-i * 100}%`,
-                    }}
-                  />
+                <div key={i} className="relative overflow-hidden" style={{ aspectRatio: '4/5' }}>
+                  {previewTiles[i] ? (
+                    <img src={previewTiles[i]} alt={`slide ${i + 1}`} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
                   <div className="absolute bottom-1.5 left-0 right-0 flex justify-center pointer-events-none">
                     <span className="text-white text-[9px] font-bold bg-black/40 backdrop-blur-sm px-1.5 py-0.5 rounded-md">{i + 1}</span>
                   </div>
