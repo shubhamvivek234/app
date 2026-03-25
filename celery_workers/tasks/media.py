@@ -87,6 +87,9 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
 
         # Step 4: Upload media to permanent storage (R2 or Firebase)
         ext = pathlib.Path(processed_path).suffix or ""
+        media_filename = f"{media_job_id}{ext}"
+        media_folder = f"media/{user_id}"
+        media_storage_key = f"{media_folder}/{media_filename}"
         loop = asyncio.get_event_loop()
         def _read_file(path: str) -> bytes:
             with open(path, "rb") as f:
@@ -94,9 +97,9 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         media_bytes = await loop.run_in_executor(None, _read_file, processed_path)
         media_url = await upload_file_async(
             media_bytes,
-            f"{media_job_id}{ext}",
+            media_filename,
             mime_type,
-            folder=f"media/{user_id}",
+            folder=media_folder,
         )
         logger.info("Media uploaded: media_id=%s url=%s", media_job_id, media_url)
 
@@ -114,12 +117,15 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             )
             logger.info("Thumbnail uploaded: media_id=%s url=%s", media_job_id, thumbnail_url)
 
-        # Step 6: Persist real URLs to DB
+        # Step 6: Persist real URLs + storage key to DB
+        # storage_key is stored separately so cleanup can call delete_file(key)
+        # without having to parse the public URL (which may change format)
         await db.media_assets.update_one(
             {"media_id": media_job_id},
             {"$set": {
                 "status": "ready",
                 "media_url": media_url,
+                "storage_key": media_storage_key,
                 "thumbnail_url": thumbnail_url,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
                 "duration_seconds": validation_result.get("duration"),
