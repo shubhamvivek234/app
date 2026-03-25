@@ -50,18 +50,20 @@ async def _check_queue_depth(queue_redis: QueueRedis) -> None:
 
 
 async def _check_concurrent_uploads(cache_redis: CacheRedis, user_id: str, plan: str) -> None:
-    """Enforce per-user concurrent upload limit."""
+    """Enforce per-user concurrent upload limit (atomic incr-then-check, LB-3)."""
     limit = _CONCURRENT_LIMIT.get(plan, 2)
     key = f"upload:concurrent:{user_id}"
-    count = await cache_redis.get(key)
-    if count and int(count) >= limit:
+    # Atomic increment first, then check — avoids GET/INCR race condition
+    current = await cache_redis.incr(key)
+    await cache_redis.expire(key, 300)  # auto-expire after 5 min
+    if current > limit:
+        # Roll back the increment before raising
+        await cache_redis.decr(key)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Concurrent upload limit reached ({limit} for {plan} plan)",
             headers={"Retry-After": "60"},
         )
-    await cache_redis.incr(key)
-    await cache_redis.expire(key, 300)  # auto-expire after 5 min
 
 
 async def _release_concurrent_slot(cache_redis: CacheRedis, user_id: str) -> None:

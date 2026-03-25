@@ -86,9 +86,10 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         # Step 4: Upload media to permanent storage (R2 or Firebase)
         ext = pathlib.Path(processed_path).suffix or ""
         loop = asyncio.get_event_loop()
-        media_bytes = await loop.run_in_executor(
-            None, lambda: open(processed_path, "rb").read()
-        )
+        def _read_file(path: str) -> bytes:
+            with open(path, "rb") as f:
+                return f.read()
+        media_bytes = await loop.run_in_executor(None, _read_file, processed_path)
         media_url = await upload_file_async(
             media_bytes,
             f"{media_job_id}{ext}",

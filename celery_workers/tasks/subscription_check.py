@@ -47,18 +47,18 @@ async def _async_check() -> dict:
             "subscription_status": "active",
             "expiry_warning_sent": {"$ne": True},
         },
-        {"_id": 0, "id": 1, "email": 1, "subscription_expires_at": 1},
+        {"_id": 0, "user_id": 1, "email": 1, "subscription_expires_at": 1},
     )
     async for user in cursor:
         # Count affected posts
         post_count = await db.posts.count_documents({
-            "user_id": user["id"],
+            "user_id": user["user_id"],
             "status": "scheduled",
             "scheduled_time": {"$gt": user.get("subscription_expires_at", now)},
         })
         # Send warning notification
         await db.notifications.insert_one({
-            "user_id": user["id"],
+            "user_id": user["user_id"],
             "type": "subscription_expiring",
             "message": f"Your subscription expires soon. {post_count} scheduled posts may be affected.",
             "post_count": post_count,
@@ -66,7 +66,7 @@ async def _async_check() -> dict:
             "is_read": False,
         })
         await db.users.update_one(
-            {"id": user["id"]},
+            {"user_id": user["user_id"]},
             {"$set": {"expiry_warning_sent": True}},
         )
         warned += 1
@@ -78,7 +78,7 @@ async def _async_check() -> dict:
             "subscription_expires_at": {"$lte": grace_cutoff},
             "subscription_status": {"$in": ["expired", "past_due"]},
         },
-        {"_id": 0, "id": 1, "user_id": 1, "subscription_expires_at": 1, "subscription_cleanup_date": 1},
+        {"_id": 0, "user_id": 1, "subscription_expires_at": 1, "subscription_cleanup_date": 1},
     )
     async for user in expired_cursor:
         user_id = user.get("user_id") or user.get("id")
@@ -88,7 +88,7 @@ async def _async_check() -> dict:
         if subscription_expires_at and not user.get("subscription_cleanup_date"):
             cleanup_date = subscription_expires_at + timedelta(days=20)
             await db.users.update_one(
-                {"id": user["id"]},
+                {"user_id": user_id},
                 {"$set": {"subscription_cleanup_date": cleanup_date}},
             )
 
@@ -119,10 +119,10 @@ async def _async_check() -> dict:
             "subscription_cleanup_date": {"$lte": now},
             "subscription_status": "expired",
         },
-        {"_id": 0, "id": 1, "user_id": 1},
+        {"_id": 0, "user_id": 1},
     )
     async for user in cleanup_cursor:
-        user_id = user.get("user_id") or user.get("id")
+        user_id = user["user_id"]
         user_cleanup_posts = 0
         user_media_deleted = 0
 
@@ -176,7 +176,7 @@ async def _async_check() -> dict:
 
             # Clear subscription_cleanup_date to prevent re-notification on next daily run
             await db.users.update_one(
-                {"id": user_id},
+                {"user_id": user_id},
                 {"$set": {"subscription_cleanup_date": None}},
             )
             await db.notifications.insert_one({
