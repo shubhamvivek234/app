@@ -71,13 +71,18 @@ async def _event_generator(
                 missed_key = f"sse:history:{user_id}"
                 missed_events = await cache_redis.lrange(missed_key, 0, -1)
                 replay_started = False
+                seen_event_ids: set[str] = set()  # EC-8: deduplicate in case two SSE connections pushed the same event
                 for raw_event in missed_events:
                     if isinstance(raw_event, bytes):
                         raw_event = raw_event.decode("utf-8", errors="replace")
                     try:
                         evt = json.loads(raw_event)
                         if replay_started:
-                            yield _sse_event(raw_event, event=evt.get("type", "update"), id=evt.get("event_id", ""))
+                            event_id = evt.get("event_id", "")
+                            if event_id and event_id in seen_event_ids:
+                                continue  # skip duplicate
+                            seen_event_ids.add(event_id)
+                            yield _sse_event(raw_event, event=evt.get("type", "update"), id=event_id)
                         elif evt.get("event_id") == last_event_id:
                             replay_started = True
                     except (json.JSONDecodeError, ValueError):
