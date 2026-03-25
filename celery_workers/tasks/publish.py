@@ -200,18 +200,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         pass  # subscription module not available — skip check
 
     try:
-        # ── Circuit breaker check (Section 20.1) ───────────────────────────────
-        cb_open = await can_attempt(r_cache, platform)
-        if not cb_open:
-            logger.warning("Circuit OPEN for %s — skipping platform call for post %s", platform, post_id)
-            await _update_platform_result(db, post_id, platform, {
-                "status": "retrying",
-                "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
-                "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
-            })
-            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
-
-        # Gap 2.7: Inject decrypted access token so adapter can authenticate
+        # Gap 2.7: Inject decrypted access token so adapter can authenticate.
+        # Fetch account first so we have account_id for per-account circuit breaker.
+        account_id: str | None = None
         try:
             from utils.encryption import decrypt
             account_doc = await db.social_accounts.find_one({
@@ -220,9 +211,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "is_active": True,
             })
             if account_doc and account_doc.get("access_token"):
+                account_id = account_doc.get("account_id")
                 post = {**post, "access_token": decrypt(account_doc["access_token"]), "account": account_doc}
         except Exception as _token_err:
             logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
+
+        # ── Circuit breaker check — per-account to avoid cross-tenant impact ──
+        cb_open = await can_attempt(r_cache, platform, account_id)
+        if not cb_open:
+            logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, account_id, post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "retrying",
+                "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
+                "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            })
+            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
 
         adapter = get_adapter(platform)
         result = await adapter.publish(post, redis=r_cache)
@@ -240,7 +243,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         await r_cache.setex(confirm_key, 86400, json.dumps(confirmation_payload))
 
         # ── Circuit breaker: record success (Section 20.1) ────────────────────
-        await record_success(r_cache, platform)
+        await record_success(r_cache, platform, account_id)
 
         # Then update MongoDB
         await _update_platform_result(db, post_id, platform, {
@@ -332,7 +335,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     pass
 
             # ── Circuit breaker: record failure (Section 20.1) ────────────────
-            await record_failure(r_cache, platform)
+            await record_failure(r_cache, platform, account_id)
 
             await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
             return {"status": "permanent_failure"}
@@ -355,7 +358,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
             if attempt >= MAX_RETRIES:
                 logger.error("Max retries exceeded for %s/%s — DLQ", post_id, platform)
-                await record_failure(r_cache, platform)  # Section 20.1
+                await record_failure(r_cache, platform, account_id)  # Section 20.1
                 await _move_to_dlq(post_id, str(exc), platform=platform)
                 await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "dlq"}

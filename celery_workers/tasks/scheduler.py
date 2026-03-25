@@ -97,10 +97,14 @@ async def _async_scan_and_enqueue() -> dict:
     enqueued = 0
     high_priority_threshold = now + timedelta(minutes=5)
 
-    # Cursor over posts due in window — each iteration atomically claims one
+    # Cursor over posts due in window — each iteration atomically claims one.
+    # Capped at 500 per scan: prevents Beat task from running past its 30s window
+    # on popular time slots (e.g. 9AM Monday with thousands of posts due).
+    # Unclaimed posts are picked up by the next scan cycle 30s later.
     cursor = db.posts.find(
         {"status": "scheduled", "scheduled_time": {"$lte": enqueue_horizon}},
         {"_id": 0, "id": 1, "scheduled_time": 1, "platforms": 1, "version": 1},
+        limit=500,
     )
 
     async for post in cursor:
@@ -147,7 +151,7 @@ async def _async_scan_and_enqueue() -> dict:
             "status": "scheduled",
             "scheduled_time": {"$lte": pre_upload_horizon, "$gt": enqueue_horizon},
             "post_type": {"$in": ["video", "reel", "story"]},
-            "pre_upload_status": {"$in": [None, "pending"]},
+            "pre_upload_status": {"$in": [None, "pending", "failed"]},  # retry failed pre-uploads
         },
         {"_id": 0, "id": 1, "platforms": 1},
         limit=50,
