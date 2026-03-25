@@ -203,7 +203,7 @@ const BulkCSVModal = ({ onClose }) => {
         if (missingHeaders.length) {
           const guessOld = headers.some((h) => h === 'text' || h === 'image_url');
           if (guessOld) {
-            toast.error('CSV uses old column names. Download the new template — columns are: content, platforms, accounts, scheduled_time, timezone, image_urls, video_url, title, tags, post_type');
+            toast.error('CSV uses old column names. Download the new template — columns are: content, platforms, accounts, scheduled_time, image_urls, video_url, title, tags, post_type');
             return;
           }
         }
@@ -338,7 +338,8 @@ const BulkCSVModal = ({ onClose }) => {
             <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
               <h3 className="text-sm font-semibold text-gray-900 mb-1">1. Prepare your CSV file</h3>
               <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-                Make sure your CSV file is in the correct format: <strong>content, platforms, accounts, scheduled_time, timezone, image_urls, video_url, title, tags, post_type</strong>.
+                Make sure your CSV file is in the correct format: <strong>content, platforms, accounts, scheduled_time, image_urls, video_url, title, tags, post_type</strong>.
+                scheduled_time must use the format <strong>DD/Mon/YYYY HH:mm</strong> e.g. <code className="bg-gray-100 px-1 rounded text-green-700">23/Apr/2026 10:00</code>.
                 Download our template to get started, and check our{' '}
                 <button
                   onClick={() => { onClose(); navigate('/bulk-upload-guide'); }}
