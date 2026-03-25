@@ -65,6 +65,8 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     quarantine_path = asset.get("quarantine_path")
     mime_type = asset.get("mime_type", "application/octet-stream")
 
+    processed_path: str | None = None  # track for EC-14 cleanup
+
     try:
         await db.media_assets.update_one(
             {"media_id": media_job_id},
@@ -136,6 +138,15 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             {"$set": {"status": "failed", "error_message": str(exc)}},
         )
         raise task.retry(countdown=30, exc=exc)
+
+    finally:
+        # EC-14: Remove local quarantine/temp files to prevent disk accumulation
+        for path in {quarantine_path, processed_path}:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError as _e:
+                    logger.warning("Could not delete temp file %s: %s", path, _e)
 
 
 # ── Section 18.8 — Per-platform Publish Notifications ────────────────────────

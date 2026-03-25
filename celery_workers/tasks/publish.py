@@ -278,6 +278,28 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     except Exception as exc:
         from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
 
+        # EC-3: Instagram container expired — clear stale container and re-run pre_upload
+        if "container expired" in str(exc).lower() and platform == "instagram":
+            logger.warning("Instagram container expired for %s — clearing and re-queuing pre_upload", post_id)
+            await db.posts.update_one(
+                {"id": post_id},
+                {
+                    "$unset": {f"platform_container_ids.{platform}": ""},
+                    "$set": {"pre_upload_status": "pending"},
+                },
+            )
+            pre_upload_task.apply_async(
+                kwargs={"post_id": post_id, "platform": platform},
+                queue="default",
+                countdown=5,
+            )
+            await _update_platform_result(db, post_id, platform, {
+                "status": "retrying",
+                "error": "Container expired — re-uploading media",
+                "last_attempt_at": datetime.now(timezone.utc),
+            })
+            return {"status": "container_expired_requeued"}
+
         error_class = classify_error(exc)
 
         if error_class == ErrorClass.PERMANENT:

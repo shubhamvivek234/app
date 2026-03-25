@@ -89,6 +89,14 @@ async def upload_media(
     user_id = current_user["user_id"]
     plan = current_user.get("plan", "starter")
 
+    # EC-5: Block uploads for expired subscriptions (not just at publish time)
+    sub_status = current_user.get("subscription_status", "free")
+    if sub_status not in {"active", "free", "grace"}:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Active subscription required to upload media",
+        )
+
     # 1. Queue depth guard — before any I/O
     await _check_queue_depth(queue_redis)
 

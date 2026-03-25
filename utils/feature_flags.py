@@ -5,7 +5,6 @@ Falls back to environment variable defaults when Unleash is unavailable.
 """
 import logging
 import os
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
