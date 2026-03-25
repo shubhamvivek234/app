@@ -19,8 +19,10 @@ export ALLOWED_ORIGINS="http://localhost:3000,http://127.0.0.1:3000"
 
 # Start Backend
 echo "Starting Backend v2.9 on port 8000..."
-python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --env-file backend/.env > backend.log 2>&1 &
+cd backend
+python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 --env-file .env > ../backend.log 2>&1 &
 BACKEND_PID=$!
+cd ..
 
 # Start Frontend
 echo "Starting Frontend on port 3000..."
