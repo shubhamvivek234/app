@@ -126,12 +126,18 @@ async def disconnect_account(
             "Cancelled %d future posts for account %s (force disconnect)",
             future_count, account_id,
         )
-        # TODO: enqueue notification task
+        # Notify user about the disconnection directly (9.5: send_notification is post-only)
         try:
-            from celery_workers.tasks.media import send_notification
-            send_notification.delay(account_id, "account_disconnected")
+            await db.notifications.insert_one({
+                "user_id": user_id,
+                "type": "account.disconnected",
+                "message": f"Social account disconnected and {future_count} future posts cancelled.",
+                "metadata": {"account_id": account_id, "cancelled_posts": future_count},
+                "is_read": False,
+                "created_at": now,
+            })
         except Exception as exc:
-            logger.warning("Failed to send disconnect notification: %s", exc)
+            logger.warning("Failed to insert disconnect notification: %s", exc)
 
     # Soft-deactivate; hard-delete deferred 24h
     await db.social_accounts.update_one(

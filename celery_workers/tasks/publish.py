@@ -225,7 +225,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
 
         adapter = get_adapter(platform)
-        result = await adapter.publish(post)
+        result = await adapter.publish(post, redis=r_cache)
 
         post_url = result.get("post_url")
         platform_post_id = result.get("platform_post_id")
@@ -374,6 +374,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
+    r_cache = get_cache_redis()
 
     await db.posts.update_one(
         {"id": post_id},
@@ -383,7 +384,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     try:
         adapter = get_adapter(platform)
         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-        container_result = await adapter.pre_upload(post)
+        container_result = await adapter.pre_upload(post, redis=r_cache)
 
         # EC12: If Instagram container is still pending, dispatch non-blocking poller
         if container_result.get("pre_upload_status") == "pending" and platform == "instagram":

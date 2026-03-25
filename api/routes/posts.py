@@ -141,12 +141,46 @@ async def create_post(
         logger.warning("Schedule density warning: %s", dw.message)
         all_warnings.append(dw.message)
 
+    # 9.3 — Resolve platform names to social_account_ids so EC7 disconnect guard works
+    social_account_ids: list[str] = []
+    if body.platforms:
+        account_cursor = db.social_accounts.find(
+            {"user_id": user_id, "platform": {"$in": body.platforms}, "is_active": True},
+            {"_id": 0, "account_id": 1},
+        )
+        async for acct in account_cursor:
+            if acct.get("account_id"):
+                social_account_ids.append(acct["account_id"])
+
+    # 9.13/9.14 — Validate media_ids belong to current user + workspace membership check
+    if body.media_ids:
+        owned = await db.media_assets.count_documents({
+            "media_id": {"$in": body.media_ids},
+            "user_id": user_id,
+        })
+        if owned != len(body.media_ids):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="One or more media_ids are invalid or do not belong to you",
+            )
+
+    if body.workspace_id and body.workspace_id != current_user.get("default_workspace_id"):
+        member = await db.workspace_members.find_one(
+            {"workspace_id": body.workspace_id, "user_id": user_id}
+        )
+        if not member:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a member of the specified workspace",
+            )
+
     doc: dict = {
         "id": str(ObjectId()),
         "user_id": user_id,
         "workspace_id": workspace_id,
         "content": body.content,
         "platforms": body.platforms,
+        "social_account_ids": social_account_ids,
         "media_ids": body.media_ids,
         "post_type": body.post_type,
         "timezone": body.timezone,

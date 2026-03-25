@@ -4,7 +4,7 @@ Runs every 6 hours. Uses distributed Redis lock to prevent race conditions.
 """
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from celery_workers.celery_app import celery_app
 from utils.encryption import decrypt, encrypt
@@ -28,7 +28,7 @@ async def _async_refresh_tokens() -> dict:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
-    horizon = datetime.utcnow() + timedelta(hours=72)
+    horizon = datetime.now(timezone.utc) + timedelta(hours=72)
     cursor = db.social_accounts.find(
         {"is_active": True, "token_expiry": {"$lt": horizon}},
         {"_id": 0, "account_id": 1, "platform": 1, "user_id": 1},
@@ -71,7 +71,7 @@ async def _refresh_with_lock(db, account_id: str, platform: str) -> None:
             return
 
         # Still expired? If another worker refreshed, we skip
-        if account.get("token_expiry") and account["token_expiry"] > datetime.utcnow() + timedelta(hours=72):
+        if account.get("token_expiry") and account["token_expiry"] > datetime.now(timezone.utc) + timedelta(hours=72):
             logger.debug("Token for %s already refreshed by another worker", account_id)
             return
 

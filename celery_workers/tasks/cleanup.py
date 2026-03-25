@@ -5,7 +5,7 @@ Only cleans up when ALL platforms are in terminal state (EC media cleanup gate).
 """
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from celery_workers.celery_app import celery_app
 
@@ -66,7 +66,7 @@ async def _async_cleanup(post_id: str) -> dict:
             {"media_id": media_id},
             {"$set": {
                 "status": "cleaned",
-                "media_cleaned_at": datetime.utcnow().isoformat(),
+                "media_cleaned_at": datetime.now(timezone.utc).isoformat(),
                 # thumbnail_url left intact — thumbnails are PERMANENT
             }},
         )
@@ -76,7 +76,7 @@ async def _async_cleanup(post_id: str) -> dict:
     await db.posts.update_one(
         {"id": post_id},
         {"$set": {
-            "media_cleaned_at": datetime.utcnow().isoformat(),
+            "media_cleaned_at": datetime.now(timezone.utc).isoformat(),
         }},
     )
 
