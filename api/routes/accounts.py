@@ -8,6 +8,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
@@ -239,10 +240,19 @@ def _build_oauth_url(platform: str, state: str) -> str:
         "linkedin": "https://www.linkedin.com/oauth/v2/authorization",
         "tiktok": "https://www.tiktok.com/auth/authorize/",
     }
-    client_id = os.environ.get(f"{platform.upper()}_CLIENT_ID", "")
-    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/api/v1/oauth/callback")
+    # YouTube uses Google OAuth — env var is GOOGLE_CLIENT_ID not YOUTUBE_CLIENT_ID (CFG-3)
+    client_id_env = "GOOGLE_CLIENT_ID" if platform == "youtube" else f"{platform.upper()}_CLIENT_ID"
+    client_id = os.environ.get(client_id_env, "")
+    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback")
     base = base_urls.get(platform, "")
-    return f"{base}?client_id={client_id}&redirect_uri={redirect_uri}&state={state}&response_type=code"
+    # URL-encode all params to handle special characters (LB-4)
+    params = urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "response_type": "code",
+    })
+    return f"{base}?{params}"
 
 
 async def _exchange_code_for_tokens(platform: str, code: str) -> dict | None:

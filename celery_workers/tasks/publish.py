@@ -125,12 +125,9 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
         )
         return {"status": "version_mismatch_requeued"}
 
-    # Apply jitter
+    # Apply jitter — use Celery countdown instead of blocking time.sleep (LB-2)
     post_type = post.get("post_type", "image")
     jitter = _jitter_seconds(post_type)
-    if jitter > 0:
-        import time
-        time.sleep(jitter)
 
     # Update post with jitter info + processing status
     await db.posts.update_one(
@@ -143,12 +140,13 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     )
 
     # Spawn per-platform tasks in parallel (Phase 1.6.2)
+    # countdown=jitter delays children without blocking the worker thread
     platforms = post.get("platforms", [])
     platform_tasks = group(
         publish_to_platform.s(post_id=post_id, platform=p, attempt=0)
         for p in platforms
     )
-    platform_tasks.apply_async(queue="default")
+    platform_tasks.apply_async(queue="default", countdown=jitter)
 
     return {"status": "dispatched", "platforms": platforms, "jitter_seconds": jitter}
 

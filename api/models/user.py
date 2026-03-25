@@ -1,7 +1,7 @@
 """User and workspace Pydantic models with strict validation."""
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, computed_field
 
 
 class SubscriptionStatus(str, Enum):
@@ -33,6 +33,11 @@ class UserResponse(BaseModel):
     created_at: datetime
     mfa_enabled: bool = False
     role: str = "user"
+
+    @computed_field  # FE-2: alias for frontend compatibility
+    @property
+    def name(self) -> str | None:
+        return self.display_name
 
 
 class WorkspaceRole(str, Enum):

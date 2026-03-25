@@ -38,18 +38,18 @@ async def _async_check() -> dict:
             "subscription_status": "active",
             "expiry_warning_sent": {"$ne": True},
         },
-        {"_id": 0, "id": 1, "email": 1, "subscription_expires_at": 1},
+        {"_id": 0, "user_id": 1, "email": 1, "subscription_expires_at": 1},
     )
     async for user in cursor:
         # Count affected posts
         post_count = await db.posts.count_documents({
-            "user_id": user["id"],
+            "user_id": user["user_id"],
             "status": "scheduled",
             "scheduled_time": {"$gt": user.get("subscription_expires_at", now)},
         })
         # Send warning notification
         await db.notifications.insert_one({
-            "user_id": user["id"],
+            "user_id": user["user_id"],
             "type": "subscription_expiring",
             "message": f"Your subscription expires soon. {post_count} scheduled posts may be affected.",
             "post_count": post_count,
@@ -57,7 +57,7 @@ async def _async_check() -> dict:
             "is_read": False,
         })
         await db.users.update_one(
-            {"id": user["id"]},
+            {"user_id": user["user_id"]},
             {"$set": {"expiry_warning_sent": True}},
         )
         warned += 1
@@ -69,12 +69,12 @@ async def _async_check() -> dict:
             "subscription_expires_at": {"$lte": grace_cutoff},
             "subscription_status": {"$in": ["expired", "past_due"]},
         },
-        {"_id": 0, "id": 1},
+        {"_id": 0, "user_id": 1},
     )
     async for user in expired_cursor:
         result = await db.posts.update_many(
             {
-                "user_id": user["id"],
+                "user_id": user["user_id"],
                 "status": "scheduled",
             },
             {"$set": {
@@ -86,7 +86,7 @@ async def _async_check() -> dict:
         if result.modified_count > 0:
             paused_users += 1
             await db.notifications.insert_one({
-                "user_id": user["id"],
+                "user_id": user["user_id"],
                 "type": "posts_paused",
                 "message": f"{result.modified_count} posts paused due to expired subscription.",
                 "created_at": now,

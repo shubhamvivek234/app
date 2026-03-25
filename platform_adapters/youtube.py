@@ -82,8 +82,8 @@ class YouTubeAdapter(PlatformAdapter):
                     headers={**auth_headers, "X-Upload-Content-Type": "video/*"},
                     json=metadata,
                 )
-                if init_resp.status_code not in (200, 200):
-                    if init_resp.status_code != 200:
+                if init_resp.status_code not in (200, 201):
+                    if init_resp.status_code not in (200, 201):
                         if redis:
                             await record_failure(redis, self.platform)
                         raise PlatformHTTPError(init_resp.status_code, init_resp.text)

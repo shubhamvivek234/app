@@ -8,10 +8,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Header, status
+from fastapi import APIRouter, HTTPException, Header, Request, status
 from pydantic import BaseModel
 
 from api.deps import DB
+from api.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["public-api"])
@@ -88,7 +89,9 @@ class PublicPostListResponse(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/posts", response_model=PublicPostListResponse)
+@limiter.limit("60/minute")
 async def public_list_posts(
+    request: Request,
     db: DB,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     page: int = 1,
@@ -120,7 +123,9 @@ async def public_list_posts(
 
 
 @router.get("/posts/{post_id}", response_model=PublicPostSummary)
+@limiter.limit("60/minute")
 async def public_get_post(
+    request: Request,
     post_id: str,
     db: DB,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),

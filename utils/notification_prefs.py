@@ -5,6 +5,7 @@ and opt into digest mode (batches notifications into hourly/daily digests).
 """
 from __future__ import annotations
 
+import copy
 from enum import Enum
 
 
@@ -35,7 +36,7 @@ DEFAULT_PREFERENCES: dict[str, dict] = {
 async def get_user_prefs(db, user_id: str) -> dict:
     """Fetch user notification preferences, falling back to defaults."""
     doc = await db.notification_prefs.find_one({"user_id": user_id})
-    prefs = DEFAULT_PREFERENCES.copy()
+    prefs = copy.deepcopy(DEFAULT_PREFERENCES)
     if doc:
         prefs.update(doc.get("prefs", {}))
     return prefs
