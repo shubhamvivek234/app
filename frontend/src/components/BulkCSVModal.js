@@ -61,7 +61,8 @@ const MONTH_ABBR = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9
 
 const parseDateTime = (str) => {
   if (!str) return null;
-  const s = str.trim();
+  // Strip leading apostrophe (Excel "force text" prefix added by template)
+  const s = str.trim().replace(/^'/, '');
   // Only accepted format: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
   const m = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
   if (m) {
@@ -280,7 +281,8 @@ const BulkCSVModal = ({ onClose }) => {
     const pad = (n) => String(n).padStart(2, '0');
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
-    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
+    // Prefix with a single quote inside the quotes to prevent Excel from auto-converting the date
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","'${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
