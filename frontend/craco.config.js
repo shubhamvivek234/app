@@ -78,6 +78,15 @@ if (config.enableVisualEdits && babelMetadataPlugin) {
 }
 
 webpackConfig.devServer = (devServerConfig) => {
+  // Fix: webpack-dev-server sets COOP: same-origin by default which blocks
+  // Firebase signInWithPopup from communicating back to the opener window.
+  // Override to same-origin-allow-popups to allow Firebase Google auth popup.
+  devServerConfig.headers = {
+    ...devServerConfig.headers,
+    'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+    'Cross-Origin-Embedder-Policy': 'unsafe-none',
+  };
+
   // Apply visual edits dev server setup only if enabled
   if (config.enableVisualEdits && setupDevServer) {
     devServerConfig = setupDevServer(devServerConfig);
