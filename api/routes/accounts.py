@@ -72,6 +72,11 @@ class BlueskyConnectRequest(BaseModel):
     app_password: str
 
 
+class DiscordWebhookRequest(BaseModel):
+    webhook_url: str
+    channel_name: str | None = None  # optional user-supplied label
+
+
 # ── LinkedIn org models ───────────────────────────────────────────────────────
 
 class LinkedInOrgRequest(BaseModel):
@@ -345,6 +350,59 @@ async def connect_bluesky(
     )
     logger.info("Bluesky connected: user=%s handle=%s", user_id, handle)
     return {"connected": True, "platform": "bluesky", "handle": handle}
+
+
+# ── Discord (webhook-based, no OAuth) ─────────────────────────────────────────
+
+@router.post("/social-accounts/discord/connect")
+async def connect_discord(
+    body: DiscordWebhookRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Connect a Discord channel via incoming webhook URL."""
+    from backend.app.social.discord import DiscordWebhook
+
+    user_id = current_user["user_id"]
+    webhook_url = body.webhook_url.strip()
+
+    try:
+        meta = await DiscordWebhook.validate(webhook_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.error("Discord webhook validation failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Failed to reach Discord. Please check the webhook URL.")
+
+    now = datetime.now(timezone.utc)
+    webhook_id = meta["webhook_id"]
+    account_id = f"discord_{user_id}_{secrets.token_hex(8)}"
+    channel_label = body.channel_name or meta.get("channel_name") or f"Channel {meta.get('channel_id', '')}"
+
+    await db.social_accounts.update_one(
+        {"user_id": user_id, "platform": "discord", "platform_user_id": webhook_id},
+        {"$set": {
+            "account_id": account_id,
+            "user_id": user_id,
+            "platform": "discord",
+            "platform_user_id": webhook_id,
+            "platform_username": channel_label,
+            "access_token": encrypt(webhook_url),   # webhook URL is the "token"
+            "refresh_token": None,
+            "scopes": ["webhook"],
+            "is_active": True,
+            "connected_at": now,
+            "expires_at": None,
+            "metadata": {
+                "guild_id": meta.get("guild_id"),
+                "channel_id": meta.get("channel_id"),
+            },
+        }},
+        upsert=True,
+    )
+    logger.info("Discord webhook connected: user=%s webhook_id=%s channel=%s", user_id, webhook_id, channel_label)
+    return {"connected": True, "platform": "discord", "channel": channel_label}
 
 
 # ── LinkedIn org selection ────────────────────────────────────────────────────

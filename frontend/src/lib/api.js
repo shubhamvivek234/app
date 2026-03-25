@@ -521,6 +521,11 @@ export const connectBluesky = async (data) => {
   return response.data;
 };
 
+export const connectDiscord = async (webhookUrl, channelName) => {
+  const response = await axios.post(`${API}/social-accounts/discord/connect`, { webhook_url: webhookUrl, channel_name: channelName || null }, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const getLinkedInPendingOrgs = async () => {
   const response = await axios.get(`${API}/social-accounts/linkedin/pending-orgs`, { headers: getAuthHeaders() });
   return response.data;

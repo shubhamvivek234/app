@@ -2,25 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getSocialAccounts, connectSocialAccount, disconnectSocialAccount, connectBluesky, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually } from '@/lib/api';
-import { Button } from '@/components/ui/button';
+import {
+  getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
+  connectBluesky, connectDiscord, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
+} from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  FaTwitter,
-  FaLinkedin,
-  FaInstagram,
-  FaFacebook,
-  FaYoutube,
-  FaTiktok,
-  FaPinterest,
-  FaTimes,
-  FaFilter,
-  FaExclamationTriangle,
-  FaClock,
-  FaCheckCircle,
+  FaTwitter, FaLinkedin, FaInstagram, FaFacebook, FaYoutube,
+  FaTiktok, FaPinterest, FaTimes, FaExclamationTriangle, FaClock,
+  FaCheckCircle, FaPlus, FaLink, FaDiscord,
 } from 'react-icons/fa';
+import { SiThreads, SiReddit, SiSnapchat, SiBluesky } from 'react-icons/si';
 
-// Returns 'expired' | 'expiring' | 'ok' | 'unknown'
+// ── Token status helper ───────────────────────────────────────────────────────
 const getTokenStatus = (account) => {
   const expiry = account.token_expiry;
   if (!expiry) return 'unknown';
@@ -28,147 +22,177 @@ const getTokenStatus = (account) => {
   if (isNaN(expiryDate)) return 'unknown';
   const now = new Date();
   const diffHours = (expiryDate - now) / (1000 * 60 * 60);
-  if (diffHours < 0) {
-    // Even if expired, if there's a refresh_token the backend can auto-refresh
-    return account.refresh_token ? 'ok' : 'expired';
-  }
-  // Show 'expiring' only if under 24h AND no refresh_token to auto-heal it
-  // (Twitter tokens are always 2h but auto-refresh on load — don't alarm user)
+  if (diffHours < 0) return account.refresh_token ? 'ok' : 'expired';
   if (diffHours < 24 && !account.refresh_token) return 'expiring';
   return 'ok';
 };
-import { SiThreads, SiReddit, SiSnapchat, SiBluesky } from 'react-icons/si';
 
+// ── Platform definitions ──────────────────────────────────────────────────────
+const PLATFORMS = [
+  { id: 'instagram',  name: 'Instagram',  icon: FaInstagram, color: 'text-pink-500',    bg: 'bg-pink-50',    border: 'border-pink-200',   ring: 'focus:ring-pink-400',   btn: 'bg-pink-500 hover:bg-pink-600' },
+  { id: 'facebook',   name: 'Facebook',   icon: FaFacebook,  color: 'text-blue-600',    bg: 'bg-blue-50',    border: 'border-blue-200',   ring: 'focus:ring-blue-400',   btn: 'bg-blue-600 hover:bg-blue-700' },
+  { id: 'twitter',    name: 'X (Twitter)',icon: FaTwitter,   color: 'text-sky-400',     bg: 'bg-sky-50',     border: 'border-sky-200',    ring: 'focus:ring-sky-400',    btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'linkedin',   name: 'LinkedIn',   icon: FaLinkedin,  color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-300',   ring: 'focus:ring-blue-500',   btn: 'bg-blue-700 hover:bg-blue-800' },
+  { id: 'youtube',    name: 'YouTube',    icon: FaYoutube,   color: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',    ring: 'focus:ring-red-400',    btn: 'bg-red-600 hover:bg-red-700' },
+  { id: 'tiktok',     name: 'TikTok',     icon: FaTiktok,    color: 'text-gray-900',    bg: 'bg-gray-50',    border: 'border-gray-300',   ring: 'focus:ring-gray-400',   btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'threads',    name: 'Threads',    icon: SiThreads,   color: 'text-gray-900',    bg: 'bg-gray-50',    border: 'border-gray-300',   ring: 'focus:ring-gray-400',   btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'pinterest',  name: 'Pinterest',  icon: FaPinterest, color: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',    ring: 'focus:ring-red-400',    btn: 'bg-red-600 hover:bg-red-700' },
+  { id: 'reddit',     name: 'Reddit',     icon: SiReddit,    color: 'text-orange-500',  bg: 'bg-orange-50',  border: 'border-orange-200', ring: 'focus:ring-orange-400', btn: 'bg-orange-500 hover:bg-orange-600' },
+  { id: 'snapchat',   name: 'Snapchat',   icon: SiSnapchat,  color: 'text-yellow-500',  bg: 'bg-yellow-50',  border: 'border-yellow-200', ring: 'focus:ring-yellow-400', btn: 'bg-yellow-400 hover:bg-yellow-500',  badge: 'Spotlight only' },
+  { id: 'bluesky',    name: 'Bluesky',    icon: SiBluesky,   color: 'text-sky-500',     bg: 'bg-sky-50',     border: 'border-sky-200',    ring: 'focus:ring-sky-400',    btn: 'bg-sky-500 hover:bg-sky-600',       badge: 'App Password', credential: true },
+  { id: 'discord',    name: 'Discord',    icon: FaDiscord,   color: 'text-indigo-500',  bg: 'bg-indigo-50',  border: 'border-indigo-200', ring: 'focus:ring-indigo-400', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook',      credential: true },
+];
+
+const getAvatarColor = (username = '') => {
+  const palette = ['bg-blue-500','bg-green-500','bg-yellow-500','bg-red-500','bg-purple-500','bg-pink-500','bg-indigo-500','bg-teal-500'];
+  return palette[username.charCodeAt(0) % palette.length];
+};
+
+// ── Account chip ──────────────────────────────────────────────────────────────
+const AccountChip = ({ account, onDisconnect }) => {
+  const status = getTokenStatus(account);
+  return (
+    <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs border shadow-sm
+      ${status === 'expired'  ? 'bg-red-50 border-red-300' :
+        status === 'expiring' ? 'bg-yellow-50 border-yellow-300' :
+        'bg-white border-gray-200'}`}
+      title={status === 'expired' ? 'Token expired — reconnect' : status === 'expiring' ? 'Token expiring soon' : 'Active'}
+    >
+      {status === 'expired'  && <FaExclamationTriangle className="text-red-400 text-[9px] shrink-0" />}
+      {status === 'expiring' && <FaClock className="text-yellow-400 text-[9px] shrink-0" />}
+      {account.picture_url ? (
+        <img src={account.picture_url} alt="" className="w-4 h-4 rounded-full object-cover" />
+      ) : (
+        <div className={`w-4 h-4 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-[8px] font-bold shrink-0`}>
+          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
+        </div>
+      )}
+      <span className={`font-medium truncate max-w-[100px]
+        ${status === 'expired' ? 'text-red-700' : status === 'expiring' ? 'text-yellow-700' : 'text-gray-800'}`}>
+        {account.platform_username}
+      </span>
+      {status === 'expired'  && <span className="text-[8px] font-bold text-red-500 uppercase tracking-wide shrink-0">Expired</span>}
+      {status === 'expiring' && <span className="text-[8px] font-bold text-yellow-600 uppercase tracking-wide shrink-0">Soon</span>}
+      <button onClick={onDisconnect} className="ml-0.5 text-gray-300 hover:text-red-400 transition-colors shrink-0">
+        <FaTimes className="text-[9px]" />
+      </button>
+    </div>
+  );
+};
+
+// ── Platform card ─────────────────────────────────────────────────────────────
+const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, connecting, extra }) => {
+  const Icon = platform.icon;
+  const count = connectedAccounts.length;
+  const hasExpired = connectedAccounts.some(a => getTokenStatus(a) === 'expired');
+  const hasExpiring = connectedAccounts.some(a => getTokenStatus(a) === 'expiring');
+
+  return (
+    <div className={`relative bg-white rounded-2xl border ${hasExpired ? 'border-red-200' : hasExpiring ? 'border-yellow-200' : 'border-gray-200'} shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden`}>
+      {/* Card header */}
+      <div className={`${platform.bg} px-4 pt-4 pb-3 border-b ${platform.border}`}>
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl ${platform.bg} border ${platform.border} flex items-center justify-center shadow-sm`}>
+              <Icon className={`text-xl ${platform.color}`} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-900">{platform.name}</p>
+              {platform.badge && (
+                <span className="text-[10px] text-gray-500 bg-white border border-gray-200 px-1.5 py-0.5 rounded-full">{platform.badge}</span>
+              )}
+            </div>
+          </div>
+          {count > 0 && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${hasExpired ? 'bg-red-100 text-red-600' : hasExpiring ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'}`}>
+              {count} connected
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Connected accounts */}
+      <div className="px-4 py-3 flex-1 min-h-[56px]">
+        {count > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {connectedAccounts.map(account => (
+              <AccountChip
+                key={account.id}
+                account={account}
+                onDisconnect={() => onDisconnect(account.id, platform.name)}
+              />
+            ))}
+            {extra}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 italic">No accounts connected</p>
+        )}
+      </div>
+
+      {/* Connect button */}
+      <div className="px-4 pb-4">
+        <button
+          onClick={() => onConnect(platform.id)}
+          disabled={connecting === platform.id}
+          className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors disabled:opacity-60 ${platform.btn}`}
+        >
+          {connecting === platform.id ? (
+            <span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+          ) : (
+            <FaPlus className="text-[10px]" />
+          )}
+          {connecting === platform.id ? 'Connecting…' : count > 0 ? `Add ${platform.name}` : `Connect ${platform.name}`}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 const ConnectedAccounts = () => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
+
+  // Bluesky modal
   const [blueskyModal, setBlueskyModal] = useState(false);
   const [blueskyHandle, setBlueskyHandle] = useState('');
   const [blueskyPass, setBlueskyPass] = useState('');
   const [blueskyLoading, setBlueskyLoading] = useState(false);
 
-  // LinkedIn Pages modal state (auto, from OAuth)
+  // Discord modal
+  const [discordModal, setDiscordModal] = useState(false);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
+  const [discordChannelName, setDiscordChannelName] = useState('');
+  const [discordLoading, setDiscordLoading] = useState(false);
+
+  // LinkedIn modals
   const [linkedinOrgsModal, setLinkedinOrgsModal] = useState(false);
   const [linkedinOrgs, setLinkedinOrgs] = useState([]);
   const [selectedOrgs, setSelectedOrgs] = useState([]);
   const [savingOrgs, setSavingOrgs] = useState(false);
-
-  // LinkedIn manual page-add modal
   const [linkedinPageModal, setLinkedinPageModal] = useState(false);
   const [pageIdInput, setPageIdInput] = useState('');
   const [pageNameInput, setPageNameInput] = useState('');
   const [addingPage, setAddingPage] = useState(false);
 
-  // Platform definitions
-  const platforms = [
-    {
-      id: 'facebook',
-      name: 'Facebook',
-      icon: FaFacebook,
-      color: 'text-blue-600',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'instagram',
-      name: 'Instagram',
-      icon: FaInstagram,
-      color: 'text-pink-500',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'linkedin',
-      name: 'LinkedIn',
-      icon: FaLinkedin,
-      color: 'text-blue-700',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'tiktok',
-      name: 'TikTok',
-      icon: FaTiktok,
-      color: 'text-gray-900',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'twitter',
-      name: 'Twitter',
-      icon: FaTwitter,
-      color: 'text-blue-400',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'youtube',
-      name: 'Youtube',
-      icon: FaYoutube,
-      color: 'text-red-600',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'threads',
-      name: 'Threads',
-      icon: SiThreads,
-      color: 'text-gray-900',
-      buttonBg: 'bg-gray-900 hover:bg-gray-800'
-    },
-    {
-      id: 'pinterest',
-      name: 'Pinterest',
-      icon: FaPinterest,
-      color: 'text-red-600',
-      buttonBg: 'bg-red-600 hover:bg-red-700'
-    },
-    {
-      id: 'reddit',
-      name: 'Reddit',
-      icon: SiReddit,
-      color: 'text-orange-500',
-      buttonBg: 'bg-orange-500 hover:bg-orange-600'
-    },
-    {
-      id: 'snapchat',
-      name: 'Snapchat',
-      icon: SiSnapchat,
-      color: 'text-yellow-400',
-      buttonBg: 'bg-yellow-400 hover:bg-yellow-500',
-      badge: 'Spotlight only',
-    },
-    {
-      id: 'bluesky',
-      name: 'Bluesky',
-      icon: SiBluesky,
-      color: 'text-sky-500',
-      buttonBg: 'bg-sky-500 hover:bg-sky-600',
-      badge: 'App password',
-    },
-  ];
-
   const [searchParams] = useSearchParams();
 
-  useEffect(() => {
-    fetchAccounts();
-  }, []);
+  useEffect(() => { fetchAccounts(); }, []);
 
-  // After OAuth redirect, refresh accounts and show success message
   useEffect(() => {
     if (searchParams.get('linkedin_orgs') === '1') {
-      // Personal LinkedIn account saved — now offer pages selection
-      if (searchParams.get('personal_connected') === 'true') {
-        toast.success('LinkedIn personal account connected!');
-      }
+      if (searchParams.get('personal_connected') === 'true') toast.success('LinkedIn personal account connected!');
       fetchAccounts();
-      getLinkedInPendingOrgs()
-        .then((data) => {
-          if (data.orgs && data.orgs.length > 0) {
-            setLinkedinOrgs(data.orgs);
-            setSelectedOrgs(data.orgs.map((o) => o.org_id)); // pre-select all
-            setLinkedinOrgsModal(true);
-          }
-        })
-        .catch(() => {});
+      getLinkedInPendingOrgs().then((data) => {
+        if (data.orgs?.length > 0) {
+          setLinkedinOrgs(data.orgs);
+          setSelectedOrgs(data.orgs.map(o => o.org_id));
+          setLinkedinOrgsModal(true);
+        }
+      }).catch(() => {});
     } else if (searchParams.get('connected') === 'true') {
-      const platforms = searchParams.get('platforms') || 'account';
-      toast.success(`Successfully connected: ${platforms}`);
+      toast.success(`Successfully connected: ${searchParams.get('platforms') || 'account'}`);
       fetchAccounts();
     }
     if (searchParams.get('error')) {
@@ -180,10 +204,85 @@ const ConnectedAccounts = () => {
     try {
       const data = await getSocialAccounts();
       setAccounts(data);
-    } catch (error) {
+    } catch {
       toast.error('Failed to load accounts');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConnect = async (platformId) => {
+    if (platformId === 'bluesky') { setBlueskyModal(true); return; }
+    if (platformId === 'discord') { setDiscordModal(true); return; }
+
+    setConnecting(platformId);
+    try {
+      const token = localStorage.getItem('token');
+      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
+      const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
+
+      if (oauthPlatforms.includes(platformId)) {
+        const authResponse = await axios.get(`${apiUrl}/api/oauth/${platformId}/authorize`, {
+          headers: { Authorization: `Bearer ${token}` },
+          withCredentials: true,
+        });
+        const { authorization_url, code_verifier } = authResponse.data;
+        if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
+        sessionStorage.setItem('oauth_platform', platformId);
+        sessionStorage.setItem('oauth_return_to', 'accounts');
+        window.location.href = authorization_url;
+        return;
+      }
+    } catch (error) {
+      if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
+        toast.error('API credentials not configured for this platform.');
+      } else {
+        toast.error(error.response?.data?.detail || 'Failed to connect account');
+      }
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const handleDisconnect = async (accountId, platformName) => {
+    try {
+      await disconnectSocialAccount(accountId);
+      setAccounts(prev => prev.filter(a => a.id !== accountId));
+      toast.success(`${platformName} account disconnected`);
+    } catch {
+      toast.error('Failed to disconnect account');
+    }
+  };
+
+  const handleBlueskyConnect = async () => {
+    if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
+    setBlueskyLoading(true);
+    try {
+      await connectBluesky({ handle: blueskyHandle.trim(), app_password: blueskyPass.trim() });
+      toast.success('Bluesky account connected!');
+      setBlueskyModal(false);
+      setBlueskyHandle(''); setBlueskyPass('');
+      fetchAccounts();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to connect Bluesky');
+    } finally {
+      setBlueskyLoading(false);
+    }
+  };
+
+  const handleDiscordConnect = async () => {
+    if (!discordWebhookUrl.trim()) return;
+    setDiscordLoading(true);
+    try {
+      const res = await connectDiscord(discordWebhookUrl.trim(), discordChannelName.trim() || null);
+      toast.success(`Discord channel "${res.channel}" connected!`);
+      setDiscordModal(false);
+      setDiscordWebhookUrl(''); setDiscordChannelName('');
+      fetchAccounts();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Invalid webhook URL. Make sure it is a valid Discord webhook.');
+    } finally {
+      setDiscordLoading(false);
     }
   };
 
@@ -193,9 +292,7 @@ const ConnectedAccounts = () => {
     try {
       await addLinkedInPageManually(pageIdInput.trim(), pageNameInput.trim());
       toast.success(`LinkedIn page "${pageNameInput}" connected!`);
-      setLinkedinPageModal(false);
-      setPageIdInput('');
-      setPageNameInput('');
+      setLinkedinPageModal(false); setPageIdInput(''); setPageNameInput('');
       fetchAccounts();
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to add LinkedIn page');
@@ -218,115 +315,16 @@ const ConnectedAccounts = () => {
     }
   };
 
-  const handleBlueskyConnect = async () => {
-    if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
-    setBlueskyLoading(true);
-    try {
-      await connectBluesky(blueskyHandle.trim(), blueskyPass.trim());
-      toast.success('Bluesky account connected!');
-      setBlueskyModal(false);
-      setBlueskyHandle('');
-      setBlueskyPass('');
-      fetchAccounts();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to connect Bluesky');
-    } finally {
-      setBlueskyLoading(false);
-    }
-  };
+  const getAccountsByPlatform = (id) => accounts.filter(a => a.platform === id);
 
-  const handleConnect = async (platformId) => {
-    setConnecting(platformId);
-    try {
-      const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
-
-      // Bluesky uses custom modal (not redirect OAuth)
-      if (platformId === 'bluesky') {
-        setBlueskyModal(true);
-        setConnecting(null);
-        return;
-      }
-
-      // Use real OAuth for integrated platforms
-      if (['facebook', 'instagram', 'youtube', 'twitter', 'linkedin', 'threads', 'reddit', 'pinterest', 'snapchat', 'tiktok'].includes(platformId)) {
-        // 1. Get Auth URL from backend
-        const authResponse = await axios.get(
-          `${apiUrl}/api/oauth/${platformId}/authorize`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            withCredentials: true,
-          }
-        );
-
-        const { authorization_url, code_verifier } = authResponse.data;
-
-        if (code_verifier) {
-          sessionStorage.setItem('twitter_code_verifier', code_verifier);
-        }
-
-        // Store platform info for callback so it redirects back here
-        sessionStorage.setItem('oauth_platform', platformId);
-        sessionStorage.setItem('oauth_return_to', 'accounts');
-
-        // 2. Redirect user to authorization page
-        window.location.href = authorization_url;
-        return;
-      }
-
-      // Generate a mock username for demo (for other non-integrated platforms like tiktok/linkedin)
-      const platform = platforms.find(p => p.id === platformId);
-      const mockUsername = `@user_${Date.now().toString(36)}`;
-
-      await connectSocialAccount(platformId, mockUsername);
-      toast.success(`${platform.name} mock account connected!`);
-      fetchAccounts();
-    } catch (error) {
-      console.error('Connect error:', error);
-      if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
-        toast.error(`API credentials not configured for this platform.`);
-      } else {
-        toast.error(error.response?.data?.detail || 'Failed to connect account');
-      }
-    } finally {
-      setConnecting(null);
-    }
-  };
-
-  const handleDisconnect = async (accountId, platform) => {
-    try {
-      await disconnectSocialAccount(accountId);
-      setAccounts(accounts.filter((a) => a.id !== accountId));
-      toast.success(`${platform} account disconnected`);
-    } catch (error) {
-      toast.error('Failed to disconnect account');
-    }
-  };
-
-  const handleRefresh = (platform) => {
-    toast.success(`${platform} connections refreshed`);
-  };
-
-  // Get accounts by platform
-  const getAccountsByPlatform = (platformId) => {
-    return accounts.filter(a => a.platform === platformId);
-  };
-
-  // Generate avatar colors based on username
-  const getAvatarColor = (username) => {
-    const colors = [
-      'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
-      'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'
-    ];
-    const index = username.charCodeAt(0) % colors.length;
-    return colors[index];
-  };
+  const totalConnected = accounts.length;
+  const expiredCount = accounts.filter(a => getTokenStatus(a) === 'expired').length;
 
   if (loading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-gray-600">Loading accounts...</div>
+          <div className="text-gray-500 text-sm">Loading accounts…</div>
         </div>
       </DashboardLayout>
     );
@@ -334,222 +332,112 @@ const ConnectedAccounts = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-5xl mx-auto pb-12">
+
         {/* Header */}
-        <div className="flex justify-between items-center mb-6">
+        <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Connected Accounts</h1>
-          <button className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900">
-            <span>all accounts</span>
-            <FaFilter className="text-xs" />
-          </button>
+          <p className="text-sm text-gray-500 mt-1">
+            Manage your social accounts and channels. Connect as many as you need.
+          </p>
+          {totalConnected > 0 && (
+            <div className="flex items-center gap-4 mt-3">
+              <span className="flex items-center gap-1.5 text-sm text-green-700 font-medium">
+                <FaCheckCircle className="text-green-500" /> {totalConnected} account{totalConnected !== 1 ? 's' : ''} connected
+              </span>
+              {expiredCount > 0 && (
+                <span className="flex items-center gap-1.5 text-sm text-red-600 font-medium">
+                  <FaExclamationTriangle className="text-red-500" /> {expiredCount} expired — reconnect required
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Expired token banner */}
-        {accounts.some(a => getTokenStatus(a) === 'expired') && (
-          <div className="mb-4 flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-            <FaExclamationTriangle className="text-red-500 mt-0.5 flex-shrink-0" />
+        {expiredCount > 0 && (
+          <div className="mb-6 flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <FaExclamationTriangle className="text-red-500 mt-0.5 shrink-0" />
             <div>
               <p className="text-sm font-semibold text-red-700">One or more platform tokens have expired</p>
               <p className="text-xs text-red-500 mt-0.5">
-                Expired accounts are shown in red below. Click <strong>Connect</strong> next to the platform to re-authenticate.
+                Click <strong>Connect</strong> on the expired platform to re-authenticate.
               </p>
             </div>
           </div>
         )}
-        {accounts.some(a => getTokenStatus(a) === 'expiring') && !accounts.some(a => getTokenStatus(a) === 'expired') && (
-          <div className="mb-4 flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3">
-            <FaClock className="text-yellow-500 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-yellow-700">
-              Some platform tokens are expiring within 24 hours. Consider reconnecting them soon.
-            </p>
-          </div>
-        )}
 
-        {/* Platform Rows */}
-        <div className="space-y-4">
-          {platforms.map((platform) => {
-            const Icon = platform.icon;
-            const connectedAccounts = getAccountsByPlatform(platform.id);
+        {/* Platform grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {PLATFORMS.map((platform) => {
+            const connected = getAccountsByPlatform(platform.id);
+            const extra = platform.id === 'linkedin' && connected.length > 0 ? (
+              <button
+                onClick={() => setLinkedinPageModal(true)}
+                className="flex items-center gap-1 text-[10px] text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-full transition-colors"
+              >
+                <FaLinkedin className="text-[9px]" /> + Company Page
+              </button>
+            ) : null;
 
             return (
-              <div key={platform.id} className="flex items-center gap-4 py-2">
-                {/* Platform Icon */}
-                <div className="w-8 h-8 flex items-center justify-center">
-                  <Icon className={`text-2xl ${platform.color}`} />
-                </div>
-
-                {/* Connect Button + optional badge */}
-                <div className="flex flex-col gap-0.5">
-                  <Button
-                    onClick={() => handleConnect(platform.id)}
-                    disabled={connecting === platform.id}
-                    className={`${platform.buttonBg} text-white min-w-[160px]`}
-                    data-testid={`connect-${platform.id}`}
-                  >
-                    {connecting === platform.id ? 'Connecting...' : `Connect ${platform.name}`}
-                  </Button>
-                  {platform.badge && (
-                    <span className="text-[10px] text-gray-400 pl-1">{platform.badge}</span>
-                  )}
-                </div>
-
-                {/* Connected Account Tags */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {connectedAccounts.map((account) => {
-                    const tokenStatus = getTokenStatus(account);
-                    return (
-                    <div
-                      key={account.id}
-                      className={`flex items-center gap-1.5 bg-offwhite border rounded-full px-2 py-1 text-sm shadow-sm ${
-                        tokenStatus === 'expired'  ? 'border-red-300 bg-red-50' :
-                        tokenStatus === 'expiring' ? 'border-yellow-300 bg-yellow-50' :
-                        'border-gray-200'
-                      }`}
-                      data-testid={`account-tag-${account.id}`}
-                      title={
-                        tokenStatus === 'expired'  ? 'Token expired — please reconnect' :
-                        tokenStatus === 'expiring' ? 'Token expiring soon — reconnect recommended' :
-                        tokenStatus === 'ok'       ? 'Connected and active' : ''
-                      }
-                    >
-                      {/* Token Status Icon */}
-                      {tokenStatus === 'expired' && (
-                        <FaExclamationTriangle className="text-red-500 text-[10px] flex-shrink-0" />
-                      )}
-                      {tokenStatus === 'expiring' && (
-                        <FaClock className="text-yellow-500 text-[10px] flex-shrink-0" />
-                      )}
-                      {/* Avatar */}
-                      {account.picture_url ? (
-                        <img
-                          src={account.picture_url}
-                          alt={account.platform_username}
-                          className="w-5 h-5 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className={`w-5 h-5 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-xs`}>
-                          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
-                        </div>
-                      )}
-                      {/* Username */}
-                      <span className={`font-medium ${
-                        tokenStatus === 'expired'  ? 'text-red-700' :
-                        tokenStatus === 'expiring' ? 'text-yellow-700' :
-                        'text-gray-800'
-                      }`}>{account.platform_username}</span>
-                      {/* Expired label */}
-                      {tokenStatus === 'expired' && (
-                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wide">Expired</span>
-                      )}
-                      {tokenStatus === 'expiring' && (
-                        <span className="text-[9px] font-bold text-yellow-600 uppercase tracking-wide">Expiring</span>
-                      )}
-                      {/* Close Button */}
-                      <button
-                        onClick={() => handleDisconnect(account.id, platform.name)}
-                        className="text-red-400 hover:text-red-600 ml-1"
-                        data-testid={`disconnect-${account.id}`}
-                      >
-                        <FaTimes className="text-xs" />
-                      </button>
-                    </div>
-                    );
-                  })}
-
-                  {/* Add Company Page button — only for LinkedIn */}
-                  {platform.id === 'linkedin' && connectedAccounts.length > 0 && (
-                    <button
-                      onClick={() => setLinkedinPageModal(true)}
-                      className="flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1.5 rounded-lg transition-colors mt-1"
-                    >
-                      <FaLinkedin className="text-[11px]" />
-                      + Add Company Page
-                    </button>
-                  )}
-                </div>
-              </div>
+              <PlatformCard
+                key={platform.id}
+                platform={platform}
+                connectedAccounts={connected}
+                onConnect={handleConnect}
+                onDisconnect={handleDisconnect}
+                connecting={connecting}
+                extra={extra}
+              />
             );
           })}
         </div>
 
-        {/* Refresh Buttons */}
+        {/* Help */}
         <div className="mt-8 pt-6 border-t border-gray-200">
-          <div className="flex flex-wrap gap-3">
-            {['Instagram', 'Twitter', 'TikTok', 'Facebook'].map((platform) => (
-              <Button
-                key={platform}
-                variant="outline"
-                onClick={() => handleRefresh(platform)}
-                className="text-gray-700 border-gray-300 hover:bg-gray-50"
-                data-testid={`refresh-${platform.toLowerCase()}`}
-              >
-                Refresh {platform}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {/* Help Link */}
-        <div className="mt-6">
-          <a
-            href="/support"
-            className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
-          >
-            <span className="w-4 h-4 rounded-full border border-gray-400 flex items-center justify-center text-xs">i</span>
-            Get help connecting your accounts
+          <a href="/support" className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 w-fit">
+            <span className="w-4 h-4 rounded-full border border-gray-400 flex items-center justify-center text-xs font-bold">i</span>
+            Need help connecting an account?
           </a>
         </div>
       </div>
 
-      {/* Bluesky modal */}
+      {/* ── Bluesky Modal ──────────────────────────────────────────────────── */}
       {blueskyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-offwhite rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <SiBluesky className="text-sky-500 text-xl" />
-              <h2 className="text-lg font-semibold text-gray-900">Connect Bluesky</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center">
+                <SiBluesky className="text-sky-500 text-lg" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Bluesky</h2>
+                <p className="text-xs text-gray-500">Enter your handle and app password</p>
+              </div>
             </div>
-            <p className="text-sm text-gray-500 mb-4">
-              Enter your Bluesky handle and an{' '}
-              <a
-                href="https://bsky.app/settings/app-passwords"
-                target="_blank"
-                rel="noreferrer"
-                className="text-sky-500 hover:underline"
-              >
+            <p className="text-xs text-gray-500 mb-4 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
+              Use an{' '}
+              <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noreferrer" className="text-sky-600 hover:underline font-medium">
                 App Password
               </a>
-              {' '}(not your main password).
+              {' '}— not your main Bluesky password.
             </p>
             <div className="space-y-3 mb-5">
-              <input
-                type="text"
-                value={blueskyHandle}
-                onChange={(e) => setBlueskyHandle(e.target.value)}
+              <input type="text" value={blueskyHandle} onChange={e => setBlueskyHandle(e.target.value)}
                 placeholder="handle.bsky.social"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
-              />
-              <input
-                type="password"
-                value={blueskyPass}
-                onChange={(e) => setBlueskyPass(e.target.value)}
-                placeholder="App password"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
-                onKeyDown={(e) => { if (e.key === 'Enter') handleBlueskyConnect(); }}
-              />
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
+              <input type="password" value={blueskyPass} onChange={e => setBlueskyPass(e.target.value)}
+                placeholder="App password (xxxx-xxxx-xxxx-xxxx)"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+                onKeyDown={e => { if (e.key === 'Enter') handleBlueskyConnect(); }} />
             </div>
             <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => { setBlueskyModal(false); setBlueskyHandle(''); setBlueskyPass(''); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleBlueskyConnect}
+              <button onClick={() => { setBlueskyModal(false); setBlueskyHandle(''); setBlueskyPass(''); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
+              <button onClick={handleBlueskyConnect}
                 disabled={blueskyLoading || !blueskyHandle.trim() || !blueskyPass.trim()}
-                className="px-4 py-2 text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white rounded-lg disabled:opacity-50 transition-colors"
-              >
+                className="px-5 py-2 text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white rounded-xl disabled:opacity-50 transition-colors">
                 {blueskyLoading ? 'Connecting…' : 'Connect'}
               </button>
             </div>
@@ -557,60 +445,101 @@ const ConnectedAccounts = () => {
         </div>
       )}
 
-      {/* ── LinkedIn Manual Page Add Modal ── */}
+      {/* ── Discord Modal ──────────────────────────────────────────────────── */}
+      {discordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center">
+                <FaDiscord className="text-indigo-500 text-xl" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Discord Channel</h2>
+                <p className="text-xs text-gray-500">Via an incoming webhook URL</p>
+              </div>
+            </div>
+
+            {/* How to steps */}
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs font-semibold text-indigo-700 mb-2">How to get a webhook URL:</p>
+              <ol className="space-y-1 text-xs text-indigo-700">
+                {[
+                  'Open your Discord server → right-click the channel',
+                  'Go to Edit Channel → Integrations → Webhooks',
+                  'Click "New Webhook", name it, then Copy Webhook URL',
+                ].map((step, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-indigo-200 text-indigo-800 text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Webhook URL <span className="text-red-500">*</span></label>
+                <input type="url" value={discordWebhookUrl} onChange={e => setDiscordWebhookUrl(e.target.value)}
+                  placeholder="https://discord.com/api/webhooks/..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Channel Label <span className="text-gray-400">(optional)</span></label>
+                <input type="text" value={discordChannelName} onChange={e => setDiscordChannelName(e.target.value)}
+                  placeholder="e.g. #announcements"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  onKeyDown={e => { if (e.key === 'Enter') handleDiscordConnect(); }} />
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setDiscordModal(false); setDiscordWebhookUrl(''); setDiscordChannelName(''); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
+              <button onClick={handleDiscordConnect}
+                disabled={discordLoading || !discordWebhookUrl.trim()}
+                className="px-5 py-2 text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl disabled:opacity-50 transition-colors flex items-center gap-2">
+                {discordLoading && <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />}
+                {discordLoading ? 'Validating…' : 'Connect Channel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LinkedIn Manual Page Modal ─────────────────────────────────────── */}
       {linkedinPageModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-offwhite rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 mb-5">
-              <FaLinkedin className="text-blue-700 text-2xl" />
+              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+                <FaLinkedin className="text-blue-700 text-xl" />
+              </div>
               <div>
-                <h2 className="text-lg font-bold text-gray-900">Add LinkedIn Company Page</h2>
-                <p className="text-sm text-gray-500">Enter your page details to connect it</p>
+                <h2 className="text-base font-bold text-gray-900">Add LinkedIn Company Page</h2>
+                <p className="text-xs text-gray-500">Enter your company page details</p>
               </div>
             </div>
-
             <div className="space-y-4 mb-5">
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
-                  Page Name
-                </label>
-                <input
-                  type="text"
-                  value={pageNameInput}
-                  onChange={(e) => setPageNameInput(e.target.value)}
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Page Name</label>
+                <input type="text" value={pageNameInput} onChange={e => setPageNameInput(e.target.value)}
                   placeholder="e.g. Acme Corporation"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
-                  Page ID or URL
-                </label>
-                <input
-                  type="text"
-                  value={pageIdInput}
-                  onChange={(e) => setPageIdInput(e.target.value)}
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Page ID or URL slug</label>
+                <input type="text" value={pageIdInput} onChange={e => setPageIdInput(e.target.value)}
                   placeholder="e.g. acme-corp or 12345678"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-[11px] text-gray-400 mt-1.5">
-                  Find it in your LinkedIn Page URL: linkedin.com/company/<strong>your-page-id</strong>
-                </p>
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <p className="text-[11px] text-gray-400 mt-1.5">Find it in your page URL: linkedin.com/company/<strong>your-page-id</strong></p>
               </div>
             </div>
-
             <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => { setLinkedinPageModal(false); setPageIdInput(''); setPageNameInput(''); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddLinkedinPage}
+              <button onClick={() => { setLinkedinPageModal(false); setPageIdInput(''); setPageNameInput(''); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors">Cancel</button>
+              <button onClick={handleAddLinkedinPage}
                 disabled={addingPage || !pageIdInput.trim() || !pageNameInput.trim()}
-                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors"
-              >
+                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors">
                 {addingPage ? 'Connecting…' : 'Connect Page'}
               </button>
             </div>
@@ -618,59 +547,38 @@ const ConnectedAccounts = () => {
         </div>
       )}
 
-      {/* ── LinkedIn Pages Selection Modal (auto, from OAuth) ── */}
+      {/* ── LinkedIn Orgs Selection Modal ──────────────────────────────────── */}
       {linkedinOrgsModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-offwhite rounded-2xl shadow-2xl w-full max-w-md p-6">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 mb-4">
-              <FaLinkedin className="text-blue-700 text-2xl" />
+              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+                <FaLinkedin className="text-blue-700 text-xl" />
+              </div>
               <div>
-                <h2 className="text-lg font-bold text-gray-900">Connect LinkedIn Pages</h2>
-                <p className="text-sm text-gray-500">Select the company pages you'd like to manage</p>
+                <h2 className="text-base font-bold text-gray-900">Connect LinkedIn Pages</h2>
+                <p className="text-xs text-gray-500">Select company pages to manage</p>
               </div>
             </div>
-
             <div className="space-y-2 max-h-64 overflow-y-auto mb-5">
-              {linkedinOrgs.map((org) => (
-                <label
-                  key={org.org_id}
-                  className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedOrgs.includes(org.org_id)}
-                    onChange={() =>
-                      setSelectedOrgs((prev) =>
-                        prev.includes(org.org_id)
-                          ? prev.filter((id) => id !== org.org_id)
-                          : [...prev, org.org_id]
-                      )
-                    }
-                    className="w-4 h-4 accent-blue-600"
-                  />
-                  <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm flex-shrink-0">
+              {linkedinOrgs.map(org => (
+                <label key={org.org_id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors">
+                  <input type="checkbox" checked={selectedOrgs.includes(org.org_id)}
+                    onChange={() => setSelectedOrgs(prev => prev.includes(org.org_id) ? prev.filter(id => id !== org.org_id) : [...prev, org.org_id])}
+                    className="w-4 h-4 accent-blue-600" />
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm shrink-0">
                     {org.name.charAt(0).toUpperCase()}
                   </div>
                   <span className="font-medium text-gray-800 text-sm">{org.name}</span>
                 </label>
               ))}
             </div>
-
             <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setLinkedinOrgsModal(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors"
-              >
-                Skip
-              </button>
-              <button
-                onClick={handleSaveLinkedinOrgs}
+              <button onClick={() => setLinkedinOrgsModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors">Skip</button>
+              <button onClick={handleSaveLinkedinOrgs}
                 disabled={savingOrgs || selectedOrgs.length === 0}
-                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors"
-              >
-                {savingOrgs
-                  ? 'Connecting…'
-                  : `Connect ${selectedOrgs.length} Page${selectedOrgs.length !== 1 ? 's' : ''}`}
+                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors">
+                {savingOrgs ? 'Connecting…' : `Connect ${selectedOrgs.length} Page${selectedOrgs.length !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>
