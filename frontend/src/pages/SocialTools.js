@@ -156,6 +156,17 @@ const ToolCard = ({ tool, onSelect }) => {
 };
 
 // ── Instagram Grid Maker ──────────────────────────────────────────────────────
+const EXTENDED_BG_COLORS = [
+  { value: '#000000', label: 'Black' },
+  { value: '#1a1a2e', label: 'Dark Navy' },
+  { value: '#374151', label: 'Slate' },
+  { value: '#d1d5db', label: 'Light Gray' },
+  { value: '#f3f4f6', label: 'Off White' },
+  { value: '#ffffff', label: 'White' },
+  { value: '#fce7f3', label: 'Soft Pink' },
+  { value: '#d1fae5', label: 'Mint' },
+];
+
 const InstagramGridMaker = ({ onBack }) => {
   const [image, setImage]           = useState(null);
   const [imageName, setImageName]   = useState('');
@@ -355,161 +366,212 @@ const InstagramGridMaker = ({ onBack }) => {
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto">
-      {/* Back */}
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 mb-5 transition-colors">
-        <FaArrowLeft className="text-xs" /> Back to Tools
-      </button>
 
-      {/* Title */}
-      <div className="text-center mb-5">
-        <h2 className="text-2xl font-bold text-gray-900">Instagram Grid Maker</h2>
-        <p className="text-sm text-gray-500 mt-1">Split any image into Instagram posts. Create stunning grid effects.</p>
+      {/* Back + Header */}
+      <div className="mb-6">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 mb-5 transition-colors group">
+          <FaArrowLeft className="text-xs group-hover:-translate-x-0.5 transition-transform" /> Back to Tools
+        </button>
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-md">
+            <MdGridOn className="text-white text-2xl" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center gap-1 bg-pink-50 text-pink-600 text-[10px] font-bold px-2 py-0.5 rounded-full border border-pink-100">
+                <SiInstagram className="text-[9px]" /> Instagram
+              </span>
+              <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-100">
+                Free · Client-side
+              </span>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900">Instagram Grid Maker</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Split any image into perfect grid posts. Your images never leave your device.</p>
+          </div>
+        </div>
       </div>
 
-      {/* Grid size pills */}
-      <div className="flex items-center justify-center gap-2 mb-4">
-        {GRID_SIZES.map((size) => (
-          <button key={size} onClick={() => setGridSize(size)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
-              gridSize === size ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
-            }`}>
-            {size}
-          </button>
-        ))}
-      </div>
+      {/* Controls bar */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5 shadow-sm">
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-4">
+          {/* Grid size */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Grid Size</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {GRID_SIZES.map((size) => (
+                <button key={size} onClick={() => setGridSize(size)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                    gridSize === size
+                      ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+                  }`}>
+                  {size}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      {/* Background color selector */}
-      <div className="flex items-center justify-center gap-3 mb-6">
-        <span className="text-xs text-gray-500 font-medium">Background:</span>
-        {BG_COLORS.map(({ value, label }) => (
-          <button key={value} onClick={() => setBgColor(value)} title={label}
-            className={`w-7 h-7 rounded-full transition-all ${bgColor === value ? 'ring-2 ring-offset-2 ring-green-500' : 'hover:ring-2 hover:ring-offset-1 hover:ring-gray-300'}`}
-            style={{ background: value, border: value === '#ffffff' ? '1.5px solid #d1d5db' : 'none' }}
-          />
-        ))}
+          {/* Vertical divider */}
+          <div className="h-10 w-px bg-gray-100 self-end hidden sm:block" />
+
+          {/* Background */}
+          <div>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Background</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {EXTENDED_BG_COLORS.map(({ value, label }) => (
+                <button key={value} onClick={() => setBgColor(value)} title={label}
+                  className={`w-6 h-6 rounded-full transition-all duration-150 ${bgColor === value ? 'ring-2 ring-offset-2 ring-green-500 scale-110' : 'hover:scale-110 hover:ring-2 hover:ring-offset-1 hover:ring-gray-300'}`}
+                  style={{ background: value, border: value === '#ffffff' || value === '#f3f4f6' ? '1.5px solid #d1d5db' : 'none' }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {!image ? (
         /* ── Upload zone ── */
         <div
-          className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-colors max-w-lg mx-auto"
+          className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-5 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-all max-w-lg mx-auto group"
           onClick={() => fileInputRef.current?.click()}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); }}
         >
-          <FaUpload className="text-4xl text-gray-300" />
-          <div className="text-center">
-            <p className="text-sm font-semibold text-gray-600">Upload Image</p>
-            <p className="text-xs text-gray-400 mt-1">Drop or click to choose — JPG, PNG, WEBP</p>
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 group-hover:bg-green-100 flex items-center justify-center transition-colors">
+            <FaUpload className="text-2xl text-gray-400 group-hover:text-green-500 transition-colors" />
           </div>
-          <button className="px-5 py-2 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors">
+          <div className="text-center">
+            <p className="text-sm font-bold text-gray-700">Drop your image here</p>
+            <p className="text-xs text-gray-400 mt-1">or click to browse files</p>
+            <p className="text-xs text-gray-300 mt-0.5">JPG · PNG · WEBP · Any size</p>
+          </div>
+          <button className="px-6 py-2.5 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors shadow-sm">
             Choose Image
           </button>
         </div>
       ) : (
         /* ── Two-panel layout ── */
-        <div className="grid grid-cols-2 gap-5">
+        <div className="grid grid-cols-2 gap-4">
           {/* LEFT: Position canvas */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-gray-600">Position Your Image</p>
-              <button onClick={handleReset}
-                className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded px-2 py-0.5 transition-colors">
-                ↺ Reset
-              </button>
-            </div>
-
-            <div className="relative rounded-xl overflow-hidden border border-gray-200 select-none">
-              <canvas
-                ref={posCanvasRef}
-                className="w-full block"
-                style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleMouseUp}
-              />
-              <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none">
-                → Drag to position
+            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                <div>
+                  <p className="text-xs font-bold text-gray-800">Position Image</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Drag to reframe</p>
+                </div>
+                <button onClick={handleReset}
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded-lg px-2.5 py-1 transition-colors hover:border-gray-300">
+                  <FaRedo className="text-[9px]" /> Reset
+                </button>
               </div>
-            </div>
 
-            {/* Scale slider */}
-            <div className="mt-3 mb-3">
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[10px] text-gray-500">Scale: {scalePercent}%</span>
+              <div className="relative select-none">
+                <canvas
+                  ref={posCanvasRef}
+                  className="w-full block"
+                  style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleMouseUp}
+                />
+                <div className="absolute top-2 left-2 bg-black/50 backdrop-blur-sm text-white text-[9px] font-medium px-2 py-1 rounded-lg pointer-events-none flex items-center gap-1">
+                  <span>⟵</span> Drag to position
+                </div>
               </div>
-              <input type="range" min="10" max="300" value={scalePercent} onChange={handleScaleChange}
-                className="w-full h-1.5 appearance-none bg-gray-200 rounded-full cursor-pointer"
-                style={{ accentColor: '#22c55e' }}
-              />
+
+              {/* Scale slider */}
+              <div className="px-4 py-3 border-t border-gray-100">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-semibold text-gray-500">Zoom</span>
+                  <span className="text-[10px] font-bold text-gray-700 tabular-nums bg-gray-100 px-2 py-0.5 rounded-md">{scalePercent}%</span>
+                </div>
+                <input type="range" min="10" max="300" value={scalePercent} onChange={handleScaleChange}
+                  className="w-full h-1.5 appearance-none bg-gray-200 rounded-full cursor-pointer"
+                  style={{ accentColor: '#22c55e' }}
+                />
+              </div>
             </div>
 
             {/* Action buttons */}
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-3">
               <button
                 onClick={downloadAll}
                 disabled={downloading}
-                className="flex-1 flex items-center justify-center gap-2 py-2 bg-green-500 hover:bg-green-600 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-60"
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-60 shadow-sm"
               >
-                {downloading ? 'Generating…' : `Split into ${gridSize} (4:5)`}
+                <FaDownload className="text-xs" />
+                {downloading ? 'Generating…' : `Download ${gridSize}`}
               </button>
               <button
                 onClick={() => { setImage(null); setImageName(''); setTiles([]); }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                className="px-4 py-2.5 text-sm font-medium text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50 hover:text-gray-700 transition-colors"
               >
-                New Image
+                New
               </button>
             </div>
           </div>
 
           {/* RIGHT: Grid preview */}
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-gray-600">{gridSize} Grid Preview (4:5)</p>
-              <button
-                onClick={downloadAll}
-                disabled={downloading || !tiles.length}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm"
-              >
-                <FaDownload className="text-[10px]" />
-                {downloading ? 'Generating…' : '⬇ Download All'}
-              </button>
-            </div>
-
-            <div
-              className="rounded-xl overflow-hidden border border-gray-200"
-              style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '2px', background: '#e5e7eb' }}
-            >
-              {Array.from({ length: totalTiles }).map((_, i) => (
-                <div key={i}
-                  className="relative group cursor-pointer"
-                  style={{ aspectRatio: '4/5', overflow: 'hidden', background: bgColor }}
-                  onMouseEnter={() => setHoveredTile(i)}
-                  onMouseLeave={() => setHoveredTile(null)}
-                  onClick={() => tiles[i] && downloadTile(i)}
-                >
-                  {tiles[i] ? (
-                    <img src={tiles[i]} alt={`tile ${i + 1}`} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                  )}
-                  {/* Hover download overlay */}
-                  <div className={`absolute inset-0 bg-black/50 flex flex-col items-center justify-center transition-opacity duration-150 ${hoveredTile === i ? 'opacity-100' : 'opacity-0'}`}>
-                    <FaDownload className="text-white text-sm mb-1" />
-                    <span className="text-white text-[9px] font-bold">{i + 1}</span>
-                  </div>
+            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                <div>
+                  <p className="text-xs font-bold text-gray-800">{gridSize} Preview</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">4:5 ratio · tap tile to save</p>
                 </div>
-              ))}
-            </div>
+                <button
+                  onClick={downloadAll}
+                  disabled={downloading || !tiles.length}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+                >
+                  <FaDownload className="text-[9px]" />
+                  {downloading ? 'Wait…' : 'All'}
+                </button>
+              </div>
 
-            <p className="text-[10px] text-gray-400 mt-1.5 text-center">Hover to download individual pieces</p>
-            <p className="text-[10px] text-gray-400 text-center">Click any piece to download • Post in order: 1→2 →3...</p>
+              <div className="p-2.5">
+                <div
+                  className="rounded-xl overflow-hidden"
+                  style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '2px', background: '#e5e7eb' }}
+                >
+                  {Array.from({ length: totalTiles }).map((_, i) => (
+                    <div key={i}
+                      className="relative group cursor-pointer"
+                      style={{ aspectRatio: '4/5', overflow: 'hidden', background: bgColor }}
+                      onMouseEnter={() => setHoveredTile(i)}
+                      onMouseLeave={() => setHoveredTile(null)}
+                      onClick={() => tiles[i] && downloadTile(i)}
+                    >
+                      {tiles[i] ? (
+                        <img src={tiles[i]} alt={`tile ${i + 1}`} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <div className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                      {/* Tile number — always visible, subtle */}
+                      <div className="absolute top-1 left-1 bg-black/30 text-white text-[8px] font-bold w-4 h-4 rounded-md flex items-center justify-center pointer-events-none">
+                        {i + 1}
+                      </div>
+                      {/* Hover overlay */}
+                      <div className={`absolute inset-0 bg-black/55 flex flex-col items-center justify-center transition-opacity duration-150 ${hoveredTile === i ? 'opacity-100' : 'opacity-0'}`}>
+                        <FaDownload className="text-white text-sm mb-1" />
+                        <span className="text-white text-[9px] font-bold">Save #{i + 1}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="px-4 pb-3 text-center">
+                <p className="text-[10px] text-gray-400">Post in order 1 → {totalTiles} for grid effect</p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -518,123 +580,109 @@ const InstagramGridMaker = ({ onBack }) => {
         onChange={(e) => { loadImage(e.target.files?.[0]); e.target.value = ''; }} />
 
       {/* Recommended Dimensions (collapsible) */}
-      <div className="mt-8 border border-gray-200 rounded-xl overflow-hidden">
+      <div className="mt-8 bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
         <button
           onClick={() => setShowDimensions(!showDimensions)}
-          className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+          className="w-full flex items-center justify-between px-5 py-4 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors"
         >
-          <span>✂ Recommended Dimensions for Split Images</span>
-          <span className="text-gray-400 text-xl leading-none">{showDimensions ? '−' : '+'}</span>
+          <div className="flex items-center gap-2.5">
+            <span className="w-7 h-7 bg-gray-100 rounded-xl flex items-center justify-center text-sm">✂</span>
+            <span>Recommended Dimensions</span>
+          </div>
+          <span className="text-gray-400 text-lg font-light">{showDimensions ? '−' : '+'}</span>
         </button>
 
         {showDimensions && (
           <div className="px-5 pb-5 border-t border-gray-100">
-            <p className="text-xs text-gray-500 mt-3 mb-4">
-              Want to create an Instagram grid yourself? Here are the recommended aspect ratios for Instagram grid posts. Each individual piece maintains the 4:5 aspect ratio:
+            <p className="text-xs text-gray-500 mt-4 mb-5">
+              Recommended aspect ratios for Instagram grid posts. Each individual piece maintains the 4:5 aspect ratio.
             </p>
-            <p className="text-xs font-bold text-gray-700 mb-3">Recommended Aspect Ratios (Total Image)</p>
-            <div className="grid grid-cols-3 gap-5">
+            <div className="grid grid-cols-3 gap-3 mb-5">
               {DIMENSION_GUIDE.map(({ label, ratio, cols: dc, rows: dr }) => (
-                <div key={label} className="text-center">
-                  <p className="text-xs font-bold text-gray-700">{label}</p>
-                  <p className="text-[10px] text-gray-500 mb-2">{ratio}</p>
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${dc}, 1fr)`, gap: '2px', width: 54, margin: '0 auto' }}>
+                <div key={label} className="text-center bg-gray-50 border border-gray-100 rounded-xl p-4">
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${dc}, 1fr)`, gap: '2px', width: 54, margin: '0 auto 10px' }}>
                     {Array.from({ length: dc * dr }).map((_, i) => (
-                      <div key={i} style={{ background: '#d1d5db', borderRadius: 1, aspectRatio: '4/5' }} />
+                      <div key={i} style={{ background: '#d1d5db', borderRadius: 2, aspectRatio: '4/5' }} />
                     ))}
                   </div>
+                  <p className="text-xs font-bold text-gray-700">{label}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{ratio}</p>
                 </div>
               ))}
             </div>
-            <div className="mt-4 space-y-1 text-xs text-gray-500">
-              <p className="font-semibold text-gray-600">Notes:</p>
-              <p>• Each piece maintains 4:5 — the Instagram standard aspect ratio</p>
-              <p>• Use any resolution that matches these ratios (e.g., 1200×1500px for 4:5)</p>
-              <p>• Keep important content away from split lines</p>
-              <p>• Test your grid before posting by previewing in this tool</p>
-              <p>• Consider your Instagram feed's overall aesthetic</p>
-              <p>• Higher resolution = better quality when split</p>
+            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+              <p className="text-xs font-bold text-gray-700 mb-2.5">Notes</p>
+              <div className="space-y-1.5">
+                {[
+                  'Each piece maintains 4:5 — the Instagram standard aspect ratio',
+                  'Use any resolution that matches these ratios (e.g., 1200×1500px for 4:5)',
+                  'Keep important content away from split lines',
+                  'Higher resolution = better quality when split',
+                ].map((note, i) => (
+                  <p key={i} className="text-[11px] text-gray-500 flex items-start gap-2">
+                    <span className="text-gray-300 mt-0.5">›</span>{note}
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
         )}
+      </div>
 
-      {/* How It Works Section */}
-      <div className="mt-16 mb-12">
-        <h3 className="text-2xl font-bold text-center text-gray-900 mb-8">How It Works</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Step 1 */}
-          <div className="border border-gray-200 rounded-xl p-6">
-            <div className="text-4xl mb-3 text-center">📤</div>
-            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 1</p>
-            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Upload your image</h4>
-            <p className="text-sm text-gray-600 text-center">Upload your high-quality image—whether it's a product photo, landscape, or artwork. Our tool supports all common image formats.</p>
-          </div>
-
-          {/* Step 2 */}
-          <div className="border border-gray-200 rounded-xl p-6">
-            <div className="text-4xl mb-3 text-center">🎯</div>
-            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 2</p>
-            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Choose grid size</h4>
-            <p className="text-sm text-gray-600 text-center">Select your preferred grid layout (3x1, 3x2, 3x3, etc.) and aspect ratio (4:5 or 1:1) for perfect Instagram compatibility.</p>
-          </div>
-
-          {/* Step 3 */}
-          <div className="border border-gray-200 rounded-xl p-6">
-            <div className="text-4xl mb-3 text-center">✨</div>
-            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 3</p>
-            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Download & post</h4>
-            <p className="text-sm text-gray-600 text-center">Download all grid pieces and post them in order on Instagram. Watch your stunning grid effect come together on your profile!</p>
-          </div>
+      {/* How It Works */}
+      <div className="mt-10">
+        <div className="text-center mb-7">
+          <h3 className="text-xl font-bold text-gray-900">How It Works</h3>
+          <p className="text-sm text-gray-400 mt-1">Three simple steps to your perfect Instagram grid</p>
+        </div>
+        <div className="grid grid-cols-3 gap-4 relative">
+          {/* Connector */}
+          <div className="absolute top-10 left-[calc(33%+1rem)] right-[calc(33%+1rem)] h-px bg-gray-200 hidden md:block pointer-events-none" />
+          {[
+            { step: '01', emoji: '📤', title: 'Upload your image', desc: 'Upload any high-quality image — product photo, landscape, or artwork. JPG, PNG, WEBP supported.' },
+            { step: '02', emoji: '🎯', title: 'Choose grid & position', desc: 'Select your grid layout, drag to reframe, and adjust zoom until your image looks perfect.' },
+            { step: '03', emoji: '✨', title: 'Download & post', desc: 'Download all pieces as a ZIP and post them in sequence to create a stunning grid on your profile.' },
+          ].map(({ step, emoji, title, desc }) => (
+            <div key={step} className="bg-white border border-gray-200 rounded-2xl p-5 text-center shadow-sm relative z-10 hover:border-gray-300 hover:shadow-md transition-all">
+              <div className="w-9 h-9 bg-gray-900 text-white text-xs font-bold rounded-xl flex items-center justify-center mx-auto mb-4 shadow-sm">
+                {step}
+              </div>
+              <div className="text-2xl mb-3">{emoji}</div>
+              <h4 className="text-xs font-bold text-gray-900 mb-2">{title}</h4>
+              <p className="text-[11px] text-gray-500 leading-relaxed">{desc}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Pro Tips Section */}
-      <div className="mt-12 bg-green-50 rounded-xl p-8">
-        <h3 className="text-xl font-bold text-center text-gray-900 mb-6">💡 Pro Tips</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Pro Tips */}
+      <div className="mt-6 mb-10 bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-9 h-9 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-center text-lg">💡</div>
           <div>
-            <ul className="space-y-3">
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Use 4:5 aspect ratio for best Instagram compatibility</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Use high-resolution images (at least 1080px width)</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Keep important content away from split lines</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Consider your feed's overall aesthetic</span>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <ul className="space-y-3">
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Post consistently to maintain grid effect</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Preview your grid before posting</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Test different background colors for best contrast</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="text-green-500 font-bold text-lg">•</span>
-                <span className="text-sm text-gray-700">Choose backgrounds that complement your image</span>
-              </li>
-            </ul>
+            <h3 className="text-sm font-bold text-gray-900">Pro Tips</h3>
+            <p className="text-[10px] text-gray-400">Get the most out of your Instagram grid</p>
           </div>
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+          {[
+            'Use 4:5 aspect ratio for best Instagram compatibility',
+            'Use high-resolution images (at least 1080px width)',
+            'Keep important content away from split lines',
+            "Consider your feed's overall aesthetic and color palette",
+            'Post consistently to maintain the grid effect over time',
+            'Preview your grid before committing to post',
+            'Test different background colors for best contrast',
+            'Choose backgrounds that complement your image tones',
+          ].map((tip, i) => (
+            <div key={i} className="flex items-start gap-2.5 py-2 px-3 rounded-xl hover:bg-gray-50 transition-colors cursor-default">
+              <span className="w-5 h-5 bg-green-100 text-green-700 text-[9px] font-bold rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+              <span className="text-xs text-gray-600 leading-relaxed">{tip}</span>
+            </div>
+          ))}
+        </div>
       </div>
-      </div>
+
     </div>
   );
 };
