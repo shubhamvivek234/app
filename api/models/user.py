@@ -33,6 +33,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     mfa_enabled: bool = False
     role: str = "user"
+    onboarding_completed: bool = False
 
     @computed_field  # FE-2: alias for frontend compatibility
     @property
