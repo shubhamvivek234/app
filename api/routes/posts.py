@@ -8,7 +8,7 @@ Phase 10.1: Schedule density warning on post save.
 import hashlib
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from bson import ObjectId
@@ -28,6 +28,7 @@ from api.models.post import (
 from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
 from utils.schedule_density import check_schedule_density
+from utils.ssrf_guard import assert_safe_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -174,6 +175,13 @@ async def create_post(
                 detail="You are not a member of the specified workspace",
             )
 
+    # SEC-2: SSRF guard on user-supplied media_urls
+    for url in (body.media_urls or []):
+        try:
+            assert_safe_url(url)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
     doc: dict = {
         "id": str(ObjectId()),
         "user_id": user_id,
@@ -229,7 +237,8 @@ async def download_bulk_template():
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Text", "Image URL", "Tags", "Posting Time"])
-    writer.writerow(["A post with text...", "", "#sample", "2026-03-24 17:30"])
+    example_time = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+    writer.writerow(["A post with text...", "", "#sample", example_time])
     writer.writerow(["A post with an image", "https://example.com/image.jpg", "", ""])
     output.seek(0)
     

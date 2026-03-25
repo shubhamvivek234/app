@@ -187,7 +187,10 @@ async def get_oauth_url(
     # Store state → user_id mapping in Redis (10-minute TTL)
     await cache_redis.setex(f"oauth_state:{state}", 600, user_id)
 
-    auth_url = _build_oauth_url(platform, state)
+    try:
+        auth_url = _build_oauth_url(platform, state)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     return OAuthUrlResponse(platform=platform, authorization_url=auth_url, state=state)
 
 
@@ -389,6 +392,9 @@ def _build_oauth_url(platform: str, state: str) -> str:
     # YouTube uses Google OAuth — env var is GOOGLE_CLIENT_ID not YOUTUBE_CLIENT_ID (CFG-3)
     client_id_env = "GOOGLE_CLIENT_ID" if platform == "youtube" else f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
+    # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
+    if not client_id:
+        raise ValueError(f"OAuth not configured for platform '{platform}': {client_id_env} env var is missing")
     redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback")
     base = base_urls.get(platform, "")
     scope = scopes.get(platform, "")

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Component } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import '@/App.css';
@@ -46,6 +46,34 @@ import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import CookieConsent from '@/components/CookieConsent';
+
+// FE-4: Catch render errors so the entire app doesn't crash to a white screen
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('App error boundary caught:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-screen text-center p-8">
+          <h1 className="text-2xl font-semibold mb-2">Something went wrong</h1>
+          <p className="text-muted-foreground mb-4">Please refresh the page or contact support if the problem persists.</p>
+          <button className="underline text-sm" onClick={() => this.setState({ hasError: false, error: null })}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   const { user, loading } = useAuth();
@@ -142,7 +170,8 @@ const ThemeApplier = () => {
 
 function App() {
   return (
-    <BrowserRouter>
+<ErrorBoundary>
+        <BrowserRouter>
       <ThemeProvider>
         <AuthProvider>
           <ThemeApplier />
@@ -404,7 +433,6 @@ function App() {
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
-
-export default App;
