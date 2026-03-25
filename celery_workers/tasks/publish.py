@@ -406,6 +406,10 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     try:
         adapter = get_adapter(platform)
         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+        # EC-1: Post deleted or cancelled before pre_upload executed — abort cleanly
+        if not post or post.get("status") in {"deleted", "cancelled"}:
+            logger.info("pre_upload EC-1: post %s deleted/cancelled before pre_upload — aborting", post_id)
+            return {"status": "post_deleted"}
         container_result = await adapter.pre_upload(post, redis=r_cache)
 
         # EC12: If Instagram container is still pending, dispatch non-blocking poller
