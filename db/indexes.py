@@ -50,6 +50,7 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
 
     # notifications
     await _safe_create_index(db.notifications, [("user_id", 1), ("is_read", 1), ("created_at", -1)])
+    await _safe_create_index(db.notifications, [("created_at", 1)], expireAfterSeconds=7776000)  # 90-day TTL
 
     # social_accounts
     await _safe_create_index(db.social_accounts, [("user_id", 1), ("platform", 1), ("is_active", 1)])

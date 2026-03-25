@@ -68,10 +68,16 @@ class YouTubeAdapter(PlatformAdapter):
         async with httpx.AsyncClient(timeout=60) as client:
             if not resume_uri:
                 # Initiate resumable upload session
+                effective_content = post.get("effective_content", post.get("content", ""))
+                effective_title = (
+                    post.get("effective_title")
+                    or post.get("title")
+                    or effective_content[:100]
+                )
                 metadata = {
                     "snippet": {
-                        "title": post.get("title") or post.get("content", "")[:100],
-                        "description": post.get("content", ""),
+                        "title": effective_title,
+                        "description": effective_content,
                         "categoryId": post.get("category_id", "22"),
                     },
                     "status": {"privacyStatus": "private"},  # publish() will flip to public

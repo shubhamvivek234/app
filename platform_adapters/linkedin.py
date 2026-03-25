@@ -73,7 +73,7 @@ class LinkedInAdapter(PlatformAdapter):
 
             ugc_body = self._build_ugc_body(
                 author_urn=author_urn,
-                text=post.get("content", ""),
+                text=post.get("effective_content", post.get("content", "")),
                 asset_urn=asset_urn,
                 post_type=post_type,
             )

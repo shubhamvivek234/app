@@ -55,17 +55,19 @@ class FacebookAdapter(PlatformAdapter):
 
         is_video = post_type == "video" or bool(post.get("media_url", ""))
 
+        effective_content = post.get("effective_content", post.get("content", ""))
+
         if is_video:
             endpoint = f"{GRAPH_BASE}/{page_id}/videos"
             payload = {
                 "file_url": post.get("media_url", ""),
-                "description": post.get("content", ""),
+                "description": effective_content,
                 "access_token": access_token,
             }
         else:
             endpoint = f"{GRAPH_BASE}/{page_id}/feed"
             payload = {
-                "message": post.get("content", ""),
+                "message": effective_content,
                 "access_token": access_token,
             }
             image_url = post.get("media_url", "")

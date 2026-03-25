@@ -24,6 +24,7 @@ from api.models.post import (
     PostResponse,
     PostStatus,
     UpdatePostRequest,
+    PlatformOverride,
 )
 from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
@@ -107,14 +108,16 @@ async def create_post(
         if recent > 0:
             intelligence_warnings.append("Duplicate content detected — this post has been published before")
 
-    # Platform character count enforcement
+    # Platform character count enforcement (default content + per-platform overrides)
     _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000}
     for platform in body.platforms:
         limit = _CHAR_LIMITS.get(platform.lower())
-        if limit and body.content and len(body.content) > limit:
+        override_content = (body.platform_overrides.get(platform) or PlatformOverride()).content
+        effective = override_content if override_content is not None else body.content
+        if limit and effective and len(effective) > limit:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"{platform} character limit is {limit} (got {len(body.content)})",
+                detail=f"{platform} character limit is {limit} (got {len(effective)})",
             )
 
     # Hashtag limit warnings (platform best practices)
@@ -207,6 +210,10 @@ async def create_post(
         "dlq_reason": None,
         "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
         "schedule_warnings": all_warnings,
+        "platform_overrides": {
+            p: ov.model_dump(exclude_none=True)
+            for p, ov in body.platform_overrides.items()
+        },
         "created_at": now,
         "updated_at": now,
     }
@@ -422,6 +429,11 @@ async def update_post(
         updates["scheduled_time"] = body.scheduled_time
     if body.platforms is not None:
         updates["platforms"] = body.platforms
+    if body.platform_overrides is not None:
+        updates["platform_overrides"] = {
+            p: ov.model_dump(exclude_none=True)
+            for p, ov in body.platform_overrides.items()
+        }
 
     result = await db.posts.update_one(
         {

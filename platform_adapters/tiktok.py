@@ -86,7 +86,7 @@ class TikTokAdapter(PlatformAdapter):
             # Step 2: Initiate publish session
             init_body = {
                 "post_info": {
-                    "title": post.get("content", "")[:150],  # TikTok title max 150 chars
+                    "title": (post.get("effective_title") or post.get("effective_content", post.get("content", "")))[:150],  # TikTok title max 150 chars
                     "privacy_level": post.get("tiktok_privacy", "PUBLIC_TO_EVERYONE"),
                     "disable_duet": post.get("disable_duet", False),
                     "disable_comment": post.get("disable_comment", False),

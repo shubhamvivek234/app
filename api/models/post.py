@@ -54,6 +54,14 @@ class PlatformResult(BaseModel):
     published_at: datetime | None = None
 
 
+class PlatformOverride(BaseModel):
+    """Per-platform text override. All fields optional — falls back to post-level content."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    content: str | None = Field(None, max_length=10000)
+    title: str | None = Field(None, max_length=500)   # YouTube title, TikTok title
+
+
 class CreatePostRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -64,6 +72,7 @@ class CreatePostRequest(BaseModel):
     post_type: str = Field(default="text", max_length=50)
     workspace_id: str | None = Field(None, max_length=100)
     timezone: str = Field(default="UTC", max_length=100)
+    platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
 
     @field_validator("platforms")
     @classmethod
@@ -130,6 +139,7 @@ class UpdatePostRequest(BaseModel):
     content: str | None = Field(None, min_length=1, max_length=10000)
     scheduled_time: datetime | None = None
     platforms: list[str] | None = Field(None, max_length=10)
+    platform_overrides: dict[str, PlatformOverride] | None = None
     version: int = Field(..., description="Optimistic lock version — must match current DB version")
 
     @field_validator("platforms")
@@ -168,3 +178,4 @@ class PostResponse(BaseModel):
     jitter_seconds: int | None = None
     version: int = 1
     dlq_reason: str | None = None
+    platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)

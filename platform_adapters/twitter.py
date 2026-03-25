@@ -55,7 +55,7 @@ class TwitterAdapter(PlatformAdapter):
             if media_url:
                 media_ids = await self._upload_media(client, auth_headers, media_url)
 
-            tweet_body: dict = {"text": post.get("content", "")}
+            tweet_body: dict = {"text": post.get("effective_content", post.get("content", ""))}
             if media_ids:
                 tweet_body["media"] = {"media_ids": media_ids}
 

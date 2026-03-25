@@ -61,7 +61,7 @@ class InstagramAdapter(PlatformAdapter):
                 # Create container
                 payload = {
                     "video_url": post.get("media_url", ""),
-                    "caption": post.get("content", ""),
+                    "caption": post.get("effective_content", post.get("content", "")),
                     "media_type": "REELS",
                     "access_token": access_token,
                 }

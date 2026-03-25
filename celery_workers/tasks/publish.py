@@ -321,6 +321,15 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             })
             raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
 
+        # Resolve per-platform text overrides — inject effective_content/effective_title
+        # so adapters never need to know about platform_overrides themselves.
+        _override = (post.get("platform_overrides") or {}).get(platform) or {}
+        post = {
+            **post,
+            "effective_content": _override.get("content") or post.get("content", ""),
+            "effective_title": _override.get("title") or post.get("title", ""),
+        }
+
         adapter = get_adapter(platform)
         result = await adapter.publish(post, redis=r_cache)
 
@@ -567,6 +576,13 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         if not post or post.get("status") in {"deleted", "cancelled"}:
             logger.info("pre_upload EC-1: post %s deleted/cancelled before pre_upload — aborting", post_id)
             return {"status": "post_deleted"}
+        # Inject per-platform text overrides for pre_upload (YouTube uses title/content in metadata)
+        _override = (post.get("platform_overrides") or {}).get(platform) or {}
+        post = {
+            **post,
+            "effective_content": _override.get("content") or post.get("content", ""),
+            "effective_title": _override.get("title") or post.get("title", ""),
+        }
         container_result = await adapter.pre_upload(post, redis=r_cache)
 
         # EC12: If Instagram container is still pending, dispatch non-blocking poller
