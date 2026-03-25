@@ -6,7 +6,7 @@
       "runtimeExecutable": "/opt/homebrew/bin/python3",
       "runtimeArgs": [
         "-c",
-        "import sys; sys.path[:0] = ['/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto', '/Users/shubham/Documents/Workspace/SocialEntangler/app/backend/venv/lib/python3.14/site-packages']; import dotenv; dotenv.load_dotenv('/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto/.env'); import uvicorn; uvicorn.run('api.main:create_app', factory=True, host='0.0.0.0', port=8000, reload=True, reload_dirs=['/Users/shubham/Documents/Workspace/SocialEntangler/app/.claude/worktrees/stupefied-matsumoto'])"
+        "import sys; sys.path[:0] = ['/Users/shubham/Documents/Workspace/SocialEntangler/app/backend', '/Users/shubham/Documents/Workspace/SocialEntangler/app/backend/venv/lib/python3.14/site-packages']; import dotenv; dotenv.load_dotenv('/Users/shubham/Documents/Workspace/SocialEntangler/app/backend/.env'); import uvicorn; uvicorn.run('server:app', host='0.0.0.0', port=8000, reload=True, reload_dirs=['/Users/shubham/Documents/Workspace/SocialEntangler/app/backend'])"
       ],
       "port": 8000,
       "cwd": "."

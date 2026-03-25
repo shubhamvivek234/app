@@ -101,7 +101,14 @@ export const AuthProvider = ({ children }) => {
         await attempt();
       } catch (secondError) {
         console.error('Failed to fetch backend profile after retry:', secondError);
-        if (secondError?.code === 'ERR_NETWORK' || secondError?.code === 'ECONNREFUSED') {
+        if (secondError?.response?.status === 401) {
+          // Stale or expired token — clear it so the user can log in fresh
+          localStorage.removeItem('token');
+          delete axios.defaults.headers.common['Authorization'];
+          setToken(null);
+          setUser(null);
+          console.warn('Cleared stale token — user must log in again');
+        } else if (secondError?.code === 'ERR_NETWORK' || secondError?.code === 'ECONNREFUSED') {
           toast.error('Cannot reach server. Please make sure the backend is running.');
         } else {
           toast.error('Failed to load your profile. Please refresh the page.');
