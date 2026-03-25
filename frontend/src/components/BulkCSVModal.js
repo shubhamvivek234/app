@@ -61,15 +61,22 @@ const MONTH_ABBR = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9
 
 const parseDateTime = (str) => {
   if (!str) return null;
-  // Strip leading apostrophe (Excel "force text" prefix added by template)
-  const s = str.trim().replace(/^'/, '');
-  // Only accepted format: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
-  const m = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
-  if (m) {
-    const mo = MONTH_ABBR[m[2].toLowerCase()];
+  const s = str.trim();
+
+  // Format 1: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
+  const mAbbr = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
+  if (mAbbr) {
+    const mo = MONTH_ABBR[mAbbr[2].toLowerCase()];
     if (mo !== undefined)
-      return new Date(parseInt(m[3]), mo, parseInt(m[1]), parseInt(m[4]), parseInt(m[5]));
+      return new Date(parseInt(mAbbr[3]), mo, parseInt(mAbbr[1]), parseInt(mAbbr[4]), parseInt(mAbbr[5]));
   }
+
+  // Format 2: DD/MM/YYYY HH:mm  e.g. 23/04/2026 10:00 (Excel auto-converted)
+  const mNum = /^(\d{1,2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
+  if (mNum) {
+    return new Date(parseInt(mNum[3]), parseInt(mNum[2]) - 1, parseInt(mNum[1]), parseInt(mNum[4]), parseInt(mNum[5]));
+  }
+
   return null;
 };
 
@@ -125,7 +132,7 @@ const validateRow = (row, headers) => {
   if (row.scheduled_time) {
     const dt = parseDateTime(row.scheduled_time);
     if (!dt || isNaN(dt.getTime())) {
-      errors.push('Unrecognisable scheduled_time format — use DD/Mon/YYYY HH:mm e.g. 23/Apr/2026 10:00');
+      errors.push('Unrecognisable scheduled_time format — use DD/Mon/YYYY HH:mm (e.g. 23/Apr/2026 10:00) or DD/MM/YYYY HH:mm (e.g. 23/04/2026 10:00)');
     } else {
       const now = new Date();
       if (dt < now) errors.push('scheduled_time is in the past');
@@ -281,8 +288,7 @@ const BulkCSVModal = ({ onClose }) => {
     const pad = (n) => String(n).padStart(2, '0');
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
-    // Prefix with a single quote inside the quotes to prevent Excel from auto-converting the date
-    const example = `"Hello world! First post via CSV","instagram,twitter","all","'${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -341,7 +347,7 @@ const BulkCSVModal = ({ onClose }) => {
               <h3 className="text-sm font-semibold text-gray-900 mb-1">1. Prepare your CSV file</h3>
               <p className="text-xs text-gray-500 mb-3 leading-relaxed">
                 Make sure your CSV file is in the correct format: <strong>content, platforms, accounts, scheduled_time, image_urls, video_url, title, tags, post_type</strong>.
-                scheduled_time must use the format <strong>DD/Mon/YYYY HH:mm</strong> e.g. <code className="bg-gray-100 px-1 rounded text-green-700">23/Apr/2026 10:00</code>.
+                scheduled_time accepts <strong>DD/Mon/YYYY HH:mm</strong> (e.g. <code className="bg-gray-100 px-1 rounded text-green-700">23/Apr/2026 10:00</code>) or <strong>DD/MM/YYYY HH:mm</strong> (e.g. <code className="bg-gray-100 px-1 rounded text-green-700">23/04/2026 10:00</code>).
                 Download our template to get started, and check our{' '}
                 <button
                   onClick={() => { onClose(); navigate('/bulk-upload-guide'); }}
