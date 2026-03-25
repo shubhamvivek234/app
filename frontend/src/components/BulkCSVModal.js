@@ -271,7 +271,11 @@ const BulkCSVModal = ({ onClose }) => {
 
   const downloadTemplate = () => {
     const cols = 'content,platforms,accounts,scheduled_time,timezone,image_urls,video_url,title,tags,post_type';
-    const example = '"Hello world! First post via CSV","instagram,twitter","all","2025-06-01 10:00","Asia/Kolkata","","","","social,marketing","text"';
+    // Use a date 7 days from now so the template is always valid on download
+    const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const futureStr = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())} 10:00`;
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","Asia/Kolkata","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
