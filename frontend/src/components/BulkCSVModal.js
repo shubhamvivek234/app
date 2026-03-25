@@ -163,9 +163,17 @@ const validateRow = (row, headers) => {
 const truncate = (s, n = 50) => (!s ? '—' : s.length > n ? s.slice(0, n) + '…' : s);
 
 // ── Status icon ───────────────────────────────────────────────────────────────
-const RowStatus = ({ errors, warnings }) => {
-  if (errors.length) return <FaExclamationTriangle className="text-red-500 text-sm" title={errors.join('\n')} />;
-  if (warnings.length) return <FaExclamationTriangle className="text-amber-400 text-sm" title={warnings.join('\n')} />;
+const RowStatus = ({ errors, warnings, onClick, expanded }) => {
+  if (errors.length) return (
+    <button onClick={onClick} className={`p-1 rounded transition-colors ${expanded ? 'bg-red-100' : 'hover:bg-red-50'}`}>
+      <FaExclamationTriangle className="text-red-500 text-sm" />
+    </button>
+  );
+  if (warnings.length) return (
+    <button onClick={onClick} className={`p-1 rounded transition-colors ${expanded ? 'bg-amber-50' : 'hover:bg-amber-50'}`}>
+      <FaExclamationTriangle className="text-amber-400 text-sm" />
+    </button>
+  );
   return <FaCheckCircle className="text-green-500 text-sm" />;
 };
 
@@ -178,6 +186,7 @@ const BulkCSVModal = ({ onClose }) => {
   const [rowResults, setRowResults] = useState([]); // [{errors, warnings}]
   const [fileName, setFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [expandedRow, setExpandedRow] = useState(null);
   const fileInputRef = useRef(null);
 
   const processFile = useCallback((file) => {
@@ -428,34 +437,74 @@ const BulkCSVModal = ({ onClose }) => {
                     {rows.map((row, i) => {
                       const { errors, warnings } = rowResults[i] || { errors: [], warnings: [] };
                       const hasError = errors.length > 0;
+                      const hasIssue = hasError || warnings.length > 0;
+                      const isExpanded = expandedRow === i;
                       return (
-                        <tr
-                          key={i}
-                          className={`border-b border-gray-50 last:border-0 ${hasError ? 'bg-red-50/40' : 'bg-white'}`}
-                        >
-                          <td className="px-4 py-3 text-xs text-gray-400 font-mono">{row._row}</td>
-                          <td className="px-4 py-3 text-xs text-gray-700 max-w-[180px]">
-                            <span title={row.content}>{truncate(row.content)}</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {row.image_urls ? (
-                              <div className="w-8 h-8 bg-gray-100 rounded border border-gray-200 flex items-center justify-center">
-                                <FaFileCsv className="text-gray-400 text-xs" />
-                              </div>
-                            ) : (
-                              <span className="text-gray-300 text-xs">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-gray-500 capitalize">
-                            {truncate(row.platforms, 25)}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-gray-500">
-                            {row.scheduled_time || <span className="text-gray-300 italic">Add to Queue</span>}
-                          </td>
-                          <td className="px-4 py-3">
-                            <RowStatus errors={errors} warnings={warnings} />
-                          </td>
-                        </tr>
+                        <React.Fragment key={i}>
+                          <tr className={`border-b border-gray-50 ${hasError ? 'bg-red-50/40' : 'bg-white'} ${isExpanded && hasIssue ? 'border-b-0' : ''}`}>
+                            <td className="px-4 py-3 text-xs text-gray-400 font-mono">{row._row}</td>
+                            <td className="px-4 py-3 text-xs text-gray-700 max-w-[180px]">
+                              <span title={row.content}>{truncate(row.content)}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {row.image_urls ? (
+                                <div className="w-8 h-8 bg-gray-100 rounded border border-gray-200 flex items-center justify-center">
+                                  <FaFileCsv className="text-gray-400 text-xs" />
+                                </div>
+                              ) : (
+                                <span className="text-gray-300 text-xs">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-500 capitalize">
+                              {truncate(row.platforms, 25)}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-500">
+                              {row.scheduled_time || <span className="text-gray-300 italic">Add to Queue</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <RowStatus
+                                errors={errors}
+                                warnings={warnings}
+                                expanded={isExpanded}
+                                onClick={() => setExpandedRow(isExpanded ? null : i)}
+                              />
+                            </td>
+                          </tr>
+                          {isExpanded && hasIssue && (
+                            <tr className={`border-b border-gray-100 ${hasError ? 'bg-red-50/60' : 'bg-amber-50/60'}`}>
+                              <td colSpan={6} className="px-4 pb-3 pt-0">
+                                <div className={`rounded-lg border px-4 py-3 ${hasError ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+                                  {errors.length > 0 && (
+                                    <div className="mb-2">
+                                      <p className="text-[10px] font-bold uppercase tracking-wide text-red-500 mb-1.5">Errors — this row will be skipped</p>
+                                      <ul className="space-y-1">
+                                        {errors.map((e, j) => (
+                                          <li key={j} className="flex items-start gap-2 text-xs text-red-700">
+                                            <FaExclamationTriangle className="text-red-400 mt-0.5 shrink-0 text-[10px]" />
+                                            {e}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  {warnings.length > 0 && (
+                                    <div>
+                                      <p className="text-[10px] font-bold uppercase tracking-wide text-amber-500 mb-1.5">Warnings</p>
+                                      <ul className="space-y-1">
+                                        {warnings.map((w, j) => (
+                                          <li key={j} className="flex items-start gap-2 text-xs text-amber-700">
+                                            <FaExclamationTriangle className="text-amber-400 mt-0.5 shrink-0 text-[10px]" />
+                                            {w}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -474,7 +523,7 @@ const BulkCSVModal = ({ onClose }) => {
             {/* Step 2 footer */}
             <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
               <button
-                onClick={() => { setStep(1); setRows([]); setRowResults([]); }}
+                onClick={() => { setStep(1); setRows([]); setRowResults([]); setExpandedRow(null); }}
                 className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
               >
                 ← Upload different file
