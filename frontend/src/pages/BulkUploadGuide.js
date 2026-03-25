@@ -35,7 +35,7 @@ const COLUMNS = [
     name: 'scheduled_time',
     required: 'No',
     default: 'Auto-queue',
-    format: 'DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00. Also accepts YYYY-MM-DD HH:mm and MM/DD/YYYY HH:mm.',
+    format: 'DD/Mon/YYYY HH:mm only. e.g. 23/Apr/2026 10:00 or 26/Sep/2026 14:30',
     errors: 'Date is in the past · Unrecognisable format · More than 365 days ahead',
     warnings: 'Within 2 min of now',
   },
@@ -96,7 +96,7 @@ const VALIDATION_LAYERS = [
   { layer: '2 · Structure', checks: 'At least one of content / image_urls / video_url present · image_urls and video_url not both present · platforms not empty · no completely empty rows', when: 'Per row, no DB' },
   { layer: '3 · Platform', checks: 'Platform names valid · post_type compatible with platforms · Instagram requires image or video · content length within each platform\'s limit', when: 'Per row, no DB' },
   { layer: '4 · Content', checks: 'Title within limit for YouTube / LinkedIn · tags format', when: 'Per row, no DB' },
-  { layer: '5 · DateTime', checks: 'Date parseable — primary: DD/Mon/YYYY HH:mm (e.g. 23/Apr/2026 10:00); legacy: YYYY-MM-DD HH:mm, MM/DD/YYYY HH:mm · not in the past · not >365 days ahead', when: 'Per row, no DB' },
+  { layer: '5 · DateTime', checks: 'Date must be in DD/Mon/YYYY HH:mm format (e.g. 23/Apr/2026 10:00) · not in the past · not >365 days ahead', when: 'Per row, no DB' },
   { layer: '6 · URLs', checks: 'Valid URL format · ends in image extension (or Google Drive / Dropbox pattern) · max 10 images · no localhost / 169.254.x.x / private IP (SSRF)', when: 'Per row, no network' },
   { layer: '7 · Schedule', checks: 'Account names exist in workspace · daily platform posting limit not exceeded for any day · scheduling conflict within 30-min window for same account', when: 'Per row, DB call' },
 ];
@@ -232,25 +232,17 @@ const BulkUploadGuide = () => (
       </Section>
 
       {/* DateTime formats */}
-      <Section icon={FaCalendarAlt} title="Accepted Date/Time Formats">
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { fmt: 'DD/Mon/YYYY HH:mm', ex: '23/Apr/2026 10:00', label: 'Recommended' },
-            { fmt: 'DD/Mon/YYYY HH:mm', ex: '26/Sep/2026 14:30', label: 'Recommended' },
-            { fmt: 'YYYY-MM-DD HH:mm', ex: '2026-06-15 14:30', label: 'Legacy' },
-            { fmt: 'MM/DD/YYYY HH:mm', ex: '06/15/2026 14:30', label: 'Legacy' },
-          ].map(({ fmt, ex, label }, idx) => (
-            <div key={idx} className={`rounded-xl border px-4 py-3 ${label === 'Recommended' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="flex items-center justify-between mb-1">
-                <p className={`text-xs font-mono font-bold ${label === 'Recommended' ? 'text-green-700' : 'text-gray-500'}`}>{fmt}</p>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${label === 'Recommended' ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>{label}</span>
-              </div>
-              <p className="text-[11px] text-gray-500">e.g. <span className="font-mono">{ex}</span></p>
-            </div>
-          ))}
+      <Section icon={FaCalendarAlt} title="Date/Time Format">
+        <div className="bg-green-50 border border-green-200 rounded-xl px-5 py-4">
+          <p className="text-xs font-mono font-bold text-green-700 mb-2">DD/Mon/YYYY HH:mm</p>
+          <div className="flex flex-wrap gap-3">
+            {['23/Apr/2026 10:00', '26/Sep/2026 14:30', '01/Jan/2027 09:00', '15/Dec/2026 18:45'].map((ex) => (
+              <span key={ex} className="text-[11px] font-mono bg-white border border-green-200 text-green-800 px-2.5 py-1 rounded-lg">{ex}</span>
+            ))}
+          </div>
         </div>
         <p className="text-xs text-gray-500 mt-3 bg-blue-50 rounded-xl px-4 py-3 border border-blue-100">
-          <strong className="text-blue-700">Tip:</strong> Use 3-letter month abbreviations — Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec. Case-insensitive.
+          <strong className="text-blue-700">Month abbreviations:</strong> Jan · Feb · Mar · Apr · May · Jun · Jul · Aug · Sep · Oct · Nov · Dec (case-insensitive)
         </p>
       </Section>
 

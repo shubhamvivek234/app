@@ -62,23 +62,12 @@ const MONTH_ABBR = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9
 const parseDateTime = (str) => {
   if (!str) return null;
   const s = str.trim();
-
-  // Primary format: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
-  const mAbbr = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
-  if (mAbbr) {
-    const mo = MONTH_ABBR[mAbbr[2].toLowerCase()];
+  // Only accepted format: DD/Mon/YYYY HH:mm  e.g. 23/Apr/2026 10:00
+  const m = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4}) (\d{2}):(\d{2})$/.exec(s);
+  if (m) {
+    const mo = MONTH_ABBR[m[2].toLowerCase()];
     if (mo !== undefined)
-      return new Date(parseInt(mAbbr[3]), mo, parseInt(mAbbr[1]), parseInt(mAbbr[4]), parseInt(mAbbr[5]));
-  }
-
-  // Legacy formats for backwards compatibility
-  const legacyFormats = [
-    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/,
-    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/,
-    /^(\d{2})\/(\d{2})\/(\d{4}) (\d{1,2}):(\d{2})(AM|PM)$/i,
-  ];
-  for (const re of legacyFormats) {
-    if (re.test(s)) return new Date(s);
+      return new Date(parseInt(m[3]), mo, parseInt(m[1]), parseInt(m[4]), parseInt(m[5]));
   }
   return null;
 };
