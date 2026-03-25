@@ -472,6 +472,20 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             await _write_idempotency_key(idem_key, publish_id)
             return {"status": "success", "platform_post_id": publish_id}
 
+        elif platform == "discord":
+            from app.social.discord import DiscordWebhook
+            from utils.encryption import decrypt
+            # access_token for Discord is the encrypted webhook URL
+            try:
+                webhook_url = decrypt(access_token)
+            except Exception:
+                return {"status": "failed", "error": "Discord webhook URL could not be decrypted — reconnect the channel", "permanent": True}
+
+            channel_label = account.get("platform_username", "Discord channel")
+            await DiscordWebhook.post_message(webhook_url, content, username="SocialEntangler")
+            await _write_idempotency_key(idem_key, f"discord_{account_id}")
+            return {"status": "success", "platform_post_id": f"discord_{account_id}"}
+
         elif platform in ("bluesky", "threads"):
             return {"status": "failed", "error": f"{platform.title()} publishing not yet configured"}
 

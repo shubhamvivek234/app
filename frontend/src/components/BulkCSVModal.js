@@ -12,7 +12,7 @@ import {
 } from 'react-icons/fa';
 import { SiInstagram } from 'react-icons/si';
 
-const VALID_PLATFORMS = ['instagram', 'youtube', 'twitter', 'tiktok', 'linkedin', 'facebook', 'bluesky'];
+const VALID_PLATFORMS = ['instagram', 'youtube', 'twitter', 'tiktok', 'linkedin', 'facebook', 'bluesky', 'discord'];
 const PLATFORM_CHAR_LIMITS = {
   instagram: 2200, facebook: 63206, twitter: 280, tiktok: 4000,
   linkedin: 3000, youtube: 5000, bluesky: 300,
