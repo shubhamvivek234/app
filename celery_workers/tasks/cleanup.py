@@ -50,17 +50,19 @@ async def _async_cleanup(post_id: str) -> dict:
         if not asset:
             continue
 
-        media_url = asset.get("media_url", "")
+        storage_key = asset.get("storage_key", "")
 
         if plan == "starter":
-            # Delete immediately
-            await _delete_from_storage(media_url)
-        elif plan == "pro":
-            # Move to NEARLINE (30-day retention via GCS lifecycle)
-            await _archive_to_nearline(media_url, post_id)
-        elif plan == "agency":
-            # Move to COLDLINE (1-year retention via GCS lifecycle)
-            await _archive_to_coldline(media_url, post_id)
+            # Delete immediately from R2
+            if storage_key:
+                await _delete_from_storage(storage_key)
+            else:
+                logger.warning("No storage_key for media_id %s — cannot delete from R2", media_id)
+        elif plan in ("pro", "agency"):
+            # Retain in R2 — lifecycle policy on the bucket handles expiry.
+            # pro: 30-day R2 lifecycle rule on media/ prefix
+            # agency: 1-year R2 lifecycle rule on media/ prefix
+            logger.info("Retaining media %s for plan=%s (R2 lifecycle handles expiry)", media_id, plan)
 
         await db.media_assets.update_one(
             {"media_id": media_id},
@@ -84,17 +86,17 @@ async def _async_cleanup(post_id: str) -> dict:
     return {"status": "cleaned", "count": cleaned}
 
 
-async def _delete_from_storage(url: str) -> None:
-    # TODO: integrate with firebase_admin.storage or GCS client
-    logger.info("Deleting media: %s", url[:80])
-
-
-async def _archive_to_nearline(url: str, post_id: str) -> None:
-    logger.info("Archiving to NEARLINE: %s (post %s)", url[:80], post_id)
-
-
-async def _archive_to_coldline(url: str, post_id: str) -> None:
-    logger.info("Archiving to COLDLINE: %s (post %s)", url[:80], post_id)
+async def _delete_from_storage(storage_key: str) -> None:
+    """Delete a file from R2 (or Firebase) using its storage key."""
+    import asyncio
+    try:
+        from utils.storage import delete_file
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, delete_file, storage_key)
+        logger.info("Deleted from storage: %s", storage_key)
+    except Exception as exc:
+        logger.error("Failed to delete %s from storage: %s", storage_key, exc)
+        raise
 
 
 @celery_app.task(
