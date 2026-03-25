@@ -34,10 +34,13 @@ export const AuthProvider = ({ children }) => {
       // during the async fetchBackendProfile call on a fresh login.
       setLoading(true);
       if (currentUser) {
+        console.log("[Auth] Firebase auth state changed: user logged in", currentUser.email);
         setFirebaseUser(currentUser);
         try {
           // Get ID Token
+          console.log("[Auth] Getting Firebase ID token...");
           const idToken = await currentUser.getIdToken();
+          console.log("[Auth] Got ID token, length:", idToken.length);
           setToken(idToken);
           localStorage.setItem('token', idToken);
 
@@ -45,12 +48,14 @@ export const AuthProvider = ({ children }) => {
           axios.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
 
           // Sync with Backend (Get detailed profile)
+          console.log("[Auth] Fetching backend profile...");
           await fetchBackendProfile(idToken);
         } catch (error) {
-          console.error("Error syncing user:", error);
+          console.error("[Auth] Error syncing user:", error);
           toast.error("Failed to sync user profile");
         }
       } else {
+        console.log("[Auth] Firebase auth state changed: user logged out");
         setFirebaseUser(null);
         // Don't clear token/user here if token exists in localStorage (backend OAuth flow)
         if (!localStorage.getItem('token')) {
@@ -109,14 +114,23 @@ export const AuthProvider = ({ children }) => {
   // 3. Login Actions
   const loginWithGoogle = async () => {
     try {
+      console.log("[Auth] Starting Google Sign-In...");
       // Use Firebase signInWithPopup — onAuthStateChanged will handle the rest
       // (token storage, backend sync, user state)
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log("[Auth] Google Sign-In successful, user:", result.user.email);
       return true;
     } catch (error) {
-      console.error("Google login error:", error);
-      if (error.code !== 'auth/popup-closed-by-user') {
-        toast.error(error.message);
+      console.error("[Auth] Google login failed:", error.code, error.message);
+      if (error.code === 'auth/popup-blocked') {
+        toast.error("Popup was blocked. Please allow popups and try again.");
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        // User closed the popup, don't show error
+        console.log("[Auth] User closed Google Sign-In popup");
+      } else if (error.code === 'auth/network-request-failed') {
+        toast.error("Network error. Please check your internet connection.");
+      } else {
+        toast.error(`Google login failed: ${error.message}`);
       }
       throw error;
     }

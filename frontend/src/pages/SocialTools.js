@@ -3,7 +3,7 @@
  * Grid Maker (images 6-7) and Carousel Splitter (images 9-11)
  * All processing is 100% client-side via Canvas API + JSZip
  */
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -107,6 +107,22 @@ const TOOLS = [
 ];
 
 const GRID_SIZES = ['3×1', '3×2', '3×3', '3×4', '3×5', '3×6'];
+const BG_COLORS = [
+  { value: '#000000', label: 'Black' },
+  { value: '#d1d5db', label: 'Light Gray' },
+  { value: '#ffffff', label: 'White' },
+  { value: '#d1fae5', label: 'Light Green' },
+];
+const CANVAS_W = 340;
+const PIECE_ASPECT = 5 / 4; // 4:5 → height = width * 5/4
+const DIMENSION_GUIDE = [
+  { label: '3×1 Grid', ratio: '12:5 ratio', cols: 3, rows: 1 },
+  { label: '3×2 Grid', ratio: '6:5 ratio',  cols: 3, rows: 2 },
+  { label: '3×3 Grid', ratio: '4:5 ratio',  cols: 3, rows: 3 },
+  { label: '3×4 Grid', ratio: '3:5 ratio',  cols: 3, rows: 4 },
+  { label: '3×5 Grid', ratio: '12:25 ratio',cols: 3, rows: 5 },
+  { label: '3×6 Grid', ratio: '2:5 ratio',  cols: 3, rows: 6 },
+];
 const CAROUSEL_DIMS = [
   { slides: 3, width: 1080, height: 1350, label: '3 slides' },
   { slides: 4, width: 1440, height: 1350, label: '4 slides' },
@@ -141,66 +157,189 @@ const ToolCard = ({ tool, onSelect }) => {
 
 // ── Instagram Grid Maker ──────────────────────────────────────────────────────
 const InstagramGridMaker = ({ onBack }) => {
-  const [image, setImage] = useState(null);
-  const [imageName, setImageName] = useState('');
-  const [gridSize, setGridSize] = useState('3×3');
+  const [image, setImage]           = useState(null);
+  const [imageName, setImageName]   = useState('');
+  const [gridSize, setGridSize]     = useState('3×3');
+  const [bgColor, setBgColor]       = useState('#ffffff');
+  const [offsetX, setOffsetX]       = useState(0);
+  const [offsetY, setOffsetY]       = useState(0);
+  const [scale, setScale]           = useState(1);
+  const [scalePercent, setScalePercent] = useState(100);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart]   = useState({ x: 0, y: 0 });
+  const [hoveredTile, setHoveredTile] = useState(null);
+  const [tiles, setTiles]           = useState([]);
   const [downloading, setDownloading] = useState(false);
+  const [showDimensions, setShowDimensions] = useState(false);
+
+  const posCanvasRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const cols = 3;
-  const rows = parseInt(gridSize.split('×')[1]);
+  const cols      = 3;
+  const rows      = parseInt(gridSize.split('×')[1]);
   const totalTiles = cols * rows;
+  const CANVAS_H  = Math.round(CANVAS_W * rows * PIECE_ASPECT / cols);
 
+  // ── Load image ───────────────────────────────────────────────────────────────
   const loadImage = (file) => {
-    if (!file || !file.type.startsWith('image/')) {
-      toast.error('Please upload an image file');
-      return;
-    }
+    if (!file || !file.type.startsWith('image/')) { toast.error('Please upload an image file'); return; }
     setImageName(file.name.replace(/\.[^/.]+$/, ''));
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
-      img.onload = () => setImage(img);
+      img.onload = () => {
+        setImage(img);
+        // Cover-fit initial position
+        const s = Math.max(CANVAS_W / img.width, CANVAS_H / img.height);
+        setScale(s);
+        setScalePercent(Math.round(s * 100));
+        setOffsetX((CANVAS_W - img.width * s) / 2);
+        setOffsetY((CANVAS_H - img.height * s) / 2);
+        setTiles([]);
+      };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   };
 
-  const downloadGrid = async () => {
+  // Reset to cover-fit when grid changes
+  useEffect(() => {
+    if (!image) return;
+    const canvasH = Math.round(CANVAS_W * rows * PIECE_ASPECT / cols);
+    const s = Math.max(CANVAS_W / image.width, canvasH / image.height);
+    setScale(s);
+    setScalePercent(Math.round(s * 100));
+    setOffsetX((CANVAS_W - image.width * s) / 2);
+    setOffsetY((canvasH - image.height * s) / 2);
+    setTiles([]);
+  }, [gridSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleReset = () => {
+    if (!image) return;
+    const s = Math.max(CANVAS_W / image.width, CANVAS_H / image.height);
+    setScale(s); setScalePercent(Math.round(s * 100));
+    setOffsetX((CANVAS_W - image.width * s) / 2);
+    setOffsetY((CANVAS_H - image.height * s) / 2);
+  };
+
+  // ── Draw position canvas ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = posCanvasRef.current;
+    if (!canvas) return;
+    canvas.width  = CANVAS_W;
+    canvas.height = CANVAS_H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    if (image) ctx.drawImage(image, offsetX, offsetY, image.width * scale, image.height * scale);
+    // Dashed grid overlay
+    ctx.setLineDash([5, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.80)';
+    ctx.lineWidth = 1.5;
+    for (let c = 1; c < cols; c++) {
+      const x = (c / cols) * CANVAS_W;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_H); ctx.stroke();
+    }
+    for (let r = 1; r < rows; r++) {
+      const y = (r / rows) * CANVAS_H;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_W, y); ctx.stroke();
+    }
+  }, [image, offsetX, offsetY, scale, bgColor, cols, rows, CANVAS_H]);
+
+  // ── Live tile previews (debounced) ────────────────────────────────────────────
+  useEffect(() => {
+    if (!image) return;
+    const timer = setTimeout(() => {
+      const canvas = posCanvasRef.current;
+      if (!canvas) return;
+      const tileW = CANVAS_W / cols;
+      const tileH = CANVAS_H / rows;
+      const OUT_W = 300;
+      const OUT_H = Math.round(OUT_W * PIECE_ASPECT);
+      const newTiles = [];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const tc = document.createElement('canvas');
+          tc.width = OUT_W; tc.height = OUT_H;
+          tc.getContext('2d').drawImage(canvas, c * tileW, r * tileH, tileW, tileH, 0, 0, OUT_W, OUT_H);
+          newTiles.push(tc.toDataURL('image/jpeg', 0.82));
+        }
+      }
+      setTiles(newTiles);
+    }, 90);
+    return () => clearTimeout(timer);
+  }, [image, offsetX, offsetY, scale, bgColor, cols, rows, CANVAS_H]);
+
+  // ── Scale slider ──────────────────────────────────────────────────────────────
+  const handleScaleChange = (e) => {
+    const pct = parseInt(e.target.value);
+    setScalePercent(pct);
+    const newScale = pct / 100;
+    // Zoom relative to canvas center
+    const cx = CANVAS_W / 2, cy = CANVAS_H / 2;
+    const imgCX = (cx - offsetX) / scale;
+    const imgCY = (cy - offsetY) / scale;
+    setScale(newScale);
+    setOffsetX(cx - imgCX * newScale);
+    setOffsetY(cy - imgCY * newScale);
+  };
+
+  // ── Drag ──────────────────────────────────────────────────────────────────────
+  const handleMouseDown = (e) => {
+    if (!image) return;
+    e.preventDefault();
+    const rect = posCanvasRef.current.getBoundingClientRect();
+    const sx = CANVAS_W / rect.width;
+    const sy = CANVAS_H / rect.height;
+    setIsDragging(true);
+    setDragStart({ x: (e.clientX - rect.left) * sx - offsetX, y: (e.clientY - rect.top) * sy - offsetY });
+  };
+  const handleMouseMove = (e) => {
+    if (!isDragging || !image) return;
+    const rect = posCanvasRef.current.getBoundingClientRect();
+    const sx = CANVAS_W / rect.width;
+    const sy = CANVAS_H / rect.height;
+    setOffsetX((e.clientX - rect.left) * sx - dragStart.x);
+    setOffsetY((e.clientY - rect.top) * sy - dragStart.y);
+  };
+  const handleMouseUp = () => setIsDragging(false);
+  const handleTouchStart = (e) => { const t = e.touches[0]; handleMouseDown({ clientX: t.clientX, clientY: t.clientY, preventDefault: () => e.preventDefault() }); };
+  const handleTouchMove  = (e) => { const t = e.touches[0]; handleMouseMove({ clientX: t.clientX, clientY: t.clientY }); };
+
+  // ── Download helpers ──────────────────────────────────────────────────────────
+  const buildTileCanvas = (r, c) => {
+    const OUT_W = 1080, OUT_H = 1350;
+    const tc = document.createElement('canvas');
+    tc.width = OUT_W; tc.height = OUT_H;
+    const ctx = tc.getContext('2d');
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, OUT_W, OUT_H);
+    const tileW = CANVAS_W / cols;
+    const tileH = CANVAS_H / rows;
+    const sx = OUT_W / tileW, sy = OUT_H / tileH;
+    ctx.drawImage(image, (offsetX - c * tileW) * sx, (offsetY - r * tileH) * sy, image.width * scale * sx, image.height * scale * sy);
+    return tc;
+  };
+
+  const downloadTile = (index) => {
+    const r = Math.floor(index / cols), c = index % cols;
+    const tc = buildTileCanvas(r, c);
+    const link = document.createElement('a');
+    link.download = `${imageName || 'grid'}_${index + 1}.jpg`;
+    link.href = tc.toDataURL('image/jpeg', 0.95);
+    link.click();
+  };
+
+  const downloadAll = async () => {
     if (!image) return;
     setDownloading(true);
     try {
       const zip = new JSZip();
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      // Crop source to cols:rows ratio
-      const srcAspect = cols / rows;
-      const imgAspect = image.width / image.height;
-      let srcX = 0, srcY = 0, srcW = image.width, srcH = image.height;
-      if (imgAspect > srcAspect) {
-        srcW = Math.floor(image.height * srcAspect);
-        srcX = Math.floor((image.width - srcW) / 2);
-      } else {
-        srcH = Math.floor(image.width / srcAspect);
-        srcY = Math.floor((image.height - srcH) / 2);
-      }
-
-      const pieceW = Math.floor(srcW / cols);
-      const pieceH = Math.floor(srcH / rows);
-      canvas.width = pieceW;
-      canvas.height = pieceH;
-
-      let counter = 1;
-      // Instagram grid reads right-to-left bottom-up for display,
-      // but we number posts for upload order: top-right → top-left → ...
       for (let r = 0; r < rows; r++) {
-        for (let c = cols - 1; c >= 0; c--) {
-          ctx.clearRect(0, 0, pieceW, pieceH);
-          ctx.drawImage(image, srcX + c * pieceW, srcY + r * pieceH, pieceW, pieceH, 0, 0, pieceW, pieceH);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
-          zip.file(`${imageName || 'grid'}_${counter}.jpg`, dataUrl.split(',')[1], { base64: true });
-          counter++;
+        for (let c = 0; c < cols; c++) {
+          const tc = buildTileCanvas(r, c);
+          const num = r * cols + c + 1;
+          zip.file(`${imageName || 'grid'}_${num}.jpg`, tc.toDataURL('image/jpeg', 0.95).split(',')[1], { base64: true });
         }
       }
       const content = await zip.generateAsync({ type: 'blob' });
@@ -213,159 +352,288 @@ const InstagramGridMaker = ({ onBack }) => {
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div>
-      {/* Sub-page header */}
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={onBack}
-          className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-        >
-          <FaArrowLeft />
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">Instagram Grid Maker</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Split any image into Instagram grid posts. Create stunning grid effects.</p>
-        </div>
+    <div className="max-w-3xl mx-auto">
+      {/* Back */}
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 mb-5 transition-colors">
+        <FaArrowLeft className="text-xs" /> Back to Tools
+      </button>
+
+      {/* Title */}
+      <div className="text-center mb-5">
+        <h2 className="text-2xl font-bold text-gray-900">Instagram Grid Maker</h2>
+        <p className="text-sm text-gray-500 mt-1">Split any image into Instagram posts. Create stunning grid effects.</p>
       </div>
 
-      {/* Grid size selector */}
-      <div className="flex items-center gap-3 mb-6">
-        <span className="text-xs font-semibold text-gray-500 mr-1">Grid size:</span>
+      {/* Grid size pills */}
+      <div className="flex items-center justify-center gap-2 mb-4">
         {GRID_SIZES.map((size) => (
-          <button
-            key={size}
-            onClick={() => setGridSize(size)}
+          <button key={size} onClick={() => setGridSize(size)}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
-              gridSize === size
-                ? 'bg-gray-900 text-white border-gray-900'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
-            }`}
-          >
+              gridSize === size ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+            }`}>
             {size}
           </button>
         ))}
       </div>
 
-      <div className={`grid gap-6 ${image ? 'grid-cols-2' : 'grid-cols-1 max-w-xl'}`}>
-        {/* Upload / Position area */}
-        <div>
-          {!image ? (
-            <div
-              className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-colors"
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); }}
-            >
-              <FaUpload className="text-4xl text-gray-300" />
-              <div className="text-center">
-                <p className="text-sm font-semibold text-gray-600">Upload Image</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Choose an image to split into {gridSize} ({totalTiles} images)
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">JPG, PNG, WEBP</p>
-              </div>
-              <button className="mt-2 px-5 py-2 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors">
-                Choose File
-              </button>
-            </div>
-          ) : (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-gray-600">Position Your Image</p>
-                <button
-                  onClick={() => { setImage(null); setImageName(''); }}
-                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
-                >
-                  <FaRedo className="text-[10px]" /> New Image
-                </button>
-              </div>
-              <div className="rounded-xl overflow-hidden border border-gray-200 relative aspect-square bg-gray-100">
-                <img src={image.src} alt="preview" className="w-full h-full object-cover" />
-              </div>
-              <p className="text-xs text-gray-400 font-mono mt-2">
-                Original: {image.width}×{image.height}px
-              </p>
-            </div>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => { loadImage(e.target.files?.[0]); e.target.value = ''; }}
+      {/* Background color selector */}
+      <div className="flex items-center justify-center gap-3 mb-6">
+        <span className="text-xs text-gray-500 font-medium">Background:</span>
+        {BG_COLORS.map(({ value, label }) => (
+          <button key={value} onClick={() => setBgColor(value)} title={label}
+            className={`w-7 h-7 rounded-full transition-all ${bgColor === value ? 'ring-2 ring-offset-2 ring-green-500' : 'hover:ring-2 hover:ring-offset-1 hover:ring-gray-300'}`}
+            style={{ background: value, border: value === '#ffffff' ? '1.5px solid #d1d5db' : 'none' }}
           />
-        </div>
+        ))}
+      </div>
 
-        {/* Preview grid */}
-        {image && (
+      {!image ? (
+        /* ── Upload zone ── */
+        <div
+          className="border-2 border-dashed border-gray-200 rounded-2xl p-14 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-green-400 hover:bg-green-50/30 transition-colors max-w-lg mx-auto"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); }}
+        >
+          <FaUpload className="text-4xl text-gray-300" />
+          <div className="text-center">
+            <p className="text-sm font-semibold text-gray-600">Upload Image</p>
+            <p className="text-xs text-gray-400 mt-1">Drop or click to choose — JPG, PNG, WEBP</p>
+          </div>
+          <button className="px-5 py-2 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-xl transition-colors">
+            Choose Image
+          </button>
+        </div>
+      ) : (
+        /* ── Two-panel layout ── */
+        <div className="grid grid-cols-2 gap-5">
+          {/* LEFT: Position canvas */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-gray-600">{gridSize} Grid Preview ({totalTiles} images)</p>
+              <p className="text-xs font-semibold text-gray-600">Position Your Image</p>
+              <button onClick={handleReset}
+                className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded px-2 py-0.5 transition-colors">
+                ↺ Reset
+              </button>
+            </div>
+
+            <div className="relative rounded-xl overflow-hidden border border-gray-200 select-none">
+              <canvas
+                ref={posCanvasRef}
+                className="w-full block"
+                style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleMouseUp}
+              />
+              <div className="absolute top-2 left-2 bg-black/50 text-white text-[10px] px-2 py-1 rounded-lg pointer-events-none">
+                → Drag to position
+              </div>
+            </div>
+
+            {/* Scale slider */}
+            <div className="mt-3 mb-3">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] text-gray-500">Scale: {scalePercent}%</span>
+              </div>
+              <input type="range" min="10" max="300" value={scalePercent} onChange={handleScaleChange}
+                className="w-full h-1.5 appearance-none bg-gray-200 rounded-full cursor-pointer"
+                style={{ accentColor: '#22c55e' }}
+              />
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2">
               <button
-                onClick={downloadGrid}
+                onClick={downloadAll}
                 disabled={downloading}
+                className="flex-1 flex items-center justify-center gap-2 py-2 bg-green-500 hover:bg-green-600 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-60"
+              >
+                {downloading ? 'Generating…' : `Split into ${gridSize} (4:5)`}
+              </button>
+              <button
+                onClick={() => { setImage(null); setImageName(''); setTiles([]); }}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                New Image
+              </button>
+            </div>
+          </div>
+
+          {/* RIGHT: Grid preview */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-gray-600">{gridSize} Grid Preview (4:5)</p>
+              <button
+                onClick={downloadAll}
+                disabled={downloading || !tiles.length}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm"
               >
                 <FaDownload className="text-[10px]" />
-                {downloading ? 'Generating…' : 'Download All'}
+                {downloading ? 'Generating…' : '⬇ Download All'}
               </button>
             </div>
 
             <div
-              className="rounded-xl overflow-hidden border border-gray-200 relative"
+              className="rounded-xl overflow-hidden border border-gray-200"
               style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '2px', background: '#e5e7eb' }}
             >
-              {Array.from({ length: totalTiles }).map((_, i) => {
-                const r = Math.floor(i / cols);
-                const c = i % cols;
-                return (
-                  <div key={i} className="relative aspect-square bg-gray-100 overflow-hidden">
-                    <img
-                      src={image.src}
-                      alt=""
-                      className="absolute"
-                      style={{
-                        width: `${cols * 100}%`,
-                        height: `${rows * 100}%`,
-                        left: `-${c * 100}%`,
-                        top: `-${r * 100}%`,
-                        objectFit: 'cover',
-                      }}
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-white text-base font-bold drop-shadow-lg opacity-80">{i + 1}</span>
+              {Array.from({ length: totalTiles }).map((_, i) => (
+                <div key={i}
+                  className="relative group cursor-pointer"
+                  style={{ aspectRatio: '4/5', overflow: 'hidden', background: bgColor }}
+                  onMouseEnter={() => setHoveredTile(i)}
+                  onMouseLeave={() => setHoveredTile(null)}
+                  onClick={() => tiles[i] && downloadTile(i)}
+                >
+                  {tiles[i] ? (
+                    <img src={tiles[i]} alt={`tile ${i + 1}`} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
                     </div>
+                  )}
+                  {/* Hover download overlay */}
+                  <div className={`absolute inset-0 bg-black/50 flex flex-col items-center justify-center transition-opacity duration-150 ${hoveredTile === i ? 'opacity-100' : 'opacity-0'}`}>
+                    <FaDownload className="text-white text-sm mb-1" />
+                    <span className="text-white text-[9px] font-bold">{i + 1}</span>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
 
-            <p className="text-[11px] text-gray-400 mt-2 text-center">
-              Click any image to download. Numbers show upload order (1 = post first).
+            <p className="text-[10px] text-gray-400 mt-1.5 text-center">Hover to download individual pieces</p>
+            <p className="text-[10px] text-gray-400 text-center">Click any piece to download • Post in order: 1→2 →3...</p>
+          </div>
+        </div>
+      )}
+
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { loadImage(e.target.files?.[0]); e.target.value = ''; }} />
+
+      {/* Recommended Dimensions (collapsible) */}
+      <div className="mt-8 border border-gray-200 rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowDimensions(!showDimensions)}
+          className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          <span>✂ Recommended Dimensions for Split Images</span>
+          <span className="text-gray-400 text-xl leading-none">{showDimensions ? '−' : '+'}</span>
+        </button>
+
+        {showDimensions && (
+          <div className="px-5 pb-5 border-t border-gray-100">
+            <p className="text-xs text-gray-500 mt-3 mb-4">
+              Want to create an Instagram grid yourself? Here are the recommended aspect ratios for Instagram grid posts. Each individual piece maintains the 4:5 aspect ratio:
             </p>
+            <p className="text-xs font-bold text-gray-700 mb-3">Recommended Aspect Ratios (Total Image)</p>
+            <div className="grid grid-cols-3 gap-5">
+              {DIMENSION_GUIDE.map(({ label, ratio, cols: dc, rows: dr }) => (
+                <div key={label} className="text-center">
+                  <p className="text-xs font-bold text-gray-700">{label}</p>
+                  <p className="text-[10px] text-gray-500 mb-2">{ratio}</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${dc}, 1fr)`, gap: '2px', width: 54, margin: '0 auto' }}>
+                    {Array.from({ length: dc * dr }).map((_, i) => (
+                      <div key={i} style={{ background: '#d1d5db', borderRadius: 1, aspectRatio: '4/5' }} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 space-y-1 text-xs text-gray-500">
+              <p className="font-semibold text-gray-600">Notes:</p>
+              <p>• Each piece maintains 4:5 — the Instagram standard aspect ratio</p>
+              <p>• Use any resolution that matches these ratios (e.g., 1200×1500px for 4:5)</p>
+              <p>• Keep important content away from split lines</p>
+              <p>• Test your grid before posting by previewing in this tool</p>
+              <p>• Consider your Instagram feed's overall aesthetic</p>
+              <p>• Higher resolution = better quality when split</p>
+            </div>
           </div>
         )}
+
+      {/* How It Works Section */}
+      <div className="mt-16 mb-12">
+        <h3 className="text-2xl font-bold text-center text-gray-900 mb-8">How It Works</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Step 1 */}
+          <div className="border border-gray-200 rounded-xl p-6">
+            <div className="text-4xl mb-3 text-center">📤</div>
+            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 1</p>
+            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Upload your image</h4>
+            <p className="text-sm text-gray-600 text-center">Upload your high-quality image—whether it's a product photo, landscape, or artwork. Our tool supports all common image formats.</p>
+          </div>
+
+          {/* Step 2 */}
+          <div className="border border-gray-200 rounded-xl p-6">
+            <div className="text-4xl mb-3 text-center">🎯</div>
+            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 2</p>
+            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Choose grid size</h4>
+            <p className="text-sm text-gray-600 text-center">Select your preferred grid layout (3x1, 3x2, 3x3, etc.) and aspect ratio (4:5 or 1:1) for perfect Instagram compatibility.</p>
+          </div>
+
+          {/* Step 3 */}
+          <div className="border border-gray-200 rounded-xl p-6">
+            <div className="text-4xl mb-3 text-center">✨</div>
+            <p className="text-sm text-gray-500 text-center font-semibold mb-3">STEP 3</p>
+            <h4 className="text-lg font-bold text-center text-gray-900 mb-3">Download & post</h4>
+            <p className="text-sm text-gray-600 text-center">Download all grid pieces and post them in order on Instagram. Watch your stunning grid effect come together on your profile!</p>
+          </div>
+        </div>
       </div>
 
-      {/* How it works */}
-      <div className="mt-12 pt-8 border-t border-gray-100">
-        <h3 className="text-sm font-bold text-gray-800 text-center mb-6">How It Works</h3>
-        <div className="grid grid-cols-3 gap-6">
-          {[
-            { icon: FaUpload, title: 'Upload your image', desc: 'Upload your high-quality image — whether it\'s a product photo, landscape, or artwork. We support all major image formats.' },
-            { icon: MdGridOn, title: 'Choose grid size', desc: 'Select your desired Instagram grid (3×1 through 3×6). We\'ll split it perfectly, optimized for 1:1 carousel appearance.' },
-            { icon: FaDownload, title: 'Download & post', desc: 'Download all grid pieces as a ZIP file, numbered for upload order. Post them to Instagram as a carousel to reveal the full image.' },
-          ].map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="text-center">
-              <div className="w-12 h-12 rounded-2xl bg-green-100 flex items-center justify-center mx-auto mb-3">
-                <Icon className="text-green-600 text-xl" />
-              </div>
-              <h4 className="text-sm font-bold text-gray-800 mb-1.5">{title}</h4>
-              <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
-            </div>
-          ))}
+      {/* Pro Tips Section */}
+      <div className="mt-12 bg-green-50 rounded-xl p-8">
+        <h3 className="text-xl font-bold text-center text-gray-900 mb-6">💡 Pro Tips</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <ul className="space-y-3">
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Use 4:5 aspect ratio for best Instagram compatibility</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Use high-resolution images (at least 1080px width)</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Keep important content away from split lines</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Consider your feed's overall aesthetic</span>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <ul className="space-y-3">
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Post consistently to maintain grid effect</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Preview your grid before posting</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Test different background colors for best contrast</span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="text-green-500 font-bold text-lg">•</span>
+                <span className="text-sm text-gray-700">Choose backgrounds that complement your image</span>
+              </li>
+            </ul>
+          </div>
         </div>
+      </div>
       </div>
     </div>
   );

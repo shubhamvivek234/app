@@ -63,9 +63,11 @@ const LoginV1 = () => {
     try {
       setLoading(true);
       await loginWithGoogle();
-      toast.success('Welcome back!');
+      // Don't reset loading here - let onAuthStateChanged handle it
+      // toast.success is shown after backend profile loads
     } catch (error) {
       setLoading(false);
+      // Error is already handled and toasted in AuthContext
     }
   };
 
