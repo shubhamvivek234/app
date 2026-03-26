@@ -79,66 +79,75 @@ const CreatePost = () => {
 
         {/* Post Type Selection Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          {postTypes.map((postType) => (
-            <button
-              key={postType.id}
-              onClick={() => setComposerType(postType.id)}
-              data-testid={`post-type-${postType.id}`}
-              className="relative group bg-offwhite border border-gray-200 rounded-xl p-8 hover:border-green-400 hover:shadow-lg hover:shadow-green-400/10 transition-all duration-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-            >
-              {/* Gradient background on hover */}
-              <div className="absolute inset-0 bg-gradient-to-br from-green-50/0 to-green-50/0 group-hover:from-green-50/50 group-hover:to-green-100/30 rounded-xl transition-all duration-300 pointer-events-none" />
+          {postTypes.map((postType) => {
+            const colorConfigs = {
+              text: { border: 'hover:border-blue-400', shadow: 'hover:shadow-blue-400/20', bg: 'group-hover:from-blue-50/60 group-hover:to-blue-100/40', icon: 'group-hover:bg-blue-100 group-hover:text-blue-600', title: 'group-hover:text-blue-700', platform: 'group-hover:text-blue-500', ring: 'focus:ring-blue-500' },
+              image: { border: 'hover:border-purple-400', shadow: 'hover:shadow-purple-400/20', bg: 'group-hover:from-purple-50/60 group-hover:to-pink-100/40', icon: 'group-hover:bg-purple-100 group-hover:text-purple-600', title: 'group-hover:text-purple-700', platform: 'group-hover:text-purple-500', ring: 'focus:ring-purple-500' },
+              video: { border: 'hover:border-orange-400', shadow: 'hover:shadow-orange-400/20', bg: 'group-hover:from-orange-50/60 group-hover:to-red-100/40', icon: 'group-hover:bg-orange-100 group-hover:text-orange-600', title: 'group-hover:text-orange-700', platform: 'group-hover:text-orange-500', ring: 'focus:ring-orange-500' },
+            };
+            const colors = colorConfigs[postType.id];
 
-              <div className="relative z-10 flex flex-col items-center justify-center h-full">
-                {/* Icon Container */}
-                <div className="flex justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
-                  <div className="p-3 bg-gray-50 rounded-lg group-hover:bg-green-100 transition-colors duration-300">
-                    {postType.icon}
+            return (
+              <button
+                key={postType.id}
+                onClick={() => setComposerType(postType.id)}
+                data-testid={`post-type-${postType.id}`}
+                className={`relative group bg-offwhite border border-gray-200 rounded-xl p-8 ${colors.border} hover:shadow-lg ${colors.shadow} transition-all duration-300 cursor-pointer focus:outline-none focus:ring-2 ${colors.ring} focus:ring-offset-2`}
+              >
+                {/* Gradient background on hover */}
+                <div className={`absolute inset-0 bg-gradient-to-br from-transparent to-transparent ${colors.bg} rounded-xl transition-all duration-300 pointer-events-none`} />
+
+                <div className="relative z-10 flex flex-col items-center justify-center h-full">
+                  {/* Icon Container */}
+                  <div className="flex justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
+                    <div className={`p-3 bg-gray-50 rounded-lg transition-colors duration-300 ${colors.icon}`}>
+                      {postType.icon}
+                    </div>
+                  </div>
+
+                  {/* Title */}
+                  <h3 className={`text-lg font-semibold text-gray-900 text-center mb-1 transition-colors duration-300 ${colors.title}`}>
+                    {postType.title}
+                  </h3>
+
+                  {/* Subtitle */}
+                  <p className="text-xs text-gray-500 text-center mb-6">
+                    {postType.id === 'text' && 'Share thoughts & updates'}
+                    {postType.id === 'image' && 'Upload photos & graphics'}
+                    {postType.id === 'video' && 'Post videos & reels'}
+                  </p>
+
+                  {/* Platform Icons Grid */}
+                  <div className="w-full">
+                    <p className="text-xs font-medium text-gray-600 mb-3 uppercase tracking-wider">Compatible with</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {postType.platforms.map((platform) => (
+                        <div
+                          key={platform}
+                          className={`flex items-center justify-center p-2 bg-gray-50 rounded-lg text-gray-600 group-hover:bg-white transition-all duration-300 text-lg ${colors.platform}`}
+                        >
+                          {platformIcons[platform]}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-
-                {/* Title */}
-                <h3 className="text-lg font-semibold text-gray-900 text-center mb-1 group-hover:text-green-700 transition-colors duration-300">
-                  {postType.title}
-                </h3>
-
-                {/* Subtitle */}
-                <p className="text-xs text-gray-500 text-center mb-6">
-                  {postType.id === 'text' && 'Share thoughts & updates'}
-                  {postType.id === 'image' && 'Upload photos & graphics'}
-                  {postType.id === 'video' && 'Post videos & reels'}
-                </p>
-
-                {/* Platform Icons Grid */}
-                <div className="w-full">
-                  <p className="text-xs font-medium text-gray-600 mb-3 uppercase tracking-wider">Compatible with</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {postType.platforms.map((platform) => (
-                      <div
-                        key={platform}
-                        className="flex items-center justify-center p-2 bg-gray-50 rounded-lg text-gray-600 group-hover:bg-white group-hover:text-green-600 transition-all duration-300 text-lg"
-                      >
-                        {platformIcons[platform]}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Connection Prompt - Enhanced */}
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
+        {/* Connection Prompt - Enhanced with gradient */}
+        <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-orange-50 border border-purple-200 rounded-lg p-4">
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+            <div className="w-5 h-5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
               ✓
             </div>
             <p className="text-sm text-gray-700">
               Ready to post? Connect more social accounts to expand your reach.{' '}
               <button
                 onClick={() => navigate('/accounts')}
-                className="text-green-700 hover:text-green-800 font-semibold hover:underline transition-colors"
+                className="text-purple-600 hover:text-purple-700 font-semibold hover:underline transition-colors"
                 data-testid="connect-accounts-link"
               >
                 Add accounts now
