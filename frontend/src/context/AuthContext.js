@@ -1,15 +1,20 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import axios from 'axios';
-import { auth, googleProvider } from '@/firebase';
 import { setUserContext } from '../lib/sentry';
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
 import { toast } from 'sonner';
+import {
+  googleSignIn,
+  handleRedirectResult,
+  emailSignIn,
+  emailSignUp,
+  firebaseSignOut,
+  getIdToken,
+  fetchBackendProfile as fetchProfileService,
+  listenToAuthState,
+  setAuthToken,
+  clearAuthData,
+  getSavedToken,
+} from '@/services/authService';
 
 const AuthContext = createContext();
 
@@ -22,13 +27,25 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(() => {
     // Initialize from localStorage if available
-    const savedToken = localStorage.getItem('token');
-    return savedToken || null;
+    return getSavedToken() || null;
   });
 
-  // 1. Listen for Firebase Auth Changes
+  // 1. Check for redirect result on mount (Google sign-in via redirect)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const checkRedirectResult = async () => {
+      try {
+        await handleRedirectResult();
+        // handleRedirectResult triggers onAuthStateChanged if successful
+      } catch (error) {
+        console.error('[AuthContext] Error handling redirect result:', error);
+      }
+    };
+    checkRedirectResult();
+  }, []);
+
+  // 2. Listen for Firebase Auth Changes (using isolated authService)
+  useEffect(() => {
+    const unsubscribe = listenToAuthState(async (currentUser) => {
       // Always set loading=true at the start of an auth state change.
       // This prevents PrivateRoute from seeing (user=null, loading=false)
       // during the async fetchBackendProfile call on a fresh login.
@@ -37,27 +54,25 @@ export const AuthProvider = ({ children }) => {
         setFirebaseUser(currentUser);
         try {
           // Get ID Token
-          const idToken = await currentUser.getIdToken();
+          const idToken = await getIdToken(currentUser);
           setToken(idToken);
-          localStorage.setItem('token', idToken);
-
-          // Set Axios Default
-          axios.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
 
           // Sync with Backend (Get detailed profile)
-          await fetchBackendProfile(idToken);
+          const profile = await fetchProfileService(idToken);
+          setUser(profile);
+          setUserContext(profile);
         } catch (error) {
-          console.error("Error syncing user:", error);
+          console.error('[AuthContext] Error syncing user:', error);
           toast.error("Failed to sync user profile");
         }
       } else {
         setFirebaseUser(null);
         // Don't clear token/user here if token exists in localStorage (backend OAuth flow)
-        if (!localStorage.getItem('token')) {
+        const savedToken = getSavedToken();
+        if (!savedToken) {
           setToken(null);
           setUser(null);
-          localStorage.removeItem('token');
-          delete axios.defaults.headers.common['Authorization'];
+          clearAuthData();
         }
       }
       setLoading(false);
@@ -66,57 +81,36 @@ export const AuthProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  // 2. If token exists but user doesn't, fetch user profile (handles backend OAuth)
+  // 3. If token exists but user doesn't, fetch user profile (handles backend OAuth)
   useEffect(() => {
     if (token && !user && !firebaseUser) {
-      fetchBackendProfile(token).catch(err => {
-        console.warn('Failed to fetch profile with existing token:', err);
-      });
+      fetchProfileService(token)
+        .then(profile => {
+          setUser(profile);
+          setUserContext(profile);
+        })
+        .catch(err => {
+          console.warn('[AuthContext] Failed to fetch profile with existing token:', err?.message);
+          if (err?.code === 'ERR_NETWORK' || err?.code === 'ECONNREFUSED') {
+            toast.error('Cannot reach server. Please make sure the backend is running.');
+          } else {
+            toast.error('Failed to load your profile. Please refresh the page.');
+          }
+        });
     }
   }, [token, user, firebaseUser]);
 
-  // 2. Fetch User Profile from MongoDB (Backend)
-  const fetchBackendProfile = async (idToken) => {
-    const attempt = async () => {
-      const response = await axios.get(`${API}/auth/me`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-        timeout: 8000,
-      });
-      setUser(response.data);
-      setUserContext(response.data);
-    };
-
-    try {
-      await attempt();
-    } catch (firstError) {
-      console.warn('Backend profile fetch failed, retrying in 2s...', firstError?.message);
-      // Retry once after 2 seconds (backend may still be warming up)
-      await new Promise(r => setTimeout(r, 2000));
-      try {
-        await attempt();
-      } catch (secondError) {
-        console.error('Failed to fetch backend profile after retry:', secondError);
-        if (secondError?.code === 'ERR_NETWORK' || secondError?.code === 'ECONNREFUSED') {
-          toast.error('Cannot reach server. Please make sure the backend is running.');
-        } else {
-          toast.error('Failed to load your profile. Please refresh the page.');
-        }
-        // Don't setUser — force PrivateRoute to show clear feedback
-      }
-    }
-  };
-
-  // 3. Login Actions
+  // 4. Login Actions (delegated to authService)
   const loginWithGoogle = async () => {
     try {
-      // Use Firebase signInWithPopup — onAuthStateChanged will handle the rest
-      // (token storage, backend sync, user state)
-      await signInWithPopup(auth, googleProvider);
+      // Use authService which handles popup + redirect fallback
+      // onAuthStateChanged will handle token storage, backend sync, user state
+      await googleSignIn();
       return true;
     } catch (error) {
-      console.error("Google login error:", error);
+      console.error('[AuthContext] Google login error:', error.code);
       if (error.code !== 'auth/popup-closed-by-user') {
-        toast.error(error.message);
+        toast.error(error.message || 'Google login failed');
       }
       throw error;
     }
@@ -124,26 +118,11 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password, cfTurnstileToken = null) => {
     try {
-      const credential = await signInWithEmailAndPassword(auth, email, password);
-      // If Turnstile token is present, notify the backend so it can validate it
-      // (backend enforces this only when TURNSTILE_ENABLED=true)
-      if (cfTurnstileToken) {
-        try {
-          const idToken = await credential.user.getIdToken();
-          await axios.post(
-            `${API}/auth/login`,
-            { cf_turnstile_token: cfTurnstileToken },
-            { headers: { Authorization: `Bearer ${idToken}` } },
-          );
-        } catch (backendErr) {
-          console.warn('Turnstile backend validation error:', backendErr?.response?.data);
-          // Re-throw only if backend explicitly rejected the Turnstile check (403)
-          if (backendErr?.response?.status === 403) throw backendErr;
-        }
-      }
+      // Use authService email login which handles Turnstile validation
+      await emailSignIn(email, password, cfTurnstileToken);
       return true;
     } catch (error) {
-      console.error("Login error:", error);
+      console.error('[AuthContext] Email login error:', error.code);
       if (error?.response?.status === 403) {
         toast.error("Bot protection check failed. Please refresh and try again.");
       } else {
@@ -155,33 +134,17 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (email, password, name, cfTurnstileToken = null) => {
     try {
-      // Create user in Firebase
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
-
-      // Notify backend of signup (includes Turnstile token when provided)
-      // Backend enforces Turnstile only when TURNSTILE_ENABLED=true
-      if (cfTurnstileToken) {
-        try {
-          const idToken = await credential.user.getIdToken();
-          await axios.post(
-            `${API}/auth/signup`,
-            { cf_turnstile_token: cfTurnstileToken },
-            { headers: { Authorization: `Bearer ${idToken}` } },
-          );
-        } catch (backendErr) {
-          console.warn('Signup Turnstile backend error:', backendErr?.response?.data);
-          if (backendErr?.response?.status === 403) throw backendErr;
-        }
-      }
+      // Use authService email signup (handles Turnstile validation)
+      await emailSignUp(email, password);
 
       // onAuthStateChanged will handle backend sync automatically
       return true;
     } catch (error) {
-      console.error("Signup error:", error);
+      console.error('[AuthContext] Signup error:', error.code);
       if (error?.response?.status === 403) {
         toast.error("Bot protection check failed. Please refresh and try again.");
       } else {
-        toast.error(error.message);
+        toast.error(error.message || 'Signup failed');
       }
       throw error;
     }
@@ -191,17 +154,15 @@ export const AuthProvider = ({ children }) => {
     try {
       // Clear state and storage BEFORE signOut so onAuthStateChanged
       // doesn't skip cleanup due to the localStorage token check
-      localStorage.removeItem('token');
-      delete axios.defaults.headers.common['Authorization'];
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
-      await signOut(auth);
+      // Use authService logout which clears all auth data
+      await firebaseSignOut();
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('[AuthContext] Logout error:', error);
       // Even if signOut fails, ensure local state is cleared
-      localStorage.removeItem('token');
-      delete axios.defaults.headers.common['Authorization'];
+      clearAuthData();
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
@@ -213,12 +174,15 @@ export const AuthProvider = ({ children }) => {
   // plain JWT users (re-fetches backend profile with the existing token).
   const refreshUser = async () => {
     if (firebaseUser) {
-      const idToken = await firebaseUser.getIdToken(true);
+      const idToken = await getIdToken(firebaseUser);
       setToken(idToken);
-      localStorage.setItem('token', idToken);
-      await fetchBackendProfile(idToken);
+      const profile = await fetchProfileService(idToken);
+      setUser(profile);
+      setUserContext(profile);
     } else if (token) {
-      await fetchBackendProfile(token);
+      const profile = await fetchProfileService(token);
+      setUser(profile);
+      setUserContext(profile);
     }
   };
 
