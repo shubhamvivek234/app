@@ -932,44 +932,46 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Top header bar */
   const headerBar = (
-    <div className="h-14 bg-offwhite border-b border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
-      <div className="flex items-center gap-3">
-        <button onClick={handleBack} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
-          <FaArrowLeft className="text-sm" />
+    <div className="h-16 bg-white border-b-2 border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-sm">
+      <div className="flex items-center gap-4">
+        <button onClick={handleBack} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900">
+          <FaArrowLeft className="text-lg" />
         </button>
-        <h1 className="text-base font-semibold text-gray-900">Create Post</h1>
-        {selectedAccounts.length > 0 && (
-          <span className="text-xs text-gray-400">
-            · {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''}
-          </span>
-        )}
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">Create Post</h1>
+          {selectedAccounts.length > 0 && (
+            <span className="text-xs text-gray-500">
+              {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''} selected
+            </span>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
         <Button
           variant={rightPanelMode === 'ai' ? 'default' : 'ghost'}
           size="sm"
           onClick={() => setRightPanelMode(m => m === 'ai' ? 'preview' : 'ai')}
-          className={`gap-1.5 text-xs ${rightPanelMode === 'ai' ? 'bg-violet-600 hover:bg-violet-700 text-white' : 'text-gray-600'}`}
+          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'ai' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
         >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round"
               d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
           </svg>
-          AI Assistant
+          AI
         </Button>
         <Button
-          variant={rightPanelMode === 'preview' && previewVisible ? 'default' : 'outline'}
+          variant={rightPanelMode === 'preview' && previewVisible ? 'default' : 'ghost'}
           size="sm"
           onClick={() => { setRightPanelMode('preview'); setPreviewVisible(v => !v); }}
-          className="gap-1.5 text-xs"
+          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'preview' && previewVisible ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
         >
           {previewVisible && rightPanelMode === 'preview' ? <FaEye className="text-xs" /> : <FaEyeSlash className="text-xs" />}
           Preview
         </Button>
         {/* Close button in modal mode */}
         {asModal && (
-          <button onClick={onClose} className="ml-1 p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-500">
-            <FaTimes className="text-sm" />
+          <button onClick={onClose} className="ml-2 p-2 rounded-lg hover:bg-gray-200 transition-colors text-gray-600 hover:text-gray-900">
+            <FaTimes className="text-lg" />
           </button>
         )}
       </div>
@@ -978,7 +980,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Account selector strip */
   const accountStrip = (
-    <div className="bg-offwhite border-b border-gray-200 px-5 py-3 flex-shrink-0">
+    <div className="bg-white border-b-2 border-gray-200 px-5 py-4 flex-shrink-0">
       <AccountSelector
         accounts={availableAccounts}
         selectedAccounts={selectedAccounts}
@@ -995,28 +997,28 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Left panel: stacked PlatformEditors */
   const leftPanel = (
-    <div className="flex-1 overflow-y-auto p-5 min-w-0">
+    <div className="flex-1 overflow-y-auto p-6 min-w-0 bg-offwhite">
       {orderedPlatforms.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-16 h-16 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
-            <svg className="w-7 h-7 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+        <div className="flex flex-col items-center justify-center py-28 text-center">
+          <div className="w-20 h-20 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center mb-5 shadow-sm">
+            <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round"
                 d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
             </svg>
           </div>
-          <p className="text-sm font-medium text-gray-400">Select accounts above to start composing</p>
-          <p className="text-xs text-gray-300 mt-1">Your platform editors will appear here</p>
+          <p className="text-base font-bold text-gray-700">No platforms selected</p>
+          <p className="text-sm text-gray-500 mt-2">Select one or more accounts above to start creating your post</p>
         </div>
       ) : (
         <>
           {/* ── AI Image Generation card (image/carousel posts only) ── */}
           {(type === 'image' || type === 'carousel') && uploadedMedia.length === 0 && (
-            <div className="bg-offwhite rounded-xl border border-purple-100 shadow-sm p-4 mb-3">
+            <div className="bg-white rounded-xl border-2 border-purple-200 shadow-sm p-5 mb-5 hover:border-purple-300 transition-colors">
               <button
                 onClick={() => setShowAiPanel(v => !v)}
-                className="flex items-center gap-2 text-sm font-semibold text-purple-700 hover:text-purple-900 transition-colors w-full text-left"
+                className="flex items-center gap-2.5 text-sm font-bold text-purple-700 hover:text-purple-900 transition-colors w-full text-left"
               >
-                <FaMagic className="text-xs" />
+                <FaMagic className="text-sm" />
                 {showAiPanel ? 'Hide AI Image Generator' : '✨ Generate image with AI (DALL-E 3)'}
               </button>
               {showAiPanel && (
@@ -1138,10 +1140,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
           {/* Cover image card (video + uploaded media) */}
           {type === 'video' && uploadedMedia.length > 0 && (
-            <div className="bg-offwhite rounded-xl border border-gray-200 shadow-sm p-4 mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-gray-700">Cover Image</span>
-                <button onClick={() => coverImageInputRef.current?.click()} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+            <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm p-5 mb-5 hover:border-blue-300 transition-colors">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-bold text-gray-800">Cover Image</span>
+                <button onClick={() => coverImageInputRef.current?.click()} className="text-xs text-blue-600 hover:text-blue-700 font-bold">
                   {coverImage ? 'Change' : '+ Add cover'}
                 </button>
               </div>
@@ -1211,30 +1213,30 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   ];
 
   const aiPanel = (
-    <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0">
+    <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0 flex flex-col">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center">
-            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-violet-700 flex items-center justify-center shadow-sm">
+            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round"
                 d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
             </svg>
           </div>
-          <span className="text-sm font-semibold text-gray-800">AI Assistant</span>
+          <span className="text-sm font-bold text-gray-900">AI Assistant</span>
         </div>
         {/* Active platform icon badge */}
         {activePlatform && platformIcons[activePlatform] && (() => {
           const { icon: Icon, color } = platformIcons[activePlatform];
-          return <Icon className={`text-xl ${color}`} />;
+          return <Icon className={`text-lg ${color}`} />;
         })()}
       </div>
 
-      {/* Body */}
-      <div className="p-5 space-y-4">
+      {/* Body - scrollable */}
+      <div className="p-5 space-y-4.5 overflow-y-auto flex-1">
         {/* Prompt textarea */}
         <div>
-          <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+          <label className="block text-xs font-bold text-gray-700 mb-2">
             What do you want to write about?
           </label>
           <textarea
@@ -1242,22 +1244,22 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             onChange={e => setAiCaptionPrompt(e.target.value)}
             placeholder="Eg. Promote my photography course to get new signups. Registration closes in 3 days."
             rows={5}
-            className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 placeholder:text-gray-300 resize-none bg-white"
+            className="w-full border-2 border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 placeholder:text-gray-400 resize-none bg-white hover:border-gray-300 transition-colors"
           />
         </div>
 
         {/* Tone pills */}
         <div>
-          <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tone</label>
+          <label className="block text-xs font-bold text-gray-700 mb-2.5">Tone</label>
           <div className="flex flex-wrap gap-2">
             {AI_TONES.map(t => (
               <button
                 key={t.id}
                 onClick={() => setAiCaptionTone(t.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border-2 transition-all duration-200 ${
                   aiCaptionTone === t.id
-                    ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:text-violet-600'
+                    ? 'bg-violet-600 text-white border-violet-600 shadow-md'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50/50'
                 }`}
               >
                 {t.label}
@@ -1270,7 +1272,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         <button
           disabled={aiCaptionLoading || !aiCaptionPrompt.trim()}
           onClick={handleGenerateCaption}
-          className="w-full py-2.5 text-sm font-semibold bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm"
+          className="w-full py-2.5 text-sm font-bold bg-gradient-to-r from-violet-600 to-violet-700 hover:from-violet-700 hover:to-violet-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-all duration-200 flex items-center justify-center gap-2.5 shadow-md hover:shadow-lg"
         >
           {aiCaptionLoading ? (
             <>
@@ -1279,29 +1281,29 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             </>
           ) : (
             <>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round"
                   d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
               </svg>
-              Generate
+              Generate Content
             </>
           )}
         </button>
 
         {/* Pro tip */}
-        <p className="text-[11px] text-gray-400 leading-relaxed">
-          <span className="font-semibold text-gray-500">Pro tip:</span>{' '}
-          Include key points, your target audience and your desired outcome for this post.
+        <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/60 rounded-lg px-3 py-2 border border-blue-100">
+          <span className="font-bold text-blue-700">💡 Pro tip:</span>{' '}
+          <span className="text-blue-600">Include key points, target audience, and desired outcome.</span>
         </p>
 
         {/* Generated output */}
         {aiGeneratedText && (
-          <div className="mt-1 rounded-xl border border-violet-200 bg-violet-50 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-violet-100">
-              <span className="text-[11px] font-semibold text-violet-600">✨ Generated</span>
+          <div className="rounded-xl border-2 border-violet-200 bg-violet-50 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-violet-100/60 border-b-2 border-violet-200">
+              <span className="text-xs font-bold text-violet-700">✨ Generated Content</span>
               <button
                 onClick={handleApplyGeneratedText}
-                className="text-[11px] font-semibold text-white bg-violet-600 hover:bg-violet-700 px-2.5 py-1 rounded-lg transition-colors"
+                className="text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 px-3 py-1.5 rounded-lg transition-colors duration-200 shadow-sm hover:shadow-md"
               >
                 Use this →
               </button>
@@ -1310,7 +1312,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               readOnly
               value={aiGeneratedText}
               rows={6}
-              className="w-full text-xs text-gray-700 bg-violet-50 p-3 resize-none border-none outline-none leading-relaxed"
+              className="w-full text-sm text-gray-700 bg-violet-50 p-3 resize-none border-none outline-none leading-relaxed"
             />
           </div>
         )}
@@ -1320,13 +1322,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   );
 
   const previewPanelContent = (
-    <div className="w-[340px] border-l border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0">
-      <div className="p-5">
+    <div className="w-[340px] border-l-2 border-gray-200 bg-offwhite overflow-y-auto flex-shrink-0 flex flex-col">
+      <div className="p-5 flex-1">
         {activePlatform ? (
           <>
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-sm font-semibold text-gray-700 capitalize">{activePlatform} Preview</span>
-              <FaInfoCircle className="text-gray-300 text-xs" />
+            <div className="flex items-center gap-2.5 mb-5">
+              <span className="text-sm font-bold text-gray-900 capitalize">{activePlatform} Preview</span>
+              <FaInfoCircle className="text-gray-400 text-xs" />
             </div>
             <PreviewPanel
               activePlatform={activePlatform}
@@ -1337,18 +1339,18 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               postFormat={postFormat}
             />
             {selectedPlatforms.length > 1 && (
-              <p className="text-xs text-gray-300 mt-3 text-center">
+              <p className="text-xs text-gray-400 mt-4 text-center font-medium">
                 Click a different account to switch preview
               </p>
             )}
           </>
         ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-3">
-              <FaEye className="text-gray-300 text-xl" />
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-16 h-16 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center mb-4">
+              <FaEye className="text-gray-400 text-2xl" />
             </div>
-            <p className="text-sm font-medium text-gray-400">No account selected</p>
-            <p className="text-xs text-gray-300 mt-1">Select an account to see the preview</p>
+            <p className="text-sm font-bold text-gray-700">No account selected</p>
+            <p className="text-xs text-gray-500 mt-2">Select an account above to see the preview</p>
           </div>
         )}
       </div>
@@ -1361,23 +1363,23 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Fixed bottom action bar */
   const bottomBar = (
-    <div className="h-16 bg-offwhite border-t border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10">
-      <label className="flex items-center gap-2 cursor-pointer">
+    <div className="h-16 bg-white border-t-2 border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-lg">
+      <label className="flex items-center gap-2.5 cursor-pointer hover:opacity-70 transition-opacity">
         <Checkbox
           checked={createAnother}
           onCheckedChange={(v) => setCreateAnother(!!v)}
           className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
         />
-        <span className="text-sm text-gray-600">Create Another</span>
+        <span className="text-sm font-medium text-gray-700">Create Another</span>
       </label>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         {/* Save Drafts */}
         <Button
           variant="outline" size="sm"
           onClick={() => handleSubmit('draft')}
           disabled={loading}
-          className="text-gray-600 border-gray-300 h-9"
+          className="text-gray-700 border-2 border-gray-300 h-9 font-semibold hover:border-gray-400 hover:bg-gray-50 transition-colors"
         >
           Save Drafts
         </Button>
@@ -1387,7 +1389,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           size="sm"
           onClick={() => handleSubmit('now')}
           disabled={loading}
-          className="h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-5"
+          className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
         >
           {loading ? 'Posting…' : 'Post Now'}
         </Button>
@@ -1397,7 +1399,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           variant="outline" size="sm"
           onClick={() => setShowSchedulePicker(true)}
           disabled={loading}
-          className="h-9 gap-1.5 text-gray-700 border-gray-300"
+          className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
         >
           <FaClock className="text-xs" />
           Schedule
