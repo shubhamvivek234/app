@@ -1246,21 +1246,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           />
         </div>
 
-        {/* Platform selector */}
-        <div>
-          <label className="block text-xs font-semibold text-gray-600 mb-1.5">Generate for</label>
-          <select
-            value={aiCaptionPlatform}
-            onChange={e => setAiCaptionPlatform(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-300 text-gray-700"
-          >
-            <option value="all">All selected platforms</option>
-            {orderedPlatforms.map(p => (
-              <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-            ))}
-          </select>
-        </div>
-
         {/* Tone pills */}
         <div>
           <label className="block text-xs font-semibold text-gray-600 mb-1.5">Tone</label>
