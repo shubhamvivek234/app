@@ -16,49 +16,49 @@ Arch doc reference: Architecture v2.9 / Implementation Plan v3.0
 
 ## Last Session Completed
 
-Date: 2026-03-20
+Date: 2026-03-27
 Completed tasks:
-- Replaced all bg-white → bg-offwhite (#fefefb) across 48 frontend files
-- Added offwhite custom color to tailwind.config.js
-- Replaced #ffffff → #fffffb on login/signup panel backgrounds
-- Integrated Cloudflare R2 (utils/storage.py), Turnstile (utils/turnstile.py), CDN cache purge
-- Added TurnstileWidget.js + wired into LoginV1/SignupV1
-- Fixed frontend server (craco launch config via system node bootstrap)
-- Installed socialentangler-dev skill + starter files
+- FIXED: Google login architecture isolated from UI changes
+- Created services/authService.js: all Firebase auth logic in one place
+- Refactored context/AuthContext.js: delegates to authService, no direct Firebase imports
+- Created hooks/useGoogleAuth.js: custom hook for clean component integration
+- Added popup + redirect fallback when popup blocked
+- Verified Google login flow end-to-end (tested on /login, redirects to /onboarding)
+- Started backend and frontend servers, confirmed zero authentication errors
 
-Files changed:
-- frontend/tailwind.config.js, frontend/src/**/*.js (48 files)
-- backend/utils/storage.py, backend/utils/turnstile.py
-- frontend/src/components/TurnstileWidget.js
-- frontend/src/pages/LoginV1.js, SignupV1.js
-- frontend/src/context/AuthContext.js
-- .claude/launch.json (craco via /opt/homebrew/bin/node -e bootstrap)
+Files created:
+- frontend/src/services/authService.js (222 lines) — isolated auth service
+- frontend/src/hooks/useGoogleAuth.js (48 lines) — custom hook wrapper
+
+Files modified:
+- frontend/src/context/AuthContext.js — removed Firebase imports, uses authService
 
 ---
 
 ## Active Work (next session starts here)
 
-Currently implementing: Cloudflare integration is done — no active task
-Next concrete step: Enable Cloudflare in production by setting STORAGE_BACKEND=r2 and TURNSTILE_ENABLED=true in production .env
+Currently implementing: None — auth fix complete
+Next concrete step: Any feature work; auth is now isolated and won't break on UI changes
 Blocked on: nothing
 
 ---
 
-## Known Issues
+## Architecture Notes
 
+- Authentication is now completely isolated in authService.js
+  * googleSignIn() handles popup + redirect fallback (popup-blocked safety)
+  * All Firebase calls delegated to authService — UI changes won't break auth
+  * Token management and backend sync handled independently
 - Frontend preview_start requires system node bootstrap (see .claude/launch.json)
-  because macOS sandbox blocks node_modules execution from worktrees
-- TURNSTILE_ENABLED=false in dev (intentional — enable in production only)
-- STORAGE_BACKEND=r2 set in backend .env — Firebase code preserved as fallback
 
 ---
 
 ## Decisions Made This Session
 
-- Off-white color: #fefefb (bg-offwhite Tailwind) for all page backgrounds
-- Login/signup panels: #fffffb
-- Cloudflare R2 bucket: socialentangler-media (Asia Pacific, Standard)
-- Feature-flagged storage: STORAGE_BACKEND env var (r2|firebase)
+- Isolated authentication in dedicated authService.js module to prevent UI changes from breaking login
+- Popup + redirect fallback: if browser blocks popup, automatically fall back to redirect flow
+- All Firebase operations delegated to authService — AuthContext only manages state
+- Custom hook (useGoogleAuth) for clean component-level integration
 
 ---
 
@@ -80,5 +80,5 @@ git status --short
 ```
 
 Skill active: socialentangler-dev (auto-loads for all SocialEntangler work)
-Backend worktree: .claude/worktrees/stupefied-matsumoto (feature/v2.9-implementation)
-Frontend: /frontend/ on main + version-6 branches
+Auth system: Now isolated in services/authService.js — can modify UI without breaking login
+Servers: Backend (8000), Frontend (3000) — both running after auth fix
