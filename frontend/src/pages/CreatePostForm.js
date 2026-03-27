@@ -631,24 +631,26 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     if (!file) return;
     const isVideo = file.type.startsWith('video/');
 
-    // Validate mix of video + images
-    setUploadedMedia(prev => {
-      if (prev.length > 0) {
-        if (prev[0].type === 'video') {
-          toast.error('Remove the video before adding more media.');
-          return prev;
+    // Validate mix of video + images (only for non-mixed post types)
+    if (type !== 'mixed') {
+      setUploadedMedia(prev => {
+        if (prev.length > 0) {
+          if (prev[0].type === 'video') {
+            toast.error('Remove the video before adding more media.');
+            return prev;
+          }
+          if (isVideo) {
+            toast.error('Remove existing images before adding a video.');
+            return prev;
+          }
         }
-        if (isVideo) {
-          toast.error('Remove existing images before adding a video.');
-          return prev;
-        }
-      }
-      return prev; // no change yet, actual append happens after upload
-    });
+        return prev; // no change yet, actual append happens after upload
+      });
 
-    // Re-check synchronously via a local capture
-    const currentMedia = uploadedMedia;
-    if (currentMedia.length > 0 && (currentMedia[0].type === 'video' || isVideo)) return;
+      // Re-check synchronously via a local capture
+      const currentMedia = uploadedMedia;
+      if (currentMedia.length > 0 && (currentMedia[0].type === 'video' || isVideo)) return;
+    }
 
     setUploading(true);
     setUploadProgress(0);
@@ -880,6 +882,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         post_type: type,
         cover_image: coverImage,
         media_urls: uploadedMedia.map(m => m.url),
+        media_types: uploadedMedia.map(m => m.type),
       media_alt_texts: altTexts,
         youtube_title: videoTitle,
         youtube_privacy: youtubePrivacy,

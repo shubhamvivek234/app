@@ -53,9 +53,9 @@ const MediaUploader = ({ postType, uploadedMedia, uploading, uploadProgress, onF
     }
   };
 
-  const accept = postType === 'video' ? 'video/*' : 'image/*';
-  const label = postType === 'video' ? 'MP4, MOV, AVI, WebM' : 'JPG, PNG, GIF, WebP';
-  const canAiGenerate = postType !== 'video' && !uploadedMedia && !uploading;
+  const accept = postType === 'video' ? 'video/*' : postType === 'mixed' ? 'image/*,video/*' : 'image/*';
+  const label = postType === 'video' ? 'MP4, MOV, AVI, WebM' : postType === 'mixed' ? 'JPG, PNG, GIF, WebP, MP4, MOV' : 'JPG, PNG, GIF, WebP';
+  const canAiGenerate = postType !== 'video' && postType !== 'mixed' && !uploadedMedia && !uploading;
 
   return (
     <div className="mb-4">
@@ -76,10 +76,16 @@ const MediaUploader = ({ postType, uploadedMedia, uploading, uploadProgress, onF
             className="border-2 border-dashed border-gray-200 rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/30 transition-all group"
           >
             <div className="w-12 h-12 rounded-xl bg-gray-100 group-hover:bg-blue-100 flex items-center justify-center mb-3 transition-colors">
-              {postType === 'video'
-                ? <FaVideo className="text-xl text-gray-400 group-hover:text-blue-500 transition-colors" />
-                : <FaImage className="text-xl text-gray-400 group-hover:text-blue-500 transition-colors" />
-              }
+              {postType === 'video' ? (
+                <FaVideo className="text-xl text-gray-400 group-hover:text-blue-500 transition-colors" />
+              ) : postType === 'mixed' ? (
+                <div className="flex items-center gap-0.5">
+                  <FaImage className="text-base text-gray-400 group-hover:text-teal-500 transition-colors" />
+                  <FaVideo className="text-base text-gray-400 group-hover:text-teal-500 transition-colors" />
+                </div>
+              ) : (
+                <FaImage className="text-xl text-gray-400 group-hover:text-blue-500 transition-colors" />
+              )}
             </div>
             <p className="text-sm font-medium text-gray-700">
               Drag & drop or <span className="text-blue-600">browse</span>

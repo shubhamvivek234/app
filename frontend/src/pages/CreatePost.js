@@ -16,13 +16,14 @@ import { SiBluesky, SiThreads } from 'react-icons/si';
 const CreatePost = () => {
   const navigate = useNavigate();
 
-  // null = closed, 'text' | 'image' | 'video' = composer open for that type
+  // null = closed, 'text' | 'image' | 'video' | 'mixed' = composer open for that type
   const [composerType, setComposerType] = useState(null);
 
   const postTypes = [
     {
       id: 'text',
       title: 'Text Post',
+      subtitle: 'Share thoughts & updates',
       icon: (
         <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h7" />
@@ -34,6 +35,7 @@ const CreatePost = () => {
     {
       id: 'image',
       title: 'Image Post',
+      subtitle: 'Upload photos & graphics',
       icon: (
         <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <rect x="3" y="3" width="18" height="18" rx="2" strokeWidth={1.5} />
@@ -46,6 +48,7 @@ const CreatePost = () => {
     {
       id: 'video',
       title: 'Video Post',
+      subtitle: 'Post videos & reels',
       icon: (
         <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <rect x="2" y="4" width="16" height="12" rx="2" strokeWidth={1.5} />
@@ -53,6 +56,23 @@ const CreatePost = () => {
         </svg>
       ),
       platforms: ['facebook', 'twitter', 'linkedin', 'youtube', 'tiktok', 'instagram', 'pinterest', 'threads'],
+    },
+    {
+      id: 'mixed',
+      title: 'Mixed Media',
+      subtitle: 'Post images & videos together',
+      icon: (
+        <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {/* Image frame (slightly offset back) */}
+          <rect x="2" y="5" width="14" height="11" rx="2" strokeWidth={1.5} opacity="0.6" />
+          <circle cx="6" cy="9" r="1.2" strokeWidth={1.5} opacity="0.6" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 13l-4-4-5 5" opacity="0.6" />
+          {/* Video camera (overlapping front) */}
+          <rect x="7" y="9" width="11" height="8" rx="1.5" strokeWidth={1.5} />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 11l-3 1.5v3L22 17v-6z" />
+        </svg>
+      ),
+      platforms: ['facebook', 'instagram', 'threads'],
     },
   ];
 
@@ -78,12 +98,13 @@ const CreatePost = () => {
         </div>
 
         {/* Post Type Selection Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
           {postTypes.map((postType) => {
             const colorConfigs = {
-              text: { border: 'hover:border-blue-400', shadow: 'hover:shadow-blue-400/20', bg: 'group-hover:from-blue-50/60 group-hover:to-blue-100/40', icon: 'group-hover:bg-blue-100 group-hover:text-blue-600', title: 'group-hover:text-blue-700', platform: 'group-hover:text-blue-500', ring: 'focus:ring-blue-500' },
-              image: { border: 'hover:border-purple-400', shadow: 'hover:shadow-purple-400/20', bg: 'group-hover:from-purple-50/60 group-hover:to-pink-100/40', icon: 'group-hover:bg-purple-100 group-hover:text-purple-600', title: 'group-hover:text-purple-700', platform: 'group-hover:text-purple-500', ring: 'focus:ring-purple-500' },
-              video: { border: 'hover:border-orange-400', shadow: 'hover:shadow-orange-400/20', bg: 'group-hover:from-orange-50/60 group-hover:to-red-100/40', icon: 'group-hover:bg-orange-100 group-hover:text-orange-600', title: 'group-hover:text-orange-700', platform: 'group-hover:text-orange-500', ring: 'focus:ring-orange-500' },
+              text:  { border: 'hover:border-blue-400',   shadow: 'hover:shadow-blue-400/20',   bg: 'group-hover:from-blue-50/60 group-hover:to-blue-100/40',     icon: 'group-hover:bg-blue-100 group-hover:text-blue-600',     title: 'group-hover:text-blue-700',   platform: 'group-hover:text-blue-500',   ring: 'focus:ring-blue-500' },
+              image: { border: 'hover:border-purple-400', shadow: 'hover:shadow-purple-400/20', bg: 'group-hover:from-purple-50/60 group-hover:to-pink-100/40',   icon: 'group-hover:bg-purple-100 group-hover:text-purple-600', title: 'group-hover:text-purple-700', platform: 'group-hover:text-purple-500', ring: 'focus:ring-purple-500' },
+              video: { border: 'hover:border-orange-400', shadow: 'hover:shadow-orange-400/20', bg: 'group-hover:from-orange-50/60 group-hover:to-red-100/40',    icon: 'group-hover:bg-orange-100 group-hover:text-orange-600', title: 'group-hover:text-orange-700', platform: 'group-hover:text-orange-500', ring: 'focus:ring-orange-500' },
+              mixed: { border: 'hover:border-teal-400',   shadow: 'hover:shadow-teal-400/20',   bg: 'group-hover:from-teal-50/60 group-hover:to-cyan-100/40',     icon: 'group-hover:bg-teal-100 group-hover:text-teal-600',     title: 'group-hover:text-teal-700',   platform: 'group-hover:text-teal-500',   ring: 'focus:ring-teal-500' },
             };
             const colors = colorConfigs[postType.id];
 
@@ -112,9 +133,7 @@ const CreatePost = () => {
 
                   {/* Subtitle */}
                   <p className="text-xs text-gray-500 text-center mb-6">
-                    {postType.id === 'text' && 'Share thoughts & updates'}
-                    {postType.id === 'image' && 'Upload photos & graphics'}
-                    {postType.id === 'video' && 'Post videos & reels'}
+                    {postType.subtitle}
                   </p>
 
                   {/* Platform Icons Grid */}
@@ -137,20 +156,20 @@ const CreatePost = () => {
           })}
         </div>
 
-        {/* Connection Prompt - Enhanced with gradient */}
-        <div className="bg-gradient-to-r from-blue-50 via-purple-50 to-orange-50 border border-purple-200 rounded-lg p-4">
+        {/* Connection Prompt - Colorful gradient banner */}
+        <div className="bg-gradient-to-r from-blue-50 via-purple-50 via-pink-50 to-orange-50 border border-pink-200 rounded-xl p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-              ✓
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 shadow-sm">
+              ✦
             </div>
             <p className="text-sm text-gray-700">
               Ready to post? Connect more social accounts to expand your reach.{' '}
               <button
                 onClick={() => navigate('/accounts')}
-                className="text-purple-600 hover:text-purple-700 font-semibold hover:underline transition-colors"
+                className="bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent font-semibold hover:from-purple-700 hover:to-pink-700 transition-all"
                 data-testid="connect-accounts-link"
               >
-                Add accounts now
+                Add accounts now →
               </button>
             </p>
           </div>

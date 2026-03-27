@@ -63,7 +63,20 @@ export const AuthProvider = ({ children }) => {
           setUserContext(profile);
         } catch (error) {
           console.error('[AuthContext] Error syncing user:', error);
-          toast.error("Failed to sync user profile");
+          // CRITICAL: Sign out from Firebase on backend sync failure.
+          // Without this, Firebase stays "logged in" but the app is "not logged in".
+          // onAuthStateChanged won't fire again on retry since the Firebase state
+          // hasn't changed, leaving the user permanently stuck until they clear storage.
+          try {
+            await firebaseSignOut();
+          } catch (_) {
+            // Fallback: at least clear local data so the user can retry
+            clearAuthData();
+          }
+          setToken(null);
+          setUser(null);
+          setFirebaseUser(null);
+          toast.error('Login failed. Please try again.');
         }
       } else {
         setFirebaseUser(null);

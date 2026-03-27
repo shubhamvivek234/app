@@ -171,11 +171,12 @@ PLAN_MONTHLY_POST_LIMITS = {
 # Any platform not listed here accepts all types.
 PLATFORM_CONTENT_COMPAT: Dict[str, Set[str]] = {
     "twitter":   {"text", "image", "video", "gif"},
-    "instagram": {"image", "video", "reel", "story"},   # no plain text-only posts
-    "facebook":  {"text", "image", "video", "reel", "story"},
+    "instagram": {"image", "video", "reel", "story", "mixed"},   # no plain text-only posts; mixed = carousel with images+videos
+    "facebook":  {"text", "image", "video", "reel", "story", "mixed"},
     "linkedin":  {"text", "image", "video"},
     "youtube":   {"video"},                              # YouTube is video-only
     "tiktok":    {"video"},                              # TikTok is video-only
+    "threads":   {"text", "image", "video", "mixed"},   # Threads supports mixed media carousels
 }
 
 # ==================== MODELS ====================
@@ -243,6 +244,7 @@ class PostCreate(BaseModel):
     post_type: str = "text"
     platforms: List[str]
     media_urls: Optional[List[str]] = []
+    media_types: Optional[List[str]] = []  # parallel to media_urls: 'image' | 'video' per item (used for mixed posts)
     video_url: Optional[str] = None
     cover_image_url: Optional[str] = None
     video_title: Optional[str] = None
