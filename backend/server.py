@@ -2573,6 +2573,89 @@ async def public_get_stats_api(user_id: str = Depends(_resolve_api_key_user)):
     }
 
 
+@api_router.post("/public/upload/from-url", status_code=201)
+async def public_upload_from_url(body: dict, user_id: str = Depends(_resolve_api_key_user)):
+    """Download a file from a public URL and store it. Returns a URL usable in create_post media_urls."""
+    import uuid as _uuid, io, mimetypes as _mimetypes
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=422, detail="url is required")
+
+    filename_hint = body.get("filename") or url.split("?")[0].split("/")[-1] or "upload"
+    file_ext = filename_hint.rsplit(".", 1)[-1].lower() if "." in filename_hint else ""
+
+    if not file_ext or file_ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension '.{file_ext}' not allowed. Allowed: {', '.join(sorted(ALLOWED_EXTS))}"
+        )
+
+    # Download the file (max 50MB for images, 500MB for videos)
+    is_video = file_ext in ALLOWED_VIDEO_EXTS
+    max_bytes = MAX_VIDEO_BYTES if is_video else MAX_IMAGE_BYTES
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            content = resp.content
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Failed to download URL: {exc}")
+
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {len(content) // (1024*1024)}MB. Max is {max_bytes // (1024*1024)}MB."
+        )
+
+    safe_filename = f"{_uuid.uuid4().hex}.{file_ext}"
+    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
+    file_url = None
+
+    if storage_backend == "r2":
+        try:
+            import boto3
+            from botocore.client import Config
+
+            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
+            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
+            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
+            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=r2_endpoint,
+                aws_access_key_id=r2_access_key,
+                aws_secret_access_key=r2_secret_key,
+                config=Config(signature_version="s3v4"),
+                region_name="auto"
+            )
+            content_type = _mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+            object_key = f"uploads/{user_id}/{safe_filename}"
+            s3.upload_fileobj(io.BytesIO(content), r2_bucket, object_key,
+                              ExtraArgs={"ContentType": content_type})
+            file_url = (
+                f"https://{cdn_domain}/{object_key}" if cdn_domain
+                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
+            )
+        except Exception as e:
+            logging.warning(f"R2 upload failed, falling back to local: {e}")
+
+    if not file_url:
+        upload_dir = Path("/app/uploads")
+        upload_dir.mkdir(exist_ok=True, parents=True)
+        (upload_dir / safe_filename).write_bytes(content)
+        file_url = f"/uploads/{safe_filename}"
+
+    return {
+        "url": file_url,
+        "filename": filename_hint,
+        "media_type": "video" if is_video else "image",
+        "size_bytes": len(content),
+    }
+
+
 # ==================== SCHEDULED POST PROCESSOR ====================
 
 async def _download_url_to_temp(url: str, suffix: str = ".mp4") -> Optional[str]:

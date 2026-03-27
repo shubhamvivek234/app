@@ -225,11 +225,18 @@ server.tool(
     url: z.string().url().describe('Public URL of the image or video to upload'),
     filename: z.string().optional().describe('Optional filename for the uploaded file'),
   },
-  async ({ url, filename }) => {
-    // Media upload via public API key is not supported yet.
-    // Use the SocialEntangler web app to upload media, then pass the URL to create_post.
-    return err('Media upload via API key is not yet supported. Upload media through the SocialEntangler web app and pass the resulting URL to create_post via media_urls.');
-  }
+  async ({ url, filename }) => call(async () => {
+    const { data } = await api.post('/upload/from-url', {
+      url,
+      filename: filename || url.split('?')[0].split('/').pop(),
+    });
+    return {
+      media_url: data.url,
+      filename: data.filename,
+      media_type: data.media_type,
+      size_bytes: data.size_bytes,
+    };
+  })
 );
 
 // ── Start ─────────────────────────────────────────────────────────────────────
