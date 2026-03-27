@@ -125,6 +125,7 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
 
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
@@ -134,8 +135,12 @@ const PublicRoute = ({ children }) => {
     return children;
   }
 
-  // If user is authenticated
+  // If user is authenticated, honour returnTo if present (e.g. from /mcp)
+  const returnTo = location.state?.returnTo;
   if (user) {
+    if (returnTo) {
+      return <Navigate to={returnTo} />;
+    }
     if (user.onboarding_completed) {
       if (user.subscription_status === 'free') {
         return <Navigate to="/onboarding/pricing" />;
