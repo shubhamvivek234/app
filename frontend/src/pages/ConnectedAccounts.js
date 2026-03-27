@@ -230,7 +230,7 @@ const ConnectedAccounts = () => {
         if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
         sessionStorage.setItem('oauth_platform', platformId);
         sessionStorage.setItem('oauth_return_to', 'accounts');
-        window.location.href = authorization_url;
+        window.open(authorization_url, '_blank');
         return;
       }
     } catch (error) {
@@ -245,6 +245,7 @@ const ConnectedAccounts = () => {
   };
 
   const handleDisconnect = async (accountId, platformName) => {
+    if (!window.confirm(`Disconnect your ${platformName} account? This cannot be undone.`)) return;
     try {
       await disconnectSocialAccount(accountId);
       setAccounts(prev => prev.filter(a => a.id !== accountId));

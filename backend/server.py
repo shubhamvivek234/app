@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header, Cookie, UploadFile, File, Form
 from fastapi.security import HTTPBearer
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1668,30 +1668,21 @@ async def oauth_callback_get(platform: str, request: Request,
                               state: Optional[str] = None,
                               error: Optional[str] = None):
     """Handle platform redirect-based OAuth callback (backend redirect_uri flow)."""
+    import urllib.parse
     frontend_base = FRONTEND_URL
     if error:
-        return JSONResponse(
-            status_code=302,
-            headers={"Location": f"{frontend_base}/oauth/callback?error={error}&platform={platform}"}
-        )
+        return RedirectResponse(url=f"{frontend_base}/oauth/callback?error={urllib.parse.quote(str(error))}&platform={platform}", status_code=302)
     if not code or not state:
-        return JSONResponse(
-            status_code=302,
-            headers={"Location": f"{frontend_base}/oauth/callback?error=missing_params&platform={platform}"}
-        )
-    # TikTok sends code_verifier differently — retrieve from state claims if needed
+        return RedirectResponse(url=f"{frontend_base}/oauth/callback?error=missing_params&platform={platform}", status_code=302)
     code_verifier = request.query_params.get("code_verifier")
     try:
         await _process_oauth_callback(platform, code, state, code_verifier)
-        return JSONResponse(
-            status_code=302,
-            headers={"Location": f"{frontend_base}/oauth/callback?success=true&platform={platform}"}
-        )
+        return RedirectResponse(url=f"{frontend_base}/oauth/callback?success=true&platform={platform}", status_code=302)
     except HTTPException as e:
-        return JSONResponse(
-            status_code=302,
-            headers={"Location": f"{frontend_base}/oauth/callback?error={e.detail}&platform={platform}"}
-        )
+        return RedirectResponse(url=f"{frontend_base}/oauth/callback?error={urllib.parse.quote(str(e.detail))}&platform={platform}", status_code=302)
+    except Exception as e:
+        logging.error(f"[OAuth] GET callback unhandled error for {platform}: {e}", exc_info=True)
+        return RedirectResponse(url=f"{frontend_base}/oauth/callback?error=server_error&platform={platform}", status_code=302)
 
 @api_router.post("/oauth/{platform}/callback")
 async def oauth_callback_post(platform: str, body: OAuthCallbackBody,
