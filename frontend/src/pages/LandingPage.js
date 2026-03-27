@@ -614,13 +614,13 @@ const LandingPage = () => {
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-xs font-semibold uppercase tracking-wider mb-6">
               <FaCode className="text-xs" />
-              REST API for AI Agents
+              MCP Server + REST API
             </div>
             <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-white mb-4">
-              Connects with AI Agents
+              Control social media from any AI agent
             </h2>
             <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-              Give your agents the power to post, schedule, and manage social media — with one clean REST API. Works with any AI framework or HTTP client.
+              Connect SocialEntangler to Claude, Cursor, or any MCP-compatible AI. Schedule posts, generate captions, and check analytics — all from a conversation.
             </p>
           </div>
 
@@ -635,43 +635,34 @@ const LandingPage = () => {
                 <span className="ml-3 text-xs text-slate-400 font-mono">SocialEntangler Public API</span>
               </div>
               <div className="bg-slate-950 p-6 font-mono text-sm overflow-x-auto">
-                {/* Example 1 */}
-                <p className="text-slate-500 text-xs"># List all connected social accounts</p>
-                <p className="mt-1 mb-5">
-                  <span className="text-emerald-400 font-semibold">GET</span>
-                  <span className="text-slate-300"> /api/public/v1/integrations</span>
-                </p>
-
-                {/* Example 2 */}
-                <p className="text-slate-500 text-xs"># Upload media, get back a URL</p>
-                <p className="mt-1 mb-1">
-                  <span className="text-blue-400 font-semibold">POST</span>
-                  <span className="text-slate-300"> /api/public/v1/upload</span>
-                </p>
-                <p className="text-slate-400 text-xs pl-2 mb-5">Content-Type: multipart/form-data  |  field: file</p>
-
-                {/* Example 3 */}
-                <p className="text-slate-500 text-xs"># Schedule a post across platforms</p>
-                <p className="mt-1">
-                  <span className="text-blue-400 font-semibold">POST</span>
-                  <span className="text-slate-300"> /api/public/v1/posts</span>
-                </p>
-                <pre className="text-yellow-300/80 text-xs pl-2 mt-2 whitespace-pre">{`{
-  "content": "Hello from my AI agent!",
-  "integrationIds": ["abc123"],
-  "scheduledAt": "2025-01-15T10:00:00Z"
+                {/* MCP config example */}
+                <p className="text-slate-500 text-xs"># claude_desktop_config.json</p>
+                <pre className="text-yellow-300/80 text-xs mt-1 mb-5 whitespace-pre">{`{
+  "mcpServers": {
+    "socialentangler": {
+      "command": "node",
+      "args": ["/path/to/mcp-server/index.js"],
+      "env": {
+        "SOCIALENTANGLER_API_KEY": "sk-..."
+      }
+    }
+  }
 }`}</pre>
+
+                {/* Example prompt */}
+                <p className="text-slate-500 text-xs"># Then just ask Claude naturally</p>
+                <p className="mt-1 text-emerald-300/90 text-xs italic">"Schedule 3 Instagram posts about our product launch for Mon/Wed/Fri at 9am with an excited tone"</p>
               </div>
             </div>
 
             {/* Feature Cards */}
             <div className="grid grid-cols-2 gap-4">
               {[
-                { icon: FaCode, title: 'API-First Design', desc: 'Clean REST endpoints, JSON in/out. Integrates with any agent framework.', color: 'text-indigo-400' },
+                { icon: FaCode, title: 'MCP Native', desc: 'Works out of the box with Claude Desktop, Cursor, and any MCP-compatible client.', color: 'text-indigo-400' },
                 { icon: FaGlobe, title: '11+ Platforms', desc: 'Post to Instagram, LinkedIn, Twitter, TikTok, YouTube, and more.', color: 'text-blue-400' },
-                { icon: FaCalendarAlt, title: 'Scheduled Posting', desc: 'ISO-8601 datetime support for future-scheduled posts.', color: 'text-purple-400' },
-                { icon: FaImage, title: 'Rich Media Support', desc: 'Upload images and videos via multipart, then attach to any post.', color: 'text-pink-400' },
-                { icon: FaCheck, title: 'Approve & Publish', desc: 'Create drafts or publish instantly — fully controlled through the API.', color: 'text-green-400' },
+                { icon: FaCalendarAlt, title: 'Schedule by voice', desc: 'Just say "schedule for Friday 9am" — the agent handles the rest.', color: 'text-purple-400' },
+                { icon: FaMagic, title: 'AI content gen', desc: 'Generate platform-optimized captions in any tone, ready to publish.', color: 'text-pink-400' },
+                { icon: FaCheck, title: 'Draft or publish', desc: 'Create drafts for review or publish instantly — fully agent-controlled.', color: 'text-green-400' },
                 { icon: FaKey, title: 'Secure API Keys', desc: 'Bearer-token auth with revocable keys, managed from your dashboard.', color: 'text-yellow-400' },
               ].map(({ icon: Icon, title, desc, color }, i) => (
                 <div key={i} className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 hover:bg-slate-800 transition-colors">
@@ -687,13 +678,13 @@ const LandingPage = () => {
           <div className="text-center">
             <Button
               size="lg"
-              onClick={() => navigate('/agent-docs')}
+              onClick={() => navigate('/mcp')}
               className="bg-indigo-500 hover:bg-indigo-400 text-white px-10 font-semibold"
             >
-              View Full API Docs →
+              View MCP Setup Guide →
             </Button>
             <p className="text-slate-500 text-sm mt-4">
-              Compatible with LangChain, AutoGPT, OpenClaw, and any HTTP client
+              Compatible with Claude Desktop, Cursor, and any MCP client
             </p>
           </div>
         </div>

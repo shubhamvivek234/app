@@ -1,0 +1,21 @@
+{
+  "name": "socialentangler-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for SocialEntangler — manage social media via AI agents",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "socialentangler-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "axios": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

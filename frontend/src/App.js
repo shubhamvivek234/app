@@ -30,6 +30,7 @@ import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
 import ApiKeys from '@/pages/ApiKeys';
 import AgentDocs from '@/pages/AgentDocs';
+import McpDocs from '@/pages/McpDocs';
 import HashtagGroups from '@/pages/HashtagGroups';
 import PublicCalendar from '@/pages/PublicCalendar';
 import Analytics from '@/pages/Analytics';
@@ -184,6 +185,7 @@ function App() {
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/mcp" element={<McpDocs />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/oauth/callback" element={<OAuthCallback />} />
               <Route path="/accept-invite/:token" element={<AcceptInvite />} />
