@@ -305,6 +305,11 @@ const KeysTab = () => {
         </form>
       </div>
 
+      {/* One-time notice */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+        API keys are shown <strong>only once</strong> when created and never stored in plain text. If you've lost a key, delete it and generate a new one.
+      </div>
+
       {/* Keys table */}
       <div className="bg-offwhite rounded-lg border border-border overflow-hidden shadow-sm">
         <table className="w-full text-left border-collapse">
@@ -328,7 +333,12 @@ const KeysTab = () => {
                     <div className="p-2 bg-offwhite border border-slate-200 rounded text-slate-600">
                       <FaKey size={12} />
                     </div>
-                    <span className="font-medium text-slate-900">{key.name}</span>
+                    <div>
+                      <div className="font-medium text-slate-900">{key.name}</div>
+                      {key.key_prefix && (
+                        <div className="text-xs font-mono text-slate-400 mt-0.5">{key.key_prefix}••••••••••••••••</div>
+                      )}
+                    </div>
                   </div>
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-600">
