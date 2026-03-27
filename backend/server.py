@@ -2263,6 +2263,316 @@ async def get_terms():
 async def get_privacy():
     return {"content": "Privacy Policy - We respect your privacy and protect your data..."}
 
+
+# ==================== API KEY MANAGEMENT ====================
+
+@api_router.get("/api-keys")
+async def list_api_keys(current_user: User = Depends(get_current_user)):
+    user_id = current_user.user_id
+    cursor = db.api_keys.find(
+        {"user_id": user_id, "revoked": {"$ne": True}},
+        {"_id": 0, "key_hash": 0},
+    ).sort("created_at", -1)
+    docs = await cursor.to_list(None)
+    for d in docs:
+        d.setdefault("id", d.get("key_id", ""))
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        if isinstance(d.get("last_used_at"), datetime):
+            d["last_used_at"] = d["last_used_at"].isoformat()
+    return docs
+
+
+@api_router.post("/api-keys", status_code=201)
+async def create_api_key_route(body: dict, current_user: User = Depends(get_current_user)):
+    import secrets as _secrets, uuid as _uuid
+    user_id = current_user.user_id
+    name = (body.get("name") or "API Key").strip() or "API Key"
+    scopes = body.get("scopes") or ["read", "write"]
+    now = datetime.now(timezone.utc)
+
+    raw_key = f"se_{_secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    key_id = str(_uuid.uuid4())
+
+    doc = {
+        "key_id": key_id,
+        "id": key_id,
+        "name": name,
+        "scopes": scopes,
+        "key_hash": key_hash,
+        "key_prefix": raw_key[:8],
+        "user_id": user_id,
+        "revoked": False,
+        "created_at": now,
+        "last_used_at": None,
+    }
+    await db.api_keys.insert_one(doc)
+    return {
+        "id": key_id,
+        "name": name,
+        "scopes": scopes,
+        "key_prefix": raw_key[:8],
+        "raw_key": raw_key,
+        "created_at": now.isoformat(),
+    }
+
+
+@api_router.delete("/api-keys/{key_id}", status_code=204)
+async def delete_api_key_route(key_id: str, current_user: User = Depends(get_current_user)):
+    user_id = current_user.user_id
+    result = await db.api_keys.update_one(
+        {"$or": [{"key_id": key_id}, {"id": key_id}], "user_id": user_id},
+        {"$set": {"revoked": True, "revoked_at": datetime.now(timezone.utc)}},
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+
+# ==================== PUBLIC API (X-API-Key auth for MCP / external agents) ====================
+
+async def _resolve_api_key_user(x_api_key: Optional[str] = Header(default=None, alias="X-API-Key")) -> str:
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="X-API-Key header is required",
+                            headers={"WWW-Authenticate": "ApiKey"})
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    doc = await db.api_keys.find_one({"key_hash": key_hash, "revoked": {"$ne": True}})
+    if not doc:
+        raise HTTPException(status_code=401, detail="Invalid or revoked API key")
+    try:
+        await db.api_keys.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"last_used_at": datetime.now(timezone.utc)}},
+        )
+    except Exception:
+        pass
+    return doc["user_id"]
+
+
+@api_router.get("/public/accounts")
+async def public_list_accounts(user_id: str = Depends(_resolve_api_key_user)):
+    cursor = db.social_accounts.find(
+        {"user_id": user_id, "is_active": True},
+        {"_id": 0, "account_id": 1, "platform": 1, "username": 1, "name": 1},
+    )
+    accounts = await cursor.to_list(length=200)
+    return {
+        "accounts": [
+            {
+                "id": a.get("account_id", ""),
+                "platform": a.get("platform", ""),
+                "username": a.get("username") or a.get("name"),
+                "status": "active",
+            }
+            for a in accounts
+        ],
+        "total": len(accounts),
+    }
+
+
+@api_router.get("/public/posts")
+async def public_list_posts_api(
+    page: int = 1,
+    limit: int = 20,
+    user_id: str = Depends(_resolve_api_key_user),
+):
+    if limit > 100:
+        limit = 100
+    query = {"user_id": user_id, "deleted_at": {"$exists": False}}
+    total = await db.posts.count_documents(query)
+    skip = (page - 1) * limit
+    cursor = db.posts.find(
+        query,
+        {"_id": 0, "id": 1, "status": 1, "platforms": 1,
+         "scheduled_time": 1, "created_at": 1, "platform_results": 1},
+    ).sort("scheduled_time", -1).skip(skip).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    for d in docs:
+        if isinstance(d.get("scheduled_time"), datetime):
+            d["scheduled_time"] = d["scheduled_time"].isoformat()
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+    return {"data": docs, "total": total, "page": page, "limit": limit}
+
+
+@api_router.get("/public/posts/{post_id}")
+async def public_get_post_api(post_id: str, user_id: str = Depends(_resolve_api_key_user)):
+    doc = await db.posts.find_one(
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"_id": 0, "id": 1, "status": 1, "platforms": 1,
+         "scheduled_time": 1, "created_at": 1, "platform_results": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if isinstance(doc.get("scheduled_time"), datetime):
+        doc["scheduled_time"] = doc["scheduled_time"].isoformat()
+    if isinstance(doc.get("created_at"), datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+@api_router.post("/public/posts", status_code=201)
+async def public_create_post_api(body: dict, user_id: str = Depends(_resolve_api_key_user)):
+    import uuid as _uuid
+    content = (body.get("content") or "").strip()
+    account_ids = body.get("account_ids") or []
+    if not content:
+        raise HTTPException(status_code=422, detail="Content cannot be empty")
+    if not account_ids:
+        raise HTTPException(status_code=422, detail="account_ids cannot be empty")
+
+    accounts = await db.social_accounts.find(
+        {"account_id": {"$in": account_ids}, "user_id": user_id, "is_active": True},
+        {"account_id": 1, "platform": 1},
+    ).to_list(length=100)
+    found_ids = {a["account_id"] for a in accounts}
+    invalid = [aid for aid in account_ids if aid not in found_ids]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Unknown or inactive account IDs: {invalid}")
+
+    platforms = list({a["platform"] for a in accounts})
+    now = datetime.now(timezone.utc)
+    publish_now = body.get("publish_now", False)
+    scheduled_at_raw = body.get("scheduled_at")
+
+    if publish_now:
+        post_status = "publishing"
+        scheduled_time = now
+    elif scheduled_at_raw:
+        try:
+            from datetime import datetime as _dt
+            scheduled_time = _dt.fromisoformat(str(scheduled_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            scheduled_time = now
+        post_status = "scheduled"
+    else:
+        post_status = "draft"
+        scheduled_time = now
+
+    post_id = str(_uuid.uuid4())
+    doc = {
+        "id": post_id,
+        "user_id": user_id,
+        "content": content,
+        "platforms": platforms,
+        "account_ids": account_ids,
+        "media_urls": body.get("media_urls") or [],
+        "scheduled_time": scheduled_time,
+        "status": post_status,
+        "created_at": now,
+        "updated_at": now,
+        "history": [{"status": post_status, "timestamp": now, "actor": f"api_key:{user_id}"}],
+        "platform_results": {},
+    }
+    await db.posts.insert_one(doc)
+    return {
+        "id": post_id,
+        "status": post_status,
+        "scheduled_at": scheduled_time.isoformat(),
+        "message": (
+            "Post is being published now." if publish_now
+            else f"Post scheduled for {scheduled_time.isoformat()}." if scheduled_at_raw
+            else "Post saved as draft."
+        ),
+    }
+
+
+@api_router.delete("/public/posts/{post_id}", status_code=204)
+async def public_delete_post_api(post_id: str, user_id: str = Depends(_resolve_api_key_user)):
+    result = await db.posts.update_one(
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"$set": {"deleted_at": datetime.now(timezone.utc), "status": "deleted"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+
+@api_router.post("/public/posts/{post_id}/retry")
+async def public_retry_post_api(post_id: str, user_id: str = Depends(_resolve_api_key_user)):
+    now = datetime.now(timezone.utc)
+    result = await db.posts.update_one(
+        {"id": post_id, "user_id": user_id, "status": {"$in": ["failed", "partial"]}},
+        {
+            "$set": {"status": "scheduled", "updated_at": now},
+            "$push": {"history": {"status": "scheduled", "timestamp": now, "actor": f"api_key_retry:{user_id}"}},
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Failed post not found or not retryable")
+    return {"post_id": post_id, "status": "scheduled", "message": "Post queued for retry."}
+
+
+@api_router.post("/public/ai/generate")
+async def public_generate_content_api(body: dict, user_id: str = Depends(_resolve_api_key_user)):
+    import uuid as _uuid
+    topic = (body.get("topic") or "").strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="Topic cannot be empty")
+
+    platform = body.get("platform") or ""
+    tone = body.get("tone") or ""
+    count = max(1, min(int(body.get("count") or 1), 5))
+    additional_context = body.get("additional_context") or ""
+
+    _PLATFORM_HINTS = {
+        "twitter":   " Keep it under 280 characters.",
+        "linkedin":  " Make it professional and insight-driven.",
+        "instagram": " Make it engaging with 3–5 relevant hashtags.",
+        "facebook":  " Write in a conversational tone.",
+        "tiktok":    " Write a short, punchy caption with trending language.",
+        "youtube":   " Write a concise, keyword-rich description.",
+    }
+    platform_hint = _PLATFORM_HINTS.get(platform, "")
+    tone_hint = f" Use a {tone} tone." if tone else ""
+    context_hint = f" Additional context: {additional_context}" if additional_context else ""
+    system_message = (
+        "You are a social media content expert. "
+        "Generate engaging, brand-safe social media posts. "
+        f"Return only the post text — no explanations or meta-commentary.{platform_hint}{tone_hint}"
+    )
+    prompt = f"Write a social media post about: {topic}.{context_hint}"
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AI service is not configured")
+
+    results = []
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
+        for _ in range(count):
+            session_id = f"mcp-gen-{user_id}-{_uuid.uuid4()}"
+            chat = (
+                LlmChat(api_key=api_key, session_id=session_id, system_message=system_message)
+                .with_model("openai", "gpt-4o-mini")
+            )
+            response = await chat.send_message(UserMessage(text=prompt))
+            results.append(response)
+    except Exception as exc:
+        logging.error("Public AI generation error user=%s: %s", user_id, exc)
+        raise HTTPException(status_code=502, detail="AI content generation failed. Please try again.")
+
+    return {"variations": results, "platform": platform, "count": len(results)}
+
+
+@api_router.get("/public/stats")
+async def public_get_stats_api(user_id: str = Depends(_resolve_api_key_user)):
+    import asyncio as _asyncio
+    total_posts, scheduled, published, failed, accounts = await _asyncio.gather(
+        db.posts.count_documents({"user_id": user_id, "deleted_at": {"$exists": False}}),
+        db.posts.count_documents({"user_id": user_id, "status": "scheduled", "deleted_at": {"$exists": False}}),
+        db.posts.count_documents({"user_id": user_id, "status": "published", "deleted_at": {"$exists": False}}),
+        db.posts.count_documents({"user_id": user_id, "status": {"$in": ["failed", "partial"]}, "deleted_at": {"$exists": False}}),
+        db.social_accounts.count_documents({"user_id": user_id, "is_active": True}),
+    )
+    return {
+        "total_posts": total_posts,
+        "scheduled_posts": scheduled,
+        "published_posts": published,
+        "failed_posts": failed,
+        "connected_accounts": accounts,
+    }
+
+
 # ==================== SCHEDULED POST PROCESSOR ====================
 
 async def _download_url_to_temp(url: str, suffix: str = ".mp4") -> Optional[str]:

@@ -467,19 +467,19 @@ export const downloadBulkTemplate = async () => {
   return response.data;
 };
 
-// ── API Keys ── (routes are under /api/v1/api-keys on the modern backend)
+// ── API Keys ──
 export const getApiKeys = async () => {
-  const response = await axios.get(`${BACKEND_URL}/api/v1/api-keys`, { headers: getAuthHeaders() });
+  const response = await axios.get(`${API}/api-keys`, { headers: getAuthHeaders() });
   return response.data;
 };
 
 export const createApiKey = async (data) => {
-  const response = await axios.post(`${BACKEND_URL}/api/v1/api-keys`, data, { headers: getAuthHeaders() });
+  const response = await axios.post(`${API}/api-keys`, data, { headers: getAuthHeaders() });
   return response.data;
 };
 
 export const deleteApiKey = async (keyId) => {
-  const response = await axios.delete(`${BACKEND_URL}/api/v1/api-keys/${keyId}`, { headers: getAuthHeaders() });
+  const response = await axios.delete(`${API}/api-keys/${keyId}`, { headers: getAuthHeaders() });
   return response.data;
 };
 

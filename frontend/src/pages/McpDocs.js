@@ -180,7 +180,7 @@ function ApiKeyPanel({ navigate }) {
     setError(null);
     try {
       const result = await createApiKey({ name: 'MCP Key' });
-      setGeneratedKey(result.key || result.api_key || result.value);
+      setGeneratedKey(result.raw_key || result.key || result.api_key || result.value);
       setKeys(prev => [...(prev || []), result]);
     } catch (e) {
       setError(e?.response?.data?.detail || 'Failed to create API key');

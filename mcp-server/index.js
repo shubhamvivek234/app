@@ -23,7 +23,7 @@ if (!API_KEY) {
 }
 
 const api = axios.create({
-  baseURL: `${BASE_URL}/api/v1/public`,
+  baseURL: `${BASE_URL}/api/public`,
   headers: {
     'X-API-Key': API_KEY,
     'Content-Type': 'application/json',
