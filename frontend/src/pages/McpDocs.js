@@ -554,7 +554,7 @@ node /path/to/socialentangler-mcp/index.js`}</CodeBlock>
         <section className="mb-20">
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Authentication</h2>
           <p className="text-slate-500 text-sm mb-4">
-            The MCP server uses your SocialEntangler API key as a Bearer token on every request.
+            The MCP server sends your SocialEntangler API key via the <code className="text-slate-700 font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">X-API-Key</code> header on every request.
             Keys can be created and revoked any time from{' '}
             <button onClick={() => navigate('/api-keys')} className="text-indigo-600 hover:text-indigo-500 underline underline-offset-2">
               Settings → API Keys

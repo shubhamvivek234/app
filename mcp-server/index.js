@@ -23,9 +23,9 @@ if (!API_KEY) {
 }
 
 const api = axios.create({
-  baseURL: `${BASE_URL}/api`,
+  baseURL: `${BASE_URL}/api/v1/public`,
   headers: {
-    Authorization: `Bearer ${API_KEY}`,
+    'X-API-Key': API_KEY,
     'Content-Type': 'application/json',
   },
   timeout: 30000,
@@ -64,15 +64,15 @@ server.tool(
   'List all social media accounts connected to your SocialEntangler account (Instagram, Twitter/X, Facebook, LinkedIn, YouTube, TikTok, Threads, Reddit, Pinterest, Bluesky)',
   {},
   async () => call(async () => {
-    const { data } = await api.get('/social-accounts');
+    const { data } = await api.get('/accounts');
     return {
-      accounts: data.map(a => ({
+      accounts: (data.accounts || []).map(a => ({
         id: a.id,
         platform: a.platform,
-        username: a.username || a.name,
+        username: a.username,
         status: a.status || 'active',
       })),
-      total: data.length,
+      total: data.total || 0,
     };
   })
 );
@@ -89,18 +89,19 @@ server.tool(
       .describe('Max number of posts to return (1-50, default 20)'),
   },
   async ({ status, limit = 20 }) => call(async () => {
-    const params = { limit };
-    if (status && status !== 'all') params.status = status;
-    const { data } = await api.get('/posts', { params });
-    const posts = (data.posts || data || []).map(p => ({
+    const { data } = await api.get('/posts', { params: { limit, page: 1 } });
+    let posts = (data.data || []).map(p => ({
       id: p.id,
-      content: p.content?.slice(0, 100) + (p.content?.length > 100 ? '...' : ''),
       status: p.status,
-      platforms: p.platforms || p.accounts?.map(a => a.platform),
-      scheduled_at: p.scheduled_at,
+      platforms: p.platforms,
+      scheduled_at: p.scheduled_time,
       created_at: p.created_at,
+      platform_results: p.platform_results,
     }));
-    return { posts, total: posts.length };
+    if (status && status !== 'all') {
+      posts = posts.filter(p => p.status === status);
+    }
+    return { posts, total: data.total };
   })
 );
 
@@ -138,22 +139,12 @@ server.tool(
     const payload = {
       content,
       account_ids,
-      ...(publish_now ? { status: 'publishing' } : {}),
-      ...(scheduled_at && !publish_now ? { scheduled_at, status: 'scheduled' } : {}),
-      ...(!scheduled_at && !publish_now ? { status: 'draft' } : {}),
+      publish_now: publish_now || false,
+      ...(scheduled_at ? { scheduled_at } : {}),
       ...(media_urls?.length ? { media_urls } : {}),
     };
     const { data } = await api.post('/posts', payload);
-    return {
-      id: data.id,
-      status: data.status,
-      scheduled_at: data.scheduled_at,
-      message: publish_now
-        ? 'Post is being published now.'
-        : scheduled_at
-        ? `Post scheduled for ${scheduled_at}.`
-        : 'Post saved as draft.',
-    };
+    return data;
   })
 );
 
@@ -202,7 +193,7 @@ server.tool(
       .describe('Extra context, brand info, hashtags to include, or specific instructions'),
   },
   async ({ topic, platform, tone = 'casual', count = 1, additional_context }) => call(async () => {
-    const { data } = await api.post('/ai/generate-content', {
+    const { data } = await api.post('/ai/generate', {
       topic,
       platform,
       tone,
@@ -234,17 +225,11 @@ server.tool(
     url: z.string().url().describe('Public URL of the image or video to upload'),
     filename: z.string().optional().describe('Optional filename for the uploaded file'),
   },
-  async ({ url, filename }) => call(async () => {
-    // Download and re-upload via the backend upload endpoint
-    const { data } = await api.post('/upload/from-url', {
-      url,
-      filename: filename || url.split('/').pop(),
-    });
-    return {
-      media_url: data.url || data.media_url,
-      media_id: data.id,
-    };
-  })
+  async ({ url, filename }) => {
+    // Media upload via public API key is not supported yet.
+    // Use the SocialEntangler web app to upload media, then pass the URL to create_post.
+    return err('Media upload via API key is not yet supported. Upload media through the SocialEntangler web app and pass the resulting URL to create_post via media_urls.');
+  }
 );
 
 // ── Start ─────────────────────────────────────────────────────────────────────
