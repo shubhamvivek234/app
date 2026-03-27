@@ -79,8 +79,8 @@ const OnboardingConnect = () => {
       sessionStorage.setItem('oauth_platform', selectedPlatform.id);
       sessionStorage.setItem('oauth_return_to', 'onboarding');
 
-      // Redirect to OAuth page
-      window.location.href = authorization_url;
+      // Open OAuth page in a new tab
+      window.open(authorization_url, '_blank');
 
     } catch (error) {
       console.error('Error initiating OAuth:', error);
