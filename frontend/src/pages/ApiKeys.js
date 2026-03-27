@@ -8,39 +8,24 @@ import { toast } from 'sonner';
 import { FaKey, FaTrash, FaCopy, FaCheckCircle, FaBook } from 'react-icons/fa';
 
 // ─── Inline docs data ──────────────────────────────────────────────────────────
-const BASE_URL = `${process.env.REACT_APP_BACKEND_URL}/public/v1`;
+const BASE_URL = `${process.env.REACT_APP_BACKEND_URL}/api/public`;
 
 const ENDPOINTS = [
   {
-    group: 'Auth',
+    group: 'Accounts',
     items: [
       {
         method: 'GET',
-        path: '/is-connected',
-        description: 'Verify your API key is valid and active.',
+        path: '/accounts',
+        description: 'List all connected and active social media accounts.',
         request: null,
-        response: `{ "connected": true }`,
-      },
-    ],
-  },
-  {
-    group: 'Integrations',
-    items: [
-      {
-        method: 'GET',
-        path: '/integrations',
-        description: 'List all connected social media channels.',
-        request: null,
-        response: `[
-  {
-    "id": "abc123",
-    "name": "My Twitter",
-    "identifier": "twitter",
-    "picture": "https://...",
-    "disabled": false,
-    "profile": "myhandle"
-  }
-]`,
+        response: `{
+  "accounts": [
+    { "id": "acc_abc123", "platform": "instagram", "username": "@yourhandle", "status": "active" },
+    { "id": "acc_def456", "platform": "twitter",   "username": "@yourhandle", "status": "active" }
+  ],
+  "total": 2
+}`,
       },
     ],
   },
@@ -50,71 +35,128 @@ const ENDPOINTS = [
       {
         method: 'GET',
         path: '/posts',
-        description: 'List posts within a date range.',
+        description: 'List posts (paginated). Returns draft, scheduled, published, and failed posts.',
         params: [
-          { name: 'startDate', type: 'query', required: true, desc: 'ISO 8601 UTC start date. e.g. 2024-12-01T00:00:00.000Z' },
-          { name: 'endDate',   type: 'query', required: true, desc: 'ISO 8601 UTC end date. e.g. 2024-12-31T23:59:59.000Z' },
+          { name: 'page',  type: 'query', required: false, desc: 'Page number (default: 1)' },
+          { name: 'limit', type: 'query', required: false, desc: 'Results per page, max 100 (default: 20)' },
         ],
         request: null,
         response: `{
-  "posts": [
+  "data": [
     {
-      "id": "post-id",
-      "content": "Hello world!",
-      "publishDate": "2024-12-14T10:00:00.000Z",
-      "releaseURL": "https://x.com/...",
-      "state": "PUBLISHED",
-      "integration": {
-        "id": "abc123",
-        "providerIdentifier": "twitter"
-      }
+      "id": "post-uuid",
+      "status": "scheduled",
+      "platforms": ["instagram", "twitter"],
+      "scheduled_time": "2025-06-01T09:00:00Z",
+      "created_at": "2025-05-28T12:00:00Z",
+      "platform_results": {}
     }
-  ]
+  ],
+  "total": 42,
+  "page": 1,
+  "limit": 20
+}`,
+      },
+      {
+        method: 'GET',
+        path: '/posts/{post_id}',
+        description: 'Get full details of a single post.',
+        params: [
+          { name: 'post_id', type: 'path', required: true, desc: 'The post ID' },
+        ],
+        request: null,
+        response: `{
+  "id": "post-uuid",
+  "status": "published",
+  "platforms": ["instagram"],
+  "scheduled_time": "2025-06-01T09:00:00Z",
+  "created_at": "2025-05-28T12:00:00Z",
+  "platform_results": { "instagram": { "post_id": "18023...", "url": "https://..." } }
 }`,
       },
       {
         method: 'POST',
         path: '/posts',
-        description: 'Create or schedule a new post.',
+        description: 'Create a post — save as draft, schedule for later, or publish immediately.',
         request: `{
-  "integration_id": "abc123",
   "content": "Hello from the SocialEntangler API!",
-  "media_urls": [],
-  "scheduled_at": "2024-12-14T10:00:00.000Z"
+  "account_ids": ["acc_abc123", "acc_def456"],
+  "scheduled_at": "2025-06-01T09:00:00Z",
+  "publish_now": false,
+  "media_urls": []
 }`,
         response: `{
-  "postId": "post-uuid",
-  "integration": "abc123"
+  "id": "post-uuid",
+  "status": "scheduled",
+  "scheduled_at": "2025-06-01T09:00:00Z",
+  "message": "Post scheduled for 2025-06-01T09:00:00Z."
 }`,
-        notes: 'Omit scheduled_at to add the post to the immediate queue.',
+        notes: 'Set publish_now: true to publish immediately. Omit scheduled_at to save as draft.',
       },
       {
         method: 'DELETE',
-        path: '/posts/{id}',
-        description: 'Delete a post by its ID.',
+        path: '/posts/{post_id}',
+        description: 'Soft-delete a post.',
         params: [
-          { name: 'id', type: 'path', required: true, desc: 'The post ID to delete' },
+          { name: 'post_id', type: 'path', required: true, desc: 'The post ID to delete' },
         ],
         request: null,
-        response: `{ "id": "post-uuid" }`,
+        response: `204 No Content`,
+      },
+      {
+        method: 'POST',
+        path: '/posts/{post_id}/retry',
+        description: 'Retry a failed or partially-published post.',
+        params: [
+          { name: 'post_id', type: 'path', required: true, desc: 'The failed post ID' },
+        ],
+        request: null,
+        response: `{
+  "post_id": "post-uuid",
+  "status": "scheduled",
+  "message": "Post queued for retry."
+}`,
       },
     ],
   },
   {
-    group: 'Uploads',
+    group: 'AI Content',
     items: [
       {
         method: 'POST',
-        path: '/upload',
-        description: 'Upload a media file via multipart/form-data. Returns id and path for use in post creation.',
-        request: `# multipart/form-data
-file: <binary>`,
-        response: `{
-  "id": "media-uuid",
-  "name": "image.png",
-  "path": "https://uploads.socialentangler.com/image.png"
+        path: '/ai/generate',
+        description: 'Generate platform-optimized social media content using AI.',
+        request: `{
+  "topic": "Black Friday sale — 50% off everything",
+  "platform": "instagram",
+  "tone": "excited",
+  "count": 3,
+  "additional_context": "Include emoji and hashtags"
 }`,
-        notes: 'Use the returned id and path in the media_urls array when creating a post.',
+        response: `{
+  "variations": ["Caption 1...", "Caption 2...", "Caption 3..."],
+  "platform": "instagram",
+  "count": 3
+}`,
+        notes: 'platform: instagram | twitter | linkedin | facebook | tiktok | youtube. tone: professional | casual | excited | funny | inspirational | informative. count: 1–5.',
+      },
+    ],
+  },
+  {
+    group: 'Stats',
+    items: [
+      {
+        method: 'GET',
+        path: '/stats',
+        description: 'Dashboard statistics — post counts by status, connected accounts.',
+        request: null,
+        response: `{
+  "total_posts": 142,
+  "scheduled_posts": 8,
+  "published_posts": 130,
+  "failed_posts": 4,
+  "connected_accounts": 5
+}`,
       },
     ],
   },
@@ -193,8 +235,8 @@ const KeysTab = () => {
     if (!newKeyName.trim()) return;
     setGenerating(true);
     try {
-      const data = await createApiKey(newKeyName);
-      setGeneratedKey(data.api_key);
+      const data = await createApiKey({ name: newKeyName });
+      setGeneratedKey(data.raw_key);
       setNewKeyName('');
       fetchKeys();
       toast.success('API Key generated successfully');
@@ -415,24 +457,9 @@ const ReferenceTab = () => {
         </div>
       ))}
 
-      {/* Coming soon */}
-      <div className="bg-slate-50 border border-dashed border-slate-300 rounded-lg p-5">
-        <h3 className="text-sm font-semibold text-slate-700 mb-2">Coming soon</h3>
-        <div className="flex flex-wrap gap-2">
-          {[
-            'GET /find-slot/{id}',
-            'GET /analytics/{integration}',
-            'GET /analytics/post/{postId}',
-            'GET /notifications',
-            'POST /upload-from-url',
-            'DELETE /posts/group/{group}',
-            'DELETE /integrations/{id}',
-          ].map(ep => (
-            <span key={ep} className="inline-flex items-center gap-1.5 bg-offwhite border border-slate-200 rounded px-2.5 py-1 text-xs font-mono text-slate-500">
-              {ep}
-            </span>
-          ))}
-        </div>
+      {/* Auth note */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+        <strong>Authentication:</strong> Pass your API key in every request as <code className="font-mono bg-amber-100 px-1 rounded">X-API-Key: se_your_key</code>. Keys can be created and revoked from the Keys tab. Never share your key or commit it to version control.
       </div>
     </div>
   );
