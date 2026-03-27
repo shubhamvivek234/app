@@ -1425,6 +1425,286 @@ async def disconnect_social_account(account_id: str, current_user: User = Depend
     return {"message": "Account disconnected", "posts_affected": affected}
 
 
+# ==================== OAUTH SOCIAL ACCOUNTS ====================
+
+def _create_oauth_state(user_id: str, platform: str) -> str:
+    """Create a short-lived signed state token encoding user identity."""
+    payload = {"user_id": user_id, "platform": platform,
+               "exp": datetime.now(timezone.utc) + timedelta(minutes=15)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def _verify_oauth_state(state: str) -> dict:
+    """Decode and verify a state token; raises HTTPException on failure."""
+    try:
+        return jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=400, detail="OAuth state expired — please try connecting again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+async def _save_oauth_account(user_id: str, platform: str, access_token: str,
+                               refresh_token: Optional[str], platform_user_id: str,
+                               platform_username: str, token_expiry: Optional[datetime] = None):
+    """Upsert the social account record for a user."""
+    existing = await db.social_accounts.find_one({"user_id": user_id, "platform": platform})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "user_id": user_id, "platform": platform,
+        "platform_user_id": platform_user_id,
+        "platform_username": platform_username,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_expiry": token_expiry.isoformat() if token_expiry else None,
+        "is_active": True,
+        "connected_at": now.isoformat(),
+    }
+    if existing:
+        await db.social_accounts.update_one({"user_id": user_id, "platform": platform}, {"$set": doc})
+    else:
+        doc["id"] = str(uuid.uuid4())
+        await db.social_accounts.insert_one(doc)
+
+@api_router.get("/oauth/{platform}/authorize")
+async def oauth_authorize(platform: str, current_user: User = Depends(get_current_user)):
+    """Generate OAuth authorization URL for the given platform."""
+    state = _create_oauth_state(current_user.user_id, platform)
+    try:
+        if platform == "facebook":
+            from app.social.facebook import FacebookAuth
+            url = FacebookAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "instagram":
+            from app.social.instagram import InstagramAuth
+            url = InstagramAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "twitter":
+            from app.social.twitter import TwitterAuth
+            auth = TwitterAuth()
+            verifier, challenge = auth.generate_pkce()
+            url = auth.get_auth_url(state, challenge)
+            return {"authorization_url": url, "code_verifier": verifier}
+        elif platform == "linkedin":
+            from app.social.linkedin import LinkedInAuth
+            url = LinkedInAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform in ("youtube", "google"):
+            from app.social.google import GoogleAuth
+            url = GoogleAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "reddit":
+            from app.social.reddit import RedditAuth
+            url = RedditAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "tiktok":
+            from app.social.tiktok import TikTokAuth
+            result = TikTokAuth().get_auth_url(state)
+            if isinstance(result, dict):
+                return result
+            return {"authorization_url": result}
+        elif platform == "pinterest":
+            from app.social.pinterest import PinterestAuth
+            url = PinterestAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "snapchat":
+            from app.social.snapchat import SnapchatAuth
+            url = SnapchatAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"[OAuth] authorize error for {platform}: {e}")
+        raise HTTPException(status_code=500, detail=f"{platform} credentials not configured")
+
+class OAuthCallbackBody(BaseModel):
+    code: str
+    state: Optional[str] = None
+    code_verifier: Optional[str] = None
+
+async def _process_oauth_callback(platform: str, code: str, state: str,
+                                   code_verifier: Optional[str] = None) -> dict:
+    """Exchange OAuth code for token, fetch profile, save account. Returns account info."""
+    claims = _verify_oauth_state(state)
+    user_id = claims["user_id"]
+
+    try:
+        if platform == "facebook":
+            from app.social.facebook import FacebookAuth
+            auth = FacebookAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            short_token = token_data.get("access_token")
+            ll = await auth.get_long_lived_token(short_token)
+            access_token = ll.get("access_token", short_token)
+            expiry = datetime.now(timezone.utc) + timedelta(days=60)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id", ""))
+            username = profile.get("name") or profile.get("email") or platform_user_id
+
+        elif platform == "instagram":
+            from app.social.instagram import InstagramAuth
+            auth = InstagramAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            short_token = token_data.get("access_token")
+            ll = await auth.get_long_lived_token(short_token)
+            access_token = ll.get("access_token", short_token)
+            expiry = datetime.now(timezone.utc) + timedelta(days=60)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id", token_data.get("user_id", "")))
+            username = profile.get("username") or profile.get("name") or platform_user_id
+
+        elif platform == "twitter":
+            from app.social.twitter import TwitterAuth
+            auth = TwitterAuth()
+            if not code_verifier:
+                raise HTTPException(status_code=400, detail="Twitter requires code_verifier")
+            token_data = await auth.exchange_code_for_token(code, code_verifier)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 7200)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id", ""))
+            username = profile.get("username") or profile.get("name") or platform_user_id
+            await _save_oauth_account(user_id, platform, access_token, refresh_token,
+                                       platform_user_id, username, expiry)
+            return {"platform": platform, "username": username}
+
+        elif platform == "linkedin":
+            from app.social.linkedin import LinkedInAuth
+            auth = LinkedInAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            access_token = token_data.get("access_token")
+            expires_in = token_data.get("expires_in", 5184000)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id") or profile.get("sub", ""))
+            username = profile.get("name") or profile.get("localizedFirstName", "") + " " + profile.get("localizedLastName", "")
+            username = username.strip() or platform_user_id
+
+        elif platform in ("youtube", "google"):
+            from app.social.google import GoogleAuth
+            auth = GoogleAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 3600)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            channel = await auth.get_channel_info(access_token)
+            platform_user_id = channel.get("id", "")
+            username = channel.get("title") or platform_user_id
+            platform = "youtube"
+            await _save_oauth_account(user_id, platform, access_token, refresh_token,
+                                       platform_user_id, username, expiry)
+            return {"platform": platform, "username": username}
+
+        elif platform == "reddit":
+            from app.social.reddit import RedditAuth
+            auth = RedditAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 3600)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id", ""))
+            username = profile.get("name") or platform_user_id
+
+        elif platform == "tiktok":
+            from app.social.tiktok import TikTokAuth
+            auth = TikTokAuth()
+            verifier = code_verifier or ""
+            token_data = await auth.exchange_code_for_token(code, verifier)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 86400)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("open_id") or profile.get("union_id", ""))
+            username = profile.get("display_name") or profile.get("nickname") or platform_user_id
+
+        elif platform == "pinterest":
+            from app.social.pinterest import PinterestAuth
+            auth = PinterestAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 2592000)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id") or profile.get("username", ""))
+            username = profile.get("username") or profile.get("business_name") or platform_user_id
+
+        elif platform == "snapchat":
+            from app.social.snapchat import SnapchatAuth
+            auth = SnapchatAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 3600)
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("sub") or profile.get("id", ""))
+            username = profile.get("display_name") or profile.get("name") or platform_user_id
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+
+        refresh_token = locals().get("refresh_token")
+        expiry_dt = locals().get("expiry")
+        await _save_oauth_account(user_id, platform, access_token, refresh_token,
+                                   platform_user_id, username, expiry_dt)
+        return {"platform": platform, "username": username}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"[OAuth] callback processing error for {platform}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to connect {platform}: {str(e)}")
+
+@api_router.get("/oauth/{platform}/callback")
+async def oauth_callback_get(platform: str, request: Request,
+                              code: Optional[str] = None,
+                              state: Optional[str] = None,
+                              error: Optional[str] = None):
+    """Handle platform redirect-based OAuth callback (backend redirect_uri flow)."""
+    frontend_base = FRONTEND_URL
+    if error:
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_base}/oauth/callback?error={error}&platform={platform}"}
+        )
+    if not code or not state:
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_base}/oauth/callback?error=missing_params&platform={platform}"}
+        )
+    # TikTok sends code_verifier differently — retrieve from state claims if needed
+    code_verifier = request.query_params.get("code_verifier")
+    try:
+        await _process_oauth_callback(platform, code, state, code_verifier)
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_base}/oauth/callback?success=true&platform={platform}"}
+        )
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_base}/oauth/callback?error={e.detail}&platform={platform}"}
+        )
+
+@api_router.post("/oauth/{platform}/callback")
+async def oauth_callback_post(platform: str, body: OAuthCallbackBody,
+                               current_user: User = Depends(get_current_user)):
+    """Handle frontend-posted OAuth callback (frontend redirect_uri flow, e.g. YouTube)."""
+    # When frontend posts the code, generate a fresh state with the authenticated user
+    state = body.state or _create_oauth_state(current_user.user_id, platform)
+    # Overwrite state claims with the authenticated user so we trust the right user_id
+    state = _create_oauth_state(current_user.user_id, platform)
+    result = await _process_oauth_callback(platform, body.code, state, body.code_verifier)
+    return {"success": True, "platform": result["platform"], "username": result.get("username")}
+
+
 # ==================== PAYMENTS ====================
 
 PRICING = {

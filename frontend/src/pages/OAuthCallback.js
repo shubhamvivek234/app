@@ -13,8 +13,20 @@ const OAuthCallback = () => {
       const code = searchParams.get('code');
       const state = searchParams.get('state');
       const error = searchParams.get('error');
+      const success = searchParams.get('success');
+      const platform = searchParams.get('platform') || sessionStorage.getItem('oauth_platform') || '';
 
       const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
+
+      // Backend-redirect flow: backend already processed the OAuth and redirected here
+      if (success === 'true') {
+        setStatus('success');
+        toast.success(`${platform} connected successfully!`);
+        sessionStorage.removeItem('oauth_platform');
+        sessionStorage.removeItem('oauth_return_to');
+        setTimeout(() => navigate('/accounts'), 1500);
+        return;
+      }
 
       if (error) {
         setStatus('error');
