@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -48,32 +48,48 @@ const getAvatarColor = (username = '') => {
   return palette[username.charCodeAt(0) % palette.length];
 };
 
-// ── Account chip — round avatar with hover tooltip ────────────────────────────
+// ── Account chip — round avatar with tooltip (fixed-position, never clipped) ──
 const AccountChip = ({ account, onDisconnect }) => {
-  const status = getTokenStatus(account);
+  const status     = getTokenStatus(account);
   const displayName = account.platform_username || account.platform;
   const statusRing =
-    status === 'expired'  ? 'ring-2 ring-red-400'   :
-    status === 'expiring' ? 'ring-2 ring-yellow-400' : '';
+    status === 'expired'  ? 'ring-2 ring-red-400'    :
+    status === 'expiring' ? 'ring-2 ring-yellow-400'  : '';
+
+  const ref = useRef(null);
+  const [tooltipStyle, setTooltipStyle] = useState({});
+  const [showTip, setShowTip] = useState(false);
+
+  const handleMouseEnter = () => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    // Position tooltip centered above the avatar; clamp to left edge of viewport
+    const tipWidth = 180; // estimated max width
+    let left = rect.left + rect.width / 2 - tipWidth / 2;
+    if (left < 8) left = 8;
+    if (left + tipWidth > window.innerWidth - 8) left = window.innerWidth - tipWidth - 8;
+    setTooltipStyle({ top: rect.top - 8, left, transform: 'translateY(-100%)' });
+    setShowTip(true);
+  };
 
   return (
-    <div className="relative group flex-shrink-0">
+    <div
+      ref={ref}
+      className="relative flex-shrink-0 cursor-default"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShowTip(false)}
+    >
       {/* Avatar */}
       <div className="relative">
         {account.picture_url ? (
-          <img
-            src={account.picture_url}
-            alt={displayName}
-            className={`w-10 h-10 rounded-full object-cover ${statusRing}`}
-          />
+          <img src={account.picture_url} alt={displayName}
+            className={`w-10 h-10 rounded-full object-cover ${statusRing}`} />
         ) : (
           <div className={`w-10 h-10 rounded-full ${getAvatarColor(displayName)} flex items-center justify-center text-white text-sm font-bold ${statusRing}`}>
             {displayName.charAt(0).toUpperCase()}
           </div>
         )}
-
-        {/* Status badge */}
-        {status === 'expired'  && (
+        {status === 'expired' && (
           <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
             <FaExclamationTriangle className="text-white text-[8px]" />
           </div>
@@ -85,37 +101,63 @@ const AccountChip = ({ account, onDisconnect }) => {
         )}
       </div>
 
-      {/* Hover tooltip with name + disconnect */}
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
-        <div className="bg-gray-900 text-white rounded-xl shadow-xl px-3 py-2 min-w-max flex items-center gap-2">
-          <span className="text-xs font-medium">@{displayName}</span>
-          {status === 'expired'  && <span className="text-[9px] font-bold text-red-400 uppercase">Expired</span>}
-          {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-400 uppercase">Expiring</span>}
-          <button
-            onClick={onDisconnect}
-            className="ml-1 text-gray-400 hover:text-red-400 transition-colors pointer-events-auto"
-            title="Disconnect"
-          >
-            <FaTimes className="text-[10px]" />
-          </button>
+      {/* Fixed-position tooltip — never clipped by card overflow */}
+      {showTip && (
+        <div
+          className="fixed z-[9999] pointer-events-auto"
+          style={tooltipStyle}
+        >
+          <div className="bg-gray-900 text-white rounded-xl shadow-2xl px-3 py-2 flex items-center gap-2 whitespace-nowrap">
+            <span className="text-xs font-medium">@{displayName}</span>
+            {status === 'expired'  && <span className="text-[9px] font-bold text-red-400 uppercase">Expired</span>}
+            {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-400 uppercase">Expiring</span>}
+            <button
+              onClick={onDisconnect}
+              className="ml-1 text-gray-400 hover:text-red-400 transition-colors"
+              title="Disconnect"
+            >
+              <FaTimes className="text-[10px]" />
+            </button>
+          </div>
+          <div className="flex justify-center">
+            <div className="border-4 border-transparent border-t-gray-900" />
+          </div>
         </div>
-        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
-      </div>
+      )}
     </div>
   );
 };
 
 // ── Platform card ─────────────────────────────────────────────────────────────
+const MAX_VISIBLE = 3; // avatars shown before "+N more"
+
 const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, connecting, extra }) => {
   const Icon = platform.icon;
   const count = connectedAccounts.length;
-  const hasExpired = connectedAccounts.some(a => getTokenStatus(a) === 'expired');
+  const hasExpired  = connectedAccounts.some(a => getTokenStatus(a) === 'expired');
   const hasExpiring = connectedAccounts.some(a => getTokenStatus(a) === 'expiring');
 
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  const visible  = connectedAccounts.slice(0, MAX_VISIBLE);
+  const overflow = connectedAccounts.slice(MAX_VISIBLE);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dropdownOpen]);
+
   return (
-    <div className={`relative bg-white rounded-2xl border ${hasExpired ? 'border-red-200' : hasExpiring ? 'border-yellow-200' : 'border-gray-200'} shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden`}>
+    // No overflow-hidden — needed so fixed tooltips aren't clipped
+    <div className={`relative bg-white rounded-2xl border ${hasExpired ? 'border-red-200' : hasExpiring ? 'border-yellow-200' : 'border-gray-200'} shadow-sm hover:shadow-md transition-shadow flex flex-col`}>
       {/* Card header */}
-      <div className={`${platform.bg} px-4 pt-4 pb-3 border-b ${platform.border}`}>
+      <div className={`${platform.bg} px-4 pt-4 pb-3 border-b ${platform.border} rounded-t-2xl`}>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl ${platform.bg} border ${platform.border} flex items-center justify-center shadow-sm`}>
@@ -139,14 +181,60 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
       {/* Connected accounts */}
       <div className="px-4 py-3 flex-1 min-h-[64px]">
         {count > 0 ? (
-          <div className="flex flex-wrap gap-3 items-center">
-            {connectedAccounts.map(account => (
+          <div className="flex items-center gap-3 flex-wrap">
+            {visible.map(account => (
               <AccountChip
                 key={account.id}
                 account={account}
                 onDisconnect={() => onDisconnect(account.id, platform.name)}
               />
             ))}
+
+            {/* +N more dropdown button */}
+            {overflow.length > 0 && (
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setDropdownOpen(v => !v)}
+                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 border-2 border-dashed border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500 transition-colors"
+                >
+                  +{overflow.length}
+                </button>
+
+                {dropdownOpen && (
+                  <div className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-2xl shadow-xl z-50 min-w-[200px] py-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 pb-1.5 border-b border-gray-100 mb-1">
+                      More accounts
+                    </p>
+                    {overflow.map(account => {
+                      const name = account.platform_username || account.platform;
+                      const status = getTokenStatus(account);
+                      return (
+                        <div key={account.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 transition-colors">
+                          {account.picture_url ? (
+                            <img src={account.picture_url} alt={name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className={`w-7 h-7 rounded-full ${getAvatarColor(name)} flex items-center justify-center text-white text-xs font-bold flex-shrink-0`}>
+                              {name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <span className="text-xs text-gray-800 font-medium flex-1 truncate">@{name}</span>
+                          {status === 'expired'  && <span className="text-[9px] font-bold text-red-500 uppercase">Expired</span>}
+                          {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-500 uppercase">Soon</span>}
+                          <button
+                            onClick={() => { onDisconnect(account.id, platform.name); setDropdownOpen(false); }}
+                            className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
+                            title="Disconnect"
+                          >
+                            <FaTimes className="text-[10px]" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {extra}
           </div>
         ) : (
