@@ -775,7 +775,12 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
                 detail=f"scheduled_time is in the past. Please choose a future time."
             )
         status = "scheduled"
-    
+        # Thundering-herd jitter: if user picked an exact :00 time (e.g. 5:00 PM),
+        # spread posts by up to 29s so Beat scanner doesn't claim 1000 at once.
+        # The user's original intent is preserved — they only see the minute, not seconds.
+        if scheduled_time.second == 0 and scheduled_time.microsecond == 0:
+            scheduled_time = scheduled_time + timedelta(seconds=random.randint(0, 29))
+
     # 20.11: Schedule density check — warn if posting too frequently to avoid shadow-banning
     density_warnings = []
     if scheduled_time:

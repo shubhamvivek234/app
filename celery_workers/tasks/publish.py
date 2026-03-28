@@ -26,6 +26,47 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 MAX_DELIVERY_COUNT = 5  # Poison pill threshold
 
+# ── Per-platform concurrent API call limits (cross-process via Redis) ─────────
+# Prevents app-level quota exhaustion when 1000 posts hit a platform simultaneously.
+# Each value = max number of concurrent HTTP calls to that platform API at any time.
+_PLATFORM_CONCURRENCY: dict[str, int] = {
+    "instagram": 10,
+    "tiktok":    10,
+    "youtube":    5,   # stricter — YouTube upload API is more sensitive
+    "twitter":   20,
+    "facebook":  15,
+    "linkedin":  10,
+    "pinterest": 10,
+}
+_PLATFORM_SLOT_TTL = 60  # safety TTL in seconds — clears leaked slots on worker crash
+
+
+async def _acquire_platform_slot(redis, platform: str) -> bool:
+    """
+    Atomically increment the per-platform concurrent call counter in Redis.
+    Returns True if a slot was acquired, False if the platform is at capacity.
+    Uses INCR+EXPIRE in a pipeline for atomicity.
+    """
+    limit = _PLATFORM_CONCURRENCY.get(platform, 15)
+    key = f"pub_slots:{platform}"
+    pipe = redis.pipeline()
+    await pipe.incr(key)
+    await pipe.expire(key, _PLATFORM_SLOT_TTL)
+    results = await pipe.execute()
+    current = int(results[0])
+    if current > limit:
+        await redis.decr(key)
+        return False
+    return True
+
+
+async def _release_platform_slot(redis, platform: str) -> None:
+    """Release a previously acquired platform slot."""
+    key = f"pub_slots:{platform}"
+    val = await redis.decr(key)
+    if val < 0:
+        await redis.set(key, 0)  # guard against going negative on restart
+
 
 # ── Poison pill guard (Phase 7.3) ────────────────────────────────────────────
 async def _check_poison_pill(task_id: str) -> bool:
@@ -331,7 +372,33 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         }
 
         adapter = get_adapter(platform)
-        result = await adapter.publish(post, redis=r_cache)
+
+        # Throttle: cap concurrent calls per platform to avoid app-level quota exhaustion.
+        # If at capacity, re-enqueue as a new task (preserves retry budget + poison-pill counter).
+        _slot_acquired = await _acquire_platform_slot(r_cache, platform)
+        if not _slot_acquired:
+            _backoff = random.randint(8, 15)
+            logger.info(
+                "Platform %s at capacity — re-enqueuing post %s after %ds backoff",
+                platform, post_id, _backoff,
+            )
+            await _update_platform_result(db, post_id, platform, {
+                "status": "retrying",
+                "error": f"Platform {platform} throttled — too many concurrent calls",
+                "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=_backoff),
+            })
+            # Re-enqueue as a brand-new task (new task ID — does NOT consume retry budget)
+            publish_to_platform.apply_async(
+                kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+                countdown=_backoff,
+                queue="default",
+            )
+            return {"status": "throttled_requeued", "platform": platform}
+
+        try:
+            result = await adapter.publish(post, redis=r_cache)
+        finally:
+            await _release_platform_slot(r_cache, platform)
 
         # 20.1: Record success — close circuit if it was half-open
         try:

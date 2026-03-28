@@ -114,7 +114,9 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter
+    # Scale tip: run multiple worker containers for higher throughput
+    # e.g. docker-compose up -d --scale worker=5  → 5 × 8 = 40 concurrent slots
     environment:
       <<: *common-env
     volumes:

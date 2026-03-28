@@ -13,8 +13,8 @@ _client: AsyncIOMotorClient | None = None
 
 def get_mongo_settings() -> dict:
     return {
-        "maxPoolSize": 20,
-        "minPoolSize": 5,
+        "maxPoolSize": 50,   # raised from 20 — supports 5 pods × 8 concurrent workers
+        "minPoolSize": 10,   # raised from 5
         "maxIdleTimeMS": 30_000,
         "serverSelectionTimeoutMS": 5_000,
         "connectTimeoutMS": 5_000,

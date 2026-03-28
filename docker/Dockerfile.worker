@@ -25,5 +25,5 @@ USER 1001
 # Kubernetes liveness probe: worker writes heartbeat every 30s
 # Probe checks: stat /tmp/celery_heartbeat mtime < 90s
 CMD ["celery", "-A", "celery_workers.celery_app", "worker", \
-     "--loglevel=info", "--concurrency=4", \
+     "--loglevel=info", "--concurrency=8", \
      "--queues=high_priority,default,dead_letter"]

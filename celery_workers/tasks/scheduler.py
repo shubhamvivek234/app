@@ -173,7 +173,7 @@ async def _async_scan_and_enqueue() -> dict:
             "pre_upload_status": {"$in": [None, "pending", "failed"]},  # retry failed pre-uploads
         },
         {"_id": 0, "id": 1, "platforms": 1, "scheduled_time": 1, "video_size_mb": 1},
-        limit=50,
+        limit=200,  # raised from 50 — handles burst of video posts at popular time slots
     )
     pre_uploads_triggered = 0
     async for post in pre_upload_cursor:
