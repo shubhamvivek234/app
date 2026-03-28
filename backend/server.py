@@ -778,12 +778,16 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
         # Thundering-herd jitter: if user picked an exact :00 time (e.g. 5:00 PM),
         # spread posts by up to 29s so Beat scanner doesn't claim 1000 at once.
         # The user's original intent is preserved — they only see the minute, not seconds.
+        # NOTE: density check below uses the PRE-jitter time so warnings stay accurate.
+        density_check_time = scheduled_time  # save original before adding jitter
         if scheduled_time.second == 0 and scheduled_time.microsecond == 0:
             scheduled_time = scheduled_time + timedelta(seconds=random.randint(0, 29))
+    else:
+        density_check_time = None
 
     # 20.11: Schedule density check — warn if posting too frequently to avoid shadow-banning
     density_warnings = []
-    if scheduled_time:
+    if density_check_time:
         try:
             from utils.schedule_density import check_schedule_density
             import sys as _sys
@@ -792,7 +796,7 @@ async def create_post(post_data: PostCreate, current_user: User = Depends(get_cu
                 db,
                 workspace_id=current_user.user_id,
                 platforms=post_data.platforms,
-                proposed_time=scheduled_time,
+                proposed_time=density_check_time,
             )
         except Exception as _de:
             logging.warning("Schedule density check failed (non-blocking): %s", _de)

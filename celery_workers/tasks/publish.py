@@ -45,14 +45,15 @@ async def _acquire_platform_slot(redis, platform: str) -> bool:
     """
     Atomically increment the per-platform concurrent call counter in Redis.
     Returns True if a slot was acquired, False if the platform is at capacity.
-    Uses INCR+EXPIRE in a pipeline for atomicity.
+    Uses MULTI/EXEC pipeline (transaction=True) so INCR and EXPIRE are atomic —
+    if Redis crashes between them the key will not exist without a TTL.
     """
     limit = _PLATFORM_CONCURRENCY.get(platform, 15)
     key = f"pub_slots:{platform}"
-    pipe = redis.pipeline()
-    await pipe.incr(key)
-    await pipe.expire(key, _PLATFORM_SLOT_TTL)
-    results = await pipe.execute()
+    async with redis.pipeline(transaction=True) as pipe:
+        await pipe.incr(key)
+        await pipe.expire(key, _PLATFORM_SLOT_TTL)
+        results = await pipe.execute()
     current = int(results[0])
     if current > limit:
         await redis.decr(key)
@@ -479,13 +480,6 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "last_attempt_at": datetime.now(timezone.utc),
             })
             return {"status": "container_expired_requeued"}
-
-        # 20.1: Record failure — may trip circuit breaker if threshold exceeded
-        try:
-            from utils.circuit_breaker import record_failure
-            await record_failure(r_cache, platform)
-        except ImportError:
-            pass
 
         error_class = classify_error(exc)
 
