@@ -288,12 +288,11 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
 };
 
 // ── AI Hashtag Generator ──────────────────────────────────────────────────────
-const COUNT_OPTIONS = [10, 20, 30];
+const DEFAULT_HASHTAG_COUNT = 6;
 
 const HashtagGenerator = ({ onSaveAsGroup }) => {
   const [topic, setTopic]       = useState('');
   const [platform, setPlatform] = useState('instagram');
-  const [count, setCount]       = useState(20);
   const [loading, setLoading]   = useState(false);
   const [hashtags, setHashtags] = useState([]);
 
@@ -302,7 +301,7 @@ const HashtagGenerator = ({ onSaveAsGroup }) => {
     setLoading(true);
     setHashtags([]);
     try {
-      const data = await generateHashtags(topic.trim(), platform || null, count);
+      const data = await generateHashtags(topic.trim(), platform || null, DEFAULT_HASHTAG_COUNT);
       if (!data.hashtags || data.hashtags.length === 0) {
         toast.error('No hashtags returned — try a different topic');
       } else {
@@ -359,34 +358,10 @@ const HashtagGenerator = ({ onSaveAsGroup }) => {
           <p className="text-xs text-gray-400 mt-1.5">Press ⌘+Enter to generate</p>
         </div>
 
-        {/* Platform + Count row */}
-        <div className="flex flex-col sm:flex-row sm:items-end gap-4">
-          {/* Platform pills */}
-          <div className="flex-1">
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block">Platform</label>
-            <PlatformPills value={platform} onChange={setPlatform} />
-          </div>
-
-          {/* Count pills */}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block">Count</label>
-            <div className="flex items-center gap-1.5">
-              {COUNT_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setCount(n)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-all ${
-                    count === n
-                      ? 'bg-green-500 text-white border-green-500'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Platform row */}
+        <div>
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block">Platform</label>
+          <PlatformPills value={platform} onChange={setPlatform} />
         </div>
 
         {/* Generate button */}
