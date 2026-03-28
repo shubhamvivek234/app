@@ -1,6 +1,7 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header, Cookie, UploadFile, File, Form
 from fastapi.security import HTTPBearer
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -159,6 +160,11 @@ def get_next_retry_at(retry_count: int) -> datetime:
 # Create the main app
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
+
+# Serve locally uploaded files
+_LOCAL_UPLOADS_DIR = Path(__file__).parent / "uploads"
+_LOCAL_UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
+app.mount("/uploads", StaticFiles(directory=str(_LOCAL_UPLOADS_DIR)), name="uploads")
 
 # ==================== PLAN LIMITS ====================
 PLAN_MONTHLY_POST_LIMITS = {
@@ -980,7 +986,7 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
 
     if not file_url:
         # Local filesystem fallback
-        upload_dir = Path("/app/uploads")
+        upload_dir = _LOCAL_UPLOADS_DIR
         upload_dir.mkdir(exist_ok=True, parents=True)
         file_path = upload_dir / safe_filename
         file_path.write_bytes(final_content)
@@ -2643,7 +2649,7 @@ async def public_upload_from_url(body: dict, user_id: str = Depends(_resolve_api
             logging.warning(f"R2 upload failed, falling back to local: {e}")
 
     if not file_url:
-        upload_dir = Path("/app/uploads")
+        upload_dir = _LOCAL_UPLOADS_DIR
         upload_dir.mkdir(exist_ok=True, parents=True)
         (upload_dir / safe_filename).write_bytes(content)
         file_url = f"/uploads/{safe_filename}"
