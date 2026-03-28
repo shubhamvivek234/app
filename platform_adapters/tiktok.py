@@ -75,13 +75,24 @@ class TikTokAdapter(PlatformAdapter):
         }
 
         assert_safe_url(media_url)  # Gap 5.4: SSRF guard before any network fetch
+
+        # Step 1: HEAD request to get video size WITHOUT loading it into memory.
+        # Previous implementation loaded entire video into memory which would OOM
+        # the worker on large files (500MB+) when multiple users upload simultaneously.
         async with httpx.AsyncClient(timeout=60) as client:
-            # Step 1: Fetch video to determine size
-            file_resp = await client.get(media_url)
-            if file_resp.status_code != 200:
-                raise PlatformHTTPError(file_resp.status_code, "Could not fetch video for TikTok upload")
-            video_bytes = file_resp.content
-            total_bytes = len(video_bytes)
+            head_resp = await client.head(media_url)
+            if head_resp.status_code not in (200, 301, 302):
+                # Fallback: GET with stream to read Content-Length from response headers
+                head_resp = await client.get(media_url, headers={"Range": "bytes=0-0"})
+            content_length = head_resp.headers.get("content-length")
+            if content_length:
+                total_bytes = int(content_length)
+            else:
+                # Last resort: download to count bytes (unavoidable if server doesn't send Content-Length)
+                full_resp = await client.get(media_url)
+                if full_resp.status_code != 200:
+                    raise PlatformHTTPError(full_resp.status_code, "Could not fetch video for TikTok upload")
+                total_bytes = len(full_resp.content)
 
             # Step 2: Initiate publish session
             init_body = {
@@ -123,17 +134,21 @@ class TikTokAdapter(PlatformAdapter):
         if not publish_id or not upload_url:
             raise PlatformResponseError("TikTok init response missing publish_id or upload_url")
 
-        # Step 3: Upload video chunk(s)
+        # Step 3: Upload video by STREAMING from media_url → upload_url.
+        # This avoids loading the entire file into worker memory.
         async with httpx.AsyncClient(timeout=120) as client:
-            upload_resp = await client.put(
-                upload_url,
-                content=video_bytes,
-                headers={
-                    "Content-Type": "video/mp4",
-                    "Content-Length": str(total_bytes),
-                    "Content-Range": f"bytes 0-{total_bytes - 1}/{total_bytes}",
-                },
-            )
+            async with client.stream("GET", media_url) as media_stream:
+                if media_stream.status_code != 200:
+                    raise PlatformHTTPError(media_stream.status_code, "Could not stream video for TikTok upload")
+                upload_resp = await client.put(
+                    upload_url,
+                    content=media_stream.aiter_bytes(),
+                    headers={
+                        "Content-Type": "video/mp4",
+                        "Content-Length": str(total_bytes),
+                        "Content-Range": f"bytes 0-{total_bytes - 1}/{total_bytes}",
+                    },
+                )
 
         if upload_resp.status_code not in (200, 201, 206):
             if redis:

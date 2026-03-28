@@ -80,12 +80,14 @@ async def _check_poison_pill(task_id: str) -> bool:
 
 
 # ── Jitter helper (Phase 1.6) ─────────────────────────────────────────────────
+# Jitter spreads platform API calls to avoid thundering herd, but must stay
+# small so the gap between scheduled time and actual publish time is minimal.
 def _jitter_seconds(post_type: str) -> int:
     if "video" in post_type:
-        return random.randint(0, 300)
+        return random.randint(0, 30)   # was 300 — 5 min delay unacceptable for users
     elif post_type == "text":
-        return random.randint(0, 30)
-    return random.randint(0, 60)
+        return random.randint(0, 10)   # was 30
+    return random.randint(0, 15)       # was 60
 
 
 # ── Aggregate status logic (Phase 1.6.3) ─────────────────────────────────────
@@ -501,6 +503,30 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 or error_code in (190, 261, 326)
             )
             if is_auth_error:
+                # Attempt an on-the-fly token refresh before giving up.
+                # If the token was simply expired (not revoked), refreshing it
+                # and retrying once can save the post from permanent failure.
+                try:
+                    from celery_workers.tasks.tokens import _refresh_with_lock
+                    _acct = post.get("account", {})
+                    _acct_id = _acct.get("account_id", _acct.get("id", ""))
+                    if _acct_id and attempt == 0:
+                        logger.info(
+                            "Auth error on %s/%s — attempting on-demand token refresh for account %s",
+                            post_id, platform, _acct_id,
+                        )
+                        await _refresh_with_lock(db, _acct_id, platform)
+                        logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
+                        publish_to_platform.apply_async(
+                            kwargs={"post_id": post_id, "platform": platform, "attempt": attempt + 1},
+                            countdown=5,
+                            queue="default",
+                        )
+                        return {"status": "token_refreshed_requeued"}
+                except Exception as _refresh_err:
+                    logger.warning("On-demand token refresh failed for %s: %s", post_id, _refresh_err)
+
+                # If refresh didn't help or wasn't possible → ghost cascade
                 try:
                     from utils.ghost_cascade import handle_ghost_account
                     social_account_id = post.get("social_account_id") or post.get("account", {}).get("id", "")

@@ -16,7 +16,7 @@ _cache_pool: ConnectionPool | None = None
 def _make_pool(url: str) -> ConnectionPool:
     return ConnectionPool.from_url(
         url,
-        max_connections=20,
+        max_connections=50,   # raised from 20 — supports 5 pods × 8 workers with headroom
         socket_connect_timeout=5,
         socket_timeout=10,
         retry_on_timeout=True,
