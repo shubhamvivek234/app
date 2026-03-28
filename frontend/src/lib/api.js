@@ -57,6 +57,16 @@ export const generateContent = async (prompt, platform = null, tone = null) => {
   return response.data;
 };
 
+// AI Hashtag Generation
+export const generateHashtags = async (topic, platform = null, count = 20) => {
+  const response = await axios.post(
+    `${API}/ai/generate-hashtags`,
+    { topic, platform, count },
+    { headers: getAuthHeaders() }
+  );
+  return response.data; // { hashtags: ["#tag1", "#tag2", ...] }
+};
+
 // Social Accounts
 export const connectSocialAccount = async (platform, platformUsername) => {
   const response = await axios.post(

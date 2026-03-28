@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getHashtagGroups, createHashtagGroup, updateHashtagGroup, deleteHashtagGroup } from '@/lib/api';
+import { getHashtagGroups, createHashtagGroup, updateHashtagGroup, deleteHashtagGroup, generateHashtags } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FaHashtag, FaEdit, FaTrash, FaPlus, FaTimes, FaCheck, FaCopy } from 'react-icons/fa';
+import { FaHashtag, FaEdit, FaTrash, FaPlus, FaTimes, FaCheck, FaCopy, FaMagic, FaSpinner } from 'react-icons/fa';
 import { toast } from 'sonner';
 
 const PLATFORM_OPTIONS = [
@@ -199,12 +199,162 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
   );
 };
 
+const GENERATOR_PLATFORMS = [
+  { value: '', label: 'All Platforms' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'twitter', label: 'Twitter / X' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'pinterest', label: 'Pinterest' },
+];
+
+const COUNT_OPTIONS = [10, 20, 30];
+
+// ── AI Hashtag Generator ──────────────────────────────────────────────────────
+const HashtagGenerator = ({ onSaveAsGroup }) => {
+  const [topic, setTopic]         = useState('');
+  const [platform, setPlatform]   = useState('');
+  const [count, setCount]         = useState(20);
+  const [loading, setLoading]     = useState(false);
+  const [hashtags, setHashtags]   = useState([]);
+
+  const handleGenerate = async () => {
+    if (!topic.trim()) { toast.error('Describe your post first'); return; }
+    setLoading(true);
+    setHashtags([]);
+    try {
+      const data = await generateHashtags(topic.trim(), platform || null, count);
+      if (!data.hashtags || data.hashtags.length === 0) {
+        toast.error('No hashtags returned — try a different topic');
+      } else {
+        setHashtags(data.hashtags);
+        toast.success(`${data.hashtags.length} hashtags generated!`);
+      }
+    } catch {
+      toast.error('Failed to generate hashtags — please try again');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopyAll = () => {
+    navigator.clipboard.writeText(hashtags.join(' '));
+    toast.success('All hashtags copied to clipboard');
+  };
+
+  const handleSaveAsGroup = () => {
+    if (hashtags.length === 0) return;
+    onSaveAsGroup(hashtags, platform);
+  };
+
+  return (
+    <div className="bg-offwhite rounded-xl border border-gray-200 p-6">
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
+          <FaMagic className="text-green-600 text-xs" />
+        </div>
+        <h2 className="text-base font-semibold text-gray-900">Social Media Hashtag Generator</h2>
+      </div>
+      <p className="text-sm text-gray-500 mb-4 ml-9">
+        Describe your post and we'll generate trending hashtags for it using AI.
+      </p>
+
+      {/* Form */}
+      <div className="space-y-3">
+        <textarea
+          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 placeholder:text-gray-300 text-gray-800 min-h-[80px] bg-white"
+          placeholder='e.g. "Morning yoga routine on the beach at sunrise" or "Launching our new eco-friendly coffee brand"'
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGenerate(); }}
+        />
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value)}
+            className="flex-1 min-w-[160px] text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white text-gray-700"
+          >
+            {GENERATOR_PLATFORMS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          <select
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white text-gray-700"
+          >
+            {COUNT_OPTIONS.map((n) => (
+              <option key={n} value={n}>{n} hashtags</option>
+            ))}
+          </select>
+
+          <Button
+            onClick={handleGenerate}
+            disabled={loading}
+            className="bg-green-500 hover:bg-green-600 text-white gap-2 flex-shrink-0"
+          >
+            {loading
+              ? <FaSpinner className="text-xs animate-spin" />
+              : <FaMagic className="text-xs" />}
+            {loading ? 'Generating…' : 'Generate Hashtags'}
+          </Button>
+        </div>
+
+        <p className="text-xs text-gray-400">Pro tip: the more detail you add, the better the results. Press ⌘+Enter to generate.</p>
+      </div>
+
+      {/* Results */}
+      {hashtags.length > 0 && (
+        <div className="mt-5 pt-5 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span className="text-sm font-medium text-gray-700">{hashtags.length} hashtags generated</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyAll}
+                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-green-600 border border-gray-200 hover:border-green-300 rounded-lg px-3 py-1.5 transition-colors bg-white"
+              >
+                <FaCopy className="text-xs" />
+                Copy All
+              </button>
+              <button
+                onClick={handleSaveAsGroup}
+                className="flex items-center gap-1.5 text-xs text-white bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                <FaPlus className="text-xs" />
+                Save as Group
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {hashtags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-block text-xs bg-white text-gray-700 border border-gray-200 rounded-full px-2.5 py-1 cursor-pointer hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
+                onClick={() => { navigator.clipboard.writeText(tag); toast.success(`Copied ${tag}`); }}
+                title="Click to copy"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 const HashtagGroups = () => {
-  const [groups, setGroups]       = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [showNew, setShowNew]     = useState(false);
-  const [editingId, setEditingId] = useState(null);
+  const [groups, setGroups]           = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [showNew, setShowNew]         = useState(false);
+  const [editingId, setEditingId]     = useState(null);
+  const [prefillTags, setPrefillTags] = useState(null);  // { hashtags, platform } from generator
 
   const load = async () => {
     try {
@@ -252,6 +402,19 @@ const HashtagGroups = () => {
     }
   };
 
+  const handleSaveGeneratedAsGroup = (hashtags, platform) => {
+    setPrefillTags({ hashtags, platform });
+    setShowNew(true);
+    setEditingId(null);
+    // Scroll up to the new group form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCreateWithPrefill = async (groupData) => {
+    await handleCreate(groupData);
+    setPrefillTags(null);
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-2xl mx-auto">
@@ -278,8 +441,9 @@ const HashtagGroups = () => {
         {showNew && (
           <div className="mb-4">
             <GroupForm
-              onSave={handleCreate}
-              onCancel={() => setShowNew(false)}
+              initial={prefillTags ? { hashtags: prefillTags.hashtags, platform: prefillTags.platform } : undefined}
+              onSave={prefillTags ? handleCreateWithPrefill : handleCreate}
+              onCancel={() => { setShowNew(false); setPrefillTags(null); }}
             />
           </div>
         )}
@@ -325,6 +489,16 @@ const HashtagGroups = () => {
             )}
           </div>
         )}
+
+        {/* Social Media Hashtag Generator */}
+        <div className="mt-10">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-gray-200" />
+            <span className="text-xs text-gray-400 font-medium uppercase tracking-wide flex-shrink-0">AI Tools</span>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
+          <HashtagGenerator onSaveAsGroup={handleSaveGeneratedAsGroup} />
+        </div>
       </div>
     </DashboardLayout>
   );

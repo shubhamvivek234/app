@@ -273,6 +273,11 @@ class AIContentRequest(BaseModel):
     platform: Optional[str] = None
     tone: Optional[str] = None   # casual | professional | fun | promotional
 
+class HashtagGenerateRequest(BaseModel):
+    topic: str
+    platform: Optional[str] = None   # instagram, tiktok, twitter, linkedin, etc.
+    count: int = 20                   # how many hashtags to return (5–30)
+
 class SocialAccount(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1342,6 +1347,30 @@ async def generate_content(request: AIContentRequest, current_user: User = Depen
     except Exception as e:
         logging.error(f"AI generation error: {e}")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+
+@api_router.post("/ai/generate-hashtags")
+async def generate_hashtags(request: HashtagGenerateRequest, current_user: User = Depends(get_current_user)):
+    """Generate trending hashtags for a given topic using the AI waterfall."""
+    import re as _re
+    count = max(5, min(30, request.count))
+    platform_hint = f" optimised for {request.platform}" if request.platform else ""
+    system_msg = (
+        "You are a social media hashtag expert. "
+        f"Return ONLY a plain list of {count} relevant, trending hashtags{platform_hint}. "
+        "Format: space-separated on one line, each starting with #. "
+        "No explanations, no numbering, no bullet points, no extra text — just the hashtags."
+    )
+    user_prompt = f"Generate {count} hashtags for a post about: {request.topic}"
+    try:
+        raw = await _ai_waterfall(system_msg, user_prompt)
+        tags = _re.findall(r'#\w+', raw)[:count]
+        return {"hashtags": tags}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Hashtag generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Hashtag generation failed: {str(e)}")
 
 # ==================== SOCIAL ACCOUNTS ====================
 
