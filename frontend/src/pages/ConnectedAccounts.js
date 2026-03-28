@@ -48,34 +48,59 @@ const getAvatarColor = (username = '') => {
   return palette[username.charCodeAt(0) % palette.length];
 };
 
-// ── Account chip ──────────────────────────────────────────────────────────────
+// ── Account chip — round avatar with hover tooltip ────────────────────────────
 const AccountChip = ({ account, onDisconnect }) => {
   const status = getTokenStatus(account);
+  const displayName = account.platform_username || account.platform;
+  const statusRing =
+    status === 'expired'  ? 'ring-2 ring-red-400'   :
+    status === 'expiring' ? 'ring-2 ring-yellow-400' : '';
+
   return (
-    <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs border shadow-sm
-      ${status === 'expired'  ? 'bg-red-50 border-red-300' :
-        status === 'expiring' ? 'bg-yellow-50 border-yellow-300' :
-        'bg-white border-gray-200'}`}
-      title={status === 'expired' ? 'Token expired — reconnect' : status === 'expiring' ? 'Token expiring soon' : 'Active'}
-    >
-      {status === 'expired'  && <FaExclamationTriangle className="text-red-400 text-[9px] shrink-0" />}
-      {status === 'expiring' && <FaClock className="text-yellow-400 text-[9px] shrink-0" />}
-      {account.picture_url ? (
-        <img src={account.picture_url} alt="" className="w-4 h-4 rounded-full object-cover" />
-      ) : (
-        <div className={`w-4 h-4 rounded-full ${getAvatarColor(account.platform_username)} flex items-center justify-center text-white text-[8px] font-bold shrink-0`}>
-          {account.platform_username?.charAt(0)?.toUpperCase() || 'U'}
+    <div className="relative group flex-shrink-0">
+      {/* Avatar */}
+      <div className="relative">
+        {account.picture_url ? (
+          <img
+            src={account.picture_url}
+            alt={displayName}
+            className={`w-10 h-10 rounded-full object-cover ${statusRing}`}
+          />
+        ) : (
+          <div className={`w-10 h-10 rounded-full ${getAvatarColor(displayName)} flex items-center justify-center text-white text-sm font-bold ${statusRing}`}>
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+        )}
+
+        {/* Status badge */}
+        {status === 'expired'  && (
+          <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+            <FaExclamationTriangle className="text-white text-[8px]" />
+          </div>
+        )}
+        {status === 'expiring' && (
+          <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-yellow-400 rounded-full flex items-center justify-center">
+            <FaClock className="text-white text-[8px]" />
+          </div>
+        )}
+      </div>
+
+      {/* Hover tooltip with name + disconnect */}
+      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+        <div className="bg-gray-900 text-white rounded-xl shadow-xl px-3 py-2 min-w-max flex items-center gap-2">
+          <span className="text-xs font-medium">@{displayName}</span>
+          {status === 'expired'  && <span className="text-[9px] font-bold text-red-400 uppercase">Expired</span>}
+          {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-400 uppercase">Expiring</span>}
+          <button
+            onClick={onDisconnect}
+            className="ml-1 text-gray-400 hover:text-red-400 transition-colors pointer-events-auto"
+            title="Disconnect"
+          >
+            <FaTimes className="text-[10px]" />
+          </button>
         </div>
-      )}
-      <span className={`font-medium truncate max-w-[100px]
-        ${status === 'expired' ? 'text-red-700' : status === 'expiring' ? 'text-yellow-700' : 'text-gray-800'}`}>
-        {account.platform_username}
-      </span>
-      {status === 'expired'  && <span className="text-[8px] font-bold text-red-500 uppercase tracking-wide shrink-0">Expired</span>}
-      {status === 'expiring' && <span className="text-[8px] font-bold text-yellow-600 uppercase tracking-wide shrink-0">Soon</span>}
-      <button onClick={onDisconnect} className="ml-0.5 text-gray-300 hover:text-red-400 transition-colors shrink-0">
-        <FaTimes className="text-[9px]" />
-      </button>
+        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+      </div>
     </div>
   );
 };
@@ -112,9 +137,9 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
       </div>
 
       {/* Connected accounts */}
-      <div className="px-4 py-3 flex-1 min-h-[56px]">
+      <div className="px-4 py-3 flex-1 min-h-[64px]">
         {count > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-3 items-center">
             {connectedAccounts.map(account => (
               <AccountChip
                 key={account.id}

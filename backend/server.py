@@ -285,6 +285,7 @@ class SocialAccount(BaseModel):
     platform: str
     platform_user_id: Optional[str] = None
     platform_username: Optional[str] = None
+    picture_url: Optional[str] = None
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     token_expiry: Optional[datetime] = None
@@ -1539,7 +1540,8 @@ def _verify_oauth_state(state: str) -> dict:
 
 async def _save_oauth_account(user_id: str, platform: str, access_token: str,
                                refresh_token: Optional[str], platform_user_id: str,
-                               platform_username: str, token_expiry: Optional[datetime] = None):
+                               platform_username: str, token_expiry: Optional[datetime] = None,
+                               picture_url: Optional[str] = None):
     """Upsert the social account record for a user."""
     existing = await db.social_accounts.find_one({"user_id": user_id, "platform": platform})
     now = datetime.now(timezone.utc)
@@ -1547,6 +1549,7 @@ async def _save_oauth_account(user_id: str, platform: str, access_token: str,
         "user_id": user_id, "platform": platform,
         "platform_user_id": platform_user_id,
         "platform_username": platform_username,
+        "picture_url": picture_url,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_expiry": token_expiry.isoformat() if token_expiry else None,
@@ -1624,6 +1627,8 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
     user_id = claims["user_id"]
 
     try:
+        picture_url: Optional[str] = None
+
         if platform == "facebook":
             from app.social.facebook import FacebookAuth
             auth = FacebookAuth()
@@ -1635,6 +1640,8 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("id", ""))
             username = profile.get("name") or profile.get("email") or platform_user_id
+            pic = profile.get("picture")
+            picture_url = (pic.get("data", {}).get("url") if isinstance(pic, dict) else pic) or None
 
         elif platform == "instagram":
             from app.social.instagram import InstagramAuth
@@ -1647,6 +1654,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("id", token_data.get("user_id", "")))
             username = profile.get("username") or profile.get("name") or platform_user_id
+            picture_url = profile.get("profile_picture_url") or None
 
         elif platform == "twitter":
             from app.social.twitter import TwitterAuth
@@ -1661,8 +1669,11 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("id", ""))
             username = profile.get("username") or profile.get("name") or platform_user_id
+            # Twitter returns _normal (48px); replace with _400x400 for higher res
+            pic = profile.get("profile_image_url", "")
+            picture_url = pic.replace("_normal", "_400x400") if pic else None
             await _save_oauth_account(user_id, platform, access_token, refresh_token,
-                                       platform_user_id, username, expiry)
+                                       platform_user_id, username, expiry, picture_url)
             return {"platform": platform, "username": username}
 
         elif platform == "linkedin":
@@ -1676,6 +1687,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             platform_user_id = str(profile.get("id") or profile.get("sub", ""))
             username = profile.get("name") or profile.get("localizedFirstName", "") + " " + profile.get("localizedLastName", "")
             username = username.strip() or platform_user_id
+            picture_url = profile.get("picture") or None
 
         elif platform in ("youtube", "google"):
             from app.social.google import GoogleAuth
@@ -1687,10 +1699,16 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             channel = await auth.get_channel_info(access_token)
             platform_user_id = channel.get("id", "")
-            username = channel.get("title") or platform_user_id
+            snippet = channel.get("snippet", {})
+            username = snippet.get("title") or channel.get("title") or platform_user_id
             platform = "youtube"
+            picture_url = (
+                snippet.get("thumbnails", {}).get("high", {}).get("url")
+                or snippet.get("thumbnails", {}).get("default", {}).get("url")
+                or None
+            )
             await _save_oauth_account(user_id, platform, access_token, refresh_token,
-                                       platform_user_id, username, expiry)
+                                       platform_user_id, username, expiry, picture_url)
             return {"platform": platform, "username": username}
 
         elif platform == "reddit":
@@ -1704,6 +1722,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("id", ""))
             username = profile.get("name") or platform_user_id
+            picture_url = profile.get("icon_img") or profile.get("snoovatar_img") or None
 
         elif platform == "tiktok":
             from app.social.tiktok import TikTokAuth
@@ -1717,6 +1736,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("open_id") or profile.get("union_id", ""))
             username = profile.get("display_name") or profile.get("nickname") or platform_user_id
+            picture_url = profile.get("picture_url") or profile.get("avatar_url") or None
 
         elif platform == "pinterest":
             from app.social.pinterest import PinterestAuth
@@ -1729,6 +1749,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("id") or profile.get("username", ""))
             username = profile.get("username") or profile.get("business_name") or platform_user_id
+            picture_url = profile.get("profile_image") or profile.get("profile_image_url") or None
 
         elif platform == "snapchat":
             from app.social.snapchat import SnapchatAuth
@@ -1741,6 +1762,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             profile = await auth.get_user_profile(access_token)
             platform_user_id = str(profile.get("sub") or profile.get("id", ""))
             username = profile.get("display_name") or profile.get("name") or platform_user_id
+            picture_url = profile.get("bitmoji_selfie_image_url") or profile.get("avatar_url") or None
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
@@ -1748,7 +1770,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
         refresh_token = locals().get("refresh_token")
         expiry_dt = locals().get("expiry")
         await _save_oauth_account(user_id, platform, access_token, refresh_token,
-                                   platform_user_id, username, expiry_dt)
+                                   platform_user_id, username, expiry_dt, picture_url)
         return {"platform": platform, "username": username}
 
     except HTTPException:
