@@ -1,285 +1,216 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getHashtagGroups, createHashtagGroup, updateHashtagGroup, deleteHashtagGroup, generateHashtags } from '@/lib/api';
+import {
+  getHashtagGroups, createHashtagGroup, updateHashtagGroup,
+  deleteHashtagGroup, generateHashtags,
+} from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   FaHashtag, FaEdit, FaTrash, FaPlus, FaTimes, FaCheck,
-  FaCopy, FaMagic, FaSpinner, FaLayerGroup,
+  FaCopy, FaMagic, FaSpinner, FaLayerGroup, FaBolt,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
 
-// ── Platform config (only 3 platforms) ───────────────────────────────────────
+// ── Platform config ───────────────────────────────────────────────────────────
 const PLATFORMS = [
   {
     value: 'instagram',
     label: 'Instagram',
     emoji: '📸',
-    color: 'bg-pink-50 text-pink-600 border-pink-200',
-    active: 'bg-pink-500 text-white border-pink-500',
-    badge: 'bg-pink-50 text-pink-600',
+    badge: 'bg-pink-100 text-pink-700',
+    pill: 'border-pink-300 bg-pink-50 text-pink-700',
+    pillActive: 'bg-pink-500 text-white border-pink-500',
   },
   {
     value: 'tiktok',
     label: 'TikTok',
     emoji: '🎵',
-    color: 'bg-gray-50 text-gray-800 border-gray-200',
-    active: 'bg-gray-900 text-white border-gray-900',
-    badge: 'bg-gray-100 text-gray-700',
+    badge: 'bg-slate-100 text-slate-700',
+    pill: 'border-slate-300 bg-slate-50 text-slate-700',
+    pillActive: 'bg-slate-800 text-white border-slate-800',
   },
   {
     value: 'youtube',
     label: 'YouTube',
     emoji: '▶',
-    color: 'bg-red-50 text-red-600 border-red-200',
-    active: 'bg-red-500 text-white border-red-500',
-    badge: 'bg-red-50 text-red-600',
+    badge: 'bg-red-100 text-red-600',
+    pill: 'border-red-300 bg-red-50 text-red-600',
+    pillActive: 'bg-red-500 text-white border-red-500',
   },
 ];
 
 const getPlatform = (value) => PLATFORMS.find((p) => p.value === value);
 
-// ── Platform pill toggle (used in both form & generator) ─────────────────────
+// ── Platform pills ────────────────────────────────────────────────────────────
 const PlatformPills = ({ value, onChange, includeAll = false }) => {
-  const allOption = { value: '', label: 'Any', emoji: '🌐', active: 'bg-green-500 text-white border-green-500', color: 'bg-green-50 text-green-700 border-green-200' };
-  const options = includeAll ? [allOption, ...PLATFORMS] : PLATFORMS;
-
+  const allOpt = {
+    value: '', label: 'Any', emoji: '🌐',
+    pill: 'border-violet-200 bg-violet-50 text-violet-600',
+    pillActive: 'bg-violet-600 text-white border-violet-600',
+  };
+  const opts = includeAll ? [allOpt, ...PLATFORMS] : PLATFORMS;
   return (
     <div className="flex flex-wrap gap-2">
-      {options.map((p) => (
+      {opts.map((p) => (
         <button
           key={p.value}
           type="button"
           onClick={() => onChange(p.value)}
-          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-all ${
-            value === p.value ? p.active : p.color + ' hover:opacity-80'
+          className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
+            value === p.value ? p.pillActive : p.pill + ' hover:opacity-75'
           }`}
         >
-          <span>{p.emoji}</span>
-          {p.label}
+          <span>{p.emoji}</span>{p.label}
         </button>
       ))}
     </div>
   );
 };
 
-// ── Parse hashtag text into a clean array ─────────────────────────────────────
+// ── Parse raw hashtag text ────────────────────────────────────────────────────
 const parseHashtags = (raw) =>
-  raw
-    .split(/[\s,\n]+/)
+  raw.split(/[\s,\n]+/)
     .map((t) => t.trim().replace(/^#+/, ''))
     .filter(Boolean)
     .map((t) => `#${t}`);
 
-// ── Tag chip ──────────────────────────────────────────────────────────────────
-const TagChip = ({ tag, onCopy, variant = 'default' }) => {
+// ── Tag chip with copy feedback ───────────────────────────────────────────────
+const TagChip = ({ tag, onCopy, className = '' }) => {
   const [copied, setCopied] = useState(false);
-  const handleClick = () => {
-    onCopy(tag);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-
-  const base =
-    variant === 'green'
-      ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-      : 'bg-white text-gray-700 border-gray-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700';
-
+  const handle = () => { onCopy(tag); setCopied(true); setTimeout(() => setCopied(false), 1000); };
   return (
     <span
-      onClick={handleClick}
+      onClick={handle}
       title="Click to copy"
-      className={`inline-flex items-center gap-1 text-xs border rounded-full px-2.5 py-1 cursor-pointer transition-all select-none ${base}`}
+      className={`inline-flex items-center gap-1 text-xs rounded-full px-3 py-1 cursor-pointer select-none transition-all ${className}`}
     >
-      {copied ? <FaCheck className="text-[10px] text-green-500" /> : null}
+      {copied && <FaCheck className="text-[9px]" />}
       {tag}
     </span>
   );
 };
 
-// ── Inline form for creating / editing a group ────────────────────────────────
+// ── Group create / edit form ──────────────────────────────────────────────────
 const GroupForm = ({ initial, onSave, onCancel }) => {
   const [name, setName]         = useState(initial?.name || '');
   const [rawTags, setRawTags]   = useState(initial?.hashtags?.join(' ') || '');
   const [category, setCategory] = useState(initial?.category || '');
   const [platform, setPlatform] = useState(initial?.platform || '');
   const [saving, setSaving]     = useState(false);
-
   const preview = parseHashtags(rawTags);
 
   const handleSave = async () => {
     if (!name.trim()) { toast.error('Group name is required'); return; }
     if (preview.length === 0) { toast.error('Add at least one hashtag'); return; }
     setSaving(true);
-    try {
-      await onSave({ name: name.trim(), hashtags: preview, category: category.trim(), platform });
-    } finally {
-      setSaving(false);
-    }
+    try { await onSave({ name: name.trim(), hashtags: preview, category: category.trim(), platform }); }
+    finally { setSaving(false); }
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-4">
-      <h3 className="text-sm font-semibold text-gray-800">
-        {initial?.name ? 'Edit Group' : 'New Hashtag Group'}
-      </h3>
-
+    <div className="bg-white rounded-2xl border border-violet-100 shadow-md shadow-violet-50 p-5 space-y-4">
+      <p className="text-sm font-semibold text-slate-800">{initial?.name ? 'Edit Group' : 'New Hashtag Group'}</p>
       <div className="grid grid-cols-2 gap-3">
-        <Input
-          placeholder="Group name (e.g. Travel vibes)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="text-sm bg-gray-50 border-gray-200 focus:bg-white"
-          autoFocus
-        />
-        <Input
-          placeholder="Category (optional)"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="text-sm bg-gray-50 border-gray-200 focus:bg-white"
-        />
+        <Input placeholder="Group name" value={name} onChange={(e) => setName(e.target.value)}
+          className="text-sm bg-slate-50 border-slate-200" autoFocus />
+        <Input placeholder="Category (optional)" value={category} onChange={(e) => setCategory(e.target.value)}
+          className="text-sm bg-slate-50 border-slate-200" />
       </div>
-
-      {/* Platform pills */}
       <div>
-        <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Platform</p>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Platform</p>
         <PlatformPills value={platform} onChange={setPlatform} includeAll />
       </div>
-
-      {/* Hashtag input */}
       <div>
-        <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Hashtags</p>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Hashtags</p>
         <textarea
-          className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 placeholder:text-gray-300 text-gray-800 min-h-[72px] bg-gray-50 focus:bg-white transition-colors"
-          placeholder="#travel #wanderlust #adventure (space, comma or newline)"
-          value={rawTags}
-          onChange={(e) => setRawTags(e.target.value)}
+          className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-violet-400 placeholder:text-slate-300 text-slate-800 min-h-[72px] bg-slate-50"
+          placeholder="#travel #wanderlust #adventure"
+          value={rawTags} onChange={(e) => setRawTags(e.target.value)}
         />
       </div>
-
-      {/* Preview chips */}
       {preview.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
+        <div className="flex flex-wrap gap-1.5">
           {preview.map((tag) => (
-            <span key={tag} className="inline-block text-xs bg-green-50 text-green-700 border border-green-200 rounded-full px-2.5 py-1">
-              {tag}
-            </span>
+            <span key={tag} className="text-xs bg-violet-50 text-violet-700 border border-violet-200 rounded-full px-2.5 py-1">{tag}</span>
           ))}
         </div>
       )}
-
-      <div className="flex items-center gap-2 pt-1">
-        <Button size="sm" onClick={handleSave} disabled={saving} className="bg-green-500 hover:bg-green-600 text-white gap-1.5">
-          <FaCheck className="text-xs" />
-          {saving ? 'Saving…' : 'Save Group'}
+      <div className="flex gap-2 pt-1">
+        <Button size="sm" onClick={handleSave} disabled={saving}
+          className="bg-violet-600 hover:bg-violet-700 text-white gap-1.5">
+          <FaCheck className="text-xs" />{saving ? 'Saving…' : 'Save Group'}
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel} className="text-gray-500 hover:text-gray-700 gap-1.5">
-          <FaTimes className="text-xs" />
-          Cancel
+        <Button size="sm" variant="ghost" onClick={onCancel} className="text-slate-500 gap-1.5">
+          <FaTimes className="text-xs" />Cancel
         </Button>
       </div>
     </div>
   );
 };
 
-// ── Single group card ─────────────────────────────────────────────────────────
+// ── Group card ────────────────────────────────────────────────────────────────
 const GroupCard = ({ group, onEdit, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
-  const MAX_PREVIEW = 8;
-  const visible = expanded ? group.hashtags : group.hashtags.slice(0, MAX_PREVIEW);
-  const extra   = group.hashtags.length - MAX_PREVIEW;
-  const platform = getPlatform(group.platform);
+  const MAX = 8;
+  const visible = expanded ? group.hashtags : group.hashtags.slice(0, MAX);
+  const extra   = group.hashtags.length - MAX;
+  const pl = getPlatform(group.platform);
 
-  const handleCopyAll = () => {
-    navigator.clipboard.writeText(group.hashtags.join(' '));
-    toast.success('All hashtags copied!');
-  };
-
-  const handleCopyTag = (tag) => {
-    navigator.clipboard.writeText(tag);
-    toast.success(`Copied ${tag}`);
-  };
+  const copyAll = () => { navigator.clipboard.writeText(group.hashtags.join(' ')); toast.success('Copied all hashtags!'); };
+  const copyTag = (tag) => { navigator.clipboard.writeText(tag); toast.success(`Copied ${tag}`); };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 hover:border-gray-300 hover:shadow-md transition-all group">
-      {/* Card header */}
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md hover:border-violet-100 transition-all group p-5">
       <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-green-50 border border-green-100 flex items-center justify-center flex-shrink-0">
-            <FaHashtag className="text-green-500 text-xs" />
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center flex-shrink-0">
+            <FaHashtag className="text-violet-500 text-xs" />
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-gray-900 text-sm truncate leading-tight">{group.name}</p>
+            <p className="font-semibold text-slate-900 text-sm truncate">{group.name}</p>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-              <span className="text-xs text-gray-400">{group.hashtags.length} tags</span>
-              {group.category && (
-                <span className="text-xs bg-gray-100 text-gray-500 rounded-full px-2 py-px">{group.category}</span>
-              )}
-              {platform && (
-                <span className={`text-xs rounded-full px-2 py-px font-medium ${platform.badge}`}>
-                  {platform.emoji} {platform.label}
-                </span>
-              )}
+              <span className="text-xs text-slate-400">{group.hashtags.length} tags</span>
+              {group.category && <span className="text-xs bg-slate-100 text-slate-500 rounded-full px-2 py-px">{group.category}</span>}
+              {pl && <span className={`text-xs rounded-full px-2 py-px font-medium ${pl.badge}`}>{pl.emoji} {pl.label}</span>}
             </div>
           </div>
         </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={handleCopyAll}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
-            title="Copy all hashtags"
-          >
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          <button onClick={copyAll} className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors" title="Copy all">
             <FaCopy className="text-xs" />
           </button>
-          <button
-            onClick={() => onEdit(group)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-            title="Edit group"
-          >
+          <button onClick={() => onEdit(group)} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="Edit">
             <FaEdit className="text-xs" />
           </button>
-          <button
-            onClick={() => onDelete(group)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-            title="Delete group"
-          >
+          <button onClick={() => onDelete(group)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Delete">
             <FaTrash className="text-xs" />
           </button>
         </div>
       </div>
 
-      {/* Tag chips */}
       <div className="flex flex-wrap gap-1.5">
         {visible.map((tag) => (
-          <TagChip key={tag} tag={tag} onCopy={handleCopyTag} />
+          <TagChip key={tag} tag={tag} onCopy={copyTag}
+            className="bg-slate-50 text-slate-600 border border-slate-200 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-200" />
         ))}
         {!expanded && extra > 0 && (
-          <button
-            onClick={() => setExpanded(true)}
-            className="text-xs text-green-600 hover:text-green-700 px-2.5 py-1 rounded-full border border-green-200 bg-green-50 hover:bg-green-100 transition-colors font-medium"
-          >
+          <button onClick={() => setExpanded(true)}
+            className="text-xs text-violet-600 px-2.5 py-1 rounded-full border border-violet-200 bg-violet-50 hover:bg-violet-100 transition-colors font-medium">
             +{extra} more
           </button>
         )}
         {expanded && (
-          <button
-            onClick={() => setExpanded(false)}
-            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors"
-          >
+          <button onClick={() => setExpanded(false)}
+            className="text-xs text-slate-400 px-2.5 py-1 rounded-full border border-slate-200 hover:bg-slate-50 transition-colors">
             show less
           </button>
         )}
       </div>
 
-      {/* Copy all footer (always visible) */}
-      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
-        <span className="text-xs text-gray-400">Click any tag to copy</span>
-        <button
-          onClick={handleCopyAll}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-green-600 transition-colors font-medium"
-        >
+      <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
+        <span className="text-xs text-slate-300">Click any tag to copy individually</span>
+        <button onClick={copyAll} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-violet-600 transition-colors font-medium">
           <FaCopy className="text-[10px]" /> Copy all
         </button>
       </div>
@@ -288,79 +219,103 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
 };
 
 // ── AI Hashtag Generator ──────────────────────────────────────────────────────
-const DEFAULT_HASHTAG_COUNT = 6;
+const STEPS = [
+  { n: '1', label: 'Describe your post' },
+  { n: '2', label: 'Pick a platform' },
+  { n: '3', label: 'Generate & copy' },
+];
+
+const DEFAULT_COUNT = 6;
 
 const HashtagGenerator = ({ onSaveAsGroup }) => {
   const [topic, setTopic]       = useState('');
   const [platform, setPlatform] = useState('instagram');
   const [loading, setLoading]   = useState(false);
   const [hashtags, setHashtags] = useState([]);
+  const [step, setStep]         = useState(1); // 1 = topic, 2 = platform, 3 = results
+
+  const activePlatform = getPlatform(platform);
 
   const handleGenerate = async () => {
     if (!topic.trim()) { toast.error('Describe your post first'); return; }
     setLoading(true);
     setHashtags([]);
     try {
-      const data = await generateHashtags(topic.trim(), platform || null, DEFAULT_HASHTAG_COUNT);
-      if (!data.hashtags || data.hashtags.length === 0) {
-        toast.error('No hashtags returned — try a different topic');
-      } else {
-        setHashtags(data.hashtags);
-        toast.success(`${data.hashtags.length} hashtags generated!`);
-      }
-    } catch {
-      toast.error('Failed to generate hashtags — please try again');
-    } finally {
-      setLoading(false);
-    }
+      const data = await generateHashtags(topic.trim(), platform || null, DEFAULT_COUNT);
+      if (!data.hashtags?.length) { toast.error('No hashtags returned — try a different topic'); }
+      else { setHashtags(data.hashtags); setStep(3); }
+    } catch { toast.error('Failed to generate hashtags'); }
+    finally { setLoading(false); }
   };
 
-  const handleCopyAll = () => {
-    navigator.clipboard.writeText(hashtags.join(' '));
-    toast.success('All hashtags copied to clipboard');
-  };
-
-  const handleCopyTag = (tag) => {
-    navigator.clipboard.writeText(tag);
-    toast.success(`Copied ${tag}`);
-  };
-
-  const activePlatform = getPlatform(platform);
+  const copyAll = () => { navigator.clipboard.writeText(hashtags.join(' ')); toast.success('All hashtags copied!'); };
+  const copyTag = (tag) => { navigator.clipboard.writeText(tag); toast.success(`Copied ${tag}`); };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-      {/* Header band */}
-      <div className="bg-gradient-to-r from-green-500 to-emerald-400 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
-            <FaMagic className="text-white text-sm" />
+    <div className="rounded-3xl overflow-hidden border border-violet-100 shadow-xl shadow-violet-100/50">
+      {/* Hero header */}
+      <div className="bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 px-8 py-8 relative overflow-hidden">
+        {/* Decorative circles */}
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5" />
+        <div className="absolute -bottom-12 -left-6 w-32 h-32 rounded-full bg-white/5" />
+
+        <div className="relative">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+              <FaBolt className="text-white text-sm" />
+            </div>
+            <span className="text-white/70 text-xs font-semibold uppercase tracking-widest">AI-Powered</span>
           </div>
-          <div>
-            <h2 className="text-white font-semibold text-base leading-tight">Social Media Hashtag Generator</h2>
-            <p className="text-green-100 text-xs mt-0.5">Describe your post — AI finds the trending hashtags for you</p>
+          <h2 className="text-white text-2xl font-bold leading-tight mb-2">
+            Social Media Hashtag Generator
+          </h2>
+          <p className="text-violet-200 text-sm max-w-md">
+            Describe your post and get trending hashtags tailored to your platform — instantly.
+          </p>
+
+          {/* Step indicators */}
+          <div className="flex items-center gap-6 mt-6">
+            {STEPS.map((s, i) => (
+              <div key={s.n} className="flex items-center gap-3">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                  step >= i + 1 ? 'bg-white text-violet-600' : 'bg-white/20 text-white'
+                }`}>
+                  {step > i + 1 ? <FaCheck className="text-[10px]" /> : s.n}
+                </div>
+                <span className={`text-xs font-medium hidden sm:block ${step >= i + 1 ? 'text-white' : 'text-white/50'}`}>
+                  {s.label}
+                </span>
+                {i < STEPS.length - 1 && <div className="w-8 h-px bg-white/20 hidden sm:block" />}
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
-        {/* Topic input */}
+      {/* Form body */}
+      <div className="bg-white px-8 py-6 space-y-6">
+        {/* Step 1 — Topic */}
         <div>
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block">
+          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold mr-1.5">1</span>
             What's your post about?
           </label>
           <textarea
-            className="w-full text-sm border border-gray-200 rounded-xl px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 placeholder:text-gray-300 text-gray-800 min-h-[88px] bg-gray-50 focus:bg-white transition-colors"
-            placeholder='e.g. "Morning yoga routine on the beach at sunrise" or "Launching our new eco-friendly coffee brand"'
+            className="w-full text-sm border border-slate-200 rounded-xl px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent placeholder:text-slate-300 text-slate-800 bg-slate-50 focus:bg-white transition-all min-h-[90px]"
+            placeholder='"Morning yoga routine at sunrise" or "Our new product launch — eco-friendly water bottles"'
             value={topic}
-            onChange={(e) => setTopic(e.target.value)}
+            onChange={(e) => { setTopic(e.target.value); if (step === 1 && e.target.value) setStep(2); }}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGenerate(); }}
           />
-          <p className="text-xs text-gray-400 mt-1.5">Press ⌘+Enter to generate</p>
+          <p className="text-[11px] text-slate-300 mt-1.5">The more specific, the better results. Press ⌘+Enter to generate.</p>
         </div>
 
-        {/* Platform row */}
+        {/* Step 2 — Platform */}
         <div>
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block">Platform</label>
+          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold mr-1.5">2</span>
+            Choose platform
+          </label>
           <PlatformPills value={platform} onChange={setPlatform} />
         </div>
 
@@ -368,52 +323,54 @@ const HashtagGenerator = ({ onSaveAsGroup }) => {
         <button
           onClick={handleGenerate}
           disabled={loading}
-          className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-all ${
+          className={`w-full flex items-center justify-center gap-2.5 py-3.5 rounded-xl text-sm font-bold transition-all ${
             loading
-              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              : 'bg-green-500 hover:bg-green-600 text-white shadow-sm hover:shadow-md active:scale-[0.98]'
+              ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              : 'bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white shadow-lg shadow-violet-200 hover:shadow-violet-300 active:scale-[0.98]'
           }`}
         >
-          {loading ? (
-            <><FaSpinner className="animate-spin text-xs" /> Generating…</>
-          ) : (
-            <><FaMagic className="text-xs" /> Generate Hashtags{activePlatform ? ` for ${activePlatform.label}` : ''}</>
-          )}
+          {loading
+            ? <><FaSpinner className="animate-spin" /> Generating hashtags…</>
+            : <><FaMagic /> Generate hashtags{activePlatform ? ` for ${activePlatform.label}` : ''}</>
+          }
         </button>
 
-        {/* Results */}
+        {/* Step 3 — Results */}
         {hashtags.length > 0 && (
-          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div className="rounded-2xl border border-violet-100 bg-gradient-to-b from-violet-50 to-white p-5">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-800">{hashtags.length} hashtags</span>
+                <FaCheck className="text-violet-500 text-xs" />
+                <span className="text-sm font-bold text-slate-800">{hashtags.length} hashtags ready</span>
                 {activePlatform && (
-                  <span className={`text-xs rounded-full px-2.5 py-0.5 font-medium ${activePlatform.badge}`}>
+                  <span className={`text-xs rounded-full px-2.5 py-0.5 font-semibold ${activePlatform.badge}`}>
                     {activePlatform.emoji} {activePlatform.label}
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleCopyAll}
-                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-green-600 border border-gray-200 hover:border-green-300 bg-white rounded-lg px-3 py-1.5 transition-colors font-medium"
+                  onClick={copyAll}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-violet-700 bg-white border border-slate-200 hover:border-violet-300 rounded-lg px-3 py-1.5 transition-all"
                 >
                   <FaCopy className="text-[10px]" /> Copy All
                 </button>
                 <button
                   onClick={() => onSaveAsGroup(hashtags, platform)}
-                  className="flex items-center gap-1.5 text-xs text-white bg-green-500 hover:bg-green-600 rounded-lg px-3 py-1.5 transition-colors font-medium"
+                  className="flex items-center gap-1.5 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg px-3 py-1.5 transition-all"
                 >
                   <FaPlus className="text-[10px]" /> Save as Group
                 </button>
               </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+
+            <div className="flex flex-wrap gap-2">
               {hashtags.map((tag) => (
-                <TagChip key={tag} tag={tag} onCopy={handleCopyTag} variant="green" />
+                <TagChip key={tag} tag={tag} onCopy={copyTag}
+                  className="bg-white text-violet-700 border border-violet-200 hover:bg-violet-600 hover:text-white hover:border-violet-600 font-medium" />
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-3">Click any hashtag to copy it individually</p>
+            <p className="text-[11px] text-slate-300 mt-3">Click any hashtag to copy individually</p>
           </div>
         )}
       </div>
@@ -430,14 +387,9 @@ const HashtagGroups = () => {
   const [prefillTags, setPrefillTags] = useState(null);
 
   const load = async () => {
-    try {
-      const data = await getHashtagGroups();
-      setGroups(data);
-    } catch {
-      toast.error('Failed to load hashtag groups');
-    } finally {
-      setLoading(false);
-    }
+    try { const data = await getHashtagGroups(); setGroups(data); }
+    catch { toast.error('Failed to load hashtag groups'); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -447,10 +399,9 @@ const HashtagGroups = () => {
       const created = await createHashtagGroup(groupData);
       setGroups((prev) => [created, ...prev]);
       setShowNew(false);
+      setPrefillTags(null);
       toast.success('Group created!');
-    } catch {
-      toast.error('Failed to create group');
-    }
+    } catch { toast.error('Failed to create group'); }
   };
 
   const handleUpdate = async (id, data) => {
@@ -459,20 +410,16 @@ const HashtagGroups = () => {
       setGroups((prev) => prev.map((g) => (g.id === id ? updated : g)));
       setEditingId(null);
       toast.success('Group updated!');
-    } catch {
-      toast.error('Failed to update group');
-    }
+    } catch { toast.error('Failed to update group'); }
   };
 
   const handleDelete = async (group) => {
-    if (!window.confirm(`Delete "${group.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete "${group.name}"?`)) return;
     try {
       await deleteHashtagGroup(group.id);
       setGroups((prev) => prev.filter((g) => g.id !== group.id));
       toast.success('Group deleted');
-    } catch {
-      toast.error('Failed to delete group');
-    }
+    } catch { toast.error('Failed to delete group'); }
   };
 
   const handleSaveGeneratedAsGroup = (hashtags, platform) => {
@@ -482,77 +429,68 @@ const HashtagGroups = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCreateWithPrefill = async (groupData) => {
-    await handleCreate(groupData);
-    setPrefillTags(null);
-  };
-
   return (
     <DashboardLayout>
       <div className="max-w-3xl mx-auto">
 
-        {/* ── Page header ── */}
-        <div className="flex items-start justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-green-50 border border-green-100 flex items-center justify-center flex-shrink-0">
-              <FaLayerGroup className="text-green-500 text-base" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 leading-tight">Hashtag Groups</h1>
-              <p className="text-sm text-gray-500 mt-0.5">
-                Reusable hashtag sets — insert with one click while composing.
-              </p>
-            </div>
+        {/* ── Generator (top, hero feature) ── */}
+        <div className="mb-10">
+          <HashtagGenerator onSaveAsGroup={handleSaveGeneratedAsGroup} />
+        </div>
+
+        {/* ── Saved Groups section ── */}
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+            <FaLayerGroup className="text-slate-500 text-xs" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold text-slate-900 leading-tight">Saved Hashtag Groups</h2>
+            <p className="text-xs text-slate-400">Insert into any post with one click</p>
           </div>
           {!showNew && (
             <Button
-              onClick={() => { setShowNew(true); setEditingId(null); }}
-              className="bg-green-500 hover:bg-green-600 text-white gap-2 shadow-sm"
+              onClick={() => { setShowNew(true); setEditingId(null); setPrefillTags(null); }}
+              className="bg-slate-900 hover:bg-slate-700 text-white gap-2 text-xs shadow-sm flex-shrink-0"
+              size="sm"
             >
-              <FaPlus className="text-xs" />
-              New Group
+              <FaPlus className="text-[10px]" /> New Group
             </Button>
           )}
         </div>
 
-        {/* ── New group form ── */}
+        {/* New / prefill group form */}
         {showNew && (
-          <div className="mb-6">
+          <div className="mb-5">
             <GroupForm
+              key={prefillTags ? 'prefill' : 'manual'}
               initial={prefillTags ? { hashtags: prefillTags.hashtags, platform: prefillTags.platform } : undefined}
-              onSave={prefillTags ? handleCreateWithPrefill : handleCreate}
+              onSave={handleCreate}
               onCancel={() => { setShowNew(false); setPrefillTags(null); }}
             />
           </div>
         )}
 
-        {/* ── Groups section ── */}
+        {/* Group list */}
         {loading ? (
-          <div className="flex items-center justify-center py-20 gap-2 text-gray-400 text-sm">
-            <FaSpinner className="animate-spin" /> Loading groups…
+          <div className="flex items-center justify-center py-16 gap-2 text-slate-400 text-sm">
+            <FaSpinner className="animate-spin" /> Loading…
           </div>
         ) : groups.length === 0 && !showNew ? (
-          <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-200">
-            <div className="w-14 h-14 rounded-2xl bg-green-50 border border-green-100 flex items-center justify-center mx-auto mb-4">
-              <FaHashtag className="text-green-400 text-xl" />
+          <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center mx-auto mb-3">
+              <FaHashtag className="text-violet-400 text-lg" />
             </div>
-            <p className="text-gray-700 font-semibold mb-1">No hashtag groups yet</p>
-            <p className="text-gray-400 text-sm mb-5 max-w-xs mx-auto">
-              Create a group or use the AI generator below to get started.
-            </p>
-            <Button
-              onClick={() => setShowNew(true)}
-              className="bg-green-500 hover:bg-green-600 text-white gap-2 shadow-sm"
-            >
-              <FaPlus className="text-xs" />
-              Create First Group
+            <p className="text-slate-700 font-semibold mb-1">No saved groups yet</p>
+            <p className="text-slate-400 text-sm mb-5">Generate hashtags above and save them as a group.</p>
+            <Button onClick={() => setShowNew(true)} className="bg-slate-900 hover:bg-slate-700 text-white gap-2 text-xs" size="sm">
+              <FaPlus className="text-[10px]" /> Create Manually
             </Button>
           </div>
         ) : (
           <>
             {groups.length > 0 && (
-              <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">
-                {groups.length} {groups.length === 1 ? 'Group' : 'Groups'}
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-3">
+                {groups.length} {groups.length === 1 ? 'group' : 'groups'}
               </p>
             )}
             <div className="space-y-3">
@@ -576,16 +514,6 @@ const HashtagGroups = () => {
             </div>
           </>
         )}
-
-        {/* ── AI Generator ── */}
-        <div className="mt-10">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="flex-1 h-px bg-gray-100" />
-            <span className="text-xs text-gray-400 font-semibold uppercase tracking-widest flex-shrink-0">AI Tools</span>
-            <div className="flex-1 h-px bg-gray-100" />
-          </div>
-          <HashtagGenerator onSaveAsGroup={handleSaveGeneratedAsGroup} />
-        </div>
 
       </div>
     </DashboardLayout>

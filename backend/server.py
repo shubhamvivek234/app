@@ -1372,6 +1372,66 @@ async def generate_hashtags(request: HashtagGenerateRequest, current_user: User 
         logging.error(f"Hashtag generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Hashtag generation failed: {str(e)}")
 
+
+# ==================== HASHTAG GROUPS ====================
+
+class HashtagGroupCreate(BaseModel):
+    name: str
+    hashtags: List[str]
+    category: Optional[str] = ""
+    platform: Optional[str] = ""
+
+class HashtagGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+    category: Optional[str] = None
+    platform: Optional[str] = None
+
+@api_router.get("/hashtag-groups")
+async def get_hashtag_groups(current_user: User = Depends(get_current_user)):
+    groups = await db.hashtag_groups.find(
+        {"user_id": current_user.user_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return groups
+
+@api_router.post("/hashtag-groups")
+async def create_hashtag_group(data: HashtagGroupCreate, current_user: User = Depends(get_current_user)):
+    if not data.name.strip():
+        raise HTTPException(status_code=400, detail="Group name is required")
+    if not data.hashtags:
+        raise HTTPException(status_code=400, detail="At least one hashtag is required")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.user_id,
+        "name": data.name.strip(),
+        "hashtags": data.hashtags,
+        "category": (data.category or "").strip(),
+        "platform": data.platform or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.hashtag_groups.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.patch("/hashtag-groups/{group_id}")
+async def update_hashtag_group(group_id: str, data: HashtagGroupUpdate, current_user: User = Depends(get_current_user)):
+    existing = await db.hashtag_groups.find_one({"id": group_id, "user_id": current_user.user_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Group not found")
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    await db.hashtag_groups.update_one({"id": group_id}, {"$set": update})
+    updated = await db.hashtag_groups.find_one({"id": group_id}, {"_id": 0})
+    return updated
+
+@api_router.delete("/hashtag-groups/{group_id}")
+async def delete_hashtag_group(group_id: str, current_user: User = Depends(get_current_user)):
+    result = await db.hashtag_groups.delete_one({"id": group_id, "user_id": current_user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"success": True}
+
 # ==================== SOCIAL ACCOUNTS ====================
 
 @api_router.post("/social-accounts", response_model=SocialAccount)
