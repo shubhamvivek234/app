@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
@@ -34,15 +34,133 @@ const getAvatarColor = (name) => {
   return colors[(name?.charCodeAt(0) || 0) % colors.length];
 };
 
-const TIMEZONES = [
-  'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
-  'America/Los_Angeles', 'Europe/London', 'Europe/Paris', 'Asia/Kolkata',
-  'Asia/Tokyo', 'Australia/Sydney',
+// Fallback list used if browser doesn't support Intl.supportedValuesOf
+const FALLBACK_TIMEZONES = [
+  'UTC',
+  'America/New_York','America/Chicago','America/Denver','America/Los_Angeles',
+  'America/Phoenix','America/Anchorage','America/Honolulu',
+  'America/Toronto','America/Vancouver','America/Mexico_City',
+  'America/Bogota','America/Lima','America/Santiago','America/Sao_Paulo',
+  'America/Buenos_Aires','America/Caracas','America/Halifax',
+  'Europe/London','Europe/Dublin','Europe/Lisbon','Europe/Madrid',
+  'Europe/Paris','Europe/Berlin','Europe/Rome','Europe/Amsterdam',
+  'Europe/Brussels','Europe/Vienna','Europe/Zurich','Europe/Stockholm',
+  'Europe/Oslo','Europe/Copenhagen','Europe/Helsinki','Europe/Warsaw',
+  'Europe/Prague','Europe/Budapest','Europe/Bucharest','Europe/Athens',
+  'Europe/Istanbul','Europe/Kiev','Europe/Moscow','Europe/Minsk',
+  'Africa/Cairo','Africa/Lagos','Africa/Nairobi','Africa/Johannesburg',
+  'Africa/Casablanca','Africa/Accra','Africa/Tunis','Africa/Algiers',
+  'Asia/Dubai','Asia/Riyadh','Asia/Kuwait','Asia/Baghdad',
+  'Asia/Tehran','Asia/Karachi','Asia/Kolkata','Asia/Colombo',
+  'Asia/Kathmandu','Asia/Dhaka','Asia/Yangon','Asia/Bangkok',
+  'Asia/Jakarta','Asia/Singapore','Asia/Kuala_Lumpur','Asia/Manila',
+  'Asia/Hong_Kong','Asia/Shanghai','Asia/Taipei','Asia/Seoul',
+  'Asia/Tokyo','Asia/Vladivostok','Asia/Magadan','Asia/Kamchatka',
+  'Australia/Perth','Australia/Darwin','Australia/Adelaide',
+  'Australia/Brisbane','Australia/Sydney','Australia/Melbourne',
+  'Pacific/Auckland','Pacific/Fiji','Pacific/Honolulu',
+  'Pacific/Guam','Pacific/Port_Moresby',
 ];
+
+// Get UTC offset label for a timezone (e.g. "UTC+5:30")
+const getUTCOffsetLabel = (tzName) => {
+  try {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: tzName,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(new Date());
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    return tzPart?.value || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
+// Build sorted timezone list with UTC offset labels
+const buildTimezoneList = () => {
+  const names = (typeof Intl.supportedValuesOf === 'function')
+    ? Intl.supportedValuesOf('timeZone')
+    : FALLBACK_TIMEZONES;
+  return names.map((tz) => ({
+    value: tz,
+    label: `${tz} (${getUTCOffsetLabel(tz)})`,
+  }));
+};
+
+// Convert a user's chosen date + time in a named IANA timezone → UTC ISO string
+// e.g. ("2025-03-29", "10:00", "Asia/Kolkata") → "2025-03-29T04:30:00.000Z"
+const convertToUTC = (dateStr, timeStr, tzName) => {
+  // Treat the input as if it were UTC to get a reference Date
+  const dtAsUTC = new Date(`${dateStr}T${timeStr}:00Z`);
+  if (isNaN(dtAsUTC.getTime())) return null;
+
+  // Format that UTC instant in the target timezone — this tells us what the
+  // "local wall clock" would read in that zone for that UTC instant
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tzName,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(dtAsUTC);
+  const p = {};
+  parts.forEach((pt) => (p[pt.type] = pt.value));
+
+  // Clamp hour "24" → "00" (Intl edge case at midnight)
+  const hour = p.hour === '24' ? '00' : p.hour;
+  const localAsUTC = new Date(`${p.year}-${p.month}-${p.day}T${hour}:${p.minute}:${p.second}Z`);
+
+  // The offset in ms between "target tz local time read as UTC" and our reference UTC
+  const offsetMs = localAsUTC.getTime() - dtAsUTC.getTime();
+
+  // Subtract the offset to get the true UTC instant
+  return new Date(dtAsUTC.getTime() - offsetMs).toISOString();
+};
 
 const formatFileSize = (bytes) => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Searchable timezone selector
+const TimezoneSelect = ({ value, onChange }) => {
+  const [search, setSearch] = useState('');
+  const allTZ = useMemo(() => buildTimezoneList(), []);
+  const filtered = useMemo(
+    () => search.trim()
+      ? allTZ.filter((tz) => tz.label.toLowerCase().includes(search.toLowerCase()))
+      : allTZ,
+    [allTZ, search]
+  );
+
+  return (
+    <div className="space-y-1">
+      <div className="relative">
+        <FaGlobe className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search timezone…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full text-xs pl-7 pr-2 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:bg-white transition-colors"
+        />
+      </div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        size={4}
+        className="w-full text-xs px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:bg-white transition-colors"
+      >
+        {filtered.map((tz) => (
+          <option key={tz.value} value={tz.value}>{tz.label}</option>
+        ))}
+      </select>
+      <p className="text-[10px] text-gray-400">
+        {filtered.length} timezone{filtered.length !== 1 ? 's' : ''}
+        {search && ` matching "${search}"`}
+      </p>
+    </div>
+  );
 };
 
 const VideoCard = ({ item, index, onUpdate, onRemove }) => (
@@ -223,7 +341,8 @@ const BulkVideoUpload = () => {
 
         let scheduledTime = null;
         if (video.date && video.time) {
-          scheduledTime = new Date(`${video.date}T${video.time}:00`).toISOString();
+          // Convert date+time in the selected timezone → UTC ISO string
+          scheduledTime = convertToUTC(video.date, video.time, bulkTimezone);
         }
 
         await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v1/posts`, {
@@ -387,18 +506,7 @@ const BulkVideoUpload = () => {
 
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">Timezone</label>
-                  <div className="relative">
-                    <FaGlobe className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs" />
-                    <select
-                      value={bulkTimezone}
-                      onChange={(e) => setBulkTimezone(e.target.value)}
-                      className="w-full text-xs pl-7 pr-2 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:bg-white transition-colors appearance-none"
-                    >
-                      {TIMEZONES.map((tz) => (
-                        <option key={tz} value={tz}>{tz}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <TimezoneSelect value={bulkTimezone} onChange={setBulkTimezone} />
                 </div>
               </div>
 

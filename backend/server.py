@@ -256,6 +256,7 @@ class PostCreate(BaseModel):
     video_title: Optional[str] = None
     video_size_mb: Optional[float] = None  # 17.3: client passes this after upload to enable dynamic window
     scheduled_time: Optional[str] = None
+    timezone: Optional[str] = None        # IANA tz the user picked; scheduled_time is always UTC
 
 class PostUpdate(BaseModel):
     content: Optional[str] = None
