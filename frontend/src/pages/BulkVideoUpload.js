@@ -3,11 +3,36 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { getSocialAccounts } from '@/lib/api';
+import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
 import {
   FaArrowLeft, FaCloudUploadAlt, FaTimes, FaVideo, FaCalendarAlt,
-  FaClock, FaGlobe, FaCheckCircle, FaSpinner, FaPlus, FaExclamationCircle,
+  FaClock, FaGlobe, FaSpinner, FaPlus, FaExclamationCircle,
+  FaFacebook, FaTwitter, FaLinkedin, FaInstagram, FaPinterest,
+  FaYoutube, FaDiscord,
 } from 'react-icons/fa';
+import { SiTiktok as FaTiktok, SiBluesky, SiThreads } from 'react-icons/si';
+
+const PLATFORM_ICONS = {
+  facebook:  { icon: FaFacebook,  color: 'text-blue-600' },
+  twitter:   { icon: FaTwitter,   color: 'text-sky-500' },
+  linkedin:  { icon: FaLinkedin,  color: 'text-blue-700' },
+  instagram: { icon: FaInstagram, color: 'text-pink-500' },
+  pinterest: { icon: FaPinterest, color: 'text-red-600' },
+  youtube:   { icon: FaYoutube,   color: 'text-red-600' },
+  tiktok:    { icon: FaTiktok,    color: 'text-gray-900' },
+  bluesky:   { icon: SiBluesky,   color: 'text-blue-500' },
+  threads:   { icon: SiThreads,   color: 'text-gray-900' },
+  discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
+};
+
+const getAvatarColor = (name) => {
+  const colors = [
+    'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
+    'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500',
+  ];
+  return colors[(name?.charCodeAt(0) || 0) % colors.length];
+};
 
 const TIMEZONES = [
   'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
@@ -249,9 +274,6 @@ const BulkVideoUpload = () => {
 
         {/* Connected accounts bar — always visible */}
         <div className="bg-white rounded-xl border border-gray-200 px-5 py-4 mb-6 shadow-sm">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Post to accounts
-          </p>
           {accountsLoading ? (
             <div className="flex items-center gap-2 text-gray-400 text-xs py-1">
               <FaSpinner className="animate-spin text-xs" /> Loading accounts…
@@ -262,22 +284,13 @@ const BulkVideoUpload = () => {
               No connected accounts. Go to <a href="/settings" className="underline font-semibold ml-1">Settings → Accounts</a> to connect one.
             </div>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {accounts.map((acc) => (
-                <button
-                  key={acc.id}
-                  onClick={() => toggleAccount(acc.id)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-                    selectedAccounts.includes(acc.id)
-                      ? 'bg-green-500 text-white border-green-500'
-                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  {selectedAccounts.includes(acc.id) && <FaCheckCircle className="text-[10px]" />}
-                  {acc.platform_username || acc.username || acc.display_name || acc.platform}
-                </button>
-              ))}
-            </div>
+            <AccountSelector
+              accounts={accounts}
+              selectedAccounts={selectedAccounts}
+              onToggle={toggleAccount}
+              platformIcons={PLATFORM_ICONS}
+              getAvatarColor={getAvatarColor}
+            />
           )}
         </div>
 
