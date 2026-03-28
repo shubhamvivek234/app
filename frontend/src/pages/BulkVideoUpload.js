@@ -122,9 +122,13 @@ const formatFileSize = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-// Searchable timezone selector
+// Searchable dropdown timezone selector
 const TimezoneSelect = ({ value, onChange }) => {
+  const [open, setOpen]     = useState(false);
   const [search, setSearch] = useState('');
+  const wrapRef             = useRef(null);
+  const searchRef           = useRef(null);
+
   const allTZ = useMemo(() => buildTimezoneList(), []);
   const filtered = useMemo(
     () => search.trim()
@@ -133,32 +137,78 @@ const TimezoneSelect = ({ value, onChange }) => {
     [allTZ, search]
   );
 
+  const selected = allTZ.find((tz) => tz.value === value);
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleOpen = () => {
+    setOpen((o) => !o);
+    // Auto-focus search on open
+    setTimeout(() => searchRef.current?.focus(), 50);
+  };
+
+  const pick = (tz) => {
+    onChange(tz.value);
+    setOpen(false);
+    setSearch('');
+  };
+
   return (
-    <div className="space-y-1">
-      <div className="relative">
-        <FaGlobe className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none" />
-        <input
-          type="text"
-          placeholder="Search timezone…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full text-xs pl-7 pr-2 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:bg-white transition-colors"
-        />
-      </div>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        size={4}
-        className="w-full text-xs px-2 py-1 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 focus:bg-white transition-colors"
+    <div ref={wrapRef} className="relative">
+      {/* Trigger button */}
+      <button
+        type="button"
+        onClick={handleOpen}
+        className="w-full flex items-center gap-2 text-xs px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-green-400 focus:outline-none focus:border-green-400 transition-colors text-left"
       >
-        {filtered.map((tz) => (
-          <option key={tz.value} value={tz.value}>{tz.label}</option>
-        ))}
-      </select>
-      <p className="text-[10px] text-gray-400">
-        {filtered.length} timezone{filtered.length !== 1 ? 's' : ''}
-        {search && ` matching "${search}"`}
-      </p>
+        <FaGlobe className="text-gray-400 flex-shrink-0" />
+        <span className="flex-1 truncate text-gray-700">{selected?.label || value}</span>
+        <span className="text-gray-400 text-[10px]">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+          {/* Search */}
+          <div className="p-2 border-b border-gray-100">
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder="Search timezone…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full text-xs px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-green-400 transition-colors"
+            />
+          </div>
+          {/* Options list */}
+          <ul className="max-h-48 overflow-y-auto">
+            {filtered.length === 0 && (
+              <li className="text-xs text-gray-400 px-3 py-3 text-center">No timezones found</li>
+            )}
+            {filtered.map((tz) => (
+              <li
+                key={tz.value}
+                onClick={() => pick(tz)}
+                className={`text-xs px-3 py-2 cursor-pointer truncate transition-colors ${
+                  tz.value === value
+                    ? 'bg-green-50 text-green-700 font-semibold'
+                    : 'text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {tz.label}
+              </li>
+            ))}
+          </ul>
+          <div className="px-3 py-1.5 border-t border-gray-100 text-[10px] text-gray-400">
+            {filtered.length} timezone{filtered.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -242,7 +292,9 @@ const BulkVideoUpload = () => {
   // Bulk settings
   const [bulkDate, setBulkDate] = useState('');
   const [bulkTime, setBulkTime] = useState('');
-  const [bulkTimezone, setBulkTimezone] = useState('UTC');
+  const [bulkTimezone, setBulkTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  );
 
   const fileInputRef = useRef(null);
 
