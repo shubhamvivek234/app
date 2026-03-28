@@ -6,7 +6,7 @@ import { getSocialAccounts } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   FaArrowLeft, FaCloudUploadAlt, FaTimes, FaVideo, FaCalendarAlt,
-  FaClock, FaGlobe, FaCheckCircle, FaSpinner, FaPlus,
+  FaClock, FaGlobe, FaCheckCircle, FaSpinner, FaPlus, FaExclamationCircle,
 } from 'react-icons/fa';
 
 const TIMEZONES = [
@@ -91,6 +91,7 @@ const BulkVideoUpload = () => {
   const { user } = useAuth();
   const [videos, setVideos] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [scheduling, setScheduling] = useState(false);
@@ -103,9 +104,11 @@ const BulkVideoUpload = () => {
   const fileInputRef = useRef(null);
 
   React.useEffect(() => {
+    setAccountsLoading(true);
     getSocialAccounts()
-      .then((res) => setAccounts(res.accounts || res || []))
-      .catch(() => {});
+      .then((res) => setAccounts(Array.isArray(res) ? res : (res.accounts || [])))
+      .catch(() => toast.error('Failed to load connected accounts'))
+      .finally(() => setAccountsLoading(false));
   }, []);
 
   const addFiles = useCallback((files) => {
@@ -244,12 +247,21 @@ const BulkVideoUpload = () => {
           </div>
         </div>
 
-        {/* Connected accounts bar */}
-        {accounts.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 px-5 py-4 mb-6 shadow-sm">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              Post to accounts
-            </p>
+        {/* Connected accounts bar — always visible */}
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-4 mb-6 shadow-sm">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+            Post to accounts
+          </p>
+          {accountsLoading ? (
+            <div className="flex items-center gap-2 text-gray-400 text-xs py-1">
+              <FaSpinner className="animate-spin text-xs" /> Loading accounts…
+            </div>
+          ) : accounts.length === 0 ? (
+            <div className="flex items-center gap-2 text-amber-600 text-xs bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              <FaExclamationCircle className="flex-shrink-0" />
+              No connected accounts. Go to <a href="/settings" className="underline font-semibold ml-1">Settings → Accounts</a> to connect one.
+            </div>
+          ) : (
             <div className="flex flex-wrap gap-2">
               {accounts.map((acc) => (
                 <button
@@ -262,12 +274,12 @@ const BulkVideoUpload = () => {
                   }`}
                 >
                   {selectedAccounts.includes(acc.id) && <FaCheckCircle className="text-[10px]" />}
-                  {acc.username || acc.display_name || acc.platform}
+                  {acc.platform_username || acc.username || acc.display_name || acc.platform}
                 </button>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="flex gap-6">
           {/* Left: video list */}
