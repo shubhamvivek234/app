@@ -18,23 +18,23 @@ export const PLAN_LIMITS = {
 export const PLATFORM_LIMITS = {
   instagram: {
     label:        'Instagram',
-    maxVideoBytes: 650  * 1024 * 1024,        // 650 MB
-    maxImageBytes: 8    * 1024 * 1024,        // 8 MB
+    maxVideoBytes: 4    * 1024 * 1024 * 1024, // 4 GB (Reels — verified 2026)
+    maxImageBytes: 30   * 1024 * 1024,        // 30 MB
     maxDuration:   3600,                       // 60 min
     maxWidth:      1920,
     allowedVideoTypes: ['video/mp4', 'video/quicktime'],
     allowedImageTypes: ['image/jpeg', 'image/png'],
-    notes: 'Reels: max 650 MB · 60 min · MP4/MOV only',
+    notes: 'Reels: max 4 GB · 60 min · MP4/MOV only · 4:5 portrait preferred',
   },
   facebook: {
     label:        'Facebook',
-    maxVideoBytes: 4    * 1024 * 1024 * 1024, // 4 GB
-    maxImageBytes: 10   * 1024 * 1024,        // 10 MB
-    maxDuration:   7200,                       // 2 hours
+    maxVideoBytes: 10   * 1024 * 1024 * 1024, // 10 GB (feed); Reels/Stories: 4 GB
+    maxImageBytes: 30   * 1024 * 1024,        // 30 MB
+    maxDuration:   14400,                      // 4 hours (feed)
     maxWidth:      1920,
     allowedVideoTypes: ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'],
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-    notes: 'Videos: max 4 GB · 2 hours',
+    notes: 'Feed: max 10 GB · 4 hrs · Reels/Stories: max 4 GB',
   },
   youtube: {
     label:        'YouTube',
@@ -68,13 +68,13 @@ export const PLATFORM_LIMITS = {
   },
   tiktok: {
     label:        'TikTok',
-    maxVideoBytes: 4    * 1024 * 1024 * 1024, // 4 GB
+    maxVideoBytes: 500  * 1024 * 1024,        // 500 MB (web — verified 2026; iOS: 287.6 MB, Android: 72 MB)
     maxImageBytes: 20   * 1024 * 1024,        // 20 MB
-    maxDuration:   600,                        // 10 min
+    maxDuration:   3600,                       // 60 min
     maxWidth:      1920,
     allowedVideoTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp'],
-    notes: 'Videos: max 4 GB · 10 min · portrait (9:16) recommended',
+    notes: 'Videos: max 500 MB (web) · 60 min · 9:16 mandatory',
   },
   pinterest: {
     label:        'Pinterest',
@@ -82,9 +82,9 @@ export const PLATFORM_LIMITS = {
     maxImageBytes: 20   * 1024 * 1024,        // 20 MB
     maxDuration:   900,                        // 15 min
     maxWidth:      null,
-    allowedVideoTypes: ['video/mp4'],
+    allowedVideoTypes: ['video/mp4', 'video/quicktime', 'video/x-m4v'],
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-    notes: 'Videos: max 2 GB · 15 min · MP4 only',
+    notes: 'Videos: max 2 GB · 15 min · MP4/MOV/M4V · H.264 or H.265 · 2:3 preferred',
   },
 };
 
