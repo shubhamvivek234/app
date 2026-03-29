@@ -41,8 +41,8 @@ SENDER_EMAIL   = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
     max_retries=2,
     acks_late=True,
     queue="media_processing",
-    time_limit=360,
-    soft_time_limit=300,
+    time_limit=7500,       # 2h5m — allows 2h FFmpeg transcode + upload for 10GB files
+    soft_time_limit=7200,  # 2h — soft limit triggers graceful abort
 )
 def process_media(self, media_job_id: str, user_id: str) -> dict:
     return asyncio.run(_async_process_media(self, media_job_id, user_id))
@@ -90,13 +90,9 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         media_filename = f"{media_job_id}{ext}"
         media_folder = f"media/{user_id}"
         media_storage_key = f"{media_folder}/{media_filename}"
-        loop = asyncio.get_event_loop()
-        def _read_file(path: str) -> bytes:
-            with open(path, "rb") as f:
-                return f.read()
-        media_bytes = await loop.run_in_executor(None, _read_file, processed_path)
-        media_url = await upload_file_async(
-            media_bytes,
+        from utils.storage import upload_file_from_path_async
+        media_url = await upload_file_from_path_async(
+            processed_path,
             media_filename,
             mime_type,
             folder=media_folder,

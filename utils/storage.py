@@ -139,6 +139,145 @@ def _r2_upload(
     return public_url
 
 
+
+# ── Large file support: upload from path (streaming / multipart) ──────────
+
+_MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MB — use multipart above this size
+_MULTIPART_CHUNK_SIZE = 100 * 1024 * 1024  # 100 MB chunks
+
+
+def upload_file_from_path(
+    file_path: str,
+    filename: str,
+    content_type: str,
+    folder: str = "uploads",
+) -> str:
+    """
+    Upload a file from disk path — uses multipart upload for files > 100 MB.
+    Does NOT load the entire file into memory.
+    """
+    if _STORAGE_BACKEND == "r2":
+        return _r2_upload_from_path(file_path, filename, content_type, folder)
+    return _firebase_upload_from_path(file_path, filename, content_type, folder)
+
+
+async def upload_file_from_path_async(
+    file_path: str,
+    filename: str,
+    content_type: str,
+    folder: str = "uploads",
+) -> str:
+    """Async wrapper — runs the blocking upload_file_from_path() in a thread pool."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: upload_file_from_path(file_path, filename, content_type, folder),
+    )
+
+
+def _r2_upload_from_path(
+    file_path: str,
+    filename: str,
+    content_type: str,
+    folder: str,
+) -> str:
+    """
+    Upload from file path using boto3 multipart upload for large files.
+    Files under _MULTIPART_THRESHOLD use single put_object.
+    Files over _MULTIPART_THRESHOLD use multipart upload in _MULTIPART_CHUNK_SIZE chunks.
+    """
+    import os as _os
+    key = _r2_object_key(folder, filename)
+    client = _get_r2_client()
+    file_size = _os.path.getsize(file_path)
+
+    if file_size <= _MULTIPART_THRESHOLD:
+        # Small file — single PUT (no multipart overhead)
+        with open(file_path, "rb") as f:
+            client.put_object(
+                Bucket=_R2_BUCKET,
+                Key=key,
+                Body=f,
+                ContentType=content_type,
+            )
+    else:
+        # Large file — multipart upload
+        mpu = client.create_multipart_upload(
+            Bucket=_R2_BUCKET,
+            Key=key,
+            ContentType=content_type,
+        )
+        upload_id = mpu["UploadId"]
+        parts = []
+        part_number = 1
+
+        try:
+            with open(file_path, "rb") as f:
+                while True:
+                    chunk = f.read(_MULTIPART_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    resp = client.upload_part(
+                        Bucket=_R2_BUCKET,
+                        Key=key,
+                        UploadId=upload_id,
+                        PartNumber=part_number,
+                        Body=chunk,
+                    )
+                    parts.append({"ETag": resp["ETag"], "PartNumber": part_number})
+                    logger.info(
+                        "R2 multipart part %d uploaded (%d bytes) for key=%s",
+                        part_number, len(chunk), key,
+                    )
+                    part_number += 1
+
+            client.complete_multipart_upload(
+                Bucket=_R2_BUCKET,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception:
+            # Abort multipart upload on any failure to avoid orphaned parts
+            try:
+                client.abort_multipart_upload(
+                    Bucket=_R2_BUCKET,
+                    Key=key,
+                    UploadId=upload_id,
+                )
+                logger.warning("R2 multipart upload aborted for key=%s", key)
+            except Exception as abort_exc:
+                logger.error("R2 multipart abort failed for key=%s: %s", key, abort_exc)
+            raise
+
+    public_url = f"{_R2_PUBLIC_URL_BASE}/{key}"
+    logger.info("R2 upload complete: key=%s size=%d url=%s", key, file_size, public_url)
+    return public_url
+
+
+def _firebase_upload_from_path(
+    file_path: str,
+    filename: str,
+    content_type: str,
+    folder: str,
+) -> str:
+    """Upload from file path to Firebase Storage using streaming."""
+    try:
+        import firebase_admin.storage as fb_storage
+
+        bucket = fb_storage.bucket()
+        blob_path = f"{folder}/{filename}"
+        blob = bucket.blob(blob_path)
+        blob.upload_from_filename(file_path, content_type=content_type)
+        blob.make_public()
+        url: str = blob.public_url
+        logger.info("Firebase upload from path complete: blob=%s url=%s", blob_path, url)
+        return url
+    except Exception as exc:
+        logger.error("Firebase upload from path failed: %s", exc, exc_info=True)
+        raise
+
+
 def _r2_delete(url: str) -> None:
     parsed = urlparse(url)
     # Strip leading slash to get the object key

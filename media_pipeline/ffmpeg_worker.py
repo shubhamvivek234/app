@@ -12,7 +12,22 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-FFMPEG_TIMEOUT = 300  # 5-minute hard limit
+_FFMPEG_BASE_TIMEOUT = 300   # 5-minute base for files under 500 MB
+_FFMPEG_SECS_PER_GB = 600   # +10 min per GB above 500 MB
+
+
+def _ffmpeg_timeout_for_file(file_path: str) -> int:
+    """Dynamic FFmpeg timeout based on file size. Larger files get proportionally more time."""
+    try:
+        size_bytes = os.path.getsize(file_path)
+    except OSError:
+        return _FFMPEG_BASE_TIMEOUT
+    size_gb = size_bytes / (1024 * 1024 * 1024)
+    if size_gb <= 0.5:
+        return _FFMPEG_BASE_TIMEOUT
+    extra = int((size_gb - 0.5) * _FFMPEG_SECS_PER_GB)
+    return min(_FFMPEG_BASE_TIMEOUT + extra, 7200)  # cap at 2 hours
+
 TEMP_DIR = "/tmp/media_processing"
 
 
@@ -46,7 +61,7 @@ async def _transcode_h264(input_path: str, output_path: str) -> str:
         "-movflags", "+faststart",
         output_path,
     ]
-    await _run_process(cmd_args)
+    await _run_process(cmd_args, timeout=_ffmpeg_timeout_for_file(input_path))
     return output_path
 
 
@@ -63,7 +78,7 @@ async def _convert_hdr_to_sdr(input_path: str, output_path: str) -> str:
         "-c:a", "aac", "-b:a", "128k",
         output_path,
     ]
-    await _run_process(cmd_args)
+    await _run_process(cmd_args, timeout=_ffmpeg_timeout_for_file(input_path))
     logger.info("HDR->SDR conversion complete")
     return output_path
 
@@ -183,7 +198,7 @@ async def convert_gif_for_platforms(
                     stderr=asyncio.subprocess.PIPE,
                 )
                 stdout, _ = await asyncio.wait_for(
-                    proc.communicate(), timeout=FFMPEG_TIMEOUT
+                    proc.communicate(), timeout=_FFMPEG_BASE_TIMEOUT
                 )
                 duration_str = stdout.decode().strip()
                 duration = float(duration_str) if duration_str else 0.0
@@ -213,21 +228,22 @@ async def convert_gif_for_platforms(
     return results
 
 
-async def _run_process(args: list[str]) -> None:
+async def _run_process(args: list[str], *, timeout: int | None = None) -> None:
     """Run a process with explicit arg list — no shell interpolation."""
     # All args are server-generated constants or server-side temp file paths.
     # No user-supplied data is passed here.
-    logger.debug("Running: %s %s ...", args[0], args[1])
+    effective_timeout = timeout or _FFMPEG_BASE_TIMEOUT
+    logger.debug("Running: %s %s ... (timeout=%ds)", args[0], args[1], effective_timeout)
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=FFMPEG_TIMEOUT)
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        raise RuntimeError("FFmpeg/FFprobe process timed out after 5 minutes")
+        raise RuntimeError(f"FFmpeg/FFprobe process timed out after {effective_timeout}s")
 
     if proc.returncode != 0:
         raise RuntimeError(

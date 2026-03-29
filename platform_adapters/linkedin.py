@@ -59,7 +59,7 @@ class LinkedInAdapter(PlatformAdapter):
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             asset_urn: str | None = None
 
             if post_type == "image" and media_url:

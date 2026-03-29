@@ -23,9 +23,9 @@ router = APIRouter(tags=["upload"])
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _MAX_FILE_BYTES: dict[str, int] = {
-    "starter": 100 * 1024 * 1024,   # 100 MB
-    "pro":     500 * 1024 * 1024,   # 500 MB
-    "agency":  2 * 1024 * 1024 * 1024,  # 2 GB
+    "starter": 500 * 1024 * 1024,       # 500 MB
+    "pro":     2 * 1024 * 1024 * 1024,   # 2 GB
+    "agency":  10 * 1024 * 1024 * 1024,  # 10 GB
 }
 _DEFAULT_MAX_BYTES = _MAX_FILE_BYTES["starter"]
 
@@ -130,23 +130,33 @@ async def upload_media(
         media_job_id = str(uuid.uuid4())
         safe_filename = f"{media_job_id}{ext}"
 
-        # 6. Write to quarantine path
+        # 6. Stream to quarantine path in chunks (never load entire file into RAM)
         quarantine_dir = Path(_QUARANTINE_BASE) / user_id
         quarantine_dir.mkdir(parents=True, exist_ok=True)
         quarantine_path = str(quarantine_dir / safe_filename)
 
-        # Read the rest of the file and enforce size limit
-        remaining = await file.read()
-        total_bytes = len(header_bytes) + len(remaining)
-        if total_bytes > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File exceeds maximum size ({max_bytes // (1024*1024)} MB for {plan} plan)",
-            )
+        _STREAM_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB chunks
+        total_bytes = len(header_bytes)
 
-        with open(quarantine_path, "wb") as fh:
-            fh.write(header_bytes)
-            fh.write(remaining)
+        try:
+            with open(quarantine_path, "wb") as fh:
+                fh.write(header_bytes)
+                while True:
+                    chunk = await file.read(_STREAM_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"File exceeds maximum size ({max_bytes // (1024*1024)} MB for {plan} plan)",
+                        )
+                    fh.write(chunk)
+        except HTTPException:
+            # Clean up partial file on size limit violation
+            if os.path.exists(quarantine_path):
+                os.unlink(quarantine_path)
+            raise
 
         # 7. Persist media_asset record
         now = datetime.now(timezone.utc)

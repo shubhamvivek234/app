@@ -79,7 +79,7 @@ class TikTokAdapter(PlatformAdapter):
         # Step 1: HEAD request to get video size WITHOUT loading it into memory.
         # Previous implementation loaded entire video into memory which would OOM
         # the worker on large files (500MB+) when multiple users upload simultaneously.
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             head_resp = await client.head(media_url)
             if head_resp.status_code not in (200, 301, 302):
                 # Fallback: GET with stream to read Content-Length from response headers
@@ -136,7 +136,7 @@ class TikTokAdapter(PlatformAdapter):
 
         # Step 3: Upload video by STREAMING from media_url → upload_url.
         # This avoids loading the entire file into worker memory.
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             async with client.stream("GET", media_url) as media_stream:
                 if media_stream.status_code != 200:
                     raise PlatformHTTPError(media_stream.status_code, "Could not stream video for TikTok upload")

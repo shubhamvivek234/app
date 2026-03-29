@@ -593,7 +593,7 @@ _PROCESSING_SECS: dict[str, int] = {
     "youtube": 300,
 }
 _SAFETY_BUFFER_SECS = 300  # 5-minute safety margin
-_DEFAULT_PRE_UPLOAD_SECS = 900  # 15-minute fallback when file_size unknown
+_DEFAULT_PRE_UPLOAD_SECS = 1800  # 30-minute fallback when file_size unknown
 
 
 def calculate_pre_upload_start(

@@ -245,7 +245,7 @@ async def _async_scan_pre_upload_timeouts() -> dict:
     db = client[os.environ["DB_NAME"]]
 
     now = datetime.utcnow()
-    timeout_threshold = now - timedelta(minutes=30)
+    timeout_threshold = now - timedelta(minutes=120)  # 2h — 10GB files need longer upload windows
 
     # Find posts stuck in "uploading" for more than 30 minutes
     cursor = db.posts.find(
@@ -265,7 +265,7 @@ async def _async_scan_pre_upload_timeouts() -> dict:
             {"id": post_id, "pre_upload_status": "uploading"},
             {"$set": {
                 "pre_upload_status": "timeout",
-                "pre_upload_error": "Pre-upload timed out after 30 minutes — moved to DLQ",
+                "pre_upload_error": "Pre-upload timed out after 2 hours — moved to DLQ",
                 "pre_upload_timed_out_at": now,
             }},
         )
@@ -292,7 +292,7 @@ async def _async_scan_pre_upload_timeouts() -> dict:
                     "type": "pre_upload_timeout",
                     "platform": ",".join(post.get("platforms", [])),
                     "error": (
-                        "Your video upload timed out after 30 minutes. "
+                        "Your video upload timed out after 2 hours. "
                         "Please reschedule the post or try again with a smaller file."
                     ),
                 },

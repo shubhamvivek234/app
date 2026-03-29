@@ -65,7 +65,7 @@ class YouTubeAdapter(PlatformAdapter):
 
         auth_headers = {"Authorization": f"Bearer {access_token}"}
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             if not resume_uri:
                 # Initiate resumable upload session
                 effective_content = post.get("effective_content", post.get("content", ""))

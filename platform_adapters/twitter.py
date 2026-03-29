@@ -105,16 +105,23 @@ class TwitterAdapter(PlatformAdapter):
     ) -> list[str]:
         """
         Upload media via Twitter v1.1 chunked upload (INIT → APPEND → FINALIZE).
-        Returns list containing the media_id string.
-        TODO: implement chunked APPEND for large files; currently single-segment.
+        Streams media in 5MB segments to avoid loading entire file into memory.
         """
         assert_safe_url(media_url)  # Gap 5.4: SSRF guard
-        file_resp = await client.get(media_url)
-        if file_resp.status_code != 200:
-            raise PlatformHTTPError(file_resp.status_code, "Could not fetch media for Twitter upload")
-        media_bytes = file_resp.content
-        total_bytes = len(media_bytes)
-        media_type = file_resp.headers.get("content-type", "video/mp4")
+
+        # Get file size via HEAD request
+        head_resp = await client.head(media_url, follow_redirects=True)
+        content_length = head_resp.headers.get("content-length")
+        if not content_length:
+            # Fallback: fetch with Range header to get Content-Length
+            range_resp = await client.get(media_url, headers={"Range": "bytes=0-0"})
+            content_length = range_resp.headers.get("content-range", "").split("/")[-1]
+        total_bytes = int(content_length) if content_length else 0
+
+        if total_bytes == 0:
+            raise PlatformAPIError("Cannot determine media file size for Twitter upload")
+
+        media_type = head_resp.headers.get("content-type", "video/mp4")
 
         # INIT
         init_resp = await client.post(
@@ -132,15 +139,42 @@ class TwitterAdapter(PlatformAdapter):
         if not media_id:
             raise PlatformResponseError("Missing media_id_string from INIT response")
 
-        # APPEND (single segment — TODO: chunk for files > 5 MB)
-        append_resp = await client.post(
-            TWITTER_V1_MEDIA,
-            headers=auth_headers,
-            data={"command": "APPEND", "media_id": media_id, "segment_index": "0"},
-            files={"media": media_bytes},
-        )
-        if append_resp.status_code != 204:
-            raise PlatformHTTPError(append_resp.status_code, f"Media APPEND failed: {append_resp.text}")
+        # APPEND — stream in 5 MB segments (Twitter's recommended chunk size)
+        _TWITTER_CHUNK_SIZE = 5 * 1024 * 1024
+        segment_index = 0
+
+        async with client.stream("GET", media_url) as media_stream:
+            if media_stream.status_code not in (200, 206):
+                raise PlatformHTTPError(media_stream.status_code, "Could not stream media for Twitter upload")
+
+            buffer = b""
+            async for raw_chunk in media_stream.aiter_bytes():
+                buffer += raw_chunk
+
+                while len(buffer) >= _TWITTER_CHUNK_SIZE:
+                    segment = buffer[:_TWITTER_CHUNK_SIZE]
+                    buffer = buffer[_TWITTER_CHUNK_SIZE:]
+
+                    append_resp = await client.post(
+                        TWITTER_V1_MEDIA,
+                        headers=auth_headers,
+                        data={"command": "APPEND", "media_id": media_id, "segment_index": str(segment_index)},
+                        files={"media": segment},
+                    )
+                    if append_resp.status_code != 204:
+                        raise PlatformHTTPError(append_resp.status_code, f"Media APPEND failed: {append_resp.text}")
+                    segment_index += 1
+
+            # Upload remaining buffer (last chunk, smaller than _TWITTER_CHUNK_SIZE)
+            if buffer:
+                append_resp = await client.post(
+                    TWITTER_V1_MEDIA,
+                    headers=auth_headers,
+                    data={"command": "APPEND", "media_id": media_id, "segment_index": str(segment_index)},
+                    files={"media": buffer},
+                )
+                if append_resp.status_code != 204:
+                    raise PlatformHTTPError(append_resp.status_code, f"Media APPEND failed: {append_resp.text}")
 
         # FINALIZE
         final_resp = await client.post(

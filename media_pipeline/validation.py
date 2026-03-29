@@ -11,8 +11,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-FFPROBE_TIMEOUT = 60
-FFMPEG_TIMEOUT = 300  # 5 minutes
+FFPROBE_TIMEOUT = 120  # doubled — large files (10GB) need more time for ffprobe
+FFMPEG_TIMEOUT = 300   # 5 minutes (base — ffmpeg_worker uses dynamic timeout)
 MAX_IMAGE_PIXELS = 178_956_970  # ~12000x12000 (decompression bomb limit)
 
 PLATFORM_LIMITS = {

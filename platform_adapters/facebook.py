@@ -74,7 +74,9 @@ class FacebookAdapter(PlatformAdapter):
             if image_url:
                 payload["link"] = image_url
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        # Timeout: 30s for text/image, 120s for video (Facebook processes file_url server-side)
+        _timeout = 120 if is_video else 30
+        async with httpx.AsyncClient(timeout=_timeout) as client:
             resp = await client.post(endpoint, data=payload, headers=headers)
             if resp.status_code != 200:
                 if redis:
