@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout';
 import { getMediaAssets, uploadMediaAsset, deleteMediaAsset } from '@/lib/api';
 import { toast } from 'sonner';
+import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
+import { validateMediaForPlatforms } from '@/lib/mediaValidation';
 import { format, parseISO } from 'date-fns';
 import {
   FaImages, FaUpload, FaSearch, FaCopy, FaTrash, FaVideo, FaImage,
@@ -152,6 +154,7 @@ const MediaLibrary = () => {
   const [filterType, setFilterType] = useState('all'); // 'all' | 'image' | 'video'
   const [searchQuery, setSearchQuery] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [mediaValidation, setMediaValidation] = useState(null); // { file, violations }
 
   const fileInputRef = useRef(null);
 
@@ -183,13 +186,27 @@ const MediaLibrary = () => {
   }, [assets, filterType, searchQuery]);
 
   // ── Upload logic ──────────────────────────────────────────────────────────
-  const handleFiles = async (files) => {
+  const handleFiles = async (files, { skipValidation = false } = {}) => {
     const arr = Array.from(files).filter((f) =>
       f.type.startsWith('image/') || f.type.startsWith('video/')
     );
     if (!arr.length) {
       toast.error('Only image and video files are supported');
       return;
+    }
+
+    // Validate the first file against all known platforms (library has no platform context)
+    if (!skipValidation && arr.length > 0) {
+      const allPlatforms = ['instagram', 'facebook', 'youtube', 'twitter', 'linkedin', 'tiktok', 'pinterest'];
+      const firstFile = arr[0];
+      const violations = validateMediaForPlatforms(firstFile, allPlatforms);
+      // Only show modal if ALL platforms reject the file (hard block) or there are size violations
+      const hardBlock = violations.length === allPlatforms.length;
+      const sizeViolations = violations.filter(v => v.field === 'size');
+      if (hardBlock || sizeViolations.length > 0) {
+        setMediaValidation({ file: firstFile, violations, platforms: allPlatforms, pendingFiles: arr });
+        return;
+      }
     }
 
     setUploading(true);
@@ -256,6 +273,19 @@ const MediaLibrary = () => {
 
   return (
     <DashboardLayout>
+      {mediaValidation && (
+        <MediaValidationErrorModal
+          file={mediaValidation.file}
+          violations={mediaValidation.violations}
+          platforms={mediaValidation.platforms}
+          onClose={() => setMediaValidation(null)}
+          onContinue={() => {
+            const pending = mediaValidation.pendingFiles;
+            setMediaValidation(null);
+            handleFiles(pending, { skipValidation: true });
+          }}
+        />
+      )}
       <div
         className="max-w-6xl mx-auto"
         onDragOver={handleDragOver}

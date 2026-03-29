@@ -5,6 +5,8 @@ import { useAuth } from '@/context/AuthContext';
 import { getSocialAccounts } from '@/lib/api';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
+import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
+import { validateMediaForPlatforms } from '@/lib/mediaValidation';
 import {
   FaArrowLeft, FaCloudUploadAlt, FaTimes, FaVideo, FaCalendarAlt,
   FaClock, FaGlobe, FaSpinner, FaPlus, FaExclamationCircle,
@@ -288,6 +290,7 @@ const BulkVideoUpload = () => {
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [scheduling, setScheduling] = useState(false);
+  const [mediaValidation, setMediaValidation] = useState(null); // { file, violations, platforms, pendingFiles }
 
   // Bulk settings
   const [bulkDate, setBulkDate] = useState('');
@@ -306,12 +309,32 @@ const BulkVideoUpload = () => {
       .finally(() => setAccountsLoading(false));
   }, []);
 
-  const addFiles = useCallback((files) => {
+  const addFiles = useCallback((files, { skipValidation = false } = {}) => {
     const videoFiles = Array.from(files).filter((f) => f.type.startsWith('video/'));
     if (!videoFiles.length) {
       toast.error('Please upload video files only');
       return;
     }
+
+    // Validate against selected platforms (or all platforms if none selected yet)
+    if (!skipValidation) {
+      const selectedPlatforms = [...new Set(
+        accounts.filter((a) => selectedAccounts.includes(a.id)).map((a) => a.platform)
+      )];
+      const platforms = selectedPlatforms.length > 0
+        ? selectedPlatforms
+        : ['instagram', 'facebook', 'youtube', 'twitter', 'linkedin', 'tiktok'];
+
+      // Check all files — show modal for the first violation found
+      for (const file of videoFiles) {
+        const violations = validateMediaForPlatforms(file, platforms);
+        if (violations.length > 0) {
+          setMediaValidation({ file, violations, platforms, pendingFiles: videoFiles });
+          return;
+        }
+      }
+    }
+
     const newItems = videoFiles.map((file) => ({
       file,
       caption: '',
@@ -320,7 +343,7 @@ const BulkVideoUpload = () => {
       previewUrl: URL.createObjectURL(file),
     }));
     setVideos((prev) => [...prev, ...newItems]);
-  }, []);
+  }, [accounts, selectedAccounts]);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -427,6 +450,25 @@ const BulkVideoUpload = () => {
 
   return (
     <DashboardLayout>
+      {mediaValidation && (
+        <MediaValidationErrorModal
+          file={mediaValidation.file}
+          violations={mediaValidation.violations}
+          platforms={mediaValidation.platforms}
+          onClose={() => setMediaValidation(null)}
+          onContinue={
+            mediaValidation.platforms.some(p =>
+              !mediaValidation.violations.find(v => v.platform === p)
+            )
+              ? () => {
+                  const pending = mediaValidation.pendingFiles;
+                  setMediaValidation(null);
+                  addFiles(pending, { skipValidation: true });
+                }
+              : undefined
+          }
+        />
+      )}
       <div className="max-w-6xl mx-auto pb-12">
 
         {/* Header */}

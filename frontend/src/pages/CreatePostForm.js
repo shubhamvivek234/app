@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
+import { validateMediaForPlatforms, validatePlanLimit } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -476,6 +478,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [uploading,          setUploading]          = useState(false);
   const [uploadProgress,     setUploadProgress]     = useState(0);
   const [uploadedMedia,      setUploadedMedia]      = useState([]);   // array of {file,url,type,name,width,height}
+  // Media validation modal state
+  const [mediaValidation,    setMediaValidation]    = useState(null); // { file, violations, pendingUpload }
   const [coverImage,         setCoverImage]         = useState(null);
   const [coverImageUploading,setCoverImageUploading]= useState(false);
   const [mediaRawAspectRatio,setMediaRawAspectRatio]= useState(null);
@@ -627,9 +631,21 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       img.src = url;
     });
 
-  const uploadToBackend = async (file) => {
+  const uploadToBackend = useCallback(async (file, { skipValidation = false } = {}) => {
     if (!file) return;
     const isVideo = file.type.startsWith('video/');
+
+    // ── Client-side platform validation ───────────────────────────────────
+    if (!skipValidation) {
+      const platforms = [...new Set(
+        availableAccounts.filter(a => selectedAccounts.includes(a.id)).map(a => a.platform)
+      )];
+      const violations = validateMediaForPlatforms(file, platforms);
+      if (violations.length > 0) {
+        setMediaValidation({ file, violations, platforms });
+        return; // stop — modal will let user decide
+      }
+    }
 
     // Validate mix of video + images (only for non-mixed post types)
     if (type !== 'mixed') {
@@ -683,7 +699,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     } finally {
       setUploading(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableAccounts, selectedAccounts, uploadedMedia]);
 
   // Upload multiple files sequentially
   const uploadFilesToBackend = async (files) => {
@@ -1416,6 +1433,26 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     <>
       {/* Hidden file inputs */}
       <input ref={coverImageInputRef} type="file" accept="image/*" onChange={handleCoverImageChange} className="hidden" />
+
+      {/* ── Media validation error modal ─────────────────────────────────── */}
+      {mediaValidation && (
+        <MediaValidationErrorModal
+          file={mediaValidation.file}
+          violations={mediaValidation.violations}
+          platforms={mediaValidation.platforms}
+          onClose={() => setMediaValidation(null)}
+          onContinue={
+            mediaValidation.platforms.some(p =>
+              !mediaValidation.violations.find(v => v.platform === p)
+            )
+              ? () => {
+                  setMediaValidation(null);
+                  uploadToBackend(mediaValidation.file, { skipValidation: true });
+                }
+              : undefined
+          }
+        />
+      )}
 
       {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
       {(() => {
