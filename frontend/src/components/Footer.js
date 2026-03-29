@@ -10,7 +10,7 @@ const Footer = () => {
     <>
       <footer className="bg-gray-50 border-t border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-24">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-12">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-12">
             {/* Column 1: Logo & Description - Spans 2 cols on desktop to push Links right */}
             <div className="col-span-2 md:col-span-1 lg:col-span-2 flex flex-col items-start">
               <div className="mb-8 -ml-2">
@@ -76,7 +76,16 @@ const Footer = () => {
               </ul>
             </div>
 
-            {/* Column 5: LEGAL */}
+            {/* Column 5: RESOURCES */}
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 mb-8 uppercase tracking-wider">Resources</h3>
+              <ul className="space-y-4">
+                <li><a href="/resources/social-media-image-guide" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Social Media Image Guide</a></li>
+                <li><a href="/resources/social-media-video-guide" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Social Media Video Guide</a></li>
+              </ul>
+            </div>
+
+            {/* Column 6: LEGAL */}
             <div>
               <h3 className="text-sm font-bold text-gray-900 mb-8 uppercase tracking-wider">Legal</h3>
               <ul className="space-y-4">

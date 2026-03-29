@@ -46,6 +46,8 @@ import SocialTools from '@/pages/SocialTools';
 import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
+import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
+import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -158,7 +160,7 @@ const ThemeApplier = () => {
   const { pathname } = useLocation();
 
   React.useEffect(() => {
-    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/auth/callback', '/oauth/callback', '/accept-invite'];
+    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
     const isPublicRoute = pathname === '/' || 
                         publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
 
@@ -190,6 +192,8 @@ function App() {
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/resources/social-media-image-guide" element={<SocialMediaImageGuide />} />
+              <Route path="/resources/social-media-video-guide" element={<SocialMediaVideoGuide />} />
               <Route path="/mcp" element={<McpDocs />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/oauth/callback" element={<OAuthCallback />} />
