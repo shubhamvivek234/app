@@ -1,445 +1,579 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaPinterest, FaThreads } from 'react-icons/fa6';
 import { SiBluesky, SiTiktok } from 'react-icons/si';
 import Footer from '@/components/Footer';
 
-const SocialMediaImageGuide = () => {
-  const scrollToSection = (id) => {
-    const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
+/* ─── Fonts + global styles ─────────────────────────────────────────── */
+const GUIDE_STYLES = `
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
-  const platforms = [
-    { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: 'text-pink-500', bg: 'bg-pink-500' },
-    { id: 'facebook', name: 'Facebook', icon: FaFacebook, color: 'text-blue-600', bg: 'bg-blue-600' },
-    { id: 'twitter', name: 'Twitter/X', icon: FaTwitter, color: 'text-black', bg: 'bg-black' },
-    { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: 'text-blue-700', bg: 'bg-blue-700' },
-    { id: 'tiktok', name: 'TikTok', icon: SiTiktok, color: 'text-black', bg: 'bg-black' },
-    { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: 'text-red-600', bg: 'bg-red-600' },
-    { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: 'text-red-500', bg: 'bg-red-500' },
-    { id: 'threads', name: 'Threads', icon: FaThreads, color: 'text-black', bg: 'bg-black' },
-    { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: 'text-blue-400', bg: 'bg-blue-400' },
+.img-guide * { box-sizing: border-box; }
+
+.img-guide-nav-btn {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 7px 10px; border-radius: 7px;
+  font-size: 13px; font-weight: 500; color: #78716c;
+  cursor: pointer; border: none; background: none; text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.img-guide-nav-btn:hover { background: #f5f4f2; color: #1c1917; }
+.img-guide-nav-btn.active { background: #f0fdf4; color: #15803d; font-weight: 700; }
+
+.ig-section { background: #fff; border-radius: 16px; border: 1px solid #e7e5e0; overflow: hidden; margin-bottom: 36px; scroll-margin-top: 80px; }
+
+.ig-specs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; padding: 0 24px 24px; }
+
+.ig-spec-card {
+  background: #faf9f7; border: 1px solid #e7e5e0; border-radius: 11px;
+  padding: 18px 14px 14px; display: flex; flex-direction: column; gap: 14px;
+}
+
+.ig-qt th {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: #a8a29e; padding: 11px 14px; text-align: left; background: #faf9f7; white-space: nowrap;
+}
+.ig-qt td {
+  padding: 10px 14px; font-size: 12px; color: #57534e; border-bottom: 1px solid #f5f4f2;
+  font-family: 'Courier New', monospace;
+}
+.ig-qt tr:last-child td { border-bottom: none; }
+.ig-qt td:first-child { font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 600; color: #1c1917; font-size: 13px; }
+.ig-qt tr:hover td { background: #faf9f7; }
+
+.ig-concept-card { background: #fff; border: 1px solid #e7e5e0; border-radius: 12px; padding: 20px; flex: 1; min-width: 0; }
+
+@media (max-width: 880px) {
+  .ig-layout { flex-direction: column !important; padding: 0 16px !important; }
+  .ig-sidebar { display: none !important; }
+  .ig-specs-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+`;
+
+/* ─── AspectBox: renders a proportional frame ───────────────────────── */
+const AspectBox = ({ w, h, label, dims, accent }) => {
+  const ratio = h / w;
+  const MAX = 78;
+  const boxW = ratio >= 1 ? Math.round(MAX / ratio) : MAX;
+  const boxH = ratio >= 1 ? MAX : Math.round(MAX * ratio);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+      <div style={{
+        width: boxW, height: boxH,
+        background: `${accent}14`,
+        border: `1.5px dashed ${accent}55`,
+        borderRadius: 5,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, position: 'relative',
+      }}>
+        <span style={{ fontSize: 8.5, fontWeight: 700, color: accent, letterSpacing: '0.04em', fontFamily: 'monospace' }}>
+          {w}:{h}
+        </span>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#292524', lineHeight: 1.3 }}>{label}</div>
+        <div style={{ fontSize: 10, color: '#a8a29e', fontFamily: 'monospace', marginTop: 1 }}>{dims}</div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── ProTip callout ────────────────────────────────────────────────── */
+const ProTip = ({ children }) => (
+  <div style={{
+    background: '#fffbeb', border: '1px solid #fde68a',
+    borderLeft: '4px solid #f59e0b', borderRadius: 8,
+    padding: '12px 16px', margin: '4px 24px 24px',
+    fontSize: 13, color: '#78350f', lineHeight: 1.65,
+  }}>
+    <span style={{ fontWeight: 700, color: '#b45309' }}>💡 Pro Tip: </span>
+    {children}
+  </div>
+);
+
+/* ─── Section header ────────────────────────────────────────────────── */
+const PlatformHeader = ({ icon: Icon, name, subtitle, accent, bg }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', gap: 16,
+    padding: '20px 24px',
+    background: bg || `${accent}0a`,
+    borderBottom: `1px solid ${accent}22`,
+  }}>
+    <div style={{
+      width: 46, height: 46, borderRadius: 11,
+      background: accent, flexShrink: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: `0 4px 14px ${accent}44`,
+    }}>
+      <Icon style={{ color: '#fff', fontSize: 21 }} />
+    </div>
+    <div>
+      <h2 style={{ margin: 0, fontSize: 21, fontWeight: 800, color: '#1c1917', fontFamily: "'Syne', sans-serif", letterSpacing: '-0.02em' }}>{name}</h2>
+      <p style={{ margin: 0, fontSize: 12, color: '#78716c', marginTop: 2 }}>{subtitle}</p>
+    </div>
+  </div>
+);
+
+/* ─── Individual spec card ──────────────────────────────────────────── */
+const SpecCard = ({ w, h, label, dims, accent, title, note }) => (
+  <div className="ig-spec-card" style={{ borderTop: `3px solid ${accent}55` }}>
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <AspectBox w={w} h={h} label={label} dims={dims} accent={accent} />
+    </div>
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#1c1917', marginBottom: 4, lineHeight: 1.3 }}>{title}</div>
+      <div style={{ fontSize: 11.5, color: '#78716c', lineHeight: 1.6 }}>{note}</div>
+    </div>
+  </div>
+);
+
+/* ─── Main component ────────────────────────────────────────────────── */
+const SocialMediaImageGuide = () => {
+  const [activeId, setActiveId] = useState('intro');
+
+  useEffect(() => {
+    const ids = ['intro', 'quickref', 'instagram', 'facebook', 'twitter', 'linkedin', 'tiktok', 'youtube', 'pinterest', 'threads', 'bluesky', 'tips'];
+    const observer = new IntersectionObserver(
+      (entries) => entries.forEach(e => { if (e.isIntersecting) setActiveId(e.target.id); }),
+      { rootMargin: '-20% 0px -70% 0px' }
+    );
+    ids.forEach(id => { const el = document.getElementById(id); if (el) observer.observe(el); });
+    return () => observer.disconnect();
+  }, []);
+
+  const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const navItems = [
+    { id: 'intro',     label: 'Overview' },
+    { id: 'quickref',  label: 'Quick Reference' },
+    { id: 'instagram', label: 'Instagram',  Icon: FaInstagram, accent: '#E1306C' },
+    { id: 'facebook',  label: 'Facebook',   Icon: FaFacebook,  accent: '#1877F2' },
+    { id: 'twitter',   label: 'Twitter / X', Icon: FaTwitter,  accent: '#000' },
+    { id: 'linkedin',  label: 'LinkedIn',   Icon: FaLinkedin,  accent: '#0A66C2' },
+    { id: 'tiktok',    label: 'TikTok',     Icon: SiTiktok,    accent: '#111' },
+    { id: 'youtube',   label: 'YouTube',    Icon: FaYoutube,   accent: '#FF0000' },
+    { id: 'pinterest', label: 'Pinterest',  Icon: FaPinterest, accent: '#E60023' },
+    { id: 'threads',   label: 'Threads',    Icon: FaThreads,   accent: '#111' },
+    { id: 'bluesky',   label: 'Bluesky',    Icon: SiBluesky,   accent: '#0085FF' },
+    { id: 'tips',      label: 'Best Practices' },
   ];
 
-  const AspectBox = ({ width, height, label, subLabel, color = 'bg-gray-100' }) => {
-    const aspectRatio = height / width;
-    const isVertical = aspectRatio > 1;
-    const isSquare = Math.abs(aspectRatio - 1) < 0.1;
-    const boxHeight = isSquare ? 'h-16' : isVertical ? 'h-24' : 'h-12';
-    return (
-      <div className="flex flex-col items-center">
-        <div className={`${boxHeight} ${color} rounded-lg flex items-center justify-center mb-2 shadow-sm border border-gray-200`} style={{ width: '80px' }}>
-          {isSquare && <div className="w-10 h-10 bg-gray-300 rounded-sm" />}
-          {isVertical && <div className="w-8 h-14 bg-gray-300 rounded-sm" />}
-          {!isSquare && !isVertical && <div className="w-14 h-6 bg-gray-300 rounded-sm" />}
-        </div>
-        <span className="text-xs font-medium text-gray-700">{label}</span>
-        {subLabel && <span className="text-xs text-gray-400">{subLabel}</span>}
-      </div>
-    );
-  };
+  const editorialText = (text) => (
+    <p style={{ fontSize: 14, color: '#57534e', lineHeight: 1.75, margin: '16px 24px 0', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+      {text}
+    </p>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-100 shadow-sm sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-lg">C</span>
-              </div>
-              <span className="text-xl font-semibold text-gray-900">SocialEntangler</span>
-            </Link>
-            <div className="flex items-center gap-4">
-              <Link to="/resources/social-media-video-guide" className="text-sm text-gray-600 hover:text-indigo-600 font-medium">
-                Video Guide →
-              </Link>
+    <div className="img-guide" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", background: '#faf9f6', minHeight: '100vh' }}>
+      <style>{GUIDE_STYLES}</style>
+
+      {/* ── Sticky top nav ──────────────────────────────────────────── */}
+      <nav style={{ background: '#fff', borderBottom: '1px solid #e7e5e0', position: 'sticky', top: 0, zIndex: 100, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+        <div style={{ maxWidth: 1260, margin: '0 auto', padding: '0 24px', height: 54, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+            <div style={{ width: 28, height: 28, background: '#16a34a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ color: '#fff', fontWeight: 800, fontSize: 13, fontFamily: "'Syne', sans-serif" }}>S</span>
             </div>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#1c1917', fontFamily: "'Syne', sans-serif" }}>SocialEntangler</span>
+          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15803d', background: '#f0fdf4', padding: '3px 10px', borderRadius: 20, border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Updated 2026
+            </span>
+            <Link to="/resources/social-media-video-guide" style={{ fontSize: 13, color: '#78716c', textDecoration: 'none', fontWeight: 600 }}>
+              Video Guide →
+            </Link>
           </div>
         </div>
       </nav>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Social Media Image Size Guide</h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">Complete image specifications for all major social media platforms. Updated for 2026.</p>
-        </div>
+      {/* ── Two-column layout ───────────────────────────────────────── */}
+      <div className="ig-layout" style={{ maxWidth: 1260, margin: '0 auto', padding: '0 24px', display: 'flex', gap: 44, alignItems: 'flex-start' }}>
 
-        <div className="flex flex-wrap justify-center gap-2 mb-12">
-          {platforms.map((platform) => (
-            <button
-              key={platform.id}
-              onClick={() => scrollToSection(platform.id)}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900 transition-all shadow-sm"
-            >
-              {platform.icon && <platform.icon className={platform.color} />}
-              {platform.name}
-            </button>
-          ))}
-        </div>
+        {/* ── Sidebar ─────────────────────────────────────────────── */}
+        <aside className="ig-sidebar" style={{ width: 210, flexShrink: 0, position: 'sticky', top: 70, paddingTop: 36, paddingBottom: 40 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4bfba', marginBottom: 6, paddingLeft: 10 }}>
+            On this page
+          </div>
+          <nav>
+            {navItems.map(({ id, label, Icon, accent }) => (
+              <button
+                key={id}
+                className={`img-guide-nav-btn${activeId === id ? ' active' : ''}`}
+                onClick={() => scrollTo(id)}
+              >
+                {Icon && (
+                  <Icon style={{ fontSize: 13, color: activeId === id ? '#15803d' : (accent || '#a8a29e'), opacity: activeId === id ? 1 : 0.7, flexShrink: 0 }} />
+                )}
+                {label}
+              </button>
+            ))}
+          </nav>
 
-        {/* Quick Reference Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-12">
-          <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Quick Reference</h2>
+          <div style={{ marginTop: 32, paddingLeft: 10, paddingRight: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4bfba', marginBottom: 10 }}>
+              Related
+            </div>
+            <Link to="/resources/social-media-video-guide" style={{ fontSize: 12, color: '#0A66C2', textDecoration: 'none', fontWeight: 600, display: 'block', lineHeight: 1.5 }}>
+              Video Size Guide →
+            </Link>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Platform</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Profile</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Cover</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Feed Post</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Story</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Link Preview</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {[
-                  { platform: 'Instagram', profile: '320×320', cover: '—', feed: '1080×1350', story: '1080×1920', link: '—' },
-                  { platform: 'Facebook', profile: '320×320', cover: '851×315', feed: '1080×1350', story: '1080×1920', link: '1200×630' },
-                  { platform: 'Twitter/X', profile: '400×400', cover: '1500×500', feed: '1080×1350', story: '—', link: '1200×630' },
-                  { platform: 'LinkedIn', profile: '400×400', cover: '1584×396', feed: '1080×1350', story: '—', link: '1200×627' },
-                  { platform: 'TikTok', profile: '200×200', cover: '—', feed: '1080×1920', story: '1080×1920', link: '—' },
-                  { platform: 'YouTube', profile: '800×800', cover: '2560×1440', feed: '1280×720', story: '—', link: '—' },
-                  { platform: 'Pinterest', profile: '165×165', cover: '800×450', feed: '1000×1500', story: '—', link: '—' },
-                  { platform: 'Threads', profile: '320×320', cover: '—', feed: 'Any', story: '—', link: '1200×600' },
-                  { platform: 'Bluesky', profile: '400×400', cover: '1500×500', feed: 'Any', story: '—', link: '1200×627' },
-                ].map((row, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">{row.platform}</td>
-                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{row.profile}</td>
-                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{row.cover}</td>
-                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{row.feed}</td>
-                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{row.story}</td>
-                    <td className="px-4 py-3 text-gray-600 font-mono text-xs">{row.link}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        </aside>
 
-        {/* Instagram Section */}
-        <section id="instagram" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center">
-                <FaInstagram className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Instagram</h2>
-                <p className="text-sm text-gray-500">Profile, Feed, Stories, Reels</p>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="320×320" color="bg-pink-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 320×320 pixels</p>
-                  <p className="text-xs text-gray-500">Displayed at 110×110. Cropped to circle. Upload larger for best quality.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={4} height={5} label="Feed Post" subLabel="1080×1350" color="bg-pink-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1350 pixels (4:5)</p>
-                  <p className="text-xs text-gray-500">Best for engagement. Also supports 1080×1080 (1:1) square and 1080×566 horizontal.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={9} height={16} label="Stories" subLabel="1080×1920" color="bg-pink-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1920 pixels</p>
-                  <p className="text-xs text-gray-500">9:16 aspect ratio. Keep 310px from top/bottom free for UI elements.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={9} height={16} label="Reels" subLabel="1080×1920" color="bg-pink-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1920 pixels</p>
-                  <p className="text-xs text-gray-500">Full-screen vertical video. Thumbnail should keep 480px from top/bottom clear.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* ── Main content ────────────────────────────────────────── */}
+        <main style={{ flex: 1, minWidth: 0, paddingTop: 44, paddingBottom: 80 }}>
 
-        {/* Facebook Section */}
-        <section id="facebook" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center">
-                <FaFacebook className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Facebook</h2>
-                <p className="text-sm text-gray-500">Profile, Cover, Feed, Stories</p>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="320×320" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 320×320 pixels</p>
-                  <p className="text-xs text-gray-500">Displayed at 196×196 on mobile. Cropped to circle.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={2.7} height={1} label="Cover" subLabel="851×315" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 851×315 pixels</p>
-                  <p className="text-xs text-gray-500">For Profiles & Pages. Mobile displays at 640×360. Profile pic overlaps bottom left.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={4} height={5} label="Feed Post" subLabel="1080×1350" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1350 pixels</p>
-                  <p className="text-xs text-gray-500">Vertical 4:5 aspect ratio performs best. Also supports square 1080×1080.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={9} height={16} label="Stories" subLabel="1080×1920" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1920 pixels</p>
-                  <p className="text-xs text-gray-500">Full-screen 9:16. Keep top 250px and bottom 340px free for UI.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+          {/* Hero */}
+          <section id="intro" style={{ scrollMarginTop: 80, marginBottom: 52 }}>
+            <h1 style={{
+              fontFamily: "'Syne', sans-serif",
+              fontSize: 'clamp(30px, 5vw, 50px)',
+              fontWeight: 800, color: '#1c1917',
+              lineHeight: 1.08, letterSpacing: '-0.03em',
+              margin: '0 0 16px',
+            }}>
+              Social Media<br />
+              <span style={{ color: '#16a34a' }}>Image Size Guide</span>
+            </h1>
+            <p style={{ fontSize: 16, color: '#78716c', lineHeight: 1.75, margin: '0 0 32px', maxWidth: 600 }}>
+              Getting dimensions right is one of those details that quietly separates professional accounts from amateur ones.
+              Blurry profile photos, stretched cover images, and awkward crops all erode credibility.
+              This guide covers every image format for every major platform — updated for 2026.
+            </p>
 
-        {/* Twitter/X Section */}
-        <section id="twitter" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-black flex items-center justify-center">
-                <FaTwitter className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Twitter / X</h2>
-                <p className="text-sm text-gray-500">Profile, Header, Feed</p>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="400×400" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 400×400 pixels</p>
-                  <p className="text-xs text-gray-500">Max file size: 2MB. Cropped to circle for regular accounts.</p>
+            {/* Key concepts */}
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <div className="ig-concept-card">
+                <div style={{ fontSize: 22, marginBottom: 10 }}>📐</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1c1917', marginBottom: 5 }}>What is Aspect Ratio?</div>
+                <div style={{ fontSize: 13, color: '#78716c', lineHeight: 1.65 }}>
+                  The relationship between width and height, written as <strong>width:height</strong>. A&nbsp;1:1 is a perfect square. A&nbsp;9:16 is tall vertical.
+                  A&nbsp;16:9 is wide horizontal. Aspect ratio determines <em>shape</em>; resolution determines <em>sharpness</em>.
                 </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={3} height={1} label="Header" subLabel="1500×500" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1500×500 pixels</p>
-                  <p className="text-xs text-gray-500">3:1 aspect ratio. Much wider than other platforms. May crop on mobile.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={16} height={9} label="Feed Image" subLabel="1600×900" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1600×900 pixels</p>
-                  <p className="text-xs text-gray-500">Max 4 images per tweet. Min 600px width. Supports 16:9, 1:1, 4:5, 3:4.</p>
+              </div>
+              <div className="ig-concept-card">
+                <div style={{ fontSize: 22, marginBottom: 10 }}>🔬</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#1c1917', marginBottom: 5 }}>What are Pixels?</div>
+                <div style={{ fontSize: 13, color: '#78716c', lineHeight: 1.65 }}>
+                  The unit of digital image resolution, written as <strong>width × height</strong>. More pixels means a sharper image.
+                  Uploading at <strong>1080px wide</strong> is the universal safe minimum across every platform in this guide.
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* LinkedIn Section */}
-        <section id="linkedin" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-700 flex items-center justify-center">
-                <FaLinkedin className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">LinkedIn</h2>
-                <p className="text-sm text-gray-500">Profile, Cover, Company Page</p>
+          {/* Quick reference table */}
+          <section id="quickref" style={{ scrollMarginTop: 80, marginBottom: 48 }}>
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 19, fontWeight: 800, color: '#1c1917', margin: '0 0 14px', letterSpacing: '-0.02em' }}>
+              Quick Reference
+            </h2>
+            <div style={{ background: '#fff', border: '1px solid #e7e5e0', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="ig-qt" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th>Platform</th>
+                      <th>Profile Photo</th>
+                      <th>Cover / Banner</th>
+                      <th>Best Feed Post</th>
+                      <th>Story / Reel</th>
+                      <th>Link Preview</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['Instagram',   '320×320',    '—',          '1080×1350',  '1080×1920',  '—'],
+                      ['Facebook',    '320×320',    '851×315',    '1080×1350',  '1080×1920',  '1200×630'],
+                      ['Twitter / X', '400×400',    '1500×500',   '1600×900',   '—',          '1200×628'],
+                      ['LinkedIn',    '400×400',    '1584×396',   '1080×1350',  '—',          '1200×627'],
+                      ['TikTok',      '200×200',    '—',          '1080×1920',  '1080×1920',  '—'],
+                      ['YouTube',     '800×800',    '2560×1440',  '1280×720',   '—',          '—'],
+                      ['Pinterest',   '165×165',    '800×450',    '1000×1500',  '—',          '—'],
+                      ['Threads',     '320×320',    '—',          'Any (4:5 rec)', '—',       '1200×600'],
+                      ['Bluesky',     '400×400',    '1500×500',   'Any (4:3 rec)', '—',       '1200×627'],
+                    ].map(([name, profile, cover, feed, story, link], i) => (
+                      <tr key={i}>
+                        <td>{name}</td>
+                        <td>{profile}</td>
+                        <td>{cover}</td>
+                        <td>{feed}</td>
+                        <td>{story}</td>
+                        <td>{link}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="400×400" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 400×400 pixels</p>
-                  <p className="text-xs text-gray-500">Max 8MB for personal profiles. Cropped to circle on personal profiles.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={4} height={1} label="Cover" subLabel="1584×396" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Personal:</span> 1584×396 pixels</p>
-                  <p className="text-xs text-gray-500">4:1 aspect ratio. Different for Company Pages (1128×191). Max 8MB.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={4} height={5} label="Feed Post" subLabel="1080×1350" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1350 pixels</p>
-                  <p className="text-xs text-gray-500">Supports 3:1 to 4:5 aspect ratios. Min 1080px width.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        {/* TikTok Section */}
-        <section id="tiktok" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-black flex items-center justify-center">
-                <SiTiktok className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">TikTok</h2>
-                <p className="text-sm text-gray-500">Profile, Photo Posts</p>
-              </div>
+          {/* ══ INSTAGRAM ══════════════════════════════════════════════ */}
+          <section id="instagram" className="ig-section">
+            <PlatformHeader icon={FaInstagram} name="Instagram" subtitle="Profile · Feed · Stories · Reels · Carousels" accent="#E1306C" bg="linear-gradient(135deg, #fdf2f8 0%, #faf9f7 100%)" />
+            {editorialText(
+              'Instagram is the most image-forward platform, which means image quality and cropping matter more here than anywhere else. In January 2025, Instagram shifted its default profile grid from 1:1 square thumbnails to 3:4 vertical — so tall images now show more of themselves when someone visits your profile. For Reels and Stories, 9:16 is the only format that fills the screen; anything else gets letterboxed.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile" dims="320×320 px" accent="#E1306C"
+                title="320 × 320 pixels"
+                note="Displayed at 110×110. Cropped to circle — keep faces and logos centered, away from corners. Upload larger (800×800) for sharper display on retina screens." />
+              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#E1306C"
+                title="1080 × 1350 px · 4:5"
+                note="The sweet spot. Takes the most screen space in the feed. Also supports 1:1 square (1080×1080) and 1.91:1 horizontal (1080×566)." />
+              <SpecCard w={3} h={4} label="Grid Thumbnail" dims="1080×1440 px" accent="#E1306C"
+                title="1080 × 1440 px · 3:4"
+                note="New 2025 tall grid. Profile thumbnails are now cropped at 3:4. Design posts to look intentional in this crop, not just as an afterthought." />
+              <SpecCard w={9} h={16} label="Stories & Reels" dims="1080×1920 px" accent="#E1306C"
+                title="1080 × 1920 px · 9:16"
+                note="Full-screen vertical. The top 310px and bottom 310px are covered by UI overlays (profile name, reactions). Keep key content in the safe center zone." />
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="200×200" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 200×200 pixels</p>
-                  <p className="text-xs text-gray-500">Min 20×20 pixels. Upload larger for sharper display on high-res screens.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={9} height={16} label="Photo Posts" subLabel="1080×1920" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1080×1920 pixels</p>
-                  <p className="text-xs text-gray-500">9:16 vertical. Can also use 4:5 or 1:1 but may have blank space.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+            <ProTip>
+              Upload images at exactly 1080px wide. Instagram recompresses anything larger, and smaller images look blurry on retina displays.
+              For carousel posts, every slide must use the same aspect ratio — mixing square and vertical in one carousel is not supported.
+            </ProTip>
+          </section>
 
-        {/* YouTube Section */}
-        <section id="youtube" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-red-600 flex items-center justify-center">
-                <FaYoutube className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">YouTube</h2>
-                <p className="text-sm text-gray-500">Channel Art, Profile, Thumbnails</p>
-              </div>
+          {/* ══ FACEBOOK ═══════════════════════════════════════════════ */}
+          <section id="facebook" className="ig-section">
+            <PlatformHeader icon={FaFacebook} name="Facebook" subtitle="Profile · Cover · Feed · Stories · Events · Groups" accent="#1877F2" />
+            {editorialText(
+              'Facebook has more image types than any other platform — profiles, pages, groups, events, and ads all have different specs. The platform renders images differently on desktop versus mobile, so designing to the safe area is critical for cover photos. Profile pictures are cropped into circles, so important content must stay away from the corners.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile" dims="320×320 px" accent="#1877F2"
+                title="320 × 320 pixels"
+                note="Displayed at 196×196 on desktop, 36×36 in the news feed. Cropped to circle. Important content should stay in the center 65% of the frame." />
+              <SpecCard w={2.7} h={1} label="Cover Photo" dims="851×315 px" accent="#1877F2"
+                title="851 × 315 px · ~2.7:1"
+                note="For profiles and pages. Mobile shows 640×360. Your profile picture overlaps the bottom-left corner on desktop — don't place text there." />
+              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#1877F2"
+                title="1080 × 1350 px · 4:5"
+                note="Vertical 4:5 gets the most screen space and performs best for reach. Square 1080×1080 is also reliable. Minimum 600px width." />
+              <SpecCard w={9} h={16} label="Stories" dims="1080×1920 px" accent="#1877F2"
+                title="1080 × 1920 px · 9:16"
+                note="Keep top 250px and bottom 340px clear. Those areas are covered by the profile info overlay and the reply bar respectively." />
+              <SpecCard w={1.9} h={1} label="Link Preview" dims="1200×630 px" accent="#1877F2"
+                title="1200 × 630 px · OG image"
+                note="Set via Open Graph meta tags. This image appears whenever a link is shared. Min 600×314 but 1200×630 looks sharpest on high-DPI screens." />
+              <SpecCard w={1.9} h={1} label="Group Cover" dims="1640×856 px" accent="#1877F2"
+                title="1640 × 856 px (Groups)"
+                note="Groups have a unique wider cover format. Event covers use 1920×1005. Both are separate from personal profile and page covers." />
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="800×800" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 800×800 pixels</p>
-                  <p className="text-xs text-gray-500">Displayed at 98×98. Max file size 15MB. Cropped to circle.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={16} height={9} label="Banner" subLabel="2560×1440" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 2560×1440 pixels</p>
-                  <p className="text-xs text-gray-500">16:9 aspect ratio. Min 2048×1152. Safe area 1546×423 for text/logos.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={16} height={9} label="Thumbnail" subLabel="1280×720" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1280×720 pixels</p>
-                  <p className="text-xs text-gray-500">16:9 aspect ratio. Max file size 2MB. Appears on video cards.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+            <ProTip>
+              Design Facebook cover photos with your key content in the centered 60% of the image. Mobile crops the sides and bottom significantly.
+              A 820×360 master canvas with the subject in the center works well across both desktop (851×315) and mobile (640×360) renderings.
+            </ProTip>
+          </section>
 
-        {/* Pinterest Section */}
-        <section id="pinterest" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-red-500 flex items-center justify-center">
-                <FaPinterest className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Pinterest</h2>
-                <p className="text-sm text-gray-500">Profile, Cover, Pins</p>
-              </div>
+          {/* ══ TWITTER/X ══════════════════════════════════════════════ */}
+          <section id="twitter" className="ig-section">
+            <PlatformHeader icon={FaTwitter} name="Twitter / X" subtitle="Profile · Header · Feed Posts · Link Cards" accent="#000" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
+            {editorialText(
+              'Twitter/X has a unique challenge: images in the timeline are cropped to a 2:1 horizontal strip by default — the full image only appears on click. The header photo uses an extreme 3:1 ratio that renders very differently on desktop vs. mobile, so keep all text and logos vertically centered and never extend them to the edges.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile" dims="400×400 px" accent="#555"
+                title="400 × 400 pixels"
+                note="Max 2MB. JPG or PNG. Cropped to circle for regular accounts. Business accounts can have square display. Keep subject in center 75%." />
+              <SpecCard w={3} h={1} label="Header Image" dims="1500×500 px" accent="#555"
+                title="1500 × 500 px · 3:1"
+                note="Far wider than any other platform. Displayed at 600×200 on mobile. Keep all important content in the center 60% horizontally and 50% vertically." />
+              <SpecCard w={16} h={9} label="Feed Image" dims="1600×900 px" accent="#555"
+                title="1600 × 900 px · 16:9"
+                note="Attach up to 4 images per tweet. Supports 16:9, 1:1, 4:5, 3:4. When 4 are attached, they display in a 2×2 grid with each image cropped to fit." />
+              <SpecCard w={1.9} h={1} label="Link Card" dims="1200×628 px" accent="#555"
+                title="1200 × 628 px · OG image"
+                note="Requires Twitter Card meta tags. The summary_large_image type shows a prominent banner. Without it, only a small thumbnail appears next to the link." />
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="165×165" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 165×165 pixels</p>
-                  <p className="text-xs text-gray-500">Cropped to circle when displayed. Smallest of all platforms.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={16} height={9} label="Cover" subLabel="800×450" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 800×450 pixels</p>
-                  <p className="text-xs text-gray-500">16:9 horizontal. Minimum 800×450. Shows on profile page.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={2} height={3} label="Pins" subLabel="1000×1500" color="bg-red-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1000×1500 pixels</p>
-                  <p className="text-xs text-gray-500">2:3 aspect ratio. Pinterest's signature vertical format. Max 20MB (web), 1GB (app).</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+            <ProTip>
+              For images that need to look good in the timeline preview, place your subject in the center of the frame.
+              Twitter/X auto-crops to a 2:1 ratio in the feed but shows the full image on expand — design for both states simultaneously.
+            </ProTip>
+          </section>
 
-        {/* Threads Section */}
-        <section id="threads" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center">
-                <FaThreads className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Threads</h2>
-                <p className="text-sm text-gray-500">Profile, Posts</p>
-              </div>
+          {/* ══ LINKEDIN ═══════════════════════════════════════════════ */}
+          <section id="linkedin" className="ig-section">
+            <PlatformHeader icon={FaLinkedin} name="LinkedIn" subtitle="Personal Profile · Company Page · Posts · Articles" accent="#0A66C2" />
+            {editorialText(
+              'LinkedIn has two completely different sets of dimensions: one for personal profiles and one for company pages. Cover photo aspect ratios differ dramatically — personal is 4:1, company page is nearly 6:1. The platform also differs from others in that document-style "carousel" posts (uploaded as PDFs) consistently get 3× more organic reach than image posts.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="400×400 px" accent="#0A66C2"
+                title="400 × 400 pixels (min)"
+                note="Max 8MB. Displayed at 400×400 on profile, 48×48 in posts. Cropped to circle. A high-contrast headshot with a plain background works best." />
+              <SpecCard w={4} h={1} label="Personal Cover" dims="1584×396 px" accent="#0A66C2"
+                title="1584 × 396 px · 4:1"
+                note="Max 8MB. Your profile photo overlaps the left side on desktop — avoid putting text on the left 15%. Keep important content in the center 70%." />
+              <SpecCard w={6} h={1} label="Company Cover" dims="1128×191 px" accent="#0A66C2"
+                title="1128 × 191 px · ~6:1"
+                note="Extremely wide. Use a brand color sweep with your logo centered. No room for dense text at this ratio. Max 4MB." />
+              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#0A66C2"
+                title="1080 × 1350 px · 4:5"
+                note="LinkedIn supports 3:1 to 4:5. Vertical 4:5 takes the most feed space on mobile. Square 1:1 is safest for multi-image carousels." />
+              <SpecCard w={1.9} h={1} label="Link Preview" dims="1200×627 px" accent="#0A66C2"
+                title="1200 × 627 px · OG image"
+                note="Shows as a landscape banner when sharing blog posts or landing pages. Controlled via og:image meta tag. Title text is overlaid below the image." />
+              <SpecCard w={1} h={1} label="Company Logo" dims="300×300 px" accent="#0A66C2"
+                title="300 × 300 pixels (min)"
+                note="Max 4MB. Appears on company page, search results, and alongside posts. Displayed as a circle on some views — keep the logo centered." />
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="320×320" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 320×320 pixels</p>
-                  <p className="text-xs text-gray-500">Can sync with Instagram profile photo. Cropped to circle.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={3} height={4} label="Posts" subLabel="Any" color="bg-gray-200" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">No restrictions</span></p>
-                  <p className="text-xs text-gray-500">Any dimensions accepted. Up to 20 images per post. Max 8MB per image.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+            <ProTip>
+              LinkedIn documents uploaded natively as PDFs display as swipeable carousels and get dramatically more reach than static image posts.
+              Use 1:1 slides at 1080×1080 for maximum visual consistency across the carousel.
+            </ProTip>
+          </section>
 
-        {/* Bluesky Section */}
-        <section id="bluesky" className="mb-16 scroll-mt-20">
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-400 flex items-center justify-center">
-                <SiBluesky className="text-2xl text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">Bluesky</h2>
-                <p className="text-sm text-gray-500">Profile, Banner, Posts</p>
-              </div>
+          {/* ══ TIKTOK ═════════════════════════════════════════════════ */}
+          <section id="tiktok" className="ig-section">
+            <PlatformHeader icon={SiTiktok} name="TikTok" subtitle="Profile · Photo Carousels · Video Thumbnails" accent="#111" bg="linear-gradient(135deg, #f0fafa 0%, #faf9f7 100%)" />
+            {editorialText(
+              'TikTok is a vertical-only platform — 9:16 is the only format that fills the screen without black bars. Beyond video, TikTok supports photo carousels of up to 35 images, which have become increasingly popular for tutorials, outfit inspiration, and multi-step content. Both formats must be vertical to avoid blank space at the sides.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="200×200 px" accent="#555"
+                title="200 × 200 pixels (rec.)"
+                note="Minimum accepted size is 20×20. Upload at least 200×200 for quality. Cropped to circle. Animated GIFs are supported for profile photos." />
+              <SpecCard w={9} h={16} label="Photo Posts" dims="1080×1920 px" accent="#555"
+                title="1080 × 1920 px · 9:16"
+                note="The only format that fills the screen completely. 4:5 is accepted but shows black bars. Up to 35 photos per carousel post." />
+              <SpecCard w={9} h={16} label="Video Cover" dims="1080×1920 px" accent="#555"
+                title="1080 × 1920 px · thumbnail"
+                note="The first frame or a custom image shown in your profile grid. Keep text above center — the bottom 200px is covered by the caption in the feed view." />
             </div>
-            <div className="p-6">
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Profile" subLabel="400×400" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 400×400 pixels</p>
-                  <p className="text-xs text-gray-500">1:1 aspect ratio. Cropped to circle.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={3} height={1} label="Banner" subLabel="1500×500" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">Recommended:</span> 1500×500 pixels</p>
-                  <p className="text-xs text-gray-500">3:1 aspect ratio. Gets cropped to 4:1 on mobile.</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
-                  <div className="flex justify-center mb-4"><AspectBox width={1} height={1} label="Posts" subLabel="Any" color="bg-blue-100" /></div>
-                  <p className="text-sm text-gray-600 mb-2"><span className="font-semibold">No restrictions</span></p>
-                  <p className="text-xs text-gray-500">Any size. Max 4 images per post, 1MB each. Displayed in original dimensions.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+            <ProTip>
+              TikTok crops video thumbnails aggressively in the profile grid. Set a custom cover image on every video to control your grid aesthetic.
+              The guaranteed safe zone is the center 80% of the frame — avoid the top and bottom 10% for any text or key visual elements.
+            </ProTip>
+          </section>
 
-        {/* Tips */}
-        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 p-8">
-          <h3 className="text-lg font-bold text-indigo-900 mb-4">Best Practices</h3>
-          <div className="grid md:grid-cols-2 gap-4 text-sm text-indigo-800">
-            <div className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">✓</span><span>Always upload at 1080px width - the universal standard</span></div>
-            <div className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">✓</span><span>Vertical images (4:5, 9:16) perform best on mobile</span></div>
-            <div className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">✓</span><span>Use JPG or PNG - universally supported</span></div>
-            <div className="flex items-start gap-2"><span className="text-indigo-500 mt-0.5">✓</span><span>Keep important content centered for profile crops</span></div>
-          </div>
-        </div>
+          {/* ══ YOUTUBE ════════════════════════════════════════════════ */}
+          <section id="youtube" className="ig-section">
+            <PlatformHeader icon={FaYoutube} name="YouTube" subtitle="Channel Art · Profile · Thumbnails · Community Posts" accent="#FF0000" bg="linear-gradient(135deg, #fff5f5 0%, #faf9f7 100%)" />
+            {editorialText(
+              'YouTube\'s channel banner is unique because it renders at completely different sizes across devices. The 2560×1440 upload appears as a 2560×423 strip on TV, full dimensions on desktop, and just 1546×423 centered on tablets. Design for the guaranteed center safe zone. Thumbnails are arguably your most impactful image — they directly drive click-through rates on every surface YouTube shows your video.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="800×800 px" accent="#FF0000"
+                title="800 × 800 pixels"
+                note="Max 15MB. Displayed at 98×98 on channel page, 36×36 in comments. Cropped to circle. Use a high-contrast headshot or a bold logo on a solid background." />
+              <SpecCard w={16} h={9} label="Channel Banner" dims="2560×1440 px" accent="#FF0000"
+                title="2560 × 1440 px · 16:9"
+                note="Min 2048×1152. Max 6MB. The center 1546×423px safe zone is the only portion guaranteed to show on all devices. Keep all text and logos inside it." />
+              <SpecCard w={16} h={9} label="Thumbnail" dims="1280×720 px" accent="#FF0000"
+                title="1280 × 720 px · 16:9"
+                note="Max 2MB — JPG, PNG, or GIF. High contrast, expressive faces, bold text (under 6 words), and a clear focal point are the proven formula for higher CTR." />
+              <SpecCard w={1} h={1} label="Community Post" dims="Any · 1:1 rec." accent="#FF0000"
+                title="Square recommended"
+                note="Community tab posts support any image but 1:1 square displays most consistently. Used for polls, announcements, and behind-the-scenes updates." />
+            </div>
+            <ProTip>
+              Design your banner in layers: text and logo strictly inside the center 1546×423px safe zone, decorative fill extending to 2560px wide.
+              The areas outside the safe zone only show on desktop at full resolution — they get cropped on TV, tablet, and mobile.
+            </ProTip>
+          </section>
+
+          {/* ══ PINTEREST ══════════════════════════════════════════════ */}
+          <section id="pinterest" className="ig-section">
+            <PlatformHeader icon={FaPinterest} name="Pinterest" subtitle="Profile · Cover · Pins · Idea Pins" accent="#E60023" bg="linear-gradient(135deg, #fff5f5 0%, #faf9f7 100%)" />
+            {editorialText(
+              'Pinterest is one of the few platforms where vertical images have a real algorithmic advantage — and where getting the ratio wrong actively hurts your distribution. The algorithm limits reach for images shorter than 2:3, and also for images taller than 1500px. The 1000×1500 pin at exactly 2:3 is the safest choice. Low-resolution images under 600px wide are also deprioritized.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="165×165 px" accent="#E60023"
+                title="165 × 165 pixels"
+                note="The smallest profile photo of any platform. Upload at 400×400 for sharp display — Pinterest will scale it down. Cropped to circle." />
+              <SpecCard w={16} h={9} label="Profile Cover" dims="800×450 px" accent="#E60023"
+                title="800 × 450 px · 16:9"
+                note="Min 800×450. Shows on your profile page. If none is set, Pinterest shows a collage of your boards. Upload at 1600×900 for retina quality." />
+              <SpecCard w={2} h={3} label="Standard Pin" dims="1000×1500 px" accent="#E60023"
+                title="1000 × 1500 px · 2:3"
+                note="Pinterest's signature vertical format. Max 20MB (web), 1GB (app). The algorithm rewards this exact ratio. Avoid going taller than 1500px or wider than 1:1." />
+              <SpecCard w={1} h={1} label="Square Pin" dims="1000×1000 px" accent="#E60023"
+                title="1000 × 1000 px · 1:1"
+                note="Alternate square format. Supported but gets less visual prominence than vertical pins in the masonry grid. Horizontal pins are heavily penalized." />
+            </div>
+            <ProTip>
+              Pinterest's algorithm actively demotes images taller than 1500px — even though the platform technically accepts them.
+              Also: adding a brief text overlay title to your pin images (not just the description) increases saves by up to 30%.
+            </ProTip>
+          </section>
+
+          {/* ══ THREADS ════════════════════════════════════════════════ */}
+          <section id="threads" className="ig-section">
+            <PlatformHeader icon={FaThreads} name="Threads" subtitle="Profile · Posts · Link Previews" accent="#111" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
+            {editorialText(
+              'Threads is the most relaxed platform for image specs — almost any size is accepted, and dimensions are not strictly enforced. Profile photos sync from Instagram by default, so there is rarely a need to upload separately. Posts support up to 20 images in any combination of sizes, including a unique "pinch" gesture on mobile that blends two adjacent photos together at their edges.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="320×320 px" accent="#555"
+                title="320 × 320 pixels"
+                note="Syncs automatically from Instagram. Can be updated independently. Cropped to circle. Max 8MB. Upload at 800×800 for sharp retina rendering." />
+              <SpecCard w={4} h={5} label="Post Images" dims="Any · 4:5 rec." accent="#555"
+                title="Any dimensions · up to 20"
+                note="Up to 20 images per post, max 8MB each. Vertical 4:5 looks most natural in the feed scroll. Square 1:1 works well for multi-image post grids." />
+              <SpecCard w={2} h={1} label="Link Preview" dims="1200×600 px" accent="#555"
+                title="1200 × 600 px · 2:1"
+                note="Slightly wider ratio than Twitter and Facebook OG images. Set via og:image tag. Shown as a horizontal card below linked text." />
+            </div>
+            <ProTip>
+              Because Threads shares your Instagram profile, optimizing your Instagram profile photo automatically optimizes Threads.
+              For post images, Threads renders a 4:5 crop in the feed by default — keep your subject centered to survive that automatic crop.
+            </ProTip>
+          </section>
+
+          {/* ══ BLUESKY ════════════════════════════════════════════════ */}
+          <section id="bluesky" className="ig-section">
+            <PlatformHeader icon={SiBluesky} name="Bluesky" subtitle="Profile · Banner · Posts · Link Cards" accent="#0085FF" />
+            {editorialText(
+              'Bluesky is a newer decentralized social platform without official image dimension documentation. These specs are derived from community testing and observed platform behavior. The interface closely resembles early Twitter: circular profile photo, wide banner, up to 4 images per post. Unlike Instagram, Bluesky preserves original aspect ratios in posts — images are not cropped to a fixed ratio.'
+            )}
+            <div className="ig-specs-grid">
+              <SpecCard w={1} h={1} label="Profile Photo" dims="400×400 px" accent="#0085FF"
+                title="400 × 400 px (rec.)"
+                note="Based on platform behavior — no official spec. Cropped to circle. Max 1MB per image. JPG or PNG. Upload at 400×400 minimum for sharp display." />
+              <SpecCard w={3} h={1} label="Banner" dims="1500×500 px" accent="#0085FF"
+                title="1500 × 500 px · 3:1"
+                note="Cropped to approximately 4:1 on mobile. Keep important content in the center 50% of the image. Visually similar to Twitter/X's header image." />
+              <SpecCard w={4} h={3} label="Post Images" dims="Any · max 1MB" accent="#0085FF"
+                title="Any size · up to 4 images"
+                note="Images display in their original aspect ratio — no forced crop. Shown in a 2×2 grid when 4 are attached. Max 1MB per image — compress before uploading." />
+              <SpecCard w={1.9} h={1} label="Link Card" dims="1200×627 px" accent="#0085FF"
+                title="1200 × 627 px · OG image"
+                note="Shown prominently when sharing links. Uses og:image tag. If no OG image is set, the link card shows only as a text snippet with the domain name." />
+            </div>
+            <ProTip>
+              Bluesky's 1MB image limit is strict and smaller than every other platform. Compress images with Squoosh or TinyPNG before uploading.
+              A 1080×1080 JPG at 85% quality is typically 200–400KB — well within limits with no visible quality loss.
+            </ProTip>
+          </section>
+
+          {/* ══ BEST PRACTICES ═════════════════════════════════════════ */}
+          <section id="tips" style={{ scrollMarginTop: 80 }}>
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 19, fontWeight: 800, color: '#1c1917', margin: '0 0 18px', letterSpacing: '-0.02em' }}>
+              Best Practices
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: 12 }}>
+              {[
+                { icon: '📏', title: '1080px is the universal width', body: 'Every major platform renders feed images at 1080px wide. Upload at exactly this width — larger gets compressed, smaller gets upscaled and looks blurry on retina screens.' },
+                { icon: '📱', title: 'Design vertical-first', body: 'Vertical formats (4:5, 9:16) take 30–40% more screen space on mobile. On mobile-first platforms like Instagram, TikTok, and Threads, vertical always outperforms horizontal.' },
+                { icon: '⭕', title: 'Account for the circle crop', body: 'Instagram, Facebook, Twitter, LinkedIn, YouTube, and Bluesky all crop profile photos into circles. Keep faces and logos in the center 70% of the uploaded square.' },
+                { icon: '🗂️', title: 'JPG for photos, PNG for graphics', body: 'JPG compresses photography with minimal visible loss. PNG preserves sharp edges for logos and type. Never save a screenshot or graphic as JPG — banding will appear.' },
+                { icon: '🎨', title: 'Always export in RGB', body: 'Social platforms only support RGB color mode. CMYK images (print-ready files) will render with washed-out colors. Export in RGB from Photoshop, Figma, or Canva.' },
+                { icon: '🔄', title: 'Start from a high-res master', body: 'Create one master image at 3000×3000px or larger, then export resized versions for each platform. Never upscale a small source file — the quality loss is permanent.' },
+              ].map((tip, i) => (
+                <div key={i} style={{ background: '#fff', border: '1px solid #e7e5e0', borderRadius: 12, padding: '18px 16px', display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                  <div style={{ fontSize: 20, flexShrink: 0, marginTop: 1 }}>{tip.icon}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#1c1917', marginBottom: 4, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{tip.title}</div>
+                    <div style={{ fontSize: 13, color: '#78716c', lineHeight: 1.65 }}>{tip.body}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+        </main>
       </div>
 
       <Footer />
