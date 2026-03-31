@@ -10,12 +10,20 @@ const GUIDE_STYLES = `
 
 .img-guide * { box-sizing: border-box; }
 
+.ig-sidebar-nav {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px;
+}
+
 .img-guide-nav-btn {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 7px 10px; border-radius: 7px;
+  display: flex !important; align-items: center; gap: 9px;
+  width: 100% !important; padding: 7px 10px; border-radius: 7px;
   font-size: 13px; font-weight: 500; color: #78716c;
   cursor: pointer; border: none; background: none; text-align: left;
+  font-family: 'Plus Jakarta Sans', sans-serif;
   transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
 }
 .img-guide-nav-btn:hover { background: #f5f4f2; color: #1c1917; }
 .img-guide-nav-btn.active { background: #f0fdf4; color: #15803d; font-weight: 700; }
@@ -50,29 +58,46 @@ const GUIDE_STYLES = `
 }
 `;
 
-/* ─── AspectBox: renders a proportional frame ───────────────────────── */
-const AspectBox = ({ w, h, label, dims, accent }) => {
-  const ratio = h / w;
-  const MAX = 78;
-  const boxW = ratio >= 1 ? Math.round(MAX / ratio) : MAX;
-  const boxH = ratio >= 1 ? MAX : Math.round(MAX * ratio);
+/* ─── AspectBox: renders a true-proportional frame ─────────────────── */
+// pw/ph = actual pixel dimensions (used to compute exact ratio)
+// label = card label, dims = dimension string, accent = brand color
+const AspectBox = ({ pw, ph, label, dims, accent, ratioLabel }) => {
+  const MAX_W = 100; // max width of the visual box
+  const MAX_H = 108; // max height of the visual box
+  const ratio = ph / pw;
+  // Scale to fit within MAX_W × MAX_H while preserving ratio
+  let boxW, boxH;
+  if (ratio * MAX_W <= MAX_H) {
+    boxW = MAX_W;
+    boxH = Math.round(MAX_W * ratio);
+  } else {
+    boxH = MAX_H;
+    boxW = Math.round(MAX_H / ratio);
+  }
+  // Enforce minimum visible size
+  boxW = Math.max(boxW, 14);
+  boxH = Math.max(boxH, 14);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-      <div style={{
-        width: boxW, height: boxH,
-        background: `${accent}14`,
-        border: `1.5px dashed ${accent}55`,
-        borderRadius: 5,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0, position: 'relative',
-      }}>
-        <span style={{ fontSize: 8.5, fontWeight: 700, color: accent, letterSpacing: '0.04em', fontFamily: 'monospace' }}>
-          {w}:{h}
-        </span>
+      {/* Fixed-height container so all cards align regardless of orientation */}
+      <div style={{ height: MAX_H + 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{
+          width: boxW, height: boxH,
+          background: `${accent}14`,
+          border: `1.5px dashed ${accent}60`,
+          borderRadius: 4,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color: accent, letterSpacing: '0.03em', fontFamily: 'monospace', lineHeight: 1 }}>
+            {ratioLabel || `${pw}:${ph}`}
+          </span>
+        </div>
       </div>
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: '#292524', lineHeight: 1.3 }}>{label}</div>
-        <div style={{ fontSize: 10, color: '#a8a29e', fontFamily: 'monospace', marginTop: 1 }}>{dims}</div>
+        <div style={{ fontSize: 10, color: '#a8a29e', fontFamily: 'monospace', marginTop: 2 }}>{dims}</div>
       </div>
     </div>
   );
@@ -115,10 +140,15 @@ const PlatformHeader = ({ icon: Icon, name, subtitle, accent, bg }) => (
 );
 
 /* ─── Individual spec card ──────────────────────────────────────────── */
-const SpecCard = ({ w, h, label, dims, accent, title, note }) => (
-  <div className="ig-spec-card" style={{ borderTop: `3px solid ${accent}55` }}>
+// pw/ph = actual pixel dimensions; ratioLabel = human-readable ratio string
+const SpecCard = ({ pw, ph, ratioLabel, label, dims, accent, title, note }) => (
+  <div style={{
+    background: '#faf9f7', border: '1px solid #e7e5e0', borderRadius: 11,
+    padding: '18px 14px 14px', display: 'flex', flexDirection: 'column', gap: 14,
+    borderTop: `3px solid ${accent}55`,
+  }}>
     <div style={{ display: 'flex', justifyContent: 'center' }}>
-      <AspectBox w={w} h={h} label={label} dims={dims} accent={accent} />
+      <AspectBox pw={pw} ph={ph} ratioLabel={ratioLabel} label={label} dims={dims} accent={accent} />
     </div>
     <div>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#1c1917', marginBottom: 4, lineHeight: 1.3 }}>{title}</div>
@@ -196,17 +226,27 @@ const SocialMediaImageGuide = () => {
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4bfba', marginBottom: 6, paddingLeft: 10 }}>
             On this page
           </div>
-          <nav>
+          <nav className="ig-sidebar-nav" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {navItems.map(({ id, label, Icon, accent }) => (
               <button
                 key={id}
                 className={`img-guide-nav-btn${activeId === id ? ' active' : ''}`}
                 onClick={() => scrollTo(id)}
+                style={{
+                  display: 'flex', flexDirection: 'row', alignItems: 'center',
+                  width: '100%', gap: 9, padding: '7px 10px', borderRadius: 7,
+                  fontSize: 13, fontWeight: activeId === id ? 700 : 500,
+                  color: activeId === id ? '#15803d' : '#78716c',
+                  background: activeId === id ? '#f0fdf4' : 'transparent',
+                  border: 'none', cursor: 'pointer', textAlign: 'left',
+                  fontFamily: "'Plus Jakarta Sans', sans-serif",
+                  whiteSpace: 'nowrap', boxSizing: 'border-box',
+                }}
               >
                 {Icon && (
                   <Icon style={{ fontSize: 13, color: activeId === id ? '#15803d' : (accent || '#a8a29e'), opacity: activeId === id ? 1 : 0.7, flexShrink: 0 }} />
                 )}
-                {label}
+                <span style={{ flex: 1 }}>{label}</span>
               </button>
             ))}
           </nav>
@@ -314,17 +354,17 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Instagram is the most image-forward platform, which means image quality and cropping matter more here than anywhere else. In January 2025, Instagram shifted its default profile grid from 1:1 square thumbnails to 3:4 vertical — so tall images now show more of themselves when someone visits your profile. For Reels and Stories, 9:16 is the only format that fills the screen; anything else gets letterboxed.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile" dims="320×320 px" accent="#E1306C"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={320} ph={320} ratioLabel="1:1" label="Profile" dims="320×320 px" accent="#E1306C"
                 title="320 × 320 pixels"
                 note="Displayed at 110×110. Cropped to circle — keep faces and logos centered, away from corners. Upload larger (800×800) for sharper display on retina screens." />
-              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#E1306C"
+              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Feed Post" dims="1080×1350 px" accent="#E1306C"
                 title="1080 × 1350 px · 4:5"
                 note="The sweet spot. Takes the most screen space in the feed. Also supports 1:1 square (1080×1080) and 1.91:1 horizontal (1080×566)." />
-              <SpecCard w={3} h={4} label="Grid Thumbnail" dims="1080×1440 px" accent="#E1306C"
+              <SpecCard pw={1080} ph={1440} ratioLabel="3:4" label="Grid Thumbnail" dims="1080×1440 px" accent="#E1306C"
                 title="1080 × 1440 px · 3:4"
                 note="New 2025 tall grid. Profile thumbnails are now cropped at 3:4. Design posts to look intentional in this crop, not just as an afterthought." />
-              <SpecCard w={9} h={16} label="Stories & Reels" dims="1080×1920 px" accent="#E1306C"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Stories & Reels" dims="1080×1920 px" accent="#E1306C"
                 title="1080 × 1920 px · 9:16"
                 note="Full-screen vertical. The top 310px and bottom 310px are covered by UI overlays (profile name, reactions). Keep key content in the safe center zone." />
             </div>
@@ -340,23 +380,23 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Facebook has more image types than any other platform — profiles, pages, groups, events, and ads all have different specs. The platform renders images differently on desktop versus mobile, so designing to the safe area is critical for cover photos. Profile pictures are cropped into circles, so important content must stay away from the corners.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile" dims="320×320 px" accent="#1877F2"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={320} ph={320} ratioLabel="1:1" label="Profile" dims="320×320 px" accent="#1877F2"
                 title="320 × 320 pixels"
                 note="Displayed at 196×196 on desktop, 36×36 in the news feed. Cropped to circle. Important content should stay in the center 65% of the frame." />
-              <SpecCard w={2.7} h={1} label="Cover Photo" dims="851×315 px" accent="#1877F2"
-                title="851 × 315 px · ~2.7:1"
+              <SpecCard pw={851} ph={315} ratioLabel="2.7:1" label="Cover Photo" dims="851×315 px" accent="#1877F2"
+                title="851 × 315 px · 2.7:1"
                 note="For profiles and pages. Mobile shows 640×360. Your profile picture overlaps the bottom-left corner on desktop — don't place text there." />
-              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#1877F2"
+              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Feed Post" dims="1080×1350 px" accent="#1877F2"
                 title="1080 × 1350 px · 4:5"
                 note="Vertical 4:5 gets the most screen space and performs best for reach. Square 1080×1080 is also reliable. Minimum 600px width." />
-              <SpecCard w={9} h={16} label="Stories" dims="1080×1920 px" accent="#1877F2"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Stories" dims="1080×1920 px" accent="#1877F2"
                 title="1080 × 1920 px · 9:16"
                 note="Keep top 250px and bottom 340px clear. Those areas are covered by the profile info overlay and the reply bar respectively." />
-              <SpecCard w={1.9} h={1} label="Link Preview" dims="1200×630 px" accent="#1877F2"
+              <SpecCard pw={1200} ph={630} ratioLabel="1.9:1" label="Link Preview" dims="1200×630 px" accent="#1877F2"
                 title="1200 × 630 px · OG image"
                 note="Set via Open Graph meta tags. This image appears whenever a link is shared. Min 600×314 but 1200×630 looks sharpest on high-DPI screens." />
-              <SpecCard w={1.9} h={1} label="Group Cover" dims="1640×856 px" accent="#1877F2"
+              <SpecCard pw={1640} ph={856} ratioLabel="1.9:1" label="Group Cover" dims="1640×856 px" accent="#1877F2"
                 title="1640 × 856 px (Groups)"
                 note="Groups have a unique wider cover format. Event covers use 1920×1005. Both are separate from personal profile and page covers." />
             </div>
@@ -372,17 +412,17 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Twitter/X has a unique challenge: images in the timeline are cropped to a 2:1 horizontal strip by default — the full image only appears on click. The header photo uses an extreme 3:1 ratio that renders very differently on desktop vs. mobile, so keep all text and logos vertically centered and never extend them to the edges.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile" dims="400×400 px" accent="#555"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={400} ph={400} ratioLabel="1:1" label="Profile" dims="400×400 px" accent="#555"
                 title="400 × 400 pixels"
                 note="Max 2MB. JPG or PNG. Cropped to circle for regular accounts. Business accounts can have square display. Keep subject in center 75%." />
-              <SpecCard w={3} h={1} label="Header Image" dims="1500×500 px" accent="#555"
+              <SpecCard pw={1500} ph={500} ratioLabel="3:1" label="Header Image" dims="1500×500 px" accent="#555"
                 title="1500 × 500 px · 3:1"
                 note="Far wider than any other platform. Displayed at 600×200 on mobile. Keep all important content in the center 60% horizontally and 50% vertically." />
-              <SpecCard w={16} h={9} label="Feed Image" dims="1600×900 px" accent="#555"
+              <SpecCard pw={1600} ph={900} ratioLabel="16:9" label="Feed Image" dims="1600×900 px" accent="#555"
                 title="1600 × 900 px · 16:9"
                 note="Attach up to 4 images per tweet. Supports 16:9, 1:1, 4:5, 3:4. When 4 are attached, they display in a 2×2 grid with each image cropped to fit." />
-              <SpecCard w={1.9} h={1} label="Link Card" dims="1200×628 px" accent="#555"
+              <SpecCard pw={1200} ph={628} ratioLabel="1.9:1" label="Link Card" dims="1200×628 px" accent="#555"
                 title="1200 × 628 px · OG image"
                 note="Requires Twitter Card meta tags. The summary_large_image type shows a prominent banner. Without it, only a small thumbnail appears next to the link." />
             </div>
@@ -398,23 +438,23 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'LinkedIn has two completely different sets of dimensions: one for personal profiles and one for company pages. Cover photo aspect ratios differ dramatically — personal is 4:1, company page is nearly 6:1. The platform also differs from others in that document-style "carousel" posts (uploaded as PDFs) consistently get 3× more organic reach than image posts.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="400×400 px" accent="#0A66C2"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={400} ph={400} ratioLabel="1:1" label="Profile Photo" dims="400×400 px" accent="#0A66C2"
                 title="400 × 400 pixels (min)"
                 note="Max 8MB. Displayed at 400×400 on profile, 48×48 in posts. Cropped to circle. A high-contrast headshot with a plain background works best." />
-              <SpecCard w={4} h={1} label="Personal Cover" dims="1584×396 px" accent="#0A66C2"
+              <SpecCard pw={1584} ph={396} ratioLabel="4:1" label="Personal Cover" dims="1584×396 px" accent="#0A66C2"
                 title="1584 × 396 px · 4:1"
                 note="Max 8MB. Your profile photo overlaps the left side on desktop — avoid putting text on the left 15%. Keep important content in the center 70%." />
-              <SpecCard w={6} h={1} label="Company Cover" dims="1128×191 px" accent="#0A66C2"
-                title="1128 × 191 px · ~6:1"
+              <SpecCard pw={1128} ph={191} ratioLabel="6:1" label="Company Cover" dims="1128×191 px" accent="#0A66C2"
+                title="1128 × 191 px · 6:1"
                 note="Extremely wide. Use a brand color sweep with your logo centered. No room for dense text at this ratio. Max 4MB." />
-              <SpecCard w={4} h={5} label="Feed Post" dims="1080×1350 px" accent="#0A66C2"
+              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Feed Post" dims="1080×1350 px" accent="#0A66C2"
                 title="1080 × 1350 px · 4:5"
                 note="LinkedIn supports 3:1 to 4:5. Vertical 4:5 takes the most feed space on mobile. Square 1:1 is safest for multi-image carousels." />
-              <SpecCard w={1.9} h={1} label="Link Preview" dims="1200×627 px" accent="#0A66C2"
+              <SpecCard pw={1200} ph={627} ratioLabel="1.9:1" label="Link Preview" dims="1200×627 px" accent="#0A66C2"
                 title="1200 × 627 px · OG image"
                 note="Shows as a landscape banner when sharing blog posts or landing pages. Controlled via og:image meta tag. Title text is overlaid below the image." />
-              <SpecCard w={1} h={1} label="Company Logo" dims="300×300 px" accent="#0A66C2"
+              <SpecCard pw={300} ph={300} ratioLabel="1:1" label="Company Logo" dims="300×300 px" accent="#0A66C2"
                 title="300 × 300 pixels (min)"
                 note="Max 4MB. Appears on company page, search results, and alongside posts. Displayed as a circle on some views — keep the logo centered." />
             </div>
@@ -430,14 +470,14 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'TikTok is a vertical-only platform — 9:16 is the only format that fills the screen without black bars. Beyond video, TikTok supports photo carousels of up to 35 images, which have become increasingly popular for tutorials, outfit inspiration, and multi-step content. Both formats must be vertical to avoid blank space at the sides.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="200×200 px" accent="#555"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={200} ph={200} ratioLabel="1:1" label="Profile Photo" dims="200×200 px" accent="#555"
                 title="200 × 200 pixels (rec.)"
                 note="Minimum accepted size is 20×20. Upload at least 200×200 for quality. Cropped to circle. Animated GIFs are supported for profile photos." />
-              <SpecCard w={9} h={16} label="Photo Posts" dims="1080×1920 px" accent="#555"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Photo Posts" dims="1080×1920 px" accent="#555"
                 title="1080 × 1920 px · 9:16"
                 note="The only format that fills the screen completely. 4:5 is accepted but shows black bars. Up to 35 photos per carousel post." />
-              <SpecCard w={9} h={16} label="Video Cover" dims="1080×1920 px" accent="#555"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Video Cover" dims="1080×1920 px" accent="#555"
                 title="1080 × 1920 px · thumbnail"
                 note="The first frame or a custom image shown in your profile grid. Keep text above center — the bottom 200px is covered by the caption in the feed view." />
             </div>
@@ -453,17 +493,17 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'YouTube\'s channel banner is unique because it renders at completely different sizes across devices. The 2560×1440 upload appears as a 2560×423 strip on TV, full dimensions on desktop, and just 1546×423 centered on tablets. Design for the guaranteed center safe zone. Thumbnails are arguably your most impactful image — they directly drive click-through rates on every surface YouTube shows your video.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="800×800 px" accent="#FF0000"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={800} ph={800} ratioLabel="1:1" label="Profile Photo" dims="800×800 px" accent="#FF0000"
                 title="800 × 800 pixels"
                 note="Max 15MB. Displayed at 98×98 on channel page, 36×36 in comments. Cropped to circle. Use a high-contrast headshot or a bold logo on a solid background." />
-              <SpecCard w={16} h={9} label="Channel Banner" dims="2560×1440 px" accent="#FF0000"
+              <SpecCard pw={2560} ph={1440} ratioLabel="16:9" label="Channel Banner" dims="2560×1440 px" accent="#FF0000"
                 title="2560 × 1440 px · 16:9"
                 note="Min 2048×1152. Max 6MB. The center 1546×423px safe zone is the only portion guaranteed to show on all devices. Keep all text and logos inside it." />
-              <SpecCard w={16} h={9} label="Thumbnail" dims="1280×720 px" accent="#FF0000"
+              <SpecCard pw={1280} ph={720} ratioLabel="16:9" label="Thumbnail" dims="1280×720 px" accent="#FF0000"
                 title="1280 × 720 px · 16:9"
                 note="Max 2MB — JPG, PNG, or GIF. High contrast, expressive faces, bold text (under 6 words), and a clear focal point are the proven formula for higher CTR." />
-              <SpecCard w={1} h={1} label="Community Post" dims="Any · 1:1 rec." accent="#FF0000"
+              <SpecCard pw={1080} ph={1080} ratioLabel="1:1" label="Community Post" dims="Any · 1:1 rec." accent="#FF0000"
                 title="Square recommended"
                 note="Community tab posts support any image but 1:1 square displays most consistently. Used for polls, announcements, and behind-the-scenes updates." />
             </div>
@@ -479,17 +519,17 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Pinterest is one of the few platforms where vertical images have a real algorithmic advantage — and where getting the ratio wrong actively hurts your distribution. The algorithm limits reach for images shorter than 2:3, and also for images taller than 1500px. The 1000×1500 pin at exactly 2:3 is the safest choice. Low-resolution images under 600px wide are also deprioritized.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="165×165 px" accent="#E60023"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={165} ph={165} ratioLabel="1:1" label="Profile Photo" dims="165×165 px" accent="#E60023"
                 title="165 × 165 pixels"
                 note="The smallest profile photo of any platform. Upload at 400×400 for sharp display — Pinterest will scale it down. Cropped to circle." />
-              <SpecCard w={16} h={9} label="Profile Cover" dims="800×450 px" accent="#E60023"
+              <SpecCard pw={800} ph={450} ratioLabel="16:9" label="Profile Cover" dims="800×450 px" accent="#E60023"
                 title="800 × 450 px · 16:9"
                 note="Min 800×450. Shows on your profile page. If none is set, Pinterest shows a collage of your boards. Upload at 1600×900 for retina quality." />
-              <SpecCard w={2} h={3} label="Standard Pin" dims="1000×1500 px" accent="#E60023"
+              <SpecCard pw={1000} ph={1500} ratioLabel="2:3" label="Standard Pin" dims="1000×1500 px" accent="#E60023"
                 title="1000 × 1500 px · 2:3"
                 note="Pinterest's signature vertical format. Max 20MB (web), 1GB (app). The algorithm rewards this exact ratio. Avoid going taller than 1500px or wider than 1:1." />
-              <SpecCard w={1} h={1} label="Square Pin" dims="1000×1000 px" accent="#E60023"
+              <SpecCard pw={1000} ph={1000} ratioLabel="1:1" label="Square Pin" dims="1000×1000 px" accent="#E60023"
                 title="1000 × 1000 px · 1:1"
                 note="Alternate square format. Supported but gets less visual prominence than vertical pins in the masonry grid. Horizontal pins are heavily penalized." />
             </div>
@@ -505,14 +545,14 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Threads is the most relaxed platform for image specs — almost any size is accepted, and dimensions are not strictly enforced. Profile photos sync from Instagram by default, so there is rarely a need to upload separately. Posts support up to 20 images in any combination of sizes, including a unique "pinch" gesture on mobile that blends two adjacent photos together at their edges.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="320×320 px" accent="#555"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={320} ph={320} ratioLabel="1:1" label="Profile Photo" dims="320×320 px" accent="#555"
                 title="320 × 320 pixels"
                 note="Syncs automatically from Instagram. Can be updated independently. Cropped to circle. Max 8MB. Upload at 800×800 for sharp retina rendering." />
-              <SpecCard w={4} h={5} label="Post Images" dims="Any · 4:5 rec." accent="#555"
+              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Post Images" dims="Any · 4:5 rec." accent="#555"
                 title="Any dimensions · up to 20"
                 note="Up to 20 images per post, max 8MB each. Vertical 4:5 looks most natural in the feed scroll. Square 1:1 works well for multi-image post grids." />
-              <SpecCard w={2} h={1} label="Link Preview" dims="1200×600 px" accent="#555"
+              <SpecCard pw={1200} ph={600} ratioLabel="2:1" label="Link Preview" dims="1200×600 px" accent="#555"
                 title="1200 × 600 px · 2:1"
                 note="Slightly wider ratio than Twitter and Facebook OG images. Set via og:image tag. Shown as a horizontal card below linked text." />
             </div>
@@ -528,17 +568,17 @@ const SocialMediaImageGuide = () => {
             {editorialText(
               'Bluesky is a newer decentralized social platform without official image dimension documentation. These specs are derived from community testing and observed platform behavior. The interface closely resembles early Twitter: circular profile photo, wide banner, up to 4 images per post. Unlike Instagram, Bluesky preserves original aspect ratios in posts — images are not cropped to a fixed ratio.'
             )}
-            <div className="ig-specs-grid">
-              <SpecCard w={1} h={1} label="Profile Photo" dims="400×400 px" accent="#0085FF"
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
+              <SpecCard pw={400} ph={400} ratioLabel="1:1" label="Profile Photo" dims="400×400 px" accent="#0085FF"
                 title="400 × 400 px (rec.)"
                 note="Based on platform behavior — no official spec. Cropped to circle. Max 1MB per image. JPG or PNG. Upload at 400×400 minimum for sharp display." />
-              <SpecCard w={3} h={1} label="Banner" dims="1500×500 px" accent="#0085FF"
+              <SpecCard pw={1500} ph={500} ratioLabel="3:1" label="Banner" dims="1500×500 px" accent="#0085FF"
                 title="1500 × 500 px · 3:1"
                 note="Cropped to approximately 4:1 on mobile. Keep important content in the center 50% of the image. Visually similar to Twitter/X's header image." />
-              <SpecCard w={4} h={3} label="Post Images" dims="Any · max 1MB" accent="#0085FF"
+              <SpecCard pw={1080} ph={810} ratioLabel="4:3" label="Post Images" dims="Any · max 1MB" accent="#0085FF"
                 title="Any size · up to 4 images"
                 note="Images display in their original aspect ratio — no forced crop. Shown in a 2×2 grid when 4 are attached. Max 1MB per image — compress before uploading." />
-              <SpecCard w={1.9} h={1} label="Link Card" dims="1200×627 px" accent="#0085FF"
+              <SpecCard pw={1200} ph={627} ratioLabel="1.9:1" label="Link Card" dims="1200×627 px" accent="#0085FF"
                 title="1200 × 627 px · OG image"
                 note="Shown prominently when sharing links. Uses og:image tag. If no OG image is set, the link card shows only as a text snippet with the domain name." />
             </div>
