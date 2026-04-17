@@ -369,8 +369,11 @@ async def get_current_user_from_cookie(session_token: Optional[str] = Cookie(Non
     # Parse dates
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
-        user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+    if user_doc.get('subscription_end_date'):
+        if isinstance(user_doc['subscription_end_date'], str):
+            user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+        if user_doc['subscription_end_date'].tzinfo is None:
+            user_doc['subscription_end_date'] = user_doc['subscription_end_date'].replace(tzinfo=timezone.utc)
 
     # Auto-expire subscription if end_date has passed
     if (user_doc.get('subscription_status') == 'active' and
@@ -408,8 +411,11 @@ async def _resolve_user_doc(user_id: str) -> dict:
 
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
-        user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+    if user_doc.get('subscription_end_date'):
+        if isinstance(user_doc['subscription_end_date'], str):
+            user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+        if user_doc['subscription_end_date'].tzinfo is None:
+            user_doc['subscription_end_date'] = user_doc['subscription_end_date'].replace(tzinfo=timezone.utc)
 
     # Auto-expire subscription if end_date has passed
     if (user_doc.get('subscription_status') == 'active' and
@@ -675,8 +681,11 @@ async def google_auth_callback(callback_data: GoogleAuthCallback):
             user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password": 0})
             if isinstance(user_doc.get('created_at'), str):
                 user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-            if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
-                user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+            if user_doc.get('subscription_end_date'):
+                if isinstance(user_doc['subscription_end_date'], str):
+                    user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+                if user_doc['subscription_end_date'].tzinfo is None:
+                    user_doc['subscription_end_date'] = user_doc['subscription_end_date'].replace(tzinfo=timezone.utc)
             
             return {
                 "session_token": session_token,
@@ -697,8 +706,11 @@ async def login(credentials: UserLogin):
     
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    if user_doc.get('subscription_end_date') and isinstance(user_doc['subscription_end_date'], str):
-        user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+    if user_doc.get('subscription_end_date'):
+        if isinstance(user_doc['subscription_end_date'], str):
+            user_doc['subscription_end_date'] = datetime.fromisoformat(user_doc['subscription_end_date'])
+        if user_doc['subscription_end_date'].tzinfo is None:
+            user_doc['subscription_end_date'] = user_doc['subscription_end_date'].replace(tzinfo=timezone.utc)
     
     user = User(**{k: v for k, v in user_doc.items() if k not in ['password', '_id']})
     access_token = create_access_token({"sub": user.user_id, "email": user.email})
