@@ -484,10 +484,11 @@ async def get_current_user(session_token: Optional[str] = Cookie(None), authoriz
             return User(**user_doc)
         except firebase_auth.ExpiredIdTokenError:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-        except firebase_auth.InvalidIdTokenError:
+        except firebase_auth.InvalidIdTokenError as e:
+            logging.error(f"[AUTH] Firebase InvalidIdTokenError: {e}")
             pass  # Not a Firebase token — fall through to custom JWT
         except Exception as e:
-            logging.debug(f"Firebase token check failed (may be custom JWT): {e}")
+            logging.error(f"[AUTH] Firebase token check failed: {type(e).__name__}: {e}")
 
     # 2. Fall back to custom JWT (email/password login)
     try:
