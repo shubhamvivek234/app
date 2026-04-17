@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>2026 Social Media Asset Specs</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #ffffff;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px;
+  }
+  .wrapper {
+    width: 780px;
+  }
+  h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111;
+    margin-bottom: 14px;
+    letter-spacing: -0.2px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    color: #1a1a1a;
+  }
+  thead tr {
+    border-bottom: 2px solid #e0e0e0;
+  }
+  thead th {
+    text-align: left;
+    font-weight: 600;
+    color: #444;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  tbody tr {
+    border-bottom: 1px solid #f0f0f0;
+  }
+  tbody tr:last-child {
+    border-bottom: none;
+  }
+  tbody tr:hover {
+    background: #fafafa;
+  }
+  td {
+    padding: 11px 14px;
+    vertical-align: middle;
+  }
+  td:first-child {
+    font-weight: 600;
+    color: #111;
+    width: 130px;
+  }
+  td:nth-child(2),
+  td:nth-child(3) {
+    width: 130px;
+    font-variant-numeric: tabular-nums;
+    color: #222;
+  }
+  td:last-child {
+    color: #555;
+    font-size: 13px;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge-green  { background: #e6f4ea; color: #1a7a3a; }
+  .badge-red    { background: #fdecea; color: #c0392b; }
+  .badge-orange { background: #fff3e0; color: #b45309; }
+  .footnote {
+    margin-top: 16px;
+    font-size: 11.5px;
+    color: #888;
+    line-height: 1.6;
+  }
+  .footnote span { color: #c0392b; font-weight: 600; }
+  .footnote span.ok { color: #1a7a3a; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <h2>2026 Social Media Asset Specifications — Verified</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Platform</th>
+        <th>Max Video</th>
+        <th>Max Image</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Instagram</td>
+        <td>4 GB <span class="badge badge-green">↑ Corrected</span></td>
+        <td>30 MB</td>
+        <td>MP4/MOV · 4 GB for Reels (was 650 MB — outdated) · 4:5 portrait preferred</td>
+      </tr>
+      <tr>
+        <td>Facebook</td>
+        <td>10 GB (feed)<br><span style="color:#888;font-size:12px">4 GB (Reels/Stories)</span></td>
+        <td>30 MB</td>
+        <td>Feed video up to 4 hrs · 10 MB figure reflects API limit only</td>
+      </tr>
+      <tr>
+        <td>YouTube</td>
+        <td>256 GB</td>
+        <td>2 MB (thumbnails)<br><span style="color:#888;font-size:12px">16 MB (community)</span></td>
+        <td>8K UHD · up to 12 hrs · H.264 / H.265 · 5K tier removed</td>
+      </tr>
+      <tr>
+        <td>Twitter / X</td>
+        <td>512 MB (standard)<br><span style="color:#888;font-size:12px">16 GB (Premium — web/iOS)</span></td>
+        <td>5 MB (mobile)<br><span style="color:#888;font-size:12px">15 MB (web)</span></td>
+        <td>Standard: 2m20s max · Premium: up to 4 hrs · Android capped at 10 min</td>
+      </tr>
+      <tr>
+        <td>LinkedIn</td>
+        <td>5 GB</td>
+        <td>5 MB (posts)<br><span style="color:#888;font-size:12px">8 MB (profile/banner)</span></td>
+        <td>10 min (mobile) · 15 min (desktop) · Ads: 200 MB / 30 min max</td>
+      </tr>
+      <tr>
+        <td>TikTok</td>
+        <td>500 MB (web) <span class="badge badge-red">↓ Corrected</span><br><span style="color:#888;font-size:12px">287.6 MB (iOS) · 72 MB (Android)</span></td>
+        <td>20 MB</td>
+        <td>4 GB was incorrect (Meta figure) · 9:16 mandatory · up to 60 min duration</td>
+      </tr>
+      <tr>
+        <td>Pinterest</td>
+        <td>2 GB</td>
+        <td>20 MB</td>
+        <td>MP4 / MOV / M4V (not MP4-only) · H.264 or H.265 · up to 15 min · 2:3 ratio preferred</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="footnote">
+    <span>Red badges</span> = original table overstated the limit. &nbsp;
+    <span class="ok">Green badges</span> = original table understated the limit. &nbsp;
+    Image limits reflect native platform uploads; third-party API tools often enforce lower thresholds.
+  </p>
+</div>
+</body>
+</html>

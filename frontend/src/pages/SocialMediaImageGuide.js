@@ -160,6 +160,7 @@ const SpecCard = ({ pw, ph, ratioLabel, label, dims, accent, title, note }) => (
 /* ─── Main component ────────────────────────────────────────────────── */
 const SocialMediaImageGuide = () => {
   const [activeId, setActiveId] = useState('intro');
+  const [hoveredRow, setHoveredRow] = useState(null);
 
   useEffect(() => {
     const ids = ['intro', 'quickref', 'instagram', 'facebook', 'twitter', 'linkedin', 'tiktok', 'youtube', 'pinterest', 'threads', 'bluesky', 'tips'];
@@ -178,12 +179,12 @@ const SocialMediaImageGuide = () => {
     { id: 'quickref',  label: 'Quick Reference' },
     { id: 'instagram', label: 'Instagram',  Icon: FaInstagram, accent: '#E1306C' },
     { id: 'facebook',  label: 'Facebook',   Icon: FaFacebook,  accent: '#1877F2' },
-    { id: 'twitter',   label: 'Twitter / X', Icon: FaTwitter,  accent: '#000' },
+    { id: 'twitter',   label: 'Twitter / X', Icon: FaTwitter,  accent: '#000000' },
     { id: 'linkedin',  label: 'LinkedIn',   Icon: FaLinkedin,  accent: '#0A66C2' },
-    { id: 'tiktok',    label: 'TikTok',     Icon: SiTiktok,    accent: '#111' },
+    { id: 'tiktok',    label: 'TikTok',     Icon: SiTiktok,    accent: '#111111' },
     { id: 'youtube',   label: 'YouTube',    Icon: FaYoutube,   accent: '#FF0000' },
     { id: 'pinterest', label: 'Pinterest',  Icon: FaPinterest, accent: '#E60023' },
-    { id: 'threads',   label: 'Threads',    Icon: FaThreads,   accent: '#111' },
+    { id: 'threads',   label: 'Threads',    Icon: FaThreads,   accent: '#111111' },
     { id: 'bluesky',   label: 'Bluesky',    Icon: SiBluesky,   accent: '#0085FF' },
     { id: 'tips',      label: 'Best Practices' },
   ];
@@ -310,38 +311,77 @@ const SocialMediaImageGuide = () => {
             </h2>
             <div style={{ background: '#fff', border: '1px solid #e7e5e0', borderRadius: 12, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
-                <table className="ig-qt" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
                   <thead>
                     <tr>
-                      <th>Platform</th>
-                      <th>Profile Photo</th>
-                      <th>Cover / Banner</th>
-                      <th>Best Feed Post</th>
-                      <th>Story / Reel</th>
-                      <th>Link Preview</th>
+                      {['Platform', 'Profile Photo', 'Cover / Banner', 'Best Feed Post', 'Story / Reel', 'Link Preview'].map(h => (
+                        <th key={h} style={{
+                          fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+                          color: '#a8a29e', padding: '12px 14px', textAlign: 'left',
+                          background: '#faf9f7', whiteSpace: 'nowrap',
+                          borderBottom: '1px solid #e7e5e0',
+                        }}>
+                          {h}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {[
-                      ['Instagram',   '320×320',    '—',          '1080×1350',  '1080×1920',  '—'],
-                      ['Facebook',    '320×320',    '851×315',    '1080×1350',  '1080×1920',  '1200×630'],
-                      ['Twitter / X', '400×400',    '1500×500',   '1600×900',   '—',          '1200×628'],
-                      ['LinkedIn',    '400×400',    '1584×396',   '1080×1350',  '—',          '1200×627'],
-                      ['TikTok',      '200×200',    '—',          '1080×1920',  '1080×1920',  '—'],
-                      ['YouTube',     '800×800',    '2560×1440',  '1280×720',   '—',          '—'],
-                      ['Pinterest',   '165×165',    '800×450',    '1000×1500',  '—',          '—'],
-                      ['Threads',     '320×320',    '—',          'Any (4:5 rec)', '—',       '1200×600'],
-                      ['Bluesky',     '400×400',    '1500×500',   'Any (4:3 rec)', '—',       '1200×627'],
-                    ].map(([name, profile, cover, feed, story, link], i) => (
-                      <tr key={i}>
-                        <td>{name}</td>
-                        <td>{profile}</td>
-                        <td>{cover}</td>
-                        <td>{feed}</td>
-                        <td>{story}</td>
-                        <td>{link}</td>
-                      </tr>
-                    ))}
+                      { name: 'Instagram',   accent: '#E1306C', Icon: FaInstagram,  profile: '320 × 320',    cover: '—',           feed: '1080 × 1350',      story: '1080 × 1920', link: '—' },
+                      { name: 'Facebook',    accent: '#1877F2', Icon: FaFacebook,   profile: '320 × 320',    cover: '851 × 315',   feed: '1080 × 1350',      story: '1080 × 1920', link: '1200 × 630' },
+                      { name: 'Twitter / X', accent: '#000000', Icon: FaTwitter,    profile: '400 × 400',    cover: '1500 × 500',  feed: '1600 × 900',       story: '—',           link: '1200 × 628' },
+                      { name: 'LinkedIn',    accent: '#0A66C2', Icon: FaLinkedin,   profile: '400 × 400',    cover: '1584 × 396',  feed: '1080 × 1350',      story: '—',           link: '1200 × 627' },
+                      { name: 'TikTok',      accent: '#010101', Icon: SiTiktok,     profile: '200 × 200',    cover: '—',           feed: '1080 × 1920',      story: '1080 × 1920', link: '—' },
+                      { name: 'YouTube',     accent: '#FF0000', Icon: FaYoutube,    profile: '800 × 800',    cover: '2560 × 1440', feed: '1280 × 720',       story: '—',           link: '—' },
+                      { name: 'Pinterest',   accent: '#E60023', Icon: FaPinterest,  profile: '165 × 165',    cover: '800 × 450',   feed: '1000 × 1500',      story: '—',           link: '—' },
+                      { name: 'Threads',     accent: '#000000', Icon: FaThreads,    profile: '320 × 320',    cover: '—',           feed: 'Any (4:5 rec.)',   story: '—',           link: '1200 × 600' },
+                      { name: 'Bluesky',     accent: '#0085ff', Icon: SiBluesky,    profile: '400 × 400',    cover: '1500 × 500',  feed: 'Any (4:3 rec.)',   story: '—',           link: '1200 × 627' },
+                    ].map(({ name, accent, Icon, profile, cover, feed, story, link }, i, arr) => {
+                      const isLast = i === arr.length - 1;
+                      const isHovered = hoveredRow === i;
+                      const tdBase = {
+                        padding: '10px 14px',
+                        fontSize: 12,
+                        color: isHovered ? '#44403c' : '#78716c',
+                        borderBottom: isLast ? 'none' : '1px solid #f5f4f2',
+                        fontFamily: "'Courier New', monospace",
+                        whiteSpace: 'nowrap',
+                        background: isHovered ? '#faf9f7' : 'transparent',
+                        transition: 'background 0.1s, color 0.1s',
+                      };
+                      const tdDash = { ...tdBase, color: '#d4d0cc', letterSpacing: 0 };
+                      return (
+                        <tr
+                          key={i}
+                          onMouseEnter={() => setHoveredRow(i)}
+                          onMouseLeave={() => setHoveredRow(null)}
+                        >
+                          <td style={{
+                            ...tdBase,
+                            fontFamily: "'Plus Jakarta Sans', sans-serif",
+                            fontWeight: 600,
+                            color: '#1c1917',
+                            fontSize: 13,
+                          }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{
+                                width: 24, height: 24, borderRadius: 6,
+                                background: `${accent}18`,
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0,
+                              }}>
+                                <Icon style={{ fontSize: 12, color: accent }} />
+                              </span>
+                              {name}
+                            </span>
+                          </td>
+                          {[profile, cover, feed, story, link].map((val, j) => (
+                            <td key={j} style={val === '—' ? tdDash : tdBase}>{val}</td>
+                          ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -408,21 +448,21 @@ const SocialMediaImageGuide = () => {
 
           {/* ══ TWITTER/X ══════════════════════════════════════════════ */}
           <section id="twitter" className="ig-section">
-            <PlatformHeader icon={FaTwitter} name="Twitter / X" subtitle="Profile · Header · Feed Posts · Link Cards" accent="#000" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
+            <PlatformHeader icon={FaTwitter} name="Twitter / X" subtitle="Profile · Header · Feed Posts · Link Cards" accent="#000000" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
             {editorialText(
               'Twitter/X has a unique challenge: images in the timeline are cropped to a 2:1 horizontal strip by default — the full image only appears on click. The header photo uses an extreme 3:1 ratio that renders very differently on desktop vs. mobile, so keep all text and logos vertically centered and never extend them to the edges.'
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
-              <SpecCard pw={400} ph={400} ratioLabel="1:1" label="Profile" dims="400×400 px" accent="#555"
+              <SpecCard pw={400} ph={400} ratioLabel="1:1" label="Profile" dims="400×400 px" accent="#000000"
                 title="400 × 400 pixels"
                 note="Max 2MB. JPG or PNG. Cropped to circle for regular accounts. Business accounts can have square display. Keep subject in center 75%." />
-              <SpecCard pw={1500} ph={500} ratioLabel="3:1" label="Header Image" dims="1500×500 px" accent="#555"
+              <SpecCard pw={1500} ph={500} ratioLabel="3:1" label="Header Image" dims="1500×500 px" accent="#000000"
                 title="1500 × 500 px · 3:1"
                 note="Far wider than any other platform. Displayed at 600×200 on mobile. Keep all important content in the center 60% horizontally and 50% vertically." />
-              <SpecCard pw={1600} ph={900} ratioLabel="16:9" label="Feed Image" dims="1600×900 px" accent="#555"
+              <SpecCard pw={1600} ph={900} ratioLabel="16:9" label="Feed Image" dims="1600×900 px" accent="#000000"
                 title="1600 × 900 px · 16:9"
                 note="Attach up to 4 images per tweet. Supports 16:9, 1:1, 4:5, 3:4. When 4 are attached, they display in a 2×2 grid with each image cropped to fit." />
-              <SpecCard pw={1200} ph={628} ratioLabel="1.9:1" label="Link Card" dims="1200×628 px" accent="#555"
+              <SpecCard pw={1200} ph={628} ratioLabel="1.9:1" label="Link Card" dims="1200×628 px" accent="#000000"
                 title="1200 × 628 px · OG image"
                 note="Requires Twitter Card meta tags. The summary_large_image type shows a prominent banner. Without it, only a small thumbnail appears next to the link." />
             </div>
@@ -466,18 +506,18 @@ const SocialMediaImageGuide = () => {
 
           {/* ══ TIKTOK ═════════════════════════════════════════════════ */}
           <section id="tiktok" className="ig-section">
-            <PlatformHeader icon={SiTiktok} name="TikTok" subtitle="Profile · Photo Carousels · Video Thumbnails" accent="#111" bg="linear-gradient(135deg, #f0fafa 0%, #faf9f7 100%)" />
+            <PlatformHeader icon={SiTiktok} name="TikTok" subtitle="Profile · Photo Carousels · Video Thumbnails" accent="#111111" bg="linear-gradient(135deg, #f0fafa 0%, #faf9f7 100%)" />
             {editorialText(
               'TikTok is a vertical-only platform — 9:16 is the only format that fills the screen without black bars. Beyond video, TikTok supports photo carousels of up to 35 images, which have become increasingly popular for tutorials, outfit inspiration, and multi-step content. Both formats must be vertical to avoid blank space at the sides.'
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
-              <SpecCard pw={200} ph={200} ratioLabel="1:1" label="Profile Photo" dims="200×200 px" accent="#555"
+              <SpecCard pw={200} ph={200} ratioLabel="1:1" label="Profile Photo" dims="200×200 px" accent="#111111"
                 title="200 × 200 pixels (rec.)"
                 note="Minimum accepted size is 20×20. Upload at least 200×200 for quality. Cropped to circle. Animated GIFs are supported for profile photos." />
-              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Photo Posts" dims="1080×1920 px" accent="#555"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Photo Posts" dims="1080×1920 px" accent="#EE1D52"
                 title="1080 × 1920 px · 9:16"
                 note="The only format that fills the screen completely. 4:5 is accepted but shows black bars. Up to 35 photos per carousel post." />
-              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Video Cover" dims="1080×1920 px" accent="#555"
+              <SpecCard pw={1080} ph={1920} ratioLabel="9:16" label="Video Cover" dims="1080×1920 px" accent="#69C9D0"
                 title="1080 × 1920 px · thumbnail"
                 note="The first frame or a custom image shown in your profile grid. Keep text above center — the bottom 200px is covered by the caption in the feed view." />
             </div>
@@ -541,18 +581,18 @@ const SocialMediaImageGuide = () => {
 
           {/* ══ THREADS ════════════════════════════════════════════════ */}
           <section id="threads" className="ig-section">
-            <PlatformHeader icon={FaThreads} name="Threads" subtitle="Profile · Posts · Link Previews" accent="#111" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
+            <PlatformHeader icon={FaThreads} name="Threads" subtitle="Profile · Posts · Link Previews" accent="#111111" bg="linear-gradient(135deg, #f8f8f8 0%, #faf9f7 100%)" />
             {editorialText(
               'Threads is the most relaxed platform for image specs — almost any size is accepted, and dimensions are not strictly enforced. Profile photos sync from Instagram by default, so there is rarely a need to upload separately. Posts support up to 20 images in any combination of sizes, including a unique "pinch" gesture on mobile that blends two adjacent photos together at their edges.'
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, padding: '0 16px 20px' }}>
-              <SpecCard pw={320} ph={320} ratioLabel="1:1" label="Profile Photo" dims="320×320 px" accent="#555"
+              <SpecCard pw={320} ph={320} ratioLabel="1:1" label="Profile Photo" dims="320×320 px" accent="#000000"
                 title="320 × 320 pixels"
                 note="Syncs automatically from Instagram. Can be updated independently. Cropped to circle. Max 8MB. Upload at 800×800 for sharp retina rendering." />
-              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Post Images" dims="Any · 4:5 rec." accent="#555"
+              <SpecCard pw={1080} ph={1350} ratioLabel="4:5" label="Post Images" dims="Any · 4:5 rec." accent="#000000"
                 title="Any dimensions · up to 20"
                 note="Up to 20 images per post, max 8MB each. Vertical 4:5 looks most natural in the feed scroll. Square 1:1 works well for multi-image post grids." />
-              <SpecCard pw={1200} ph={600} ratioLabel="2:1" label="Link Preview" dims="1200×600 px" accent="#555"
+              <SpecCard pw={1200} ph={600} ratioLabel="2:1" label="Link Preview" dims="1200×600 px" accent="#000000"
                 title="1200 × 600 px · 2:1"
                 note="Slightly wider ratio than Twitter and Facebook OG images. Set via og:image tag. Shown as a horizontal card below linked text." />
             </div>

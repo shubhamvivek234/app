@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
-import BulkCSVModal from '@/components/BulkCSVModal';
 import {
   FaVideo, FaFileCsv, FaArrowRight, FaLayerGroup,
 } from 'react-icons/fa';
@@ -52,7 +51,6 @@ const FeatureCard = ({ icon: Icon, iconBg, title, badge, description, onClick, a
 
 const BulkUpload = () => {
   const navigate = useNavigate();
-  const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   return (
     <DashboardLayout>
@@ -87,12 +85,11 @@ const BulkUpload = () => {
             title="Bulk Upload via CSV"
             badge="NEW"
             description="Import hundreds of posts at once using a CSV file. Download our template, fill it in, upload and we'll validate every row before scheduling."
-            onClick={() => setCsvModalOpen(true)}
+            onClick={() => navigate('/bulk-csv')}
           />
         </div>
       </div>
 
-      {csvModalOpen && <BulkCSVModal onClose={() => setCsvModalOpen(false)} />}
     </DashboardLayout>
   );
 };

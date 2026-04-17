@@ -3017,6 +3017,281 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     except Exception as e:
         logging.error(f"Failed to send DLQ notification: {e}")
 
+# ==================== BULK CSV UPLOAD ====================
+
+class URLValidateRequest(BaseModel):
+    urls: List[str]
+
+class URLValidateResult(BaseModel):
+    url: str
+    ok: bool
+    error: Optional[str] = None
+
+@api_router.post("/bulk/validate-urls", response_model=List[URLValidateResult])
+async def validate_urls_endpoint(
+    request: URLValidateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """HEAD-check each URL for public accessibility. SSRF-guarded, max 50 URLs."""
+    import httpx
+    from urllib.parse import urlparse as _up
+
+    urls = list(dict.fromkeys(u.strip() for u in request.urls if u.strip()))[:50]
+    sem = asyncio.Semaphore(8)
+
+    async def _check(url: str) -> URLValidateResult:
+        async with sem:
+            if not url.startswith("http"):
+                return URLValidateResult(url=url, ok=False, error="Must start with http/https")
+            hostname = (_up(url).hostname or "")
+            if _SSRF_RE.match(hostname):
+                return URLValidateResult(url=url, ok=False, error="Private address blocked")
+            try:
+                async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+                    r = await client.head(url)
+                    if r.status_code >= 400:
+                        return URLValidateResult(url=url, ok=False, error=f"HTTP {r.status_code}")
+                    return URLValidateResult(url=url, ok=True)
+            except httpx.TimeoutException:
+                return URLValidateResult(url=url, ok=False, error="Timed out (8s)")
+            except Exception as e:
+                return URLValidateResult(url=url, ok=False, error=str(e)[:80])
+
+    results = await asyncio.gather(*[_check(u) for u in urls])
+    return list(results)
+
+
+class CSVBulkPost(BaseModel):
+    row: int = 0
+    content: str = ""
+    platforms: List[str] = []
+    scheduled_time: Optional[str] = None
+    timezone: str = "UTC"
+    image_urls: List[str] = []
+    video_url: Optional[str] = None
+    title: Optional[str] = None
+    tags: List[str] = []
+    post_type: Optional[str] = None
+
+class CSVBulkUploadRequest(BaseModel):
+    posts: List[CSVBulkPost]
+    selected_account_ids: List[str] = []
+    fallback_timezone: str = "UTC"
+
+class CSVBulkRowResult(BaseModel):
+    row: int
+    status: str  # "created" | "error"
+    post_id: Optional[str] = None
+    errors: List[str] = []
+
+class CSVBulkUploadResponse(BaseModel):
+    results: List[CSVBulkRowResult]
+    created: int
+    failed: int
+
+_SSRF_RE = re.compile(
+    r'^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)',
+    re.IGNORECASE,
+)
+
+async def _download_url_to_r2(url: str, user_id: str) -> tuple[str, str]:
+    """
+    Download a public URL and upload to R2/Firebase storage.
+    Returns (r2_public_url, content_type).
+    Raises ValueError on failure.
+    """
+    import httpx
+    import mimetypes as _mt
+    from urllib.parse import urlparse as _up
+    from utils.storage import upload_file as _upload
+
+    parsed = _up(url)
+    hostname = parsed.hostname or ""
+    if _SSRF_RE.match(hostname):
+        raise ValueError(f"URL targets a private/internal address: {hostname}")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # HEAD first to check reachability and content-length
+            head = await client.head(url)
+            if head.status_code >= 400:
+                raise ValueError(f"URL not accessible (HTTP {head.status_code})")
+
+            raw_ct = head.headers.get("content-type", "application/octet-stream")
+            content_type = raw_ct.split(";")[0].strip()
+            content_length = int(head.headers.get("content-length", 0))
+
+            is_video = "video" in content_type
+            max_bytes = 200 * 1024 * 1024 if is_video else 20 * 1024 * 1024
+            if content_length and content_length > max_bytes:
+                raise ValueError(
+                    f"File too large ({content_length / (1024*1024):.1f} MB, "
+                    f"max {max_bytes // (1024*1024)} MB)"
+                )
+
+            # Download
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.content
+
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"Downloaded file too large ({len(data) / (1024*1024):.1f} MB)"
+            )
+
+    except httpx.TimeoutException:
+        raise ValueError("URL download timed out (30s limit)")
+    except httpx.HTTPError as e:
+        raise ValueError(f"HTTP error downloading URL: {e}")
+
+    # Derive filename
+    path_part = parsed.path.split("/")[-1] or f"media_{uuid.uuid4().hex[:8]}"
+    if "." not in path_part:
+        ext = _mt.guess_extension(content_type) or ""
+        path_part = f"{path_part}{ext}"
+
+    safe_name = f"{uuid.uuid4().hex}_{path_part}"[:120]
+    folder = f"csv_imports/{user_id}"
+
+    # R2 upload (sync — run in thread pool)
+    r2_url = await asyncio.get_event_loop().run_in_executor(
+        None, _upload, data, safe_name, content_type, folder
+    )
+    return r2_url, content_type
+
+
+@api_router.post("/bulk/csv-upload", response_model=CSVBulkUploadResponse)
+async def bulk_csv_upload(
+    request: CSVBulkUploadRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Full-pipeline bulk CSV upload:
+    1. Validate platform → selected account connectivity
+    2. Download each media URL and upload to R2
+    3. Create post documents (same schema as manual post creation)
+    Returns per-row results.
+    """
+    user_id = current_user.user_id
+
+    if not request.posts:
+        raise HTTPException(status_code=400, detail="No posts provided")
+    if len(request.posts) > 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 posts per bulk import")
+
+    # Fetch user's active social accounts
+    raw_accounts = await db.social_accounts.find(
+        {"user_id": user_id, "is_active": True},
+        {"_id": 0, "id": 1, "platform": 1, "platform_username": 1},
+    ).to_list(None)
+
+    # Build map: platform → [account_id, ...] filtered by selected_account_ids
+    platform_to_accs: Dict[str, List[str]] = {}
+    for acc in raw_accounts:
+        acc_id = acc.get("id") or acc.get("account_id", "")
+        # If caller sent selected_account_ids, filter to those; else use all connected
+        if not request.selected_account_ids or acc_id in request.selected_account_ids:
+            plat = (acc.get("platform") or "").lower()
+            platform_to_accs.setdefault(plat, []).append(acc_id)
+
+    results: List[CSVBulkRowResult] = []
+
+    for post in request.posts:
+        row_errors: List[str] = []
+        platforms = [p.lower().strip() for p in post.platforms if p.strip()]
+
+        # ── 1. Account connectivity check ─────────────────────────────────────
+        missing_plats = [p for p in platforms if p not in platform_to_accs]
+        if missing_plats:
+            row_errors.append(
+                f"No selected account for platform(s): {', '.join(missing_plats)}"
+            )
+            results.append(CSVBulkRowResult(row=post.row, status="error", errors=row_errors))
+            continue
+
+        # ── 2. Download media URLs → R2 ────────────────────────────────────────
+        r2_image_urls: List[str] = []
+        r2_video_url: Optional[str] = None
+
+        for img_url in (post.image_urls or []):
+            if not img_url.strip():
+                continue
+            try:
+                r2_url, _ = await _download_url_to_r2(img_url.strip(), user_id)
+                r2_image_urls.append(r2_url)
+            except ValueError as e:
+                row_errors.append(f"Image URL error ({img_url[:60]}): {e}")
+
+        if post.video_url and post.video_url.strip():
+            try:
+                r2_url, _ = await _download_url_to_r2(post.video_url.strip(), user_id)
+                r2_video_url = r2_url
+            except ValueError as e:
+                row_errors.append(f"Video URL error ({post.video_url[:60]}): {e}")
+
+        if row_errors:
+            results.append(CSVBulkRowResult(row=post.row, status="error", errors=row_errors))
+            continue
+
+        # ── 3. Parse scheduled_time (already UTC ISO from frontend) ───────────
+        scheduled_time: Optional[datetime] = None
+        post_status = "draft"
+        if post.scheduled_time:
+            try:
+                scheduled_time = datetime.fromisoformat(
+                    post.scheduled_time.replace("Z", "+00:00")
+                )
+                if scheduled_time.tzinfo is None:
+                    scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
+                grace = datetime.now(timezone.utc) - timedelta(minutes=5)
+                if scheduled_time >= grace:
+                    post_status = "scheduled"
+                else:
+                    row_errors.append("scheduled_time is in the past — post saved as draft")
+            except ValueError:
+                row_errors.append("Could not parse scheduled_time — post saved as draft")
+
+        # ── 4. Create post document ────────────────────────────────────────────
+        inferred_post_type = post.post_type or (
+            "video" if r2_video_url else ("image" if r2_image_urls else "text")
+        )
+
+        post_doc = Post(
+            user_id=user_id,
+            content=post.content or "",
+            post_type=inferred_post_type,
+            platforms=platforms,
+            media_urls=r2_image_urls,
+            video_url=r2_video_url,
+            video_title=post.title,
+            scheduled_time=scheduled_time,
+            status=post_status,
+        )
+        doc_dict = post_doc.model_dump()
+        doc_dict["created_at"] = doc_dict["created_at"].isoformat()
+        if doc_dict.get("scheduled_time"):
+            doc_dict["scheduled_time"] = doc_dict["scheduled_time"].isoformat()
+        doc_dict["source"] = "csv_bulk_upload"
+        doc_dict["tags"] = post.tags or []
+
+        await db.posts.insert_one(doc_dict)
+
+        results.append(
+            CSVBulkRowResult(
+                row=post.row,
+                status="created",
+                post_id=post_doc.id,
+                errors=row_errors,  # may have non-blocking warnings
+            )
+        )
+
+    created = sum(1 for r in results if r.status == "created")
+    failed = sum(1 for r in results if r.status == "error")
+
+    logging.info("Bulk CSV upload: user=%s created=%d failed=%d", user_id, created, failed)
+    return CSVBulkUploadResponse(results=results, created=created, failed=failed)
+
+
 # ==================== STARTUP & SHUTDOWN ====================
 
 @app.on_event("startup")
