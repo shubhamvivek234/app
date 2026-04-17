@@ -53,6 +53,7 @@ const Inbox = () => {
 
   useEffect(() => {
     loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const loadAll = async () => {

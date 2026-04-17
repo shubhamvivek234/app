@@ -91,6 +91,7 @@ const Billing = () => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get('session_id');
     if (sessionId) checkPaymentStatus(sessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkPaymentStatus = async (sessionId) => {
