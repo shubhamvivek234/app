@@ -91,4 +91,3 @@ frontend/node_modules/.cache/default-development/1.pack
 # Environment files
 *.env
 *.env.*
-frontend/src/firebase.js
