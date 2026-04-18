@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import '@/App.css';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
+import { GooeyLoader } from '@/components/ui/loader-10';
 
 // Pages
 import LandingPage from '@/pages/LandingPage';
@@ -83,7 +84,11 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
+      </div>
+    );
   }
 
   if (!user) {
@@ -131,7 +136,11 @@ const PublicRoute = ({ children }) => {
   const location = useLocation();
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
+      </div>
+    );
   }
 
   if (!user) {
