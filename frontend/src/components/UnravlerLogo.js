@@ -1,148 +1,108 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 
 const KEYFRAMES = `
-@keyframes unravler-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50%       { transform: scale(1.08); opacity: 0.85; }
+@keyframes unravler-float-top {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-2px) scale(1.05); }
 }
-@keyframes unravler-glow {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(16,185,129,0.5)) drop-shadow(0 0 8px rgba(16,185,129,0.2)); }
-  50%       { filter: drop-shadow(0 0 8px rgba(16,185,129,0.9)) drop-shadow(0 0 16px rgba(16,185,129,0.4)); }
+@keyframes unravler-float-bot {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(2px) scale(1.05); }
 }
-@keyframes unravler-orbit-top {
-  0%   { transform: translate(0px, 0px); }
-  25%  { transform: translate(1.5px, -1.5px); }
-  50%  { transform: translate(0px, -2px); }
-  75%  { transform: translate(-1.5px, -1.5px); }
-  100% { transform: translate(0px, 0px); }
-}
-@keyframes unravler-orbit-bottom {
-  0%   { transform: translate(0px, 0px); }
-  25%  { transform: translate(-1.5px, 1.5px); }
-  50%  { transform: translate(0px, 2px); }
-  75%  { transform: translate(1.5px, 1.5px); }
-  100% { transform: translate(0px, 0px); }
-}
-@keyframes unravler-shimmer {
-  0%   { background-position: -200% center; }
-  100% { background-position:  200% center; }
+@keyframes unravler-breathe {
+  0%, 100% { filter: drop-shadow(0 4px 6px rgba(34,197,94,0.3)); transform: scale(1); }
+  50% { filter: drop-shadow(0 8px 12px rgba(34,197,94,0.5)); transform: scale(1.02); }
 }
 `;
 
 const UnravlerLogo = ({ size = 'default', showText = true, className = '', darkText = false }) => {
-  const styleRef = useRef(null);
-
-  useEffect(() => {
-    if (!document.getElementById('unravler-logo-styles')) {
+  // Inject keyframes globally
+  React.useEffect(() => {
+    if (!document.getElementById('urvl-exact-styles')) {
       const style = document.createElement('style');
-      style.id = 'unravler-logo-styles';
+      style.id = 'urvl-exact-styles';
       style.textContent = KEYFRAMES;
       document.head.appendChild(style);
-      styleRef.current = style;
     }
-    return () => {
-      // keep the style tag alive globally – multiple logos may exist
-    };
   }, []);
 
-  const scales = {
-    small:   { icon: 28, fontSize: 14 },
-    default: { icon: 38, fontSize: 20 },
-    large:   { icon: 54, fontSize: 28 },
-    xl:      { icon: 72, fontSize: 38 },
+  const sizes = {
+    small: { icon: 24, fontSize: 'text-base' },
+    default: { icon: 32, fontSize: 'text-xl' },
+    large: { icon: 48, fontSize: 'text-3xl' },
+    xl: { icon: 64, fontSize: 'text-4xl' },
   };
-  const { icon: iconSize, fontSize } = scales[size] || scales.default;
 
-  // ── colours ──────────────────────────────────────────────────────────────
-  const greenDark  = '#059669';
-  const greenLight = '#34d399';
-  const nodeColor  = darkText ? '#059669' : '#ffffff';
-  const nodeStroke = darkText ? '#059669' : 'rgba(255,255,255,0.3)';
-  const textColor  = darkText ? '#111827' : '#ffffff';
+  const { icon: iconSize, fontSize } = sizes[size] || sizes.default;
+
+  // Base text color logic.
+  // Tailwind "text-slate-900 dark:text-white" handles global dark mode automatically!
+  // If 'darkText' is explicitly passed as true, we force dark. Otherwise, let Tailwind handle it.
+  const textClasses = darkText ? 'text-slate-900' : 'text-slate-900 dark:text-white';
 
   return (
     <div
-      className={`flex items-center ${className}`}
-      style={{ display: 'flex', alignItems: 'center', gap: iconSize * 0.22 }}
+      className={`flex items-center select-none ${className}`}
+      style={{ display: 'flex', alignItems: 'center', gap: iconSize * 0.25 }}
     >
-      {/* ── Icon ──────────────────────────────────────────────────────────── */}
       <svg
         width={iconSize}
         height={iconSize}
         viewBox="0 0 40 40"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        style={{
-          flexShrink: 0,
-          animation: 'unravler-glow 3s ease-in-out infinite',
-        }}
+        style={{ flexShrink: 0, overflow: 'visible' }}
       >
         <defs>
-          <linearGradient id="urvl-half" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%"   stopColor={greenLight} />
-            <stop offset="100%" stopColor={greenDark}  />
+          <linearGradient id="shodwe-green" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#22c55e" /> {/* bright green */}
+            <stop offset="100%" stopColor="#15803d" /> {/* deeper green */}
           </linearGradient>
-          <radialGradient id="urvl-node-top" cx="40%" cy="35%" r="60%">
-            <stop offset="0%"   stopColor="#ffffff" stopOpacity="1" />
-            <stop offset="100%" stopColor="#d1fae5" stopOpacity="0.85" />
-          </radialGradient>
-          <radialGradient id="urvl-node-bot" cx="40%" cy="35%" r="60%">
-            <stop offset="0%"   stopColor="#ffffff" stopOpacity="1" />
-            <stop offset="100%" stopColor="#a7f3d0" stopOpacity="0.85" />
-          </radialGradient>
-          <filter id="urvl-shadow">
-            <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#059669" floodOpacity="0.4" />
+
+          {/* Shadow for circles so they show up on white backgrounds */}
+          <filter id="circle-shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.15" />
           </filter>
         </defs>
 
-        {/* Half-circle (left half of a 26-px circle centred at 14,20) */}
-        <path
-          d="M14,6 A14,14 0 0,1 14,34 Z"
-          fill="url(#urvl-half)"
-          style={{ animation: 'unravler-pulse 4s ease-in-out infinite' }}
-        />
-
-        {/* Top node */}
-        <g style={{ animation: 'unravler-orbit-top 5s ease-in-out infinite', transformOrigin: '28px 13px' }}>
-          <circle
-            cx="28" cy="13" r="6.5"
-            fill={darkText ? 'none' : 'url(#urvl-node-top)'}
-            stroke={darkText ? greenDark : 'rgba(255,255,255,0.2)'}
-            strokeWidth={darkText ? 2 : 0.5}
-            filter="url(#urvl-shadow)"
+        {/* Group with breathing glow animation */}
+        <g style={{ animation: 'unravler-breathe 4s ease-in-out infinite', transformOrigin: 'center' }}>
+          
+          {/* Half-Circle / Semi-Circle */}
+          <path
+            d="M 21,8 A 12,12 0 0,0 21,32 Z"
+            fill="url(#shodwe-green)"
           />
-        </g>
 
-        {/* Bottom node (smaller) */}
-        <g style={{ animation: 'unravler-orbit-bottom 5s ease-in-out infinite', transformOrigin: '27px 28px' }}>
-          <circle
-            cx="27" cy="28" r="5"
-            fill={darkText ? 'none' : 'url(#urvl-node-bot)'}
-            stroke={darkText ? greenLight : 'rgba(255,255,255,0.2)'}
-            strokeWidth={darkText ? 2 : 0.5}
-            filter="url(#urvl-shadow)"
-          />
+          {/* Top White Circle */}
+          <g style={{ animation: 'unravler-float-top 5s ease-in-out infinite', transformOrigin: '27px 14px' }}>
+            <circle
+              cx="27"
+              cy="14"
+              r="6"
+              fill="#ffffff"
+              filter="url(#circle-shadow)"
+            />
+          </g>
+
+          {/* Bottom White Circle */}
+          <g style={{ animation: 'unravler-float-bot 5s ease-in-out infinite', transformOrigin: '27px 26px' }}>
+            <circle
+              cx="27"
+              cy="26"
+              r="6"
+              fill="#ffffff"
+              filter="url(#circle-shadow)"
+            />
+          </g>
+
         </g>
       </svg>
 
-      {/* ── Text ──────────────────────────────────────────────────────────── */}
       {showText && (
         <span
-          style={{
-            fontSize,
-            fontWeight: 800,
-            letterSpacing: '-0.03em',
-            lineHeight: 1,
-            color: textColor,
-            background: darkText
-              ? 'linear-gradient(90deg, #059669 0%, #10b981 40%, #059669 100%)'
-              : 'linear-gradient(90deg, #ffffff 0%, #d1fae5 40%, #ffffff 60%, #d1fae5 80%, #ffffff 100%)',
-            backgroundSize: '200% auto',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            animation: 'unravler-shimmer 4s linear infinite',
-          }}
+          className={`font-extrabold tracking-tight ${textClasses}`}
+          style={{ letterSpacing: '-0.035em' }}
         >
           Unravler
         </span>
