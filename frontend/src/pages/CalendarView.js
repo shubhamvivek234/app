@@ -6,6 +6,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOf
 import { FaChevronLeft, FaChevronRight, FaInfoCircle, FaShare, FaLink, FaTimes } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { GooeyLoader } from '@/components/ui/loader-10';
 
 const NOTE_COLORS = ['green', 'blue', 'yellow', 'red'];
 
@@ -148,8 +149,8 @@ const CalendarView = () => {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-gray-600">Loading calendar...</div>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
         </div>
       </DashboardLayout>
     );

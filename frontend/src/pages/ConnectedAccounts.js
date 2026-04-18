@@ -13,6 +13,7 @@ import {
   FaCheckCircle, FaPlus, FaLink, FaDiscord,
 } from 'react-icons/fa';
 import { SiThreads, SiReddit, SiSnapchat, SiBluesky } from 'react-icons/si';
+import { GooeyLoader } from '@/components/ui/loader-10';
 
 // ── Token status helper ───────────────────────────────────────────────────────
 const getTokenStatus = (account) => {
@@ -437,8 +438,8 @@ const ConnectedAccounts = () => {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-gray-500 text-sm">Loading accounts…</div>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
         </div>
       </DashboardLayout>
     );
