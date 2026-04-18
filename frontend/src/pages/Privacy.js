@@ -1,18 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Footer from '@/components/Footer';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 const Privacy = () => {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
   return (
     <div className="min-h-screen bg-offwhite">
       <nav className="bg-offwhite border-b border-gray-100">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-lg">C</span>
-              </div>
-              <span className="text-xl font-semibold text-gray-900">Unravler</span>
+              <UnravlerLogo size="small" showText={true} />
             </Link>
           </div>
         </div>
@@ -25,7 +26,7 @@ const Privacy = () => {
           <p className="text-gray-600 mb-6">Last Updated: 2026-02-11</p>
 
           <p className="text-gray-700 leading-relaxed mb-6">
-            Thank you for using Unravler ("we," "us," or "our"). This Privacy Policy outlines how we collect, use, and protect your personal and non-personal information when you use our website located at https://crosspost.com (the "Website").
+            Thank you for using Unravler ("we," "us," or "our"). This Privacy Policy outlines how we collect, use, and protect your personal and non-personal information when you use our website located at https://unravler.com (the "Website").
           </p>
           <p className="text-gray-700 leading-relaxed mb-6">
             By accessing or using the Website, you agree to the terms of this Privacy Policy. If you do not agree with the practices described in this policy, please do not use the Website.
@@ -97,7 +98,7 @@ const Privacy = () => {
               If you have any questions, concerns, or requests related to this Privacy Policy, you can contact us at:
             </p>
             <p className="text-gray-700 leading-relaxed font-medium">
-              Email: support@crosspost.com
+              Email: contact@unravler.com
             </p>
           </section>
 

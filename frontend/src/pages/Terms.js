@@ -1,18 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Footer from '@/components/Footer';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 const Terms = () => {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
   return (
     <div className="min-h-screen bg-offwhite">
       <nav className="bg-offwhite border-b border-gray-100">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold text-lg">C</span>
-              </div>
-              <span className="text-xl font-semibold text-gray-900">Unravler</span>
+              <UnravlerLogo size="small" showText={true} />
             </Link>
           </div>
         </div>
@@ -26,8 +27,7 @@ const Terms = () => {
 
           <p className="text-gray-700 leading-relaxed mb-6">Welcome to Unravler!</p>
 
-          <p className="text-gray-700 leading-relaxed mb-6">
-            These Terms of Service ("Terms") govern your use of the Unravler website at https://crosspost.com ("Website") and the services provided by Unravler. By using our Website and services, you agree to these Terms.
+            These Terms of Service ("Terms") govern your use of the Unravler website at https://unravler.com ("Website") and the services provided by Unravler. By using our Website and services, you agree to these Terms.
           </p>
 
           <section className="mb-8">
@@ -46,8 +46,7 @@ const Terms = () => {
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">3. User Data and Privacy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We collect and store user data, including name, email, payment information, and social media authentication access keys, as necessary to provide our services. For details on how we handle your data, please refer to our Privacy Policy at https://crosspost.com/privacy-policy.
+              We collect and store user data, including name, email, payment information, and social media authentication access keys, as necessary to provide our services. For details on how we handle your data, please refer to our Privacy Policy at https://unravler.com/privacy-policy.
             </p>
           </section>
 
@@ -67,8 +66,7 @@ const Terms = () => {
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">6. Refund Policy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We offer a full refund within 24 hours after the purchase. To request a refund, please contact us at support@crosspost.com.
+              We offer a full refund within 24 hours after the purchase. To request a refund, please contact us at contact@unravler.com.
             </p>
           </section>
 
@@ -95,8 +93,7 @@ const Terms = () => {
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">10. Contact Information</h2>
-            <p className="text-gray-700 leading-relaxed">
-              For any questions or concerns regarding these Terms of Service, please contact us at support@crosspost.com.
+              For any questions or concerns regarding these Terms of Service, please contact us at contact@unravler.com.
             </p>
           </section>
 
