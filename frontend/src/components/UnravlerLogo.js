@@ -2,110 +2,121 @@ import React from 'react';
 import { cn } from "@/lib/utils";
 
 const KEYFRAMES = `
-@keyframes unravler-float-top {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  50% { transform: translateY(-1.5px) scale(1.03); }
+@keyframes unravler-layer-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
 }
-@keyframes unravler-float-bot {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  50% { transform: translateY(1.5px) scale(1.03); }
-}
-@keyframes unravler-breathe {
-  0%, 100% { filter: drop-shadow(0 4px 6px rgba(168, 85, 247, 0.3)); transform: scale(1); }
-  50% { filter: drop-shadow(0 8px 12px rgba(168, 85, 247, 0.5)); transform: scale(1.015); }
+@keyframes unravler-layer-breathe-mid {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
 }
 `;
 
-const UnravlerLogo = ({ size = 'default', showText = true, className = '', darkText = false }) => {
-  // Inject keyframes globally
+const UnravlerLogo = ({ 
+  size = 'default', 
+  showText = true, 
+  className = '', 
+  darkText = false 
+}) => {
+  // Inject subtle keyframes for a premium 3D hover/breathe effect
   React.useEffect(() => {
-    if (!document.getElementById('urvl-purple-styles')) {
+    if (!document.getElementById('urvl-buffer-styles')) {
       const style = document.createElement('style');
-      style.id = 'urvl-purple-styles';
+      style.id = 'urvl-buffer-styles';
       style.textContent = KEYFRAMES;
       document.head.appendChild(style);
     }
   }, []);
 
-  // Increased overall sizing to make the logo a little bigger
+  // Proportional sizing mapped exactly to the elegant Buffer-style layout
   const sizes = {
-    small:   { icon: 28, fontSize: 'text-[1.1rem]' },
-    default: { icon: 40, fontSize: 'text-[1.6rem]' },
-    large:   { icon: 56, fontSize: 'text-[2.2rem]' },
-    xl:      { icon: 76, fontSize: 'text-[3rem]' },
+    small:   { icon: 24, fontSize: 'text-[1.25rem]' },
+    default: { icon: 38, fontSize: 'text-[2.1rem]'  },
+    large:   { icon: 52, fontSize: 'text-[2.8rem]'  },
+    xl:      { icon: 72, fontSize: 'text-[4rem]'    },
   };
 
   const { icon: iconSize, fontSize } = sizes[size] || sizes.default;
 
-  // Text adapts to light/dark themes
-  const textClasses = darkText ? 'text-slate-900' : 'text-slate-900 dark:text-white';
+  // Adaptive text color for light/dark mode
+  const textClasses = darkText ? 'text-slate-800' : 'text-slate-800 dark:text-white';
 
   return (
     <div
       className={cn("flex items-center select-none", className)}
-      style={{ gap: iconSize * 0.25 }}
+      style={{ gap: iconSize * 0.35 }}
     >
       <svg
         width={iconSize}
-        height={iconSize}
-        viewBox="0 0 44 40"
+        height={iconSize * 1.05} // Slightly taller viewbox to fit the stack gracefully
+        viewBox="0 0 100 100"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         style={{ flexShrink: 0, overflow: 'visible' }}
+        className="group" // allows hover effects if you want them
       >
         <defs>
-          <linearGradient id="unravler-purple" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#c084fc" />   {/* purple-400 */}
-            <stop offset="50%" stopColor="#a855f7" />  {/* purple-500 */}
+          {/* Deep premium purple gradient to match your app's branding but with the Buffer structure */}
+          <linearGradient id="buffer-purple-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#9333ea" />  {/* purple-600 */}
+            <stop offset="100%" stopColor="#6b21a8" /> {/* purple-800 */}
+          </linearGradient>
+          
+          <linearGradient id="buffer-purple-light" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#a855f7" />  {/* purple-500 */}
             <stop offset="100%" stopColor="#7e22ce" /> {/* purple-700 */}
           </linearGradient>
 
-          {/* Shadow so white circles are visible on pure white backgrounds */}
-          <filter id="circle-shadow-purple" x="-50%" y="-50%" width="200%" height="200%">
-            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.12" />
+          {/* Optional soft shadow for depth */}
+          <filter id="stack-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="8" stdDeviation="6" floodColor="#9333ea" floodOpacity="0.15" />
           </filter>
         </defs>
 
-        <g style={{ animation: 'unravler-breathe 4s ease-in-out infinite', transformOrigin: 'center' }}>
-          
-          {/* Half-Circle / Semi-Circle (Flat edge at X=20) */}
+        <g filter="url(#stack-shadow)">
+          {/* TOP LAYER (Solid Rhombus) 
+              Center X=50. Y spans from 8 to 48.
+          */}
           <path
-            d="M 20,8 A 12,12 0 0,0 20,32 Z"
-            fill="url(#unravler-purple)"
+            d="M 50 8 L 90 28 L 50 48 L 10 28 Z"
+            fill="url(#buffer-purple-light)"
+            stroke="url(#buffer-purple-light)"
+            strokeWidth="3"
+            strokeLinejoin="round"
+            style={{ animation: 'unravler-layer-breathe 4s ease-in-out infinite' }}
           />
 
-          {/* Top White Node - Same size (r=6), with a 1.5 unit gap (center X=27.5, left edge=21.5) */}
-          <g style={{ animation: 'unravler-float-top 5s ease-in-out infinite', transformOrigin: '27.5px 14px' }}>
-            <circle
-              cx="27.5"
-              cy="14"
-              r="6"
-              fill="#ffffff"
-              filter="url(#circle-shadow-purple)"
-            />
-          </g>
+          {/* MIDDLE LAYER (Chevron) 
+              Shifted down. Gap = 8. Thickness = 14.
+          */}
+          <path
+            d="M 10 36 L 50 56 L 90 36 L 90 50 L 50 70 L 10 50 Z"
+            fill="url(#buffer-purple-grad)"
+            stroke="url(#buffer-purple-grad)"
+            strokeWidth="3"
+            strokeLinejoin="round"
+            style={{ animation: 'unravler-layer-breathe-mid 4s ease-in-out infinite' }}
+          />
 
-          {/* Bottom White Node - Same size (r=6), with a 1.5 unit gap */}
-          <g style={{ animation: 'unravler-float-bot 5s ease-in-out infinite', transformOrigin: '27.5px 26px' }}>
-            <circle
-              cx="27.5"
-              cy="26"
-              r="6"
-              fill="#ffffff"
-              filter="url(#circle-shadow-purple)"
-            />
-          </g>
-
+          {/* BOTTOM LAYER (Chevron) 
+              Shifted down again.
+          */}
+          <path
+            d="M 10 58 L 50 78 L 90 58 L 90 72 L 50 92 L 10 72 Z"
+            fill="url(#buffer-purple-grad)"
+            stroke="url(#buffer-purple-grad)"
+            strokeWidth="3"
+            strokeLinejoin="round"
+          />
         </g>
       </svg>
 
       {showText && (
         <span
-          className={cn("font-bold tracking-tight", textClasses, fontSize)}
+          className={cn("font-black tracking-tight", textClasses, fontSize)}
           style={{ 
-             letterSpacing: '-0.02em', 
-             fontFamily: "'Manrope', 'Inter', sans-serif",
-             transform: 'translateY(1px)' // perfectly align with center of logo visual
+             letterSpacing: '-0.04em', // super tight tracking like the Buffer text
+             fontFamily: "'Inter', sans-serif"
           }}
         >
           Unravler
