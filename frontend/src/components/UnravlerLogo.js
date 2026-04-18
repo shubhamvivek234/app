@@ -1,166 +1,118 @@
-"use client"
-import React from "react"
-import { cn } from "@/lib/utils"
+import React from 'react';
+import { cn } from "@/lib/utils";
 
-export default function UnravlerLogo({ 
-  text = "Unravler", 
-  letterToReplace = "a", 
-  className = "", 
-  size = 'default',
-  showText = true, // To maintain backward compatibility with any places that hide text
-  darkText = false // Maintain compatibility
-}) {
-  const sizeMap = {
-    small: 'text-2xl',
-    default: 'text-4xl',
-    large: 'text-6xl',
-    xl: 'text-[5rem]'
+const KEYFRAMES = `
+@keyframes unravler-float-top {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-1.5px) scale(1.03); }
+}
+@keyframes unravler-float-bot {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(1.5px) scale(1.03); }
+}
+@keyframes unravler-breathe {
+  0%, 100% { filter: drop-shadow(0 4px 6px rgba(168, 85, 247, 0.3)); transform: scale(1); }
+  50% { filter: drop-shadow(0 8px 12px rgba(168, 85, 247, 0.5)); transform: scale(1.015); }
+}
+`;
+
+const UnravlerLogo = ({ size = 'default', showText = true, className = '', darkText = false }) => {
+  // Inject keyframes globally
+  React.useEffect(() => {
+    if (!document.getElementById('urvl-purple-styles')) {
+      const style = document.createElement('style');
+      style.id = 'urvl-purple-styles';
+      style.textContent = KEYFRAMES;
+      document.head.appendChild(style);
+    }
+  }, []);
+
+  // Increased overall sizing to make the logo a little bigger
+  const sizes = {
+    small:   { icon: 28, fontSize: 'text-[1.1rem]' },
+    default: { icon: 40, fontSize: 'text-[1.6rem]' },
+    large:   { icon: 56, fontSize: 'text-[2.2rem]' },
+    xl:      { icon: 76, fontSize: 'text-[3rem]' },
   };
-  const sizeClass = sizeMap[size] || sizeMap.default;
 
-  // Since this component's whole point is animating a letter in the text, if showText is false, just render the diamond isolated.
-  if (!showText) {
-    return (
-      <span
-        className={cn("relative inline-flex items-center justify-center", sizeClass, className)}
-        style={{ filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.25)) drop-shadow(0 2px 4px rgba(0,0,0,0.15))" }}
-      >
-        <UnravlerDiamondGlow />
-      </span>
-    );
-  }
+  const { icon: iconSize, fontSize } = sizes[size] || sizes.default;
 
-  const parts = [];
-  let keyIndex = 0;
-
-  const lowerText = text.toLowerCase();
-  const lowerLetter = letterToReplace.toLowerCase();
-  const replaceIndex = lowerText.indexOf(lowerLetter);
-
-  if (replaceIndex === -1) {
-    return <span className={cn("font-black tracking-tight text-foreground", sizeClass, className)}>{text}</span>;
-  }
-
-  const before = text.slice(0, replaceIndex);
-  const after = text.slice(replaceIndex + 1);
+  // Text adapts to light/dark themes
+  const textClasses = darkText ? 'text-slate-900' : 'text-slate-900 dark:text-white';
 
   return (
-    <span className={cn("inline-flex items-center font-black tracking-tight", darkText ? "text-slate-900" : "text-slate-900 dark:text-white", sizeClass, className)}>
-      {before && <span key={keyIndex++}>{before}</span>}
-
-      {/* Animated visual replacing the letter */}
-      <span
-        className="relative inline-flex items-center justify-center mx-[0.02em]"
-        style={{
-          filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.25)) drop-shadow(0 2px 4px rgba(0,0,0,0.15))",
-        }}
-      >
-        <UnravlerDiamondGlow />
-      </span>
-
-      {after && <span key={keyIndex++}>{after}</span>}
-    </span>
-  );
-}
-
-const UnravlerDiamondGlow = () => (
-  <>
-    {/* SVG filters for realistic effects */}
-    <svg className="absolute w-0 h-0" aria-hidden="true">
-      <defs>
-        {/* Inner shadow filter for the outer shape */}
-        <filter id="innerShadowAnimated" x="-50%" y="-50%" width="200%" height="200%">
-          <feComponentTransfer in="SourceAlpha">
-            <feFuncA type="table" tableValues="1 0" />
-          </feComponentTransfer>
-          <feGaussianBlur stdDeviation="3" />
-          <feOffset dx="0" dy="2" result="offsetblur" />
-          <feFlood floodColor="rgba(255,255,255,0.15)" result="color" />
-          <feComposite in2="offsetblur" operator="in" />
-          <feComposite in2="SourceAlpha" operator="in" />
-          <feMerge>
-            <feMergeNode in="SourceGraphic" />
-            <feMergeNode />
-          </feMerge>
-        </filter>
-
-        <filter id="diamondGlowAnimated" x="-150%" y="-150%" width="400%" height="400%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="blur" />
-          <feFlood floodColor="#d4ff4a" floodOpacity="0.3" />
-          <feComposite in2="blur" operator="in" />
-          <feMerge>
-            <feMergeNode />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-
-        <linearGradient id="diamondGradientAnimated" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#e2ff6a" />
-          <stop offset="40%" stopColor="#d4ff4a" />
-          <stop offset="60%" stopColor="#c4f934" />
-          <stop offset="100%" stopColor="#b8ed28" />
-        </linearGradient>
-
-        <linearGradient id="diamondShineAnimated" x1="0%" y1="0%" x2="50%" y2="50%">
-          <stop offset="0%" stopColor="rgba(255,255,255,0.6)" />
-          <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-        </linearGradient>
-
-        <radialGradient id="outerShapeGradientAnimated" cx="30%" cy="30%" r="70%">
-          <stop offset="0%" stopColor="#2a2a2a" />
-          <stop offset="100%" stopColor="#0f0f0f" />
-        </radialGradient>
-      </defs>
-    </svg>
-
-    {/* Scalloped/flower outer shape with depth */}
-    <svg viewBox="0 0 100 100" className="w-[0.75em] h-[0.75em]">
-      <path
-        d="M50 0
-           C55 15, 65 15, 75 10
-           C70 25, 75 35, 90 35
-           C80 45, 80 55, 90 65
-           C75 65, 70 75, 75 90
-           C65 85, 55 85, 50 100
-           C45 85, 35 85, 25 90
-           C30 75, 25 65, 10 65
-           C20 55, 20 45, 10 35
-           C25 35, 30 25, 25 10
-           C35 15, 45 15, 50 0Z"
-        fill="url(#outerShapeGradientAnimated)"
-        filter="url(#innerShadowAnimated)"
-      />
-      <path
-        d="M50 0
-           C55 15, 65 15, 75 10
-           C70 25, 75 35, 90 35
-           C80 45, 80 55, 90 65
-           C75 65, 70 75, 75 90
-           C65 85, 55 85, 50 100
-           C45 85, 35 85, 25 90
-           C30 75, 25 65, 10 65
-           C20 55, 20 45, 10 35
-           C25 35, 30 25, 25 10
-           C35 15, 45 15, 50 0Z"
-        fill="none"
-        stroke="rgba(255,255,255,0.05)"
-        strokeWidth="1"
-      />
-    </svg>
-
-    <span className="absolute inset-0 flex items-center justify-center">
+    <div
+      className={cn("flex items-center select-none", className)}
+      style={{ gap: iconSize * 0.25 }}
+    >
       <svg
-        viewBox="0 0 100 100"
-        className="w-[0.32em] h-[0.32em] animate-diamond-rotate"
-        filter="url(#diamondGlowAnimated)"
+        width={iconSize}
+        height={iconSize}
+        viewBox="0 0 44 40"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        style={{ flexShrink: 0, overflow: 'visible' }}
       >
-        {/* Main diamond shape with clean gradient */}
-        <path d="M50 8 L92 50 L50 92 L8 50 Z" fill="url(#diamondGradientAnimated)" />
-        {/* Top-left shine facet for 3D polish */}
-        <path d="M50 8 L8 50 L50 50 Z" fill="url(#diamondShineAnimated)" />
-        {/* Subtle inner edge highlight */}
-        <path d="M50 18 L82 50 L50 82 L18 50 Z" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5" />
+        <defs>
+          <linearGradient id="unravler-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#c084fc" />   {/* purple-400 */}
+            <stop offset="50%" stopColor="#a855f7" />  {/* purple-500 */}
+            <stop offset="100%" stopColor="#7e22ce" /> {/* purple-700 */}
+          </linearGradient>
+
+          {/* Shadow so white circles are visible on pure white backgrounds */}
+          <filter id="circle-shadow-purple" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.12" />
+          </filter>
+        </defs>
+
+        <g style={{ animation: 'unravler-breathe 4s ease-in-out infinite', transformOrigin: 'center' }}>
+          
+          {/* Half-Circle / Semi-Circle (Flat edge at X=20) */}
+          <path
+            d="M 20,8 A 12,12 0 0,0 20,32 Z"
+            fill="url(#unravler-purple)"
+          />
+
+          {/* Top White Node - Same size (r=6), with a 1.5 unit gap (center X=27.5, left edge=21.5) */}
+          <g style={{ animation: 'unravler-float-top 5s ease-in-out infinite', transformOrigin: '27.5px 14px' }}>
+            <circle
+              cx="27.5"
+              cy="14"
+              r="6"
+              fill="#ffffff"
+              filter="url(#circle-shadow-purple)"
+            />
+          </g>
+
+          {/* Bottom White Node - Same size (r=6), with a 1.5 unit gap */}
+          <g style={{ animation: 'unravler-float-bot 5s ease-in-out infinite', transformOrigin: '27.5px 26px' }}>
+            <circle
+              cx="27.5"
+              cy="26"
+              r="6"
+              fill="#ffffff"
+              filter="url(#circle-shadow-purple)"
+            />
+          </g>
+
+        </g>
       </svg>
-    </span>
-  </>
-);
+
+      {showText && (
+        <span
+          className={cn("font-bold tracking-tight", textClasses, fontSize)}
+          style={{ 
+             letterSpacing: '-0.02em', 
+             fontFamily: "'Manrope', 'Inter', sans-serif",
+             transform: 'translateY(1px)' // perfectly align with center of logo visual
+          }}
+        >
+          Unravler
+        </span>
+      )}
+    </div>
+  );
+};
+
+export default UnravlerLogo;
