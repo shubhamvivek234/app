@@ -92,4 +92,13 @@ code {
             transform: translateY(0);
         }
     }
+
+    .animate-diamond-rotate {
+        animation: diamond-rotate 4s linear infinite;
+    }
+
+    @keyframes diamond-rotate {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
 }
