@@ -127,7 +127,7 @@ const BulkUploadGuide = () => (
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Bulk Upload Guide</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Everything you need to know to import posts via CSV into SocialEntangler.
+            Everything you need to know to import posts via CSV into Unravler.
           </p>
         </div>
       </div>

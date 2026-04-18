@@ -206,7 +206,7 @@ const SocialMediaImageGuide = () => {
             <div style={{ width: 28, height: 28, background: '#16a34a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span style={{ color: '#fff', fontWeight: 800, fontSize: 13, fontFamily: "'Syne', sans-serif" }}>S</span>
             </div>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#1c1917', fontFamily: "'Syne', sans-serif" }}>SocialEntangler</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#1c1917', fontFamily: "'Syne', sans-serif" }}>Unravler</span>
           </Link>
           <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15803d', background: '#f0fdf4', padding: '3px 10px', borderRadius: 20, border: '1px solid #bbf7d0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>

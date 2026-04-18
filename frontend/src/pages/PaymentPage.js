@@ -108,7 +108,7 @@ const PaymentPage = () => {
           key: response.data.razorpay_key,
           amount: selectedPlan.price * 100,
           currency: 'INR',
-          name: 'SocialEntangler',
+          name: 'Unravler',
           description: `${selectedPlan.name} Plan`,
           order_id: response.data.order_id,
           handler: async function (response) {
@@ -248,7 +248,7 @@ const PaymentPage = () => {
           {/* Left Column - Trial Details */}
           <div className="bg-offwhite rounded-lg p-8 border border-gray-200 h-fit">
             <h2 className="text-2xl font-bold text-gray-900 mb-6">
-              Try SocialEntangler {selectedPlan.name.toLowerCase()}
+              Try Unravler {selectedPlan.name.toLowerCase()}
             </h2>
 
             <div className="space-y-4">
@@ -439,7 +439,7 @@ const PaymentPage = () => {
 
               <div className="mt-6 text-center">
                 <p className="text-sm text-gray-400 mb-2">Trusted by 10,000+ creators</p>
-                <span className="font-bold text-lg text-gray-600">SocialEntangler</span>
+                <span className="font-bold text-lg text-gray-600">Unravler</span>
               </div>
 
               {/* Footer Links */}

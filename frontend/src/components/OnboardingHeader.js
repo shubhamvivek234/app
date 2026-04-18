@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -29,7 +29,7 @@ const OnboardingHeader = ({ step }) => {
             <div className="max-w-7xl mx-auto flex items-center justify-between">
                 {/* Left: Logo */}
                 <div className="w-48">
-                    <SocialEntanglerLogo />
+                    <UnravlerLogo />
                 </div>
 
                 {/* Center: Progress Steps */}

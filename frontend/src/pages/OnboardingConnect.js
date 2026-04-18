@@ -184,7 +184,7 @@ const OnboardingConnect = () => {
           <DialogHeader>
             <DialogTitle className="text-2xl">Add all your accounts</DialogTitle>
             <p className="text-sm text-slate-600 mt-2">
-              Connect your social media accounts to SocialEntangler and post to all of them at once
+              Connect your social media accounts to Unravler and post to all of them at once
             </p>
           </DialogHeader>
 

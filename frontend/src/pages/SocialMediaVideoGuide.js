@@ -211,7 +211,7 @@ const SocialMediaVideoGuide = () => {
             <div style={{ width: 30, height: 30, background: '#16a34a', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span style={{ color: '#fff', fontWeight: 800, fontSize: 15, fontFamily: "'Syne', sans-serif" }}>S</span>
             </div>
-            <span style={{ fontWeight: 700, fontSize: 16, color: '#1c1917' }}>SocialEntangler</span>
+            <span style={{ fontWeight: 700, fontSize: 16, color: '#1c1917' }}>Unravler</span>
           </Link>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 20, padding: '3px 10px', letterSpacing: '0.04em' }}>UPDATED 2026</span>

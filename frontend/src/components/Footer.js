@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 import SupportPopup from './SupportPopup';
 
 const Footer = () => {
@@ -14,7 +14,7 @@ const Footer = () => {
             {/* Column 1: Logo & Description - Spans 2 cols on desktop to push Links right */}
             <div className="col-span-2 md:col-span-1 lg:col-span-2 flex flex-col items-start">
               <div className="mb-8 -ml-2">
-                <SocialEntanglerLogo size="large" />
+                <UnravlerLogo size="large" />
               </div>
               <p className="text-sm text-gray-600 mb-8 leading-relaxed max-w-sm pr-4">
                 Post content to multiple social media platforms at the same time, all-in one place.

@@ -31,7 +31,7 @@ import {
   FaRegClock,
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
 import { useTheme } from '@/context/ThemeContext';
 
@@ -166,7 +166,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
         {/* Logo block — shrinks with sidebar */}
         <div className={`flex-shrink-0 flex items-center h-full transition-all duration-200 ${collapsed ? 'w-14 justify-center px-0' : 'w-64 px-4'}`}>
-          {collapsed ? null : <SocialEntanglerLogo size="default" />}
+          {collapsed ? null : <UnravlerLogo size="default" />}
         </div>
 
         {/* Nav tabs */}

@@ -260,7 +260,7 @@ const AcceptInvite = () => {
                 {submitting ? 'Logging in…' : 'Log in & Accept Invite'}
               </button>
               <p style={{ textAlign: 'center', marginTop: '14px', fontSize: '13px', color: '#9ca3af' }}>
-                New to SocialEntangler?{' '}
+                New to Unravler?{' '}
                 <button type="button" onClick={() => setShowForm('signup')} style={{ color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}>
                   Create account
                 </button>

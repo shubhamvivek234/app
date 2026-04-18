@@ -322,7 +322,7 @@ export default function McpDocs() {
       <nav className="border-b border-slate-200 sticky top-0 bg-white/90 backdrop-blur z-10">
         <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
           <button onClick={() => navigate('/')} className="text-sm font-semibold text-slate-900 tracking-tight">
-            SocialEntangler
+            Unravler
           </button>
           <div className="flex items-center gap-4">
             <span className="text-xs text-slate-400 font-mono hidden sm:block">MCP Server v1.0</span>
@@ -357,7 +357,7 @@ export default function McpDocs() {
             Control social media<br />from any AI agent
           </h1>
           <p className="text-lg text-slate-500 max-w-2xl leading-relaxed mb-8">
-            The SocialEntangler MCP server gives AI assistants like Claude direct access
+            The Unravler MCP server gives AI assistants like Claude direct access
             to your social accounts — create posts, schedule content, generate captions,
             and check analytics without leaving your conversation.
           </p>
@@ -385,7 +385,7 @@ export default function McpDocs() {
         {/* Setup */}
         <section className="mb-20">
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Setup</h2>
-          <p className="text-slate-500 text-sm mb-8">Three steps to connect SocialEntangler to your AI client.</p>
+          <p className="text-slate-500 text-sm mb-8">Three steps to connect Unravler to your AI client.</p>
 
           {/* Step 1 */}
           <div className="mb-10">
@@ -399,7 +399,7 @@ export default function McpDocs() {
               ) : (
                 <>
                   <p className="text-slate-500 text-sm mb-4">
-                    Sign in to SocialEntangler and generate an API key — you can do it right here without navigating away.
+                    Sign in to Unravler and generate an API key — you can do it right here without navigating away.
                   </p>
                   <button
                     onClick={() => navigate('/login', { state: { returnTo: '/mcp' } })}
@@ -540,7 +540,7 @@ node /path/to/socialentangler-mcp/index.js`}</CodeBlock>
         {/* Supported Platforms */}
         <section className="mb-20">
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Supported platforms</h2>
-          <p className="text-slate-500 text-sm mb-6">Connect accounts in SocialEntangler, then reference them by ID in any tool.</p>
+          <p className="text-slate-500 text-sm mb-6">Connect accounts in Unravler, then reference them by ID in any tool.</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
             {['Instagram', 'Twitter / X', 'Facebook', 'LinkedIn', 'YouTube', 'TikTok', 'Threads', 'Reddit', 'Pinterest', 'Snapchat', 'Bluesky'].map(p => (
               <div key={p} className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 text-center">
@@ -554,7 +554,7 @@ node /path/to/socialentangler-mcp/index.js`}</CodeBlock>
         <section className="mb-20">
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Authentication</h2>
           <p className="text-slate-500 text-sm mb-4">
-            The MCP server sends your SocialEntangler API key via the <code className="text-slate-700 font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">X-API-Key</code> header on every request.
+            The MCP server sends your Unravler API key via the <code className="text-slate-700 font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">X-API-Key</code> header on every request.
             Keys can be created and revoked any time from{' '}
             <button onClick={() => navigate('/api-keys')} className="text-indigo-600 hover:text-indigo-500 underline underline-offset-2">
               Settings → API Keys
@@ -597,7 +597,7 @@ node /path/to/socialentangler-mcp/index.js`}</CodeBlock>
       {/* Footer */}
       <footer className="border-t border-slate-200 mt-20 py-8">
         <div className="max-w-5xl mx-auto px-6 flex flex-wrap items-center justify-between gap-4">
-          <span className="text-sm text-slate-400">SocialEntangler MCP — Model Context Protocol server</span>
+          <span className="text-sm text-slate-400">Unravler MCP — Model Context Protocol server</span>
           <div className="flex gap-6">
             <button onClick={() => navigate('/terms')} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Terms</button>
             <button onClick={() => navigate('/privacy')} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Privacy</button>

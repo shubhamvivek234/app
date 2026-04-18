@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { FaRobot, FaDownload, FaKey } from 'react-icons/fa';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 const METHOD_STYLES = {
   GET: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -35,7 +35,7 @@ const AgentDocs = () => {
       id: 'integrations',
       method: 'GET',
       path: '/api/public/v1/integrations',
-      description: 'List all social media channels connected to your SocialEntangler account.',
+      description: 'List all social media channels connected to your Unravler account.',
       body: null,
       response: `[
   {
@@ -96,7 +96,7 @@ Optional: mediaUrls, scheduledAt`,
   ];
 
   const skillJson = {
-    name: 'SocialEntangler',
+    name: 'Unravler',
     description: 'Manage social media posts across 11+ platforms via REST API',
     base_url: `${baseUrl}/api/public/v1`,
     auth: {
@@ -165,7 +165,7 @@ Optional: mediaUrls, scheduledAt`,
       <nav className="bg-offwhite border-b border-gray-100 py-4 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="cursor-pointer" onClick={() => navigate('/')}>
-            <SocialEntanglerLogo />
+            <UnravlerLogo />
           </div>
           <div className="flex gap-3 items-center">
             <Button variant="ghost" className="text-gray-600 text-sm" onClick={() => navigate('/')}>
@@ -185,7 +185,7 @@ Optional: mediaUrls, scheduledAt`,
             <FaRobot /> REST API for AI Agents
           </div>
           <h1 className="text-4xl font-bold text-slate-900 tracking-tight">
-            SocialEntangler API Reference
+            Unravler API Reference
           </h1>
           <p className="text-lg text-slate-600 leading-relaxed max-w-2xl">
             A production-ready REST API for AI agents to post, schedule, and manage social media across 11+ platforms. Compatible with LangChain, AutoGPT, OpenClaw, and any HTTP client.
@@ -308,7 +308,7 @@ Optional: mediaUrls, scheduledAt`,
             Agent Skill Manifest
           </h2>
           <p className="text-slate-600 leading-relaxed">
-            For OpenClaw, LangChain tool-use, or any skill-based agent, register SocialEntangler using this JSON manifest:
+            For OpenClaw, LangChain tool-use, or any skill-based agent, register Unravler using this JSON manifest:
           </p>
           <div className="bg-offwhite border border-slate-200 rounded-xl overflow-hidden shadow-sm">
             <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">

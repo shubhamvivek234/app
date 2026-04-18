@@ -160,7 +160,7 @@ const PublicCalendar = () => {
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-300 mt-6">
-          Powered by SocialEntangler — view-only shared calendar
+          Powered by Unravler — view-only shared calendar
         </p>
       </div>
     </div>

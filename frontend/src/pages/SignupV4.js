@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Pupil — dark dot that tracks the mouse
@@ -185,7 +185,7 @@ const SignupV4 = () => {
     setLoading(true);
     try {
       await signup(formData.email, formData.password, formData.name);
-      toast.success('Account created! Welcome to SocialEntangler.');
+      toast.success('Account created! Welcome to Unravler.');
     } catch (error) {
       let msg = 'Signup failed';
       if (error.code) {
@@ -349,7 +349,7 @@ const SignupV4 = () => {
       }}>
         {/* Logo — pinned to top so form is truly centered */}
         <div style={{ position: 'absolute', top: '40px', left: '64px', right: '64px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <SocialEntanglerLogo />
+          <UnravlerLogo />
           <button onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
             Back to home

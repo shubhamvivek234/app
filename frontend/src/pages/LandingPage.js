@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import Footer from '@/components/Footer';
 import SupportPopup from '@/components/SupportPopup';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -43,7 +43,7 @@ const LandingPage = () => {
           <div className="flex justify-between h-16">
             {/* Logo */}
             <div className="flex items-center cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-              <SocialEntanglerLogo size="large" />
+              <UnravlerLogo size="large" />
             </div>
 
             {/* Navigation Menu */}
@@ -106,7 +106,7 @@ const LandingPage = () => {
                 </h1>
               </div>
               <p className="text-lg leading-relaxed text-slate-600">
-                Join thousands of creators using SocialEntangler to write highly engaging content, schedule posts across Twitter, Instagram, and LinkedIn, and grow their audience at scale.
+                Join thousands of creators using Unravler to write highly engaging content, schedule posts across Twitter, Instagram, and LinkedIn, and grow their audience at scale.
               </p>
               <div className="flex gap-4">
                 <Button
@@ -135,7 +135,7 @@ const LandingPage = () => {
                 <iframe
                   className="w-full h-full"
                   src="https://www.youtube.com/embed/M7lc1UVf-VE?rel=0"
-                  title="SocialEntangler Demo"
+                  title="Unravler Demo"
                   frameBorder="0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
@@ -221,7 +221,7 @@ const LandingPage = () => {
               Supported Platforms
             </h2>
             <p className="text-sm text-slate-500">
-              These are all the platforms you can post to from within SocialEntangler.
+              These are all the platforms you can post to from within Unravler.
             </p>
           </div>
 
@@ -449,7 +449,7 @@ const LandingPage = () => {
               Loved by creators worldwide
             </h2>
             <p className="text-lg text-slate-600">
-              Join thousands of users who trust SocialEntangler to manage their social presence
+              Join thousands of users who trust Unravler to manage their social presence
             </p>
           </div>
           <div className="grid md:grid-cols-3 gap-8">
@@ -461,7 +461,7 @@ const LandingPage = () => {
                 ))}
               </div>
               <p className="text-slate-700 mb-6 leading-relaxed">
-                "SocialEntangler has completely transformed how I manage my social media. I used to spend hours copy-pasting content, now it takes seconds."
+                "Unravler has completely transformed how I manage my social media. I used to spend hours copy-pasting content, now it takes seconds."
               </p>
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
@@ -620,7 +620,7 @@ const LandingPage = () => {
               Control social media from any AI agent
             </h2>
             <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-              Connect SocialEntangler to Claude, Cursor, or any MCP-compatible AI. Schedule posts, generate captions, and check analytics — all from a conversation.
+              Connect Unravler to Claude, Cursor, or any MCP-compatible AI. Schedule posts, generate captions, and check analytics — all from a conversation.
             </p>
           </div>
 
@@ -632,7 +632,7 @@ const LandingPage = () => {
                 <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
                 <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
                 <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-                <span className="ml-3 text-xs text-slate-400 font-mono">SocialEntangler Public API</span>
+                <span className="ml-3 text-xs text-slate-400 font-mono">Unravler Public API</span>
               </div>
               <div className="bg-slate-950 p-6 font-mono text-sm overflow-x-auto">
                 {/* MCP config example */}
@@ -698,7 +698,7 @@ const LandingPage = () => {
               Frequently asked questions
             </h2>
             <p className="text-lg text-slate-600">
-              Everything you need to know about SocialEntangler
+              Everything you need to know about Unravler
             </p>
           </div>
           <div className="space-y-6">
@@ -730,7 +730,7 @@ const LandingPage = () => {
               Ready to get started?
             </h2>
             <p className="text-lg text-white/90 mb-8 max-w-2xl mx-auto">
-              Join thousands of content creators who save hours every week with SocialEntangler
+              Join thousands of content creators who save hours every week with Unravler
             </p>
             <Button
               size="lg"

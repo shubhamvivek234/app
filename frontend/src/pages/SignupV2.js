@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Same floating icons as LoginV2
@@ -91,7 +91,7 @@ const SignupV2 = () => {
     setLoading(true);
     try {
       await signup(formData.email, formData.password, formData.name);
-      toast.success('Account created! Welcome to SocialEntangler.');
+      toast.success('Account created! Welcome to Unravler.');
     } catch (error) {
       let msg = 'Signup failed';
       if (error.code) {
@@ -204,7 +204,7 @@ const SignupV2 = () => {
       {/* ══ LEFT PANEL ══ */}
       <div className="sv2-left">
         <div className="sv2-top">
-          <SocialEntanglerLogo />
+          <UnravlerLogo />
           <button className="sv2-back" onClick={() => navigate('/')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back to home
@@ -214,7 +214,7 @@ const SignupV2 = () => {
         <div style={{ flex: 1 }} />
 
         <div className="sv2-headline-wrap">
-          <p className="sv2-eyebrow">Join SocialEntangler</p>
+          <p className="sv2-eyebrow">Join Unravler</p>
           <h2 className="sv2-headline">
             Grow your audience<br />
             across <span>every platform</span>
@@ -253,7 +253,7 @@ const SignupV2 = () => {
       {/* ══ RIGHT PANEL ══ */}
       <div className="sv2-right">
         <div className="sv2-form-card">
-          <div className="sv2-form-logo"><SocialEntanglerLogo /></div>
+          <div className="sv2-form-logo"><UnravlerLogo /></div>
           <h2 className="sv2-form-title">Create your account</h2>
           <p className="sv2-form-sub">Start scheduling your content today</p>
 

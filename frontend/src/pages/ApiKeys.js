@@ -79,7 +79,7 @@ const ENDPOINTS = [
         path: '/posts',
         description: 'Create a post — save as draft, schedule for later, or publish immediately.',
         request: `{
-  "content": "Hello from the SocialEntangler API!",
+  "content": "Hello from the Unravler API!",
   "account_ids": ["acc_abc123", "acc_def456"],
   "scheduled_at": "2025-06-01T09:00:00Z",
   "publish_now": false,

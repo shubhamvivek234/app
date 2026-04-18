@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import SocialEntanglerLogo from '@/components/SocialEntanglerLogo';
+import UnravlerLogo from '@/components/UnravlerLogo';
 import TurnstileWidget from '@/components/TurnstileWidget';
 
 const LoginV1 = () => {
@@ -454,7 +454,7 @@ const LoginV1 = () => {
       <div className="left">
         <div className="form-wrap">
           <div className="brand-container">
-            <SocialEntanglerLogo />
+            <UnravlerLogo />
             <button onClick={() => navigate('/')} className="back-home">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
               Back to home
@@ -517,7 +517,7 @@ const LoginV1 = () => {
 
         <div className="orbit-wrap">
           <div className="center-bolt" style={{ transform: 'translate(-50%, -50%)', marginTop: '0' }}>
-            <SocialEntanglerLogo size="large" showText={false} />
+            <UnravlerLogo size="large" showText={false} />
           </div>
 
           {/* ════════ OUTER RING (CW 34s) ════════ */}
