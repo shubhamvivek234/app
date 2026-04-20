@@ -19,15 +19,22 @@ from api.limiter import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["public-api"])
+_STRICT_SCOPE_ENFORCEMENT = os.environ.get("API_KEY_SCOPE_ENFORCEMENT", "false").lower() == "true"
 
 
 # ── API key auth ──────────────────────────────────────────────────────────────
 
-async def _resolve_user_id(x_api_key: str | None, db) -> str:
+def _has_scope(doc: dict, required_scope: str | None) -> bool:
+    if not required_scope:
+        return True
+    scopes = set(doc.get("scopes") or [])
+    return "*" in scopes or required_scope in scopes
+
+
+async def _resolve_api_key_doc(x_api_key: str | None, db, required_scope: str | None = None) -> dict:
     """
-    Resolve user_id from an API key.
-    Hashes the key, looks it up in api_keys collection, returns user_id.
-    Updates last_used_at as a side effect.
+    Resolve an API key document.
+    Scope enforcement is opt-in for now to avoid breaking existing deployed keys.
     """
     if not x_api_key:
         raise HTTPException(
@@ -42,6 +49,11 @@ async def _resolve_user_id(x_api_key: str | None, db) -> str:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or revoked API key",
         )
+    if _STRICT_SCOPE_ENFORCEMENT and not _has_scope(doc, required_scope):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API key lacks required scope: {required_scope}",
+        )
     try:
         await db.api_keys.update_one(
             {"_id": doc["_id"]},
@@ -49,10 +61,20 @@ async def _resolve_user_id(x_api_key: str | None, db) -> str:
         )
     except Exception:
         pass
+    return doc
+
+
+async def _resolve_user_id(x_api_key: str | None, db, required_scope: str | None = None) -> str:
+    """
+    Resolve user_id from an API key.
+    Hashes the key, looks it up in api_keys collection, returns user_id.
+    Updates last_used_at as a side effect.
+    """
+    doc = await _resolve_api_key_doc(x_api_key, db, required_scope)
     return doc["user_id"]
 
 
-async def _resolve_workspace(x_api_key: str | None, db) -> dict:
+async def _resolve_workspace(x_api_key: str | None, db, required_scope: str | None = None) -> dict:
     """
     Look up workspace by hashed API key. Returns workspace doc.
 
@@ -75,6 +97,11 @@ async def _resolve_workspace(x_api_key: str | None, db) -> dict:
         "revoked": {"$ne": True},
     })
     if api_key_doc:
+        if _STRICT_SCOPE_ENFORCEMENT and not _has_scope(api_key_doc, required_scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key lacks required scope: {required_scope}",
+            )
         workspace_id = api_key_doc.get("workspace_id")
         workspace = await db.workspaces.find_one({"_id": workspace_id}) or \
                     await db.workspaces.find_one({"workspace_id": workspace_id})
@@ -130,7 +157,7 @@ async def public_list_posts(
     limit: int = 20,
 ) -> PublicPostListResponse:
     """List posts for the workspace associated with the API key."""
-    workspace = await _resolve_workspace(x_api_key, db)
+    workspace = await _resolve_workspace(x_api_key, db, "posts:read")
     workspace_id = str(workspace["_id"])
 
     if limit > 100:
@@ -162,7 +189,7 @@ async def public_get_post(
     db: DB,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> PublicPostSummary:
-    workspace = await _resolve_workspace(x_api_key, db)
+    workspace = await _resolve_workspace(x_api_key, db, "posts:read")
     workspace_id = str(workspace["_id"])
 
     doc = await db.posts.find_one(
@@ -193,7 +220,7 @@ async def public_list_accounts(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     """List all active connected social accounts for this API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "accounts:read")
     cursor = db.social_accounts.find(
         {"user_id": user_id, "is_active": True},
         {"_id": 0, "account_id": 1, "platform": 1, "username": 1, "name": 1},
@@ -232,7 +259,7 @@ async def public_create_post(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     """Create a post — draft, scheduled, or publish now."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "posts:write")
 
     if not body.content.strip():
         raise HTTPException(status_code=422, detail="Content cannot be empty")
@@ -303,7 +330,7 @@ async def public_delete_post(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
     """Delete a post owned by this API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "posts:delete")
     result = await db.posts.update_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
         {"$set": {"deleted_at": datetime.now(timezone.utc), "status": "deleted"}},
@@ -323,7 +350,7 @@ async def public_retry_post(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     """Retry a failed post."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "posts:write")
     now = datetime.now(timezone.utc)
     result = await db.posts.update_one(
         {"id": post_id, "user_id": user_id, "status": {"$in": ["failed", "partial"]}},
@@ -372,7 +399,7 @@ async def public_generate_content(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     """Generate platform-optimized social media content via AI."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "ai:generate")
 
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     if not api_key:
@@ -422,7 +449,7 @@ async def public_get_stats(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
     """Dashboard statistics for the API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db)
+    user_id = await _resolve_user_id(x_api_key, db, "stats:read")
 
     total_posts, scheduled, published, failed, accounts = await __import__("asyncio").gather(
         db.posts.count_documents({"user_id": user_id, "deleted_at": {"$exists": False}}),
