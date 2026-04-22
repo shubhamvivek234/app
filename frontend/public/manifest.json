@@ -1,0 +1,20 @@
+{
+  "short_name": "Unravler",
+  "name": "Unravler",
+  "icons": [
+    {
+      "src": "favicon-256.png",
+      "sizes": "256x256",
+      "type": "image/png"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#111111",
+  "background_color": "#111111"
+}
