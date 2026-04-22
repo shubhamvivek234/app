@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header, Cookie, UploadFile, File, Form
 from fastapi.security import HTTPBearer
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -1546,10 +1546,56 @@ async def disconnect_social_account(account_id: str, current_user: User = Depend
 
 # ==================== OAUTH SOCIAL ACCOUNTS ====================
 
-def _create_oauth_state(user_id: str, platform: str) -> str:
+def _normalize_frontend_base(url: Optional[str]) -> Optional[str]:
+    """
+    Return a safe frontend base URL (scheme://host[:port]) or None.
+    Prevents open-redirect abuse by allowing only known domains in production.
+    """
+    if not url:
+        return None
+    try:
+        parsed = __import__("urllib.parse").parse.urlparse(url)
+    except Exception:
+        return None
+
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname or ""
+
+    env = os.environ.get("ENV", "development").lower()
+
+    # Dev: allow localhost for convenience.
+    if env != "production" and host in {"localhost", "127.0.0.1"}:
+        if scheme in {"http", "https"}:
+            return f"{scheme}://{parsed.netloc}"
+        return None
+
+    # Prod: HTTPS only, and only allow your owned domains.
+    if scheme != "https":
+        return None
+
+    allowed_hosts = {
+        "unravler.com",
+        "app.unravler.com",
+    }
+    if host not in allowed_hosts:
+        return None
+
+    return f"{scheme}://{parsed.netloc}"
+
+
+def _create_oauth_state(user_id: str, platform: str, frontend_base: Optional[str] = None) -> str:
     """Create a short-lived signed state token encoding user identity."""
-    payload = {"user_id": user_id, "platform": platform,
-               "exp": datetime.now(timezone.utc) + timedelta(minutes=15)}
+    payload = {
+        "user_id": user_id,
+        "platform": platform,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+    }
+    safe_frontend = _normalize_frontend_base(frontend_base)
+    if safe_frontend:
+        payload["frontend_base"] = safe_frontend
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def _verify_oauth_state(state: str) -> dict:
@@ -1586,9 +1632,12 @@ async def _save_oauth_account(user_id: str, platform: str, access_token: str,
         await db.social_accounts.insert_one(doc)
 
 @api_router.get("/oauth/{platform}/authorize")
-async def oauth_authorize(platform: str, current_user: User = Depends(get_current_user)):
+async def oauth_authorize(platform: str, request: Request, current_user: User = Depends(get_current_user)):
     """Generate OAuth authorization URL for the given platform."""
-    state = _create_oauth_state(current_user.user_id, platform)
+    # Prefer the browser origin so OAuth can return to the correct frontend host
+    # even if FRONTEND_URL is misconfigured on the server.
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    state = _create_oauth_state(current_user.user_id, platform, origin)
     try:
         if platform == "facebook":
             from app.social.facebook import FacebookAuth
@@ -1809,7 +1858,20 @@ async def oauth_callback_get(platform: str, request: Request,
                               error: Optional[str] = None):
     """Handle platform redirect-based OAuth callback (backend redirect_uri flow)."""
     import urllib.parse
+
+    # Default to server config, but prefer the state-embedded frontend base
+    # (set during /authorize) to avoid wrong-domain redirects.
     frontend_base = FRONTEND_URL
+    if state:
+        try:
+            claims = _verify_oauth_state(state)
+            fb = claims.get("frontend_base")
+            safe_fb = _normalize_frontend_base(fb)
+            if safe_fb:
+                frontend_base = safe_fb
+        except Exception:
+            pass
+
     if error:
         return RedirectResponse(url=f"{frontend_base}/oauth/callback?error={urllib.parse.quote(str(error))}&platform={platform}", status_code=302)
     if not code or not state:
@@ -2116,6 +2178,85 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         logging.error(f"Webhook error: {e}")
         return {"status": "error", "message": str(e)}
+
+
+# ==================== META / INSTAGRAM WEBHOOKS ====================
+
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get("INSTAGRAM_WEBHOOK_VERIFY_TOKEN") or os.environ.get(
+    "META_WEBHOOK_VERIFY_TOKEN"
+)
+
+def _verify_meta_webhook_signature(app_secret: Optional[str], payload: bytes, signature_header: Optional[str]) -> bool:
+    """
+    Verify Meta webhook signature.
+    Meta sends: X-Hub-Signature-256: sha256=<hex>
+    """
+    if not app_secret or not signature_header:
+        return False
+    if not signature_header.startswith("sha256="):
+        return False
+    sent = signature_header.split("=", 1)[1].strip()
+    try:
+        import hmac
+        import hashlib
+        expected = hmac.new(app_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, sent)
+    except Exception:
+        return False
+
+
+@api_router.get("/webhook/instagram")
+async def instagram_webhook_verify(request: Request):
+    """
+    Meta webhook verification handshake.
+    Expects query params: hub.mode, hub.challenge, hub.verify_token
+    """
+    mode = request.query_params.get("hub.mode")
+    challenge = request.query_params.get("hub.challenge")
+    token = request.query_params.get("hub.verify_token")
+
+    if (
+        mode == "subscribe"
+        and challenge
+        and token
+        and INSTAGRAM_WEBHOOK_VERIFY_TOKEN
+        and token == INSTAGRAM_WEBHOOK_VERIFY_TOKEN
+    ):
+        # Meta expects the raw challenge string in the response body.
+        return Response(content=str(challenge), media_type="text/plain", status_code=200)
+
+    # Explicit 403 helps Meta UI show a meaningful error.
+    return Response(content="Forbidden", media_type="text/plain", status_code=403)
+
+
+@api_router.post("/webhook/instagram")
+async def instagram_webhook_receive(request: Request):
+    """
+    Receive Instagram webhook events (messages/comments/etc).
+    We validate the signature header when possible and then log/store events.
+    """
+    raw = await request.body()
+
+    # Signature validation (recommended by Meta). If secret isn't configured, we still accept
+    # events, but you should enable this in production.
+    app_secret = os.environ.get("INSTAGRAM_APP_SECRET") or os.environ.get("FACEBOOK_APP_SECRET")
+    sig = request.headers.get("x-hub-signature-256") or request.headers.get("X-Hub-Signature-256")
+    if app_secret and not _verify_meta_webhook_signature(app_secret, raw, sig):
+        return Response(content="Invalid signature", media_type="text/plain", status_code=403)
+
+    # Parse JSON (Meta sends application/json)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+
+    logging.info(
+        "[Instagram Webhook] Received event: %s",
+        (str(payload)[:2000] if payload is not None else raw[:2000]),
+    )
+
+    # TODO: route to your internal inbox/comment processors.
+    return {"status": "ok"}
 
 # ==================== GDPR & USER ACCOUNT (20.3) ====================
 
@@ -3343,4 +3484,3 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
