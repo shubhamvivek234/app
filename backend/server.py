@@ -161,6 +161,11 @@ def get_next_retry_at(retry_count: int) -> datetime:
 app = FastAPI(title="Social Scheduler API")
 api_router = APIRouter(prefix="/api")
 
+# Simple health endpoint for Docker/nginx checks.
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 # Serve locally uploaded files
 _LOCAL_UPLOADS_DIR = Path(__file__).parent / "uploads"
 _LOCAL_UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
