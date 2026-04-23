@@ -23,7 +23,7 @@ const Terms = () => {
         <h1 className="text-4xl font-bold text-gray-900 mb-8">Terms and Conditions for Unravler</h1>
 
         <div className="prose prose-slate max-w-none">
-          <p className="text-gray-600 mb-6">Last Updated: 2026-02-11</p>
+          <p className="text-gray-600 mb-6">Last Updated: 2026-04-23</p>
 
           <p className="text-gray-700 leading-relaxed mb-6">Welcome to Unravler!</p>
 
@@ -48,7 +48,7 @@ const Terms = () => {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold text-gray-900 mb-4">3. User Data and Privacy</h2>
             <p className="text-gray-700 leading-relaxed">
-              We collect and store user data, including name, email, payment information, and social media authentication access keys, as necessary to provide our services. For details on how we handle your data, please refer to our Privacy Policy at https://unravler.com/privacy-policy.
+              We collect and store user data as necessary to provide our services. For details on how we handle your data, please refer to our Privacy Policy at https://unravler.com/privacy.
             </p>
           </section>
 

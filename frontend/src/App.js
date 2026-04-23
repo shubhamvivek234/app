@@ -25,6 +25,7 @@ import PaymentPage from '@/pages/PaymentPage';
 import Settings from '@/pages/Settings';
 import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
+import DataDeletion from '@/pages/DataDeletion';
 import Onboarding from '@/pages/Onboarding';
 import OnboardingConnect from '@/pages/OnboardingConnect';
 import OnboardingPricing from '@/pages/OnboardingPricing';
@@ -170,7 +171,7 @@ const ThemeApplier = () => {
   const { pathname } = useLocation();
 
   React.useEffect(() => {
-    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
+    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/data-deletion', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
     const isPublicRoute = pathname === '/' || 
                         publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
 
@@ -202,6 +203,7 @@ function App() {
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/data-deletion" element={<DataDeletion />} />
               <Route path="/resources/social-media-image-guide" element={<SocialMediaImageGuide />} />
               <Route path="/resources/social-media-video-guide" element={<SocialMediaVideoGuide />} />
               <Route path="/mcp" element={<McpDocs />} />
