@@ -25,7 +25,9 @@ def get_mongo_settings() -> dict:
 async def get_client() -> AsyncIOMotorClient:
     global _client
     if _client is None:
-        uri = os.environ["MONGODB_URI"]
+        uri = os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL")
+        if not uri:
+            raise KeyError("MONGODB_URI")
         _client = AsyncIOMotorClient(uri, **get_mongo_settings())
         # Ping to validate connection
         await _client.admin.command("ping")
