@@ -40,7 +40,7 @@ structlog==24.2.0
 
 # Payments
 stripe==9.9.0
-razorpay==1.4.0
+razorpay==1.4.1
 
 # Email
 resend==0.8.0
