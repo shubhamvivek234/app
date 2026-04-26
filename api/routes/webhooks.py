@@ -24,6 +24,10 @@ router = APIRouter(tags=["webhooks"])
 
 _TIMESTAMP_TOLERANCE_SECONDS = 300  # 5 minutes
 _DEDUP_TTL_SECONDS = 86400          # 24 hours
+_META_VERIFY_TOKEN = (
+    os.environ.get("INSTAGRAM_WEBHOOK_VERIFY_TOKEN")
+    or os.environ.get("META_WEBHOOK_VERIFY_TOKEN")
+)
 
 
 # ── Response model ────────────────────────────────────────────────────────────
@@ -34,7 +38,31 @@ class WebhookAckResponse(BaseModel):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+@router.get("/webhooks/instagram")
+@router.get("/webhook/instagram")
+async def verify_instagram_webhook(request: Request) -> Response:
+    """
+    Meta webhook verification handshake.
+    Meta expects the raw challenge string in the response body.
+    """
+    mode = request.query_params.get("hub.mode")
+    challenge = request.query_params.get("hub.challenge")
+    token = request.query_params.get("hub.verify_token")
+
+    if (
+        mode == "subscribe"
+        and challenge
+        and token
+        and _META_VERIFY_TOKEN
+        and hmac.compare_digest(token, _META_VERIFY_TOKEN)
+    ):
+        return Response(content=str(challenge), media_type="text/plain", status_code=200)
+
+    return Response(content="Forbidden", media_type="text/plain", status_code=403)
+
+
 @router.post("/webhooks/{platform}", response_model=WebhookAckResponse)
+@router.post("/webhook/{platform}", response_model=WebhookAckResponse)
 @limiter.limit("200/minute")
 async def receive_webhook(
     platform: str,
@@ -120,7 +148,12 @@ def _verify_hub_signature_256(body: bytes, headers) -> None:
             detail="Missing or malformed X-Hub-Signature-256",
         )
 
-    app_secret = os.environ.get("META_APP_SECRET", "")
+    app_secret = (
+        os.environ.get("META_APP_SECRET")
+        or os.environ.get("INSTAGRAM_APP_SECRET")
+        or os.environ.get("FACEBOOK_APP_SECRET")
+        or ""
+    )
     if not app_secret:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -236,7 +269,8 @@ def _extract_timestamp(platform: str, payload: dict, headers) -> float | None:
     if platform in ("facebook", "instagram"):
         entries = payload.get("entry", [])
         if entries and "time" in entries[0]:
-            return float(entries[0]["time"])
+            ts = float(entries[0]["time"])
+            return ts / 1000 if ts > 10_000_000_000 else ts
     # YouTube uses X-Goog-Resource-State; timestamp from headers
     if platform == "youtube":
         ts = headers.get("x-goog-message-number")
