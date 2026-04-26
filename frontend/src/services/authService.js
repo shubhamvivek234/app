@@ -9,7 +9,7 @@
  */
 
 import axios from 'axios';
-import { auth, googleProvider } from '../firebase';
+import { auth, googleProvider, assertFirebaseAuthConfig } from '../firebase';
 import env from '../env';
 import {
   onAuthStateChanged,
@@ -61,6 +61,7 @@ export const clearAuthData = () => {
  */
 export const googleSignIn = async () => {
   try {
+    assertFirebaseAuthConfig();
     console.log('[AuthService] Starting Google sign-in with popup...');
     await signInWithPopup(auth, googleProvider);
     return true;
@@ -95,6 +96,7 @@ export const googleSignIn = async () => {
  */
 export const handleRedirectResult = async () => {
   try {
+    assertFirebaseAuthConfig();
     console.log('[AuthService] Checking for redirect result...');
     const result = await getRedirectResult(auth);
     if (result && result.user) {

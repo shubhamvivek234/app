@@ -3,6 +3,7 @@ Shared FastAPI dependencies — db, redis, current user, permission checks.
 """
 import os
 import logging
+from pathlib import Path
 from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -21,12 +22,24 @@ logger = logging.getLogger(__name__)
 # ── Firebase Admin SDK initialisation ──────────────────────────────────────
 _firebase_app: firebase_admin.App | None = None
 
+
+def get_firebase_credential_path() -> str:
+    cred_path = os.environ.get("FIREBASE_ADMIN_SDK_JSON", "/app/serviceAccountKey.json")
+    if not Path(cred_path).is_file():
+        raise RuntimeError(
+            "Firebase Admin SDK credential file not found. "
+            f"Expected FIREBASE_ADMIN_SDK_JSON at '{cred_path}'."
+        )
+    return cred_path
+
+
 def get_firebase_app() -> firebase_admin.App:
     global _firebase_app
     if _firebase_app is None:
-        cred_path = os.environ.get("FIREBASE_ADMIN_SDK_JSON", "/app/serviceAccountKey.json")
+        cred_path = get_firebase_credential_path()
         cred = credentials.Certificate(cred_path)
         _firebase_app = firebase_admin.initialize_app(cred)
+        logger.info("Firebase Admin SDK initialized from %s", cred_path)
     return _firebase_app
 
 

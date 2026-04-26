@@ -24,18 +24,36 @@ const firebaseConfig = {
     storageBucket:     env.FIREBASE_STORAGE_BUCKET,
     messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID,
     appId:             env.FIREBASE_APP_ID,
-    measurementId:     process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+    measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+      || import.meta.env.REACT_APP_FIREBASE_MEASUREMENT_ID
+      || process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+};
+
+const requiredFirebaseFields = [
+    ['REACT_APP_FIREBASE_API_KEY', env.FIREBASE_API_KEY],
+    ['REACT_APP_FIREBASE_AUTH_DOMAIN', env.FIREBASE_AUTH_DOMAIN],
+    ['REACT_APP_FIREBASE_PROJECT_ID', env.FIREBASE_PROJECT_ID],
+    ['REACT_APP_FIREBASE_APP_ID', env.FIREBASE_APP_ID],
+];
+
+export const getMissingFirebaseConfig = () => (
+    requiredFirebaseFields
+        .filter(([, value]) => !value)
+        .map(([key]) => key)
+);
+
+export const assertFirebaseAuthConfig = () => {
+    const missing = getMissingFirebaseConfig();
+    if (missing.length) {
+        throw new Error(
+            `Firebase auth is not configured for this deployment. Missing: ${missing.join(', ')}`
+        );
+    }
 };
 
 // Guard: warn loudly in dev if any required key is missing
 if (process.env.NODE_ENV === 'development') {
-    const required = [
-        ['REACT_APP_FIREBASE_API_KEY', env.FIREBASE_API_KEY],
-        ['REACT_APP_FIREBASE_AUTH_DOMAIN', env.FIREBASE_AUTH_DOMAIN],
-        ['REACT_APP_FIREBASE_PROJECT_ID', env.FIREBASE_PROJECT_ID],
-        ['REACT_APP_FIREBASE_APP_ID', env.FIREBASE_APP_ID],
-    ];
-    required.forEach(([key, value]) => {
+    requiredFirebaseFields.forEach(([key, value]) => {
         if (!value) {
             console.warn(`[Firebase] Missing env var: ${key}. Check your frontend/.env file.`);
         }

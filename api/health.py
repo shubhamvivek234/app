@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from api.deps import get_firebase_app
 from db.mongo import get_client as get_mongo_client
 from db.redis_client import get_queue_redis, get_cache_redis
 
@@ -57,6 +58,15 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         logger.error("Readiness check — Redis cache unreachable: %s", exc)
         checks["redis_cache"] = "error"
+        all_ok = False
+
+    # Firebase Admin SDK check
+    try:
+        get_firebase_app()
+        checks["firebase_admin"] = "ok"
+    except Exception as exc:
+        logger.error("Readiness check — Firebase Admin SDK unavailable: %s", exc)
+        checks["firebase_admin"] = "error"
         all_ok = False
 
     status_code = 200 if all_ok else 503

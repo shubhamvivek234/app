@@ -114,9 +114,12 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import os as _os
+    from api.deps import get_firebase_app
     from db.mongo import get_client as _get_client
     _configure_logging()
     _configure_sentry()
+    if _os.getenv("ENV", "development") == "production":
+        get_firebase_app()
     await create_all_indexes()
     # Phase 7.5.1 — audit_events TTL + query indexes
     _client = await _get_client()
