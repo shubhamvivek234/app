@@ -26,15 +26,22 @@ class FacebookAuth:
         """Generate Facebook Login URL"""
         if not self.app_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Facebook credentials not configured")
-            
-        scope = "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management,pages_messaging"
+
+        # Allow scope override without code changes (useful during Meta app review).
+        # Example minimal scopes for debugging: "email,public_profile"
+        scope = os.environ.get(
+            "FACEBOOK_OAUTH_SCOPE",
+            "email,public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_insights,business_management,pages_messaging",
+        )
         
         params = {
             "client_id": self.app_id,
             "redirect_uri": self.redirect_uri,
             "state": state,
             "scope": scope,
-            "response_type": "code"
+            "response_type": "code",
+            # Helps when users previously denied scopes and need to re-grant.
+            "auth_type": os.environ.get("FACEBOOK_OAUTH_AUTH_TYPE", "rerequest"),
         }
         
         auth_url = f"https://www.facebook.com/{self._API_VERSION}/dialog/oauth?{urllib.parse.urlencode(params)}"

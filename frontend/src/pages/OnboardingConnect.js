@@ -55,6 +55,10 @@ const OnboardingConnect = () => {
     if (!selectedPlatform) return;
 
     setLoading(true);
+    // Open a popup synchronously so browsers don't block it (window.open after an await
+    // is treated as a non-user gesture and is frequently blocked).
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
+    if (popup) popup.opener = null;
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
@@ -79,11 +83,16 @@ const OnboardingConnect = () => {
       sessionStorage.setItem('oauth_platform', selectedPlatform.id);
       sessionStorage.setItem('oauth_return_to', 'onboarding');
 
-      // Open OAuth page in a new tab
-      window.open(authorization_url, '_blank');
+      // Navigate the pre-opened popup (or fall back to same-tab redirect).
+      if (popup) {
+        popup.location.href = authorization_url;
+      } else {
+        window.location.assign(authorization_url);
+      }
 
     } catch (error) {
       console.error('Error initiating OAuth:', error);
+      if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error(`${selectedPlatform.name} API credentials not configured. Please contact administrator.`);
       } else {

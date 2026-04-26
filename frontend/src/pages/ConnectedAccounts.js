@@ -330,6 +330,9 @@ const ConnectedAccounts = () => {
     if (platformId === 'discord') { setDiscordModal(true); return; }
 
     setConnecting(platformId);
+    // Open a popup synchronously so browsers don't block it.
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
+    if (popup) popup.opener = null;
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
@@ -344,10 +347,15 @@ const ConnectedAccounts = () => {
         if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
         sessionStorage.setItem('oauth_platform', platformId);
         sessionStorage.setItem('oauth_return_to', 'accounts');
-        window.open(authorization_url, '_blank');
+        if (popup) {
+          popup.location.href = authorization_url;
+        } else {
+          window.location.assign(authorization_url);
+        }
         return;
       }
     } catch (error) {
+      if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error('API credentials not configured for this platform.');
       } else {

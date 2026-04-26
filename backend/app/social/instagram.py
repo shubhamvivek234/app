@@ -14,7 +14,8 @@ class InstagramAuth:
     """Instagram Business Login standalone (no Facebook Page required)"""
 
     _API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
-    OAUTH_URL = "https://api.instagram.com/oauth/authorize"
+    # Meta "Instagram API with Instagram login" uses this endpoint (matches Meta UI embed URL).
+    OAUTH_URL = "https://www.instagram.com/oauth/authorize"
     TOKEN_URL = "https://api.instagram.com/oauth/access_token"
     GRAPH_URL = f"https://graph.instagram.com/{_API_VERSION}"
 
@@ -37,15 +38,23 @@ class InstagramAuth:
         if not self.app_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Instagram credentials not configured")
 
-        scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages"
+        # Allow scope override without code changes (useful during Meta app review).
+        scope = os.environ.get(
+            "INSTAGRAM_OAUTH_SCOPE",
+            "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_insights,instagram_business_manage_messages",
+        )
 
         params = {
             "client_id": self.app_id,
             "redirect_uri": self.redirect_uri,
             "scope": scope,
             "response_type": "code",
-            "state": state
+            "state": state,
         }
+
+        # Helps when users previously denied scopes and need to re-grant.
+        if os.environ.get("INSTAGRAM_OAUTH_FORCE_REAUTH", "true").lower() in {"1", "true", "yes"}:
+            params["force_reauth"] = "true"
         
         auth_url = f"{self.OAUTH_URL}?{urllib.parse.urlencode(params)}"
         logging.info(f"[Instagram] Generated Auth URL: {auth_url}")
