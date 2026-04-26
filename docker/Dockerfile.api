@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 FROM python:3.11-slim
 
 # Security: never run as root
+RUN apt-get update && apt-get install -y libmagic1 ffmpeg curl && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 1001 appgroup && \
     useradd --uid 1001 --gid 1001 --no-create-home appuser
 
