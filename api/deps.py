@@ -24,7 +24,8 @@ _firebase_app: firebase_admin.App | None = None
 def get_firebase_app() -> firebase_admin.App:
     global _firebase_app
     if _firebase_app is None:
-        cred = credentials.Certificate(os.environ["FIREBASE_ADMIN_SDK_JSON"])
+        cred_path = os.environ.get("FIREBASE_ADMIN_SDK_JSON", "/app/serviceAccountKey.json")
+        cred = credentials.Certificate(cred_path)
         _firebase_app = firebase_admin.initialize_app(cred)
     return _firebase_app
 

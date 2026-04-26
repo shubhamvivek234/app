@@ -14,12 +14,19 @@ version: "3.9"
 
 x-common-env: &common-env
   MONGO_URL: ${MONGO_URL}
+  MONGODB_URI: ${MONGODB_URI:-${MONGO_URL}}
   DB_NAME: ${DB_NAME}
   JWT_SECRET: ${JWT_SECRET}
   JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
   REDIS_URL: redis://redis:6379/0
+  REDIS_CACHE_URL: ${REDIS_CACHE_URL:-}
+  REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-}
   FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-https://api.unravler.com}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.unravler.com,https://unravler.com,https://www.unravler.com}
+  CORS_ORIGINS: ${CORS_ORIGINS:-https://app.unravler.com,https://unravler.com,https://www.unravler.com}
   FIREBASE_STORAGE_BUCKET: ${FIREBASE_STORAGE_BUCKET:-}
+  FIREBASE_ADMIN_SDK_JSON: ${FIREBASE_ADMIN_SDK_JSON:-/app/serviceAccountKey.json}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
   GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
   GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}

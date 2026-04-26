@@ -10,6 +10,7 @@
 
 import axios from 'axios';
 import { auth, googleProvider } from '../firebase';
+import env from '../env';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -20,7 +21,7 @@ import {
   getRedirectResult,
 } from 'firebase/auth';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 /**
