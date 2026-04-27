@@ -56,3 +56,8 @@ def decrypt(ciphertext: str) -> str:
 def generate_key() -> str:
     """One-time helper: generate a new Fernet key. Store result in ENCRYPTION_KEY."""
     return Fernet.generate_key().decode("utf-8")
+
+
+def validate_encryption_key() -> None:
+    """Fail fast when ENCRYPTION_KEY is missing or malformed."""
+    _get_fernet()

@@ -56,6 +56,7 @@ from db.redis_client import close_pools
 from db.indexes import create_all_indexes
 from db.audit_events import ensure_indexes as create_audit_indexes
 from utils.log_scrub import configure_scrubbing
+from utils.encryption import validate_encryption_key
 
 
 def _configure_sentry() -> None:
@@ -120,6 +121,7 @@ async def lifespan(app: FastAPI):
     _configure_sentry()
     if _os.getenv("ENV", "development") == "production":
         get_firebase_app()
+        validate_encryption_key()
     await create_all_indexes()
     # Phase 7.5.1 — audit_events TTL + query indexes
     _client = await _get_client()
