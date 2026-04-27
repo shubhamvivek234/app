@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 import os
 import logging
 import asyncio
@@ -440,6 +441,8 @@ async def _get_or_create_user_from_firebase(decoded_token: dict) -> str:
     """Return user_id for a verified Firebase token, creating the MongoDB user if needed."""
     email = decoded_token.get("email", "")
     firebase_uid = decoded_token.get("uid", "")
+    name = decoded_token.get("name") or (email.split("@")[0] if email else "User")
+    picture = decoded_token.get("picture")
 
     # Look up by email first, then by firebase_uid
     user_doc = await db.users.find_one(
@@ -449,17 +452,22 @@ async def _get_or_create_user_from_firebase(decoded_token: dict) -> str:
 
     if user_doc:
         # Keep firebase_uid synced
-        if not user_doc.get("firebase_uid"):
+        updates = {}
+        if firebase_uid and not user_doc.get("firebase_uid"):
+            updates["firebase_uid"] = firebase_uid
+        if name and not user_doc.get("name"):
+            updates["name"] = name
+        if picture and not user_doc.get("picture"):
+            updates["picture"] = picture
+        if updates:
             await db.users.update_one(
                 {"user_id": user_doc["user_id"]},
-                {"$set": {"firebase_uid": firebase_uid}}
+                {"$set": updates}
             )
         return user_doc["user_id"]
 
     # New user — create MongoDB record from Firebase data
     user_id = f"user_{uuid.uuid4().hex[:12]}"
-    name = decoded_token.get("name") or email.split("@")[0]
-    picture = decoded_token.get("picture")
     new_user = {
         "user_id": user_id,
         "firebase_uid": firebase_uid,
@@ -470,9 +478,30 @@ async def _get_or_create_user_from_firebase(decoded_token: dict) -> str:
         "subscription_status": "free",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.users.insert_one(new_user)
-    logging.info(f"Created new user from Firebase login: {user_id} ({email})")
-    return user_id
+    try:
+        await db.users.insert_one(new_user)
+        logging.info(f"Created new user from Firebase login: {user_id} ({email})")
+        return user_id
+    except DuplicateKeyError:
+        # Multiple auth/me requests can race on first login. Re-read the user
+        # instead of failing the whole sign-in flow.
+        logging.info("Firebase user creation raced for email=%s uid=%s; reloading existing user", email, firebase_uid)
+        user_doc = await db.users.find_one(
+            {"$or": [{"email": email}, {"firebase_uid": firebase_uid}]},
+            {"_id": 0}
+        )
+        if user_doc:
+            updates = {}
+            if firebase_uid and not user_doc.get("firebase_uid"):
+                updates["firebase_uid"] = firebase_uid
+            if name and not user_doc.get("name"):
+                updates["name"] = name
+            if picture and not user_doc.get("picture"):
+                updates["picture"] = picture
+            if updates:
+                await db.users.update_one({"user_id": user_doc["user_id"]}, {"$set": updates})
+            return user_doc["user_id"]
+        raise
 
 
 async def get_current_user(session_token: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)) -> User:
