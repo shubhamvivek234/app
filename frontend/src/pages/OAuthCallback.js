@@ -94,9 +94,9 @@ const OAuthCallback = () => {
         }
 
         // Send callback to backend
-        console.log(`[OAuthCallback] Sending payload to ${apiUrl}/api/oauth/${platform}/callback:`, callbackData);
+        console.log(`[OAuthCallback] Sending payload to ${apiUrl}/api/v1/oauth/${platform}/callback:`, callbackData);
         const response = await axios.post(
-          `${apiUrl}/api/oauth/${platform}/callback`,
+          `${apiUrl}/api/v1/oauth/${platform}/callback`,
           callbackData,
           {
             headers: { Authorization: `Bearer ${token}` },

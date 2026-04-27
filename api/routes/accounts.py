@@ -3,14 +3,16 @@ Social account management — list, disconnect, OAuth flow.
 EC7: safe disconnect with future-post guard.
 Tokens are NEVER returned to frontend (response_model excludes them).
 """
+import json
 import logging
 import os
 import secrets
 from datetime import datetime, timezone
 from typing import Annotated
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, urlparse
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
 from api.deps import CurrentUser, DB, CacheRedis, require_permission
@@ -198,6 +200,7 @@ async def disconnect_account(
             dependencies=[require_permission("account:connect")])
 async def get_oauth_url(
     platform: str,
+    request: Request,
     current_user: CurrentUser,
     cache_redis: CacheRedis,
 ) -> OAuthUrlResponse:
@@ -209,9 +212,18 @@ async def get_oauth_url(
 
     user_id = current_user["user_id"]
     state = secrets.token_urlsafe(32)
+    frontend_base = (
+        _normalize_frontend_base(request.headers.get("origin"))
+        or _normalize_frontend_base(request.headers.get("referer"))
+        or _default_frontend_base()
+    )
 
-    # Store state → user_id mapping in Redis (10-minute TTL)
-    await cache_redis.setex(f"oauth_state:{state}", 600, user_id)
+    # Store enough context to finish redirect-based OAuth on the backend.
+    await cache_redis.setex(
+        f"oauth_state:{state}",
+        600,
+        json.dumps({"user_id": user_id, "frontend_base": frontend_base}),
+    )
 
     try:
         auth_url = _build_oauth_url(platform, state)
@@ -237,42 +249,13 @@ async def oauth_callback(
 
     # Validate CSRF state (only if state is provided, e.g. not for some platforms)
     if payload.state:
-        stored_user = await cache_redis.get(f"oauth_state:{payload.state}")
-        if stored_user is None:
+        state_context = await _consume_oauth_state(cache_redis, payload.state)
+        if state_context is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
-        await cache_redis.delete(f"oauth_state:{payload.state}")
 
     user_id = current_user["user_id"]
     token_data = await _exchange_code_for_tokens(platform, payload.code, payload.code_verifier)
-
-    if not token_data:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to exchange authorization code for tokens",
-        )
-
-    now = datetime.now(timezone.utc)
-    account_id = f"{platform}_{user_id}_{secrets.token_hex(8)}"
-
-    await db.social_accounts.update_one(
-        {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")},
-        {
-            "$set": {
-                "account_id": account_id,
-                "user_id": user_id,
-                "platform": platform,
-                "platform_user_id": token_data.get("platform_user_id"),
-                "platform_username": token_data.get("username"),
-                "access_token": encrypt(token_data["access_token"]),
-                "refresh_token": encrypt(token_data.get("refresh_token", "")),
-                "scopes": token_data.get("scopes", []),
-                "expires_at": token_data.get("expires_at"),
-                "is_active": True,
-                "connected_at": now,
-            }
-        },
-        upsert=True,
-    )
+    account_id = await _persist_oauth_account(db, user_id, platform, token_data)
 
     logger.info("OAuth connected: %s user=%s platform=%s", account_id, user_id, platform)
     return OAuthCallbackResponse(
@@ -280,6 +263,54 @@ async def oauth_callback(
         platform=platform,
         platform_username=token_data.get("username"),
     )
+
+
+@router.get("/oauth/{platform}/callback", include_in_schema=False)
+async def oauth_callback_redirect(
+    platform: str,
+    db: DB,
+    cache_redis: CacheRedis,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    if platform not in _SUPPORTED_PLATFORMS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported platform: {platform}",
+        )
+
+    state_context = await _consume_oauth_state(cache_redis, state) if state else None
+    frontend_base = (
+        (state_context or {}).get("frontend_base")
+        or _default_frontend_base()
+    )
+
+    if error:
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?error={quote(str(error))}&platform={platform}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not code or not state or not state_context:
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?error=missing_params&platform={platform}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    user_id = state_context["user_id"]
+    token_data = await _exchange_code_for_tokens(platform, code)
+    try:
+        await _persist_oauth_account(db, user_id, platform, token_data)
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?success=true&platform={platform}",
+            status_code=status.HTTP_302_FOUND,
+        )
+    except HTTPException as exc:
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?error={quote(str(exc.detail))}&platform={platform}",
+            status_code=status.HTTP_302_FOUND,
+        )
 
 
 # ── Frontend URL aliases (/social-accounts mirrors /accounts) ─────────────────
@@ -446,6 +477,80 @@ async def add_linkedin_page_manually(body: dict, current_user: CurrentUser, db: 
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _default_frontend_base() -> str:
+    candidates = [
+        os.environ.get("FRONTEND_URL", "").strip(),
+        *[origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()],
+        "https://app.unravler.com",
+    ]
+    for candidate in candidates:
+        normalized = _normalize_frontend_base(candidate)
+        if normalized:
+            return normalized
+    return "https://app.unravler.com"
+
+
+def _normalize_frontend_base(candidate: str | None) -> str | None:
+    if not candidate:
+        return None
+    parsed = urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+async def _consume_oauth_state(cache_redis: CacheRedis, state: str) -> dict | None:
+    stored_value = await cache_redis.get(f"oauth_state:{state}")
+    if stored_value is None:
+        return None
+    await cache_redis.delete(f"oauth_state:{state}")
+
+    if isinstance(stored_value, bytes):
+        stored_value = stored_value.decode("utf-8")
+
+    try:
+        payload = json.loads(stored_value)
+        if isinstance(payload, dict) and payload.get("user_id"):
+            payload["frontend_base"] = _normalize_frontend_base(payload.get("frontend_base")) or _default_frontend_base()
+            return payload
+    except Exception:
+        pass
+
+    return {"user_id": str(stored_value), "frontend_base": _default_frontend_base()}
+
+
+async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data: dict | None) -> str:
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to exchange authorization code for tokens",
+        )
+
+    now = datetime.now(timezone.utc)
+    account_id = f"{platform}_{user_id}_{secrets.token_hex(8)}"
+    await db.social_accounts.update_one(
+        {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")},
+        {
+            "$set": {
+                "account_id": account_id,
+                "user_id": user_id,
+                "platform": platform,
+                "platform_user_id": token_data.get("platform_user_id"),
+                "platform_username": token_data.get("username"),
+                "access_token": encrypt(token_data["access_token"]),
+                "refresh_token": encrypt(token_data.get("refresh_token", "")),
+                "scopes": token_data.get("scopes", []),
+                "expires_at": token_data.get("expires_at"),
+                "is_active": True,
+                "connected_at": now,
+            }
+        },
+        upsert=True,
+    )
+    return account_id
 
 def _build_oauth_url(platform: str, state: str) -> str:
     """Build platform-specific OAuth authorization URL with required scopes."""

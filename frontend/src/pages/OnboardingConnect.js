@@ -84,7 +84,7 @@ const OnboardingConnect = () => {
 
       // Get OAuth authorization URL
       const authResponse = await axios.get(
-        `${apiUrl}/api/oauth/${selectedPlatform.id}/authorize`,
+        `${apiUrl}/api/v1/oauth/${selectedPlatform.id}/url`,
         {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,

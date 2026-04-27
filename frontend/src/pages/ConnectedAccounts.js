@@ -357,7 +357,7 @@ const ConnectedAccounts = () => {
       const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
 
       if (oauthPlatforms.includes(platformId)) {
-        const authResponse = await axios.get(`${apiUrl}/api/oauth/${platformId}/authorize`, {
+        const authResponse = await axios.get(`${apiUrl}/api/v1/oauth/${platformId}/url`, {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
         });
