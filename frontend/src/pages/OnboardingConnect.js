@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import axios from 'axios';
 import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus, FaLinkedin, FaTiktok } from 'react-icons/fa';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
+import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
@@ -82,18 +83,7 @@ const OnboardingConnect = () => {
     markOAuthPopupExpected(Boolean(popup));
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-
-      // Get OAuth authorization URL
-      const authResponse = await axios.get(
-        `${apiUrl}/api/v1/oauth/${selectedPlatform.id}/url`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          withCredentials: true,
-        }
-      );
-
-      const { authorization_url, code_verifier } = authResponse.data;
+      const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id, token);
 
       // Store code_verifier for Twitter if present
       if (code_verifier) {

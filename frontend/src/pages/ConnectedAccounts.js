@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import axios from 'axios';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
   connectBluesky, connectDiscord, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
 } from '@/lib/api';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
+import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { toast } from 'sonner';
 import {
   FaTwitter, FaLinkedin, FaInstagram, FaFacebook, FaYoutube,
@@ -353,15 +353,10 @@ const ConnectedAccounts = () => {
     markOAuthPopupExpected(Boolean(popup));
     try {
       const token = localStorage.getItem('token');
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
       const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
 
       if (oauthPlatforms.includes(platformId)) {
-        const authResponse = await axios.get(`${apiUrl}/api/v1/oauth/${platformId}/url`, {
-          headers: { Authorization: `Bearer ${token}` },
-          withCredentials: true,
-        });
-        const { authorization_url, code_verifier } = authResponse.data;
+        const { authorization_url, code_verifier } = await requestOAuthUrl(platformId, token);
         if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
         sessionStorage.setItem('oauth_platform', platformId);
         sessionStorage.setItem('oauth_return_to', 'accounts');
