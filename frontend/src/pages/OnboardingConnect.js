@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import axios from 'axios';
-import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus } from 'react-icons/fa';
+import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus, FaLinkedin, FaTiktok } from 'react-icons/fa';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
@@ -24,6 +24,8 @@ const OnboardingConnect = () => {
     { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: '#FF0000' },
     { id: 'facebook', name: 'Facebook', icon: FaFacebook, color: '#1877F2' },
     { id: 'twitter', name: 'Twitter/X', icon: FaTwitter, color: '#1DA1F2' },
+    { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: '#0A66C2' },
+    { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: '#111827' },
   ];
 
   useEffect(() => {

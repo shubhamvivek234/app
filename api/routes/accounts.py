@@ -51,6 +51,7 @@ class OAuthUrlResponse(BaseModel):
     platform: str
     authorization_url: str
     state: str
+    code_verifier: str | None = None
 
 
 class OAuthCallbackResponse(BaseModel):
@@ -217,19 +218,38 @@ async def get_oauth_url(
         or _normalize_frontend_base(request.headers.get("referer"))
         or _default_frontend_base()
     )
+    code_verifier: str | None = None
+
+    if platform == "tiktok":
+        from backend.app.social.tiktok import TikTokAuth
+        auth_payload = TikTokAuth().get_auth_url(state)
+        auth_url = auth_payload["url"]
+        code_verifier = auth_payload.get("verifier")
+    elif platform == "linkedin":
+        from backend.app.social.linkedin import LinkedInAuth
+        auth_url = LinkedInAuth().get_auth_url(state)
+    else:
+        try:
+            auth_url = _build_oauth_url(platform, state)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
     # Store enough context to finish redirect-based OAuth on the backend.
     await cache_redis.setex(
         f"oauth_state:{state}",
         600,
-        json.dumps({"user_id": user_id, "frontend_base": frontend_base}),
+        json.dumps({
+            "user_id": user_id,
+            "frontend_base": frontend_base,
+            "code_verifier": code_verifier,
+        }),
     )
-
-    try:
-        auth_url = _build_oauth_url(platform, state)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
-    return OAuthUrlResponse(platform=platform, authorization_url=auth_url, state=state)
+    return OAuthUrlResponse(
+        platform=platform,
+        authorization_url=auth_url,
+        state=state,
+        code_verifier=code_verifier,
+    )
 
 
 @router.post("/oauth/{platform}/callback", response_model=OAuthCallbackResponse,
@@ -299,7 +319,11 @@ async def oauth_callback_redirect(
         )
 
     user_id = state_context["user_id"]
-    token_data = await _exchange_code_for_tokens(platform, code)
+    token_data = await _exchange_code_for_tokens(
+        platform,
+        code,
+        (state_context or {}).get("code_verifier"),
+    )
     try:
         await _persist_oauth_account(db, user_id, platform, token_data)
         return RedirectResponse(
@@ -570,7 +594,7 @@ def _build_oauth_url(platform: str, state: str) -> str:
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
         "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/userinfo.profile",
         "twitter": "tweet.read tweet.write users.read offline.access",
-        "linkedin": "w_member_social r_liteprofile",
+        "linkedin": "openid profile email w_member_social",
         "tiktok": "video.upload,user.info.basic",
     }
     # Some providers use APP_ID naming instead of CLIENT_ID.
@@ -623,7 +647,7 @@ async def _exchange_code_for_tokens(platform: str, code: str, code_verifier: str
     if platform == "linkedin":
         return await _exchange_linkedin_code(code)
     if platform == "tiktok":
-        return await _exchange_tiktok_code(code)
+        return await _exchange_tiktok_code(code, code_verifier or "")
     logger.warning("Token exchange not implemented for platform=%s", platform)
     return None
 
@@ -799,50 +823,28 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
 
 async def _exchange_linkedin_code(code: str) -> dict | None:
     """LinkedIn OAuth: exchange authorization code for tokens."""
-    import httpx
+    from backend.app.social.linkedin import LinkedInAuth
     from datetime import timedelta
 
-    client_id = os.environ.get("LINKEDIN_CLIENT_ID", "")
-    client_secret = os.environ.get("LINKEDIN_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get("LINKEDIN_REDIRECT_URI",
-                                  os.environ.get("OAUTH_REDIRECT_URI", ""))
-    if not client_id or not client_secret:
-        logger.error("LinkedIn OAuth: LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET not set")
-        return None
-
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                "https://www.linkedin.com/oauth/v2/accessToken",
-                data={"grant_type": "authorization_code", "code": code,
-                      "redirect_uri": redirect_uri, "client_id": client_id,
-                      "client_secret": client_secret},
-            )
-            r.raise_for_status()
-            tokens = r.json()
-            access_token = tokens.get("access_token")
-            if not access_token:
-                logger.error("LinkedIn token missing: %s", tokens)
-                return None
+        auth = LinkedInAuth()
+        tokens = await auth.exchange_code_for_token(code)
+        access_token = tokens.get("access_token")
+        if not access_token:
+            logger.error("LinkedIn token missing: %s", tokens)
+            return None
 
-            expires_in = tokens.get("expires_in")
-            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
-                          if expires_in else None)
-
-            # Get profile
-            r2 = await client.get(
-                "https://api.linkedin.com/v2/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            r2.raise_for_status()
-            profile = r2.json()
+        expires_in = tokens.get("expires_in")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                      if expires_in else None)
+        profile = await auth.get_user_profile(access_token)
 
         return {
             "access_token": access_token,
             "refresh_token": tokens.get("refresh_token"),
             "platform_user_id": str(profile.get("sub", "")),
             "username": profile.get("name", profile.get("email", "")),
-            "scopes": ["w_member_social"],
+            "scopes": ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
         }
     except Exception as exc:
@@ -850,48 +852,29 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
         return None
 
 
-async def _exchange_tiktok_code(code: str) -> dict | None:
+async def _exchange_tiktok_code(code: str, code_verifier: str) -> dict | None:
     """TikTok OAuth v2: exchange authorization code for tokens."""
-    import httpx
     from datetime import timedelta
-
-    client_key = os.environ.get("TIKTOK_CLIENT_ID", "")
-    client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get("TIKTOK_REDIRECT_URI",
-                                  os.environ.get("OAUTH_REDIRECT_URI", ""))
-    if not client_key or not client_secret:
-        logger.error("TikTok OAuth: TIKTOK_CLIENT_ID / TIKTOK_CLIENT_SECRET not set")
-        return None
+    from backend.app.social.tiktok import TikTokAuth
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                "https://open.tiktokapis.com/v2/oauth/token/",
-                data={"client_key": client_key, "client_secret": client_secret,
-                      "code": code, "grant_type": "authorization_code",
-                      "redirect_uri": redirect_uri},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            r.raise_for_status()
-            data = r.json()
-            token_data = data.get("data", data)
-            access_token = token_data.get("access_token")
-            if not access_token:
-                logger.error("TikTok token missing: %s", data)
-                return None
+        auth = TikTokAuth()
+        token_data = await auth.exchange_code_for_token(code, code_verifier)
+        access_token = token_data.get("access_token")
+        if not access_token:
+            logger.error("TikTok token missing: %s", token_data)
+            return None
 
-            expires_in = token_data.get("expires_in")
-            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
-                          if expires_in else None)
-
-            open_id = token_data.get("open_id", "")
-
+        expires_in = token_data.get("expires_in")
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                      if expires_in else None)
+        profile = await auth.get_user_profile(access_token)
         return {
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
-            "platform_user_id": str(open_id),
-            "username": open_id,
-            "scopes": ["video.upload", "user.info.basic"],
+            "platform_user_id": str(profile.get("id", "")),
+            "username": profile.get("username") or profile.get("name") or profile.get("id", ""),
+            "scopes": ["user.info.basic", "video.publish", "video.upload"],
             "expires_at": expires_at,
         }
     except Exception as exc:
