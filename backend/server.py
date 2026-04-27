@@ -37,11 +37,35 @@ import hashlib
 import tempfile
 import re
 import time
+import base64
 import json as _json
 import asyncio as _asyncio
+from cryptography.fernet import Fernet
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+_legacy_fernet = None
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Encrypt a token string for legacy server routes."""
+    global _legacy_fernet
+    if not plaintext:
+        return plaintext
+    if _legacy_fernet is None:
+        raw_key = os.environ.get("ENCRYPTION_KEY")
+        if not raw_key:
+            raise EnvironmentError("ENCRYPTION_KEY environment variable is not set")
+        try:
+            key_bytes = base64.urlsafe_b64decode(raw_key.encode())
+            if len(key_bytes) != 32:
+                raise ValueError("ENCRYPTION_KEY must decode to exactly 32 bytes")
+            fernet_key = base64.urlsafe_b64encode(key_bytes)
+        except Exception:
+            fernet_key = raw_key.encode()
+        _legacy_fernet = Fernet(fernet_key)
+    return _legacy_fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
 # Redis URL for SSE pub/sub (20.4)
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -1593,7 +1617,6 @@ async def connect_bluesky_account(
 ):
     """Connect a Bluesky account using handle + app password."""
     from app.social.bluesky import BlueskyAuth
-    from utils.encryption import encrypt
 
     raw_handle = (body.handle or "").strip().lstrip("@")
     if not raw_handle or not body.app_password.strip():
@@ -1629,8 +1652,8 @@ async def connect_bluesky_account(
         "platform_user_id": did,
         "platform_username": username,
         "picture_url": profile.get("picture_url"),
-        "access_token": encrypt(session.get("accessJwt", "")),
-        "refresh_token": encrypt(session.get("refreshJwt", "")),
+        "access_token": encrypt_secret(session.get("accessJwt", "")),
+        "refresh_token": encrypt_secret(session.get("refreshJwt", "")),
         "token_expiry": None,
         "is_active": True,
         "connected_at": now.isoformat(),
@@ -1652,7 +1675,6 @@ async def connect_discord_account(
 ):
     """Connect a Discord channel via incoming webhook URL."""
     from app.social.discord import DiscordWebhook
-    from utils.encryption import encrypt
 
     webhook_url = (body.webhook_url or "").strip()
     if not webhook_url:
@@ -1682,7 +1704,7 @@ async def connect_discord_account(
         "platform_user_id": webhook_id,
         "platform_username": channel_label,
         "picture_url": None,
-        "access_token": encrypt(webhook_url),
+        "access_token": encrypt_secret(webhook_url),
         "refresh_token": None,
         "token_expiry": None,
         "is_active": True,
