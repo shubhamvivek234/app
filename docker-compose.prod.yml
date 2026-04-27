@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8001:8001"
+    env_file: ./backend/.env
+    restart: always
+    volumes:
+      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
+      - uploads_data:/app/uploads
+    networks:
+      - app_net
+
+  celery-worker:
+    build: ./backend
+    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    env_file: ./backend/.env
+    restart: always
+    volumes:
+      - ./backend/serviceAccountKey.json:/app/serviceAccountKey.json:ro
+    networks:
+      - app_net
+
+  celery-beat:
+    build: ./backend
+    command: celery -A celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: ./backend/.env
+    restart: always
+    networks:
+      - app_net
+
+volumes:
+  uploads_data:
+
+networks:
+  app_net:
+    external: true
+    name: socialentagler_app_net
