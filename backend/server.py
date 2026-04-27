@@ -303,6 +303,14 @@ class SocialAccountConnect(BaseModel):
     platform: str
     platform_username: str
 
+class BlueskyConnectRequest(BaseModel):
+    handle: str
+    app_password: str
+
+class DiscordWebhookRequest(BaseModel):
+    webhook_url: str
+    channel_name: Optional[str] = None
+
 class PaymentTransaction(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1576,6 +1584,121 @@ async def disconnect_social_account(account_id: str, current_user: User = Depend
         logging.warning(f"EC7/EC16: {affected} queued posts on {platform} marked failed after account disconnect")
 
     return {"message": "Account disconnected", "posts_affected": affected}
+
+
+@api_router.post("/social-accounts/bluesky/connect")
+async def connect_bluesky_account(
+    body: BlueskyConnectRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Connect a Bluesky account using handle + app password."""
+    from app.social.bluesky import BlueskyAuth
+    from utils.encryption import encrypt
+
+    raw_handle = (body.handle or "").strip().lstrip("@")
+    if not raw_handle or not body.app_password.strip():
+        raise HTTPException(status_code=400, detail="Bluesky handle and app password are required")
+
+    # Accept a short handle and default it to the common public host.
+    handle = raw_handle if "." in raw_handle else f"{raw_handle}.bsky.social"
+    user_id = current_user.user_id
+    auth = BlueskyAuth()
+
+    try:
+        session = await auth.create_session(handle, body.app_password.strip())
+        profile = await auth.get_user_profile(session.get("accessJwt", ""), session.get("did", handle))
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:
+        logging.error("Bluesky connect failed for handle=%s: %s", handle, exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to authenticate with Bluesky")
+
+    now = datetime.now(timezone.utc)
+    did = profile.get("id") or session.get("did") or handle
+    username = profile.get("username") or handle
+    display_name = profile.get("name") or username
+    existing = await db.social_accounts.find_one(
+        {"user_id": user_id, "platform": "bluesky", "platform_user_id": did}
+    )
+    account_id = existing.get("id") if existing else str(uuid.uuid4())
+
+    doc = {
+        "id": account_id,
+        "user_id": user_id,
+        "platform": "bluesky",
+        "platform_user_id": did,
+        "platform_username": username,
+        "picture_url": profile.get("picture_url"),
+        "access_token": encrypt(session.get("accessJwt", "")),
+        "refresh_token": encrypt(session.get("refreshJwt", "")),
+        "token_expiry": None,
+        "is_active": True,
+        "connected_at": now.isoformat(),
+        "metadata": {"display_name": display_name},
+    }
+
+    if existing:
+        await db.social_accounts.update_one({"id": account_id}, {"$set": doc})
+    else:
+        await db.social_accounts.insert_one(doc)
+
+    return {"connected": True, "platform": "bluesky", "handle": username}
+
+
+@api_router.post("/social-accounts/discord/connect")
+async def connect_discord_account(
+    body: DiscordWebhookRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Connect a Discord channel via incoming webhook URL."""
+    from app.social.discord import DiscordWebhook
+    from utils.encryption import encrypt
+
+    webhook_url = (body.webhook_url or "").strip()
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="Webhook URL is required")
+
+    try:
+        meta = await DiscordWebhook.validate(webhook_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logging.error("Discord webhook validation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to reach Discord. Please check the webhook URL.")
+
+    user_id = current_user.user_id
+    now = datetime.now(timezone.utc)
+    webhook_id = meta.get("webhook_id") or meta.get("id")
+    channel_label = (body.channel_name or "").strip() or meta.get("channel_name") or f"Channel {meta.get('channel_id', '')}"
+    existing = await db.social_accounts.find_one(
+        {"user_id": user_id, "platform": "discord", "platform_user_id": webhook_id}
+    )
+    account_id = existing.get("id") if existing else str(uuid.uuid4())
+
+    doc = {
+        "id": account_id,
+        "user_id": user_id,
+        "platform": "discord",
+        "platform_user_id": webhook_id,
+        "platform_username": channel_label,
+        "picture_url": None,
+        "access_token": encrypt(webhook_url),
+        "refresh_token": None,
+        "token_expiry": None,
+        "is_active": True,
+        "connected_at": now.isoformat(),
+        "metadata": {
+            "guild_id": meta.get("guild_id"),
+            "channel_id": meta.get("channel_id"),
+        },
+    }
+
+    if existing:
+        await db.social_accounts.update_one({"id": account_id}, {"$set": doc})
+    else:
+        await db.social_accounts.insert_one(doc)
+
+    return {"connected": True, "platform": "discord", "channel": channel_label}
 
 
 # ==================== OAUTH SOCIAL ACCOUNTS ====================
