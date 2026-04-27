@@ -1937,10 +1937,11 @@ async def oauth_callback_get(platform: str, request: Request,
 async def oauth_callback_post(platform: str, body: OAuthCallbackBody,
                                current_user: User = Depends(get_current_user)):
     """Handle frontend-posted OAuth callback (frontend redirect_uri flow, e.g. YouTube)."""
-    # When frontend posts the code, generate a fresh state with the authenticated user
+    # Prefer the original provider state so we preserve the frontend host that
+    # initiated the OAuth flow. This matters for providers like Google/YouTube,
+    # which require the token exchange redirect_uri to exactly match the
+    # authorization redirect_uri.
     state = body.state or _create_oauth_state(current_user.user_id, platform)
-    # Overwrite state claims with the authenticated user so we trust the right user_id
-    state = _create_oauth_state(current_user.user_id, platform)
     result = await _process_oauth_callback(platform, body.code, state, body.code_verifier)
     return {"success": True, "platform": result["platform"], "username": result.get("username")}
 
