@@ -158,9 +158,8 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
 };
 
 const PublicRoute = ({ children }) => {
-  const { user, loading, firebaseUser, token, authIssue } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
-  const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
   if (loading) {
     return (
@@ -168,10 +167,6 @@ const PublicRoute = ({ children }) => {
         <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
       </div>
     );
-  }
-
-  if (hasPendingSession && authIssue) {
-    return <AuthRecoveryScreen />;
   }
 
   if (!user) {
