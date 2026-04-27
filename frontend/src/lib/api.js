@@ -536,6 +536,15 @@ export const connectDiscord = async (webhookUrl, channelName) => {
   return response.data;
 };
 
+export const connectMedium = async (integrationToken) => {
+  const response = await axios.post(
+    `${API}/social-accounts/medium/connect`,
+    { integration_token: integrationToken },
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
 export const getLinkedInPendingOrgs = async () => {
   const response = await axios.get(`${API}/social-accounts/linkedin/pending-orgs`, { headers: getAuthHeaders() });
   return response.data;

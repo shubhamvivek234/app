@@ -15,10 +15,10 @@ import {
   FaPinterest,
   FaDiscord,
 } from 'react-icons/fa';
-import { SiBluesky } from 'react-icons/si';
+import { SiBluesky, SiMedium, SiSnapchat, SiThreads } from 'react-icons/si';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
-import { connectBluesky, connectDiscord } from '@/lib/api';
+import { connectBluesky, connectDiscord, connectMedium } from '@/lib/api';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
@@ -37,6 +37,9 @@ const OnboardingConnect = () => {
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordChannelName, setDiscordChannelName] = useState('');
   const [discordLoading, setDiscordLoading] = useState(false);
+  const [mediumModal, setMediumModal] = useState(false);
+  const [mediumToken, setMediumToken] = useState('');
+  const [mediumLoading, setMediumLoading] = useState(false);
 
   const platforms = [
     { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: '#E4405F' },
@@ -46,8 +49,11 @@ const OnboardingConnect = () => {
     { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: '#0A66C2' },
     { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: '#111827' },
     { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: '#E60023' },
+    { id: 'threads', name: 'Threads', icon: SiThreads, color: '#111827' },
+    { id: 'snapchat', name: 'Snapchat', icon: SiSnapchat, color: '#EAB308' },
     { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: '#0284C7', credential: true },
     { id: 'discord', name: 'Discord', icon: FaDiscord, color: '#5865F2', credential: true },
+    { id: 'medium', name: 'Medium', icon: SiMedium, color: '#111827', credential: true, badge: 'Legacy token' },
   ];
 
   useEffect(() => {
@@ -96,6 +102,11 @@ const OnboardingConnect = () => {
     if (platform.id === 'discord') {
       setShowAddModal(false);
       setDiscordModal(true);
+      return;
+    }
+    if (platform.id === 'medium') {
+      setShowAddModal(false);
+      setMediumModal(true);
       return;
     }
     setSelectedPlatform(platform);
@@ -208,6 +219,28 @@ const OnboardingConnect = () => {
     }
   };
 
+  const resetMediumModal = () => {
+    setMediumModal(false);
+    setMediumToken('');
+  };
+
+  const handleMediumConnect = async () => {
+    if (!mediumToken.trim()) return;
+
+    setMediumLoading(true);
+    try {
+      await connectMedium(mediumToken.trim());
+      toast.success('Medium connected successfully!');
+      resetMediumModal();
+      fetchConnectedAccounts();
+    } catch (error) {
+      console.error('Error connecting Medium:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to connect Medium');
+    } finally {
+      setMediumLoading(false);
+    }
+  };
+
   const handleBack = () => {
     navigate('/onboarding');
   };
@@ -306,7 +339,12 @@ const OnboardingConnect = () => {
                 >
                   <div className="flex items-center">
                     <Icon className="text-2xl mr-3" style={{ color: platform.color }} />
-                    <span className="font-medium">{platform.name}</span>
+                    <div>
+                      <span className="font-medium">{platform.name}</span>
+                      {platform.badge && (
+                        <div className="text-[10px] text-gray-500">{platform.badge}</div>
+                      )}
+                    </div>
                   </div>
                   <Button
                     size="sm"
@@ -407,6 +445,28 @@ const OnboardingConnect = () => {
                   <span className="mr-2">•</span>
                   <p className="text-sm text-slate-600">
                     Make sure the Pinterest app has your production redirect URI configured before connecting.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {selectedPlatform?.id === 'threads' && (
+              <div className="space-y-2">
+                <div className="flex items-start">
+                  <span className="mr-2">•</span>
+                  <p className="text-sm text-slate-600">
+                    You&apos;ll be redirected to Threads to approve publishing access for your account.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {selectedPlatform?.id === 'snapchat' && (
+              <div className="space-y-2">
+                <div className="flex items-start">
+                  <span className="mr-2">•</span>
+                  <p className="text-sm text-slate-600">
+                    Snapchat currently supports account login and profile connection. Organic post publishing is limited on their public API.
                   </p>
                 </div>
               </div>
@@ -566,6 +626,56 @@ const OnboardingConnect = () => {
                   <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
                 )}
                 {discordLoading ? 'Validating…' : 'Connect Channel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Medium modal */}
+      {mediumModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center">
+                <SiMedium className="text-gray-900 text-lg" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Medium</h2>
+                <p className="text-xs text-gray-500">Use an existing Medium integration token</p>
+              </div>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs text-gray-700">
+                Medium no longer broadly supports new app integrations. If you already have a legacy Medium integration token,
+                you can connect it here for account-level access.
+              </p>
+            </div>
+            <div className="space-y-3 mb-5">
+              <input
+                type="password"
+                value={mediumToken}
+                onChange={(e) => setMediumToken(e.target.value)}
+                placeholder="Paste your Medium integration token"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleMediumConnect();
+                }}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={resetMediumModal}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMediumConnect}
+                disabled={mediumLoading || !mediumToken.trim()}
+                className="px-5 py-2 text-sm font-semibold bg-gray-900 hover:bg-black text-white rounded-xl disabled:opacity-50 transition-colors"
+              >
+                {mediumLoading ? 'Connecting…' : 'Connect'}
               </button>
             </div>
           </div>

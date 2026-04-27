@@ -335,6 +335,9 @@ class DiscordWebhookRequest(BaseModel):
     webhook_url: str
     channel_name: Optional[str] = None
 
+class MediumConnectRequest(BaseModel):
+    integration_token: str
+
 class PaymentTransaction(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1723,6 +1726,61 @@ async def connect_discord_account(
     return {"connected": True, "platform": "discord", "channel": channel_label}
 
 
+@api_router.post("/social-accounts/medium/connect")
+async def connect_medium_account(
+    body: MediumConnectRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Connect Medium using a legacy user-provided integration token."""
+    from app.social.medium import MediumAuth
+
+    integration_token = (body.integration_token or "").strip()
+    if not integration_token:
+        raise HTTPException(status_code=400, detail="Medium integration token is required")
+
+    try:
+        profile = await MediumAuth().get_user_profile(integration_token)
+    except HTTPException as exc:
+        raise exc
+    except Exception as exc:
+        logging.error("Medium token validation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to reach Medium. Please try again.")
+
+    user_id = current_user.user_id
+    now = datetime.now(timezone.utc)
+    medium_user_id = str(profile.get("id", ""))
+    username = profile.get("username") or profile.get("name") or medium_user_id
+    existing = await db.social_accounts.find_one(
+        {"user_id": user_id, "platform": "medium", "platform_user_id": medium_user_id}
+    )
+    account_id = existing.get("id") if existing else str(uuid.uuid4())
+
+    doc = {
+        "id": account_id,
+        "user_id": user_id,
+        "platform": "medium",
+        "platform_user_id": medium_user_id,
+        "platform_username": username,
+        "picture_url": profile.get("image_url"),
+        "access_token": encrypt_secret(integration_token),
+        "refresh_token": None,
+        "token_expiry": None,
+        "is_active": True,
+        "connected_at": now.isoformat(),
+        "metadata": {
+            "profile_url": profile.get("url"),
+            "display_name": profile.get("name") or username,
+        },
+    }
+
+    if existing:
+        await db.social_accounts.update_one({"id": account_id}, {"$set": doc})
+    else:
+        await db.social_accounts.insert_one(doc)
+
+    return {"connected": True, "platform": "medium", "username": username}
+
+
 # ==================== OAUTH SOCIAL ACCOUNTS ====================
 
 def _normalize_frontend_base(url: Optional[str]) -> Optional[str]:
@@ -1862,6 +1920,10 @@ async def oauth_authorize(platform: str, request: Request, current_user: User = 
         elif platform == "pinterest":
             from app.social.pinterest import PinterestAuth
             url = PinterestAuth().get_auth_url(state)
+            return {"authorization_url": url}
+        elif platform == "threads":
+            from app.social.threads import ThreadsAuth
+            url = ThreadsAuth().get_auth_url(state)
             return {"authorization_url": url}
         elif platform == "snapchat":
             from app.social.snapchat import SnapchatAuth
@@ -2015,6 +2077,20 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             username = profile.get("username") or profile.get("business_name") or platform_user_id
             picture_url = profile.get("profile_image") or profile.get("profile_image_url") or None
 
+        elif platform == "threads":
+            from app.social.threads import ThreadsAuth
+            auth = ThreadsAuth()
+            token_data = await auth.exchange_code_for_token(code)
+            short_lived_token = token_data.get("access_token")
+            long_lived = await auth.get_long_lived_token(short_lived_token)
+            access_token = long_lived.get("access_token", short_lived_token)
+            expires_in = long_lived.get("expires_in") or token_data.get("expires_in") or 5184000
+            expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            profile = await auth.get_user_profile(access_token)
+            platform_user_id = str(profile.get("id", ""))
+            username = profile.get("username") or profile.get("name") or platform_user_id
+            picture_url = profile.get("threads_profile_picture_url") or profile.get("picture_url") or None
+
         elif platform == "snapchat":
             from app.social.snapchat import SnapchatAuth
             auth = SnapchatAuth()
@@ -2024,9 +2100,9 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
             expires_in = token_data.get("expires_in", 3600)
             expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             profile = await auth.get_user_profile(access_token)
-            platform_user_id = str(profile.get("sub") or profile.get("id", ""))
-            username = profile.get("display_name") or profile.get("name") or platform_user_id
-            picture_url = profile.get("bitmoji_selfie_image_url") or profile.get("avatar_url") or None
+            platform_user_id = str(profile.get("id", ""))
+            username = profile.get("username") or profile.get("name") or platform_user_id
+            picture_url = profile.get("picture_url") or None
 
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")

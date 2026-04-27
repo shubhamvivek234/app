@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
-  connectBluesky, connectDiscord, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
+  connectBluesky, connectDiscord, connectMedium, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
 } from '@/lib/api';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
@@ -13,7 +13,7 @@ import {
   FaTiktok, FaPinterest, FaTimes, FaExclamationTriangle, FaClock,
   FaCheckCircle, FaPlus, FaLink, FaDiscord,
 } from 'react-icons/fa';
-import { SiThreads, SiReddit, SiSnapchat, SiBluesky } from 'react-icons/si';
+import { SiThreads, SiReddit, SiSnapchat, SiBluesky, SiMedium } from 'react-icons/si';
 import { GooeyLoader } from '@/components/ui/loader-10';
 
 // ── Token status helper ───────────────────────────────────────────────────────
@@ -43,6 +43,7 @@ const PLATFORMS = [
   { id: 'snapchat',   name: 'Snapchat',   icon: SiSnapchat,  color: 'text-yellow-500',  bg: 'bg-yellow-50',  border: 'border-yellow-200', ring: 'focus:ring-yellow-400', btn: 'bg-yellow-400 hover:bg-yellow-500',  badge: 'Spotlight only' },
   { id: 'bluesky',    name: 'Bluesky',    icon: SiBluesky,   color: 'text-sky-500',     bg: 'bg-sky-50',     border: 'border-sky-200',    ring: 'focus:ring-sky-400',    btn: 'bg-sky-500 hover:bg-sky-600',       badge: 'App Password', credential: true },
   { id: 'discord',    name: 'Discord',    icon: FaDiscord,   color: 'text-indigo-500',  bg: 'bg-indigo-50',  border: 'border-indigo-200', ring: 'focus:ring-indigo-400', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook',      credential: true },
+  { id: 'medium',     name: 'Medium',     icon: SiMedium,    color: 'text-gray-900',    bg: 'bg-gray-50',    border: 'border-gray-300',   ring: 'focus:ring-gray-400',   btn: 'bg-gray-900 hover:bg-black',       badge: 'Legacy token', credential: true },
 ];
 
 const getAvatarColor = (username = '') => {
@@ -280,6 +281,9 @@ const ConnectedAccounts = () => {
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordChannelName, setDiscordChannelName] = useState('');
   const [discordLoading, setDiscordLoading] = useState(false);
+  const [mediumModal, setMediumModal] = useState(false);
+  const [mediumToken, setMediumToken] = useState('');
+  const [mediumLoading, setMediumLoading] = useState(false);
 
   // LinkedIn modals
   const [linkedinOrgsModal, setLinkedinOrgsModal] = useState(false);
@@ -345,6 +349,7 @@ const ConnectedAccounts = () => {
   const handleConnect = async (platformId) => {
     if (platformId === 'bluesky') { setBlueskyModal(true); return; }
     if (platformId === 'discord') { setDiscordModal(true); return; }
+    if (platformId === 'medium') { setMediumModal(true); return; }
 
     setConnecting(platformId);
     // Open a popup synchronously so browsers don't block it.
@@ -420,6 +425,22 @@ const ConnectedAccounts = () => {
       toast.error(err?.response?.data?.detail || 'Invalid webhook URL. Make sure it is a valid Discord webhook.');
     } finally {
       setDiscordLoading(false);
+    }
+  };
+
+  const handleMediumConnect = async () => {
+    if (!mediumToken.trim()) return;
+    setMediumLoading(true);
+    try {
+      const res = await connectMedium(mediumToken.trim());
+      toast.success(`Medium account "${res.username}" connected!`);
+      setMediumModal(false);
+      setMediumToken('');
+      fetchAccounts();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to connect Medium');
+    } finally {
+      setMediumLoading(false);
     }
   };
 
@@ -637,6 +658,54 @@ const ConnectedAccounts = () => {
                 className="px-5 py-2 text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl disabled:opacity-50 transition-colors flex items-center gap-2">
                 {discordLoading && <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />}
                 {discordLoading ? 'Validating…' : 'Connect Channel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Medium Modal ───────────────────────────────────────────────────── */}
+      {mediumModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center">
+                <SiMedium className="text-gray-900 text-lg" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Medium</h2>
+                <p className="text-xs text-gray-500">Paste an existing Medium integration token</p>
+              </div>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs text-gray-700">
+                Medium&apos;s API is legacy-only for most users. If you already have a Medium integration token,
+                you can connect it here and we&apos;ll validate it against your Medium profile.
+              </p>
+            </div>
+            <div className="space-y-3 mb-5">
+              <input
+                type="password"
+                value={mediumToken}
+                onChange={e => setMediumToken(e.target.value)}
+                placeholder="Paste your Medium integration token"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                onKeyDown={e => { if (e.key === 'Enter') handleMediumConnect(); }}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setMediumModal(false); setMediumToken(''); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMediumConnect}
+                disabled={mediumLoading || !mediumToken.trim()}
+                className="px-5 py-2 text-sm font-semibold bg-gray-900 hover:bg-black text-white rounded-xl disabled:opacity-50 transition-colors"
+              >
+                {mediumLoading ? 'Connecting…' : 'Connect'}
               </button>
             </div>
           </div>
