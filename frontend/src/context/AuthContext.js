@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { setUserContext } from '../lib/sentry';
 import { toast } from 'sonner';
@@ -14,6 +14,8 @@ import {
   setAuthToken,
   clearAuthData,
   getSavedToken,
+  isRetriableBackendError,
+  isFatalAuthSyncError,
 } from '@/services/authService';
 import env from '@/env';
 
@@ -26,10 +28,38 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null); // Backend User Profile (MongoDB)
   const [firebaseUser, setFirebaseUser] = useState(null); // Firebase User Object
   const [loading, setLoading] = useState(true);
+  const [authIssue, setAuthIssue] = useState(null);
   const [token, setToken] = useState(() => {
     // Initialize from localStorage if available
     return getSavedToken() || null;
   });
+
+  const syncProfile = useCallback(async (idToken, currentUser, { silent = false } = {}) => {
+    try {
+      const profile = await fetchProfileService(idToken);
+      setUser(profile);
+      setUserContext(profile);
+      setAuthIssue(null);
+      return profile;
+    } catch (error) {
+      const transient = isRetriableBackendError(error);
+      const fatal = isFatalAuthSyncError(error);
+
+      if (!silent) {
+        console.error('[AuthContext] Error syncing user:', error);
+      }
+
+      if (fatal || !transient) {
+        throw error;
+      }
+
+      setAuthIssue({
+        code: 'backend_sync_unavailable',
+        message: 'You are signed in, but the app server is taking a moment to catch up.',
+      });
+      throw error;
+    }
+  }, []);
 
   // 1. Check for redirect result on mount (Google sign-in via redirect)
   useEffect(() => {
@@ -57,30 +87,30 @@ export const AuthProvider = ({ children }) => {
           // Get ID Token
           const idToken = await getIdToken(currentUser);
           setToken(idToken);
+          setAuthIssue(null);
 
           // Sync with Backend (Get detailed profile)
-          const profile = await fetchProfileService(idToken);
-          setUser(profile);
-          setUserContext(profile);
+          await syncProfile(idToken, currentUser);
         } catch (error) {
-          console.error('[AuthContext] Error syncing user:', error);
-          // CRITICAL: Sign out from Firebase on backend sync failure.
-          // Without this, Firebase stays "logged in" but the app is "not logged in".
-          // onAuthStateChanged won't fire again on retry since the Firebase state
-          // hasn't changed, leaving the user permanently stuck until they clear storage.
-          try {
-            await firebaseSignOut();
-          } catch (_) {
-            // Fallback: at least clear local data so the user can retry
-            clearAuthData();
+          if (isRetriableBackendError(error) && !isFatalAuthSyncError(error)) {
+            toast.error('Signed in, but the server is temporarily unavailable. We will keep trying.');
+          } else {
+            console.error('[AuthContext] Fatal sync error, signing out:', error);
+            try {
+              await firebaseSignOut();
+            } catch (_) {
+              clearAuthData();
+            }
+            setToken(null);
+            setUser(null);
+            setFirebaseUser(null);
+            setAuthIssue(null);
+            toast.error('Login failed. Please try again.');
           }
-          setToken(null);
-          setUser(null);
-          setFirebaseUser(null);
-          toast.error('Login failed. Please try again.');
         }
       } else {
         setFirebaseUser(null);
+        setAuthIssue(null);
         // Don't clear token/user here if token exists in localStorage (backend OAuth flow)
         const savedToken = getSavedToken();
         if (!savedToken) {
@@ -93,7 +123,7 @@ export const AuthProvider = ({ children }) => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [syncProfile]);
 
   // 3. If token exists but user doesn't, fetch user profile (handles backend OAuth)
   useEffect(() => {
@@ -102,6 +132,7 @@ export const AuthProvider = ({ children }) => {
         .then(profile => {
           setUser(profile);
           setUserContext(profile);
+          setAuthIssue(null);
         })
         .catch(err => {
           console.warn('[AuthContext] Failed to fetch profile with existing token:', err?.message);
@@ -180,8 +211,47 @@ export const AuthProvider = ({ children }) => {
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
+      setAuthIssue(null);
     }
   };
+
+  const retryProfileSync = useCallback(async ({ silent = false } = {}) => {
+    const activeUser = firebaseUser;
+    const activeToken = token;
+    if (!activeUser && !activeToken) {
+      return false;
+    }
+
+    setLoading(true);
+    try {
+      const nextToken = activeUser ? await getIdToken(activeUser) : activeToken;
+      if (nextToken) {
+        setToken(nextToken);
+        await syncProfile(nextToken, activeUser, { silent });
+        return true;
+      }
+      return false;
+    } catch (error) {
+      if (!silent) {
+        toast.error('Still waiting on the server. Please try again in a moment.');
+      }
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [firebaseUser, token, syncProfile]);
+
+  useEffect(() => {
+    if (!authIssue || (!firebaseUser && !token)) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      retryProfileSync({ silent: true });
+    }, 4000);
+
+    return () => window.clearTimeout(timer);
+  }, [authIssue, firebaseUser, token, retryProfileSync]);
 
   // Helper to force token refresh if needed.
   // Works for both Firebase users (refreshes Firebase token) and
@@ -205,6 +275,7 @@ export const AuthProvider = ({ children }) => {
       user, // MongoDB Profile
       firebaseUser, // Firebase User
       loading,
+      authIssue,
       login,
       signup,
       loginWithGoogle,
@@ -212,7 +283,8 @@ export const AuthProvider = ({ children }) => {
       token,
       setToken,
       setUser,
-      refreshUser
+      refreshUser,
+      retryProfileSync
     }}>
       {children}
     </AuthContext.Provider>

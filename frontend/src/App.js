@@ -81,8 +81,29 @@ class ErrorBoundary extends Component {
   }
 }
 
+const AuthRecoveryScreen = () => {
+  const { authIssue, retryProfileSync, loading } = useAuth();
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background text-center p-8">
+      <h1 className="text-2xl font-semibold mb-2">We are reconnecting your session</h1>
+      <p className="text-muted-foreground mb-6 max-w-md">
+        {authIssue?.message || 'You are signed in, but the app server is taking a moment to catch up.'}
+      </p>
+      <button
+        className="px-4 py-2 rounded-md bg-foreground text-background text-sm font-medium disabled:opacity-60"
+        disabled={loading}
+        onClick={() => retryProfileSync()}
+      >
+        {loading ? 'Retrying...' : 'Retry now'}
+      </button>
+    </div>
+  );
+};
+
 const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, firebaseUser, token, authIssue } = useAuth();
+  const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
   if (loading) {
     return (
@@ -90,6 +111,10 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
         <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
       </div>
     );
+  }
+
+  if (hasPendingSession && authIssue) {
+    return <AuthRecoveryScreen />;
   }
 
   if (!user) {
@@ -133,8 +158,9 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
 };
 
 const PublicRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, firebaseUser, token, authIssue } = useAuth();
   const location = useLocation();
+  const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
   if (loading) {
     return (
@@ -142,6 +168,10 @@ const PublicRoute = ({ children }) => {
         <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
       </div>
     );
+  }
+
+  if (hasPendingSession && authIssue) {
+    return <AuthRecoveryScreen />;
   }
 
   if (!user) {

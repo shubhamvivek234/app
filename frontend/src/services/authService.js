@@ -24,6 +24,29 @@ import {
 const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+export const isRetriableBackendError = (error) => {
+  if (!error) return false;
+  if (error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED') {
+    return true;
+  }
+  const status = error.response?.status;
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+};
+
+export const isFatalAuthSyncError = (error) => {
+  if (!error) return false;
+  const status = error.response?.status;
+  if (status === 401 || status === 403) {
+    return true;
+  }
+
+  const detail = error.response?.data?.detail;
+  if (typeof detail === 'string') {
+    return detail.includes('Invalid token') || detail.includes('Missing token');
+  }
+  return false;
+};
+
 /**
  * Configure axios with auth token
  */
@@ -197,21 +220,32 @@ export const fetchBackendProfile = async (idToken) => {
     return response.data;
   };
 
-  try {
-    console.log('[AuthService] Fetching backend profile...');
-    return await attempt();
-  } catch (firstError) {
-    console.warn('[AuthService] First profile fetch failed, retrying in 2s...', firstError?.message);
+  const delaysMs = [0, 1200, 2500, 5000];
+  let lastError;
 
-    // Retry once after 2 seconds
-    await new Promise(r => setTimeout(r, 2000));
+  for (let index = 0; index < delaysMs.length; index += 1) {
+    if (delaysMs[index] > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[index]));
+    }
+
     try {
+      if (index === 0) {
+        console.log('[AuthService] Fetching backend profile...');
+      } else {
+        console.log(`[AuthService] Retrying backend profile fetch (attempt ${index + 1}/${delaysMs.length})...`);
+      }
       return await attempt();
-    } catch (secondError) {
-      console.error('[AuthService] Profile fetch failed after retry:', secondError?.message);
-      throw secondError;
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableBackendError(error) || index === delaysMs.length - 1) {
+        break;
+      }
+      console.warn('[AuthService] Transient profile fetch error, will retry:', error?.message);
     }
   }
+
+  console.error('[AuthService] Profile fetch failed:', lastError?.message);
+  throw lastError;
 };
 
 /**

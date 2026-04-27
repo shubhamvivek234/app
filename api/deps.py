@@ -3,11 +3,14 @@ Shared FastAPI dependencies — db, redis, current user, permission checks.
 """
 import os
 import logging
+import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 from redis.asyncio import Redis
 
 import firebase_admin
@@ -43,6 +46,77 @@ def get_firebase_app() -> firebase_admin.App:
     return _firebase_app
 
 
+async def _bootstrap_user_from_claims(
+    db: AsyncIOMotorDatabase,
+    decoded: dict,
+) -> dict:
+    """
+    Resolve a MongoDB user from verified Firebase claims, auto-creating a record
+    on first login when needed.
+
+    We also recover gracefully from older records that exist by email but do not
+    yet have firebase_uid populated.
+    """
+    uid = decoded.get("uid")
+    email = decoded.get("email", uid)
+    display_name = decoded.get("name")
+
+    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+    if user is not None:
+        return user
+
+    if email:
+        user = await db.users.find_one({"email": email}, {"_id": 0})
+        if user is not None:
+            updates = {}
+            if uid and not user.get("firebase_uid"):
+                updates["firebase_uid"] = uid
+            if display_name and not user.get("display_name"):
+                updates["display_name"] = display_name
+            if updates:
+                await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
+                user.update(updates)
+                logger.info("Backfilled Firebase identity for existing user %s", user["user_id"])
+            return user
+
+    now = datetime.now(timezone.utc)
+    user_doc = {
+        "user_id": f"usr_{secrets.token_hex(12)}",
+        "firebase_uid": uid,
+        "email": email,
+        "display_name": display_name,
+        "avatar_url": decoded.get("picture"),
+        "plan": "starter",
+        "subscription_status": "free",
+        "subscription_end_date": None,
+        "subscription_grace_period_end": None,
+        "timezone": "UTC",
+        "mfa_enabled": False,
+        "role": "user",
+        "onboarding_completed": False,
+        "workspace_ids": [],
+        "default_workspace_id": None,
+        "created_at": now,
+    }
+    try:
+        await db.users.insert_one(user_doc)
+        logger.info("Auto-created user from Firebase login: %s", user_doc["user_id"])
+        return user_doc
+    except DuplicateKeyError:
+        # Another request likely created the user concurrently. Re-read to keep
+        # sign-in stable instead of failing the request.
+        logger.info("User bootstrap raced with another request for email=%s uid=%s", email, uid)
+        if uid:
+            user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+            if user is not None:
+                return user
+        if email:
+            user = await db.users.find_one({"email": email}, {"_id": 0})
+            if user is not None:
+                return user
+        raise
+
+
 # ── Security scheme ─────────────────────────────────────────────────────────
 _bearer = HTTPBearer(auto_error=False)
 
@@ -67,10 +141,14 @@ async def get_current_user(
         logger.warning("Firebase token verification failed: %s", type(exc).__name__)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    uid = decoded.get("uid")
-    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    try:
+        user = await _bootstrap_user_from_claims(db, decoded)
+    except DuplicateKeyError:
+        logger.exception("User bootstrap failed after duplicate-key recovery")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="User profile is still being prepared. Please try again.",
+        )
 
     request.state.user_id = user["user_id"]
     return user
@@ -89,12 +167,13 @@ async def get_current_user_from_cookie(
     get_firebase_app()
     claims = await verify_session_cookie(request)
 
-    uid = claims.get("uid") or claims.get("sub")
-    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
-    if user is None:
+    try:
+        user = await _bootstrap_user_from_claims(db, claims)
+    except DuplicateKeyError:
+        logger.exception("Cookie user bootstrap failed after duplicate-key recovery")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="User profile is still being prepared. Please try again.",
         )
 
     request.state.user_id = user["user_id"]
