@@ -335,8 +335,9 @@ class DiscordWebhookRequest(BaseModel):
     webhook_url: str
     channel_name: Optional[str] = None
 
-class MediumConnectRequest(BaseModel):
-    integration_token: str
+class MastodonConnectRequest(BaseModel):
+    instance_url: str
+    access_token: str
 
 class PaymentTransaction(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1726,50 +1727,48 @@ async def connect_discord_account(
     return {"connected": True, "platform": "discord", "channel": channel_label}
 
 
-@api_router.post("/social-accounts/medium/connect")
-async def connect_medium_account(
-    body: MediumConnectRequest,
+@api_router.post("/social-accounts/mastodon/connect")
+async def connect_mastodon_account(
+    body: MastodonConnectRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Connect Medium using a legacy user-provided integration token."""
-    from app.social.medium import MediumAuth
-
-    integration_token = (body.integration_token or "").strip()
-    if not integration_token:
-        raise HTTPException(status_code=400, detail="Medium integration token is required")
+    """Connect Mastodon using a user-provided instance URL and access token."""
+    from app.social.mastodon import MastodonAuth
 
     try:
-        profile = await MediumAuth().get_user_profile(integration_token)
+        profile = await MastodonAuth().get_user_profile(body.instance_url, body.access_token)
     except HTTPException as exc:
         raise exc
     except Exception as exc:
-        logging.error("Medium token validation failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=502, detail="Failed to reach Medium. Please try again.")
+        logging.error("Mastodon token validation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to reach Mastodon. Please try again.")
 
     user_id = current_user.user_id
     now = datetime.now(timezone.utc)
-    medium_user_id = str(profile.get("id", ""))
-    username = profile.get("username") or profile.get("name") or medium_user_id
+    mastodon_user_id = str(profile.get("id", ""))
+    username = profile.get("acct") or profile.get("username") or mastodon_user_id
     existing = await db.social_accounts.find_one(
-        {"user_id": user_id, "platform": "medium", "platform_user_id": medium_user_id}
+        {"user_id": user_id, "platform": "mastodon", "platform_user_id": mastodon_user_id}
     )
     account_id = existing.get("id") if existing else str(uuid.uuid4())
 
     doc = {
         "id": account_id,
         "user_id": user_id,
-        "platform": "medium",
-        "platform_user_id": medium_user_id,
+        "platform": "mastodon",
+        "platform_user_id": mastodon_user_id,
         "platform_username": username,
-        "picture_url": profile.get("image_url"),
-        "access_token": encrypt_secret(integration_token),
+        "picture_url": profile.get("picture_url"),
+        "access_token": encrypt_secret(body.access_token.strip()),
         "refresh_token": None,
         "token_expiry": None,
         "is_active": True,
         "connected_at": now.isoformat(),
         "metadata": {
+            "instance_url": profile.get("instance_url"),
             "profile_url": profile.get("url"),
-            "display_name": profile.get("name") or username,
+            "display_name": profile.get("display_name") or username,
+            "acct": profile.get("acct") or username,
         },
     }
 
@@ -1778,7 +1777,12 @@ async def connect_medium_account(
     else:
         await db.social_accounts.insert_one(doc)
 
-    return {"connected": True, "platform": "medium", "username": username}
+    return {
+        "connected": True,
+        "platform": "mastodon",
+        "username": username,
+        "instance_url": profile.get("instance_url"),
+    }
 
 
 # ==================== OAUTH SOCIAL ACCOUNTS ====================

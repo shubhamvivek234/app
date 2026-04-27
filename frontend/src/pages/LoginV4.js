@@ -407,7 +407,7 @@ const LoginV4 = () => {
       }}>
         {/* Logo — pinned to top so form is truly centered */}
         <div style={{ position: 'absolute', top: '48px', left: '64px', right: '64px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <UnravlerLogo />
+          <UnravlerLogo showText={false} />
           <button onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
             Back to home

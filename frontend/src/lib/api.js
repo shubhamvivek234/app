@@ -536,10 +536,10 @@ export const connectDiscord = async (webhookUrl, channelName) => {
   return response.data;
 };
 
-export const connectMedium = async (integrationToken) => {
+export const connectMastodon = async (instanceUrl, accessToken) => {
   const response = await axios.post(
-    `${API}/social-accounts/medium/connect`,
-    { integration_token: integrationToken },
+    `${API}/social-accounts/mastodon/connect`,
+    { instance_url: instanceUrl, access_token: accessToken },
     { headers: getAuthHeaders() },
   );
   return response.data;

@@ -204,7 +204,7 @@ const SignupV2 = () => {
       {/* ══ LEFT PANEL ══ */}
       <div className="sv2-left">
         <div className="sv2-top">
-          <UnravlerLogo />
+          <UnravlerLogo showText={false} />
           <button className="sv2-back" onClick={() => navigate('/')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back to home
@@ -253,7 +253,7 @@ const SignupV2 = () => {
       {/* ══ RIGHT PANEL ══ */}
       <div className="sv2-right">
         <div className="sv2-form-card">
-          <div className="sv2-form-logo"><UnravlerLogo /></div>
+          <div className="sv2-form-logo"><UnravlerLogo showText={false} /></div>
           <h2 className="sv2-form-title">Create your account</h2>
           <p className="sv2-form-sub">Start scheduling your content today</p>
 

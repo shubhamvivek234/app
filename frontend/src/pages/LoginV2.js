@@ -615,7 +615,7 @@ const LoginV2 = () => {
 
         {/* Top bar */}
         <div className="lv2-top-logo">
-          <UnravlerLogo />
+          <UnravlerLogo showText={false} />
           <button className="lv2-back" onClick={() => navigate('/')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
@@ -659,7 +659,7 @@ const LoginV2 = () => {
       <div className="lv2-right">
         <div className="lv2-form-card">
           <div className="lv2-form-logo">
-            <UnravlerLogo />
+            <UnravlerLogo showText={false} />
           </div>
 
           <h2 className="lv2-form-title">Login</h2>

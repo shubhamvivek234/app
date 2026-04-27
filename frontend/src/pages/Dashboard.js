@@ -7,7 +7,7 @@ import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, Fa
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { GooeyLoader } from '@/components/ui/loader-10';
+import BrandLoader from '@/components/BrandLoader';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -85,7 +85,7 @@ const Dashboard = () => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <GooeyLoader primaryColor="#22c55e" secondaryColor="#a855f7" />
+          <BrandLoader />
         </div>
       </DashboardLayout>
     );
