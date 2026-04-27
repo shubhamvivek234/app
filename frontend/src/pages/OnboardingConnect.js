@@ -4,9 +4,21 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import axios from 'axios';
-import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus, FaLinkedin, FaTiktok } from 'react-icons/fa';
+import {
+  FaInstagram,
+  FaYoutube,
+  FaFacebook,
+  FaTwitter,
+  FaPlus,
+  FaLinkedin,
+  FaTiktok,
+  FaPinterest,
+  FaDiscord,
+} from 'react-icons/fa';
+import { SiBluesky } from 'react-icons/si';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
+import { connectBluesky, connectDiscord } from '@/lib/api';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
@@ -17,8 +29,14 @@ const OnboardingConnect = () => {
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [connectedAccounts, setConnectedAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
-
-  // ... (rest of logic same)
+  const [blueskyModal, setBlueskyModal] = useState(false);
+  const [blueskyHandle, setBlueskyHandle] = useState('');
+  const [blueskyPass, setBlueskyPass] = useState('');
+  const [blueskyLoading, setBlueskyLoading] = useState(false);
+  const [discordModal, setDiscordModal] = useState(false);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
+  const [discordChannelName, setDiscordChannelName] = useState('');
+  const [discordLoading, setDiscordLoading] = useState(false);
 
   const platforms = [
     { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: '#E4405F' },
@@ -27,6 +45,9 @@ const OnboardingConnect = () => {
     { id: 'twitter', name: 'Twitter/X', icon: FaTwitter, color: '#1DA1F2' },
     { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: '#0A66C2' },
     { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: '#111827' },
+    { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: '#E60023' },
+    { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: '#0284C7', credential: true },
+    { id: 'discord', name: 'Discord', icon: FaDiscord, color: '#5865F2', credential: true },
   ];
 
   useEffect(() => {
@@ -67,6 +88,16 @@ const OnboardingConnect = () => {
   };
 
   const handleAddClick = (platform) => {
+    if (platform.id === 'bluesky') {
+      setShowAddModal(false);
+      setBlueskyModal(true);
+      return;
+    }
+    if (platform.id === 'discord') {
+      setShowAddModal(false);
+      setDiscordModal(true);
+      return;
+    }
     setSelectedPlatform(platform);
     setShowAddModal(false);
     setShowPlatformModal(true);
@@ -119,6 +150,62 @@ const OnboardingConnect = () => {
   const handleNext = async () => {
     // Allow proceeding to pricing without connections
     navigate('/onboarding/pricing');
+  };
+
+  const resetBlueskyModal = () => {
+    setBlueskyModal(false);
+    setBlueskyHandle('');
+    setBlueskyPass('');
+  };
+
+  const handleBlueskyConnect = async () => {
+    if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
+
+    setBlueskyLoading(true);
+    try {
+      await connectBluesky({
+        handle: blueskyHandle.trim(),
+        app_password: blueskyPass.trim(),
+      });
+      toast.success('Bluesky connected successfully!');
+      resetBlueskyModal();
+      fetchConnectedAccounts();
+    } catch (error) {
+      console.error('Error connecting Bluesky:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to connect Bluesky');
+    } finally {
+      setBlueskyLoading(false);
+    }
+  };
+
+  const resetDiscordModal = () => {
+    setDiscordModal(false);
+    setDiscordWebhookUrl('');
+    setDiscordChannelName('');
+  };
+
+  const handleDiscordConnect = async () => {
+    if (!discordWebhookUrl.trim()) return;
+
+    setDiscordLoading(true);
+    try {
+      const result = await connectDiscord(
+        discordWebhookUrl.trim(),
+        discordChannelName.trim() || null,
+      );
+      toast.success(
+        result?.channel
+          ? `Discord channel connected: ${result.channel}`
+          : 'Discord connected successfully!',
+      );
+      resetDiscordModal();
+      fetchConnectedAccounts();
+    } catch (error) {
+      console.error('Error connecting Discord:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to connect Discord');
+    } finally {
+      setDiscordLoading(false);
+    }
   };
 
   const handleBack = () => {
@@ -307,6 +394,23 @@ const OnboardingConnect = () => {
                 </div>
               </div>
             )}
+
+            {selectedPlatform?.id === 'pinterest' && (
+              <div className="space-y-2">
+                <div className="flex items-start">
+                  <span className="mr-2">•</span>
+                  <p className="text-sm text-slate-600">
+                    You'll be redirected to Pinterest to approve access to your boards and pins.
+                  </p>
+                </div>
+                <div className="flex items-start">
+                  <span className="mr-2">•</span>
+                  <p className="text-sm text-slate-600">
+                    Make sure the Pinterest app has your production redirect URI configured before connecting.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end space-x-2 mt-6">
@@ -323,6 +427,150 @@ const OnboardingConnect = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Bluesky modal */}
+      {blueskyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center">
+                <SiBluesky className="text-sky-500 text-lg" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Bluesky</h2>
+                <p className="text-xs text-gray-500">Use your handle and an app password</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mb-4 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
+              Create an{' '}
+              <a
+                href="https://bsky.app/settings/app-passwords"
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-600 hover:underline font-medium"
+              >
+                app password
+              </a>
+              {' '}in Bluesky settings. Don&apos;t use your main account password here.
+            </p>
+            <div className="space-y-3 mb-5">
+              <input
+                type="text"
+                value={blueskyHandle}
+                onChange={(e) => setBlueskyHandle(e.target.value)}
+                placeholder="handle.bsky.social"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+              />
+              <input
+                type="password"
+                value={blueskyPass}
+                onChange={(e) => setBlueskyPass(e.target.value)}
+                placeholder="App password (xxxx-xxxx-xxxx-xxxx)"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleBlueskyConnect();
+                }}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={resetBlueskyModal}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBlueskyConnect}
+                disabled={blueskyLoading || !blueskyHandle.trim() || !blueskyPass.trim()}
+                className="px-5 py-2 text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white rounded-xl disabled:opacity-50 transition-colors"
+              >
+                {blueskyLoading ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Discord modal */}
+      {discordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center">
+                <FaDiscord className="text-indigo-500 text-xl" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Connect Discord Channel</h2>
+                <p className="text-xs text-gray-500">Paste an incoming webhook URL</p>
+              </div>
+            </div>
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs font-semibold text-indigo-700 mb-2">How to get a webhook URL:</p>
+              <ol className="space-y-1 text-xs text-indigo-700">
+                {[
+                  'Open your Discord server and edit the channel you want to post into.',
+                  'Go to Integrations → Webhooks.',
+                  'Create a webhook and copy its URL into Unravler.',
+                ].map((step, index) => (
+                  <li key={step} className="flex items-start gap-2">
+                    <span className="w-4 h-4 rounded-full bg-indigo-200 text-indigo-800 text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                      {index + 1}
+                    </span>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
+                  Webhook URL <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="url"
+                  value={discordWebhookUrl}
+                  onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+                  placeholder="https://discord.com/api/webhooks/..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
+                  Channel Label <span className="text-gray-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={discordChannelName}
+                  onChange={(e) => setDiscordChannelName(e.target.value)}
+                  placeholder="e.g. #announcements"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleDiscordConnect();
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={resetDiscordModal}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDiscordConnect}
+                disabled={discordLoading || !discordWebhookUrl.trim()}
+                className="px-5 py-2 text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {discordLoading && (
+                  <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+                )}
+                {discordLoading ? 'Validating…' : 'Connect Channel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
