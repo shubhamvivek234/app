@@ -28,9 +28,10 @@ class GoogleAuth:
              if env_path.exists():
                  logging.info(f"DEBUG: .env content (partial): {open(env_path).read()[:50]}")
         
-    def get_auth_url(self, state: str) -> str:
+    def get_auth_url(self, state: str, redirect_uri: str | None = None) -> str:
         """Generate Google OAuth URL for YouTube"""
-        if not self.client_id or not self.youtube_redirect_uri:
+        oauth_redirect_uri = redirect_uri or self.youtube_redirect_uri
+        if not self.client_id or not oauth_redirect_uri:
             raise HTTPException(status_code=500, detail="Google/YouTube credentials not configured")
             
         # Scopes for YouTube upload and channel management
@@ -39,7 +40,7 @@ class GoogleAuth:
         return (
             f"{self.AUTH_URL}"
             f"?client_id={self.client_id}"
-            f"&redirect_uri={self.youtube_redirect_uri}"
+            f"&redirect_uri={oauth_redirect_uri}"
             f"&response_type=code"
             f"&scope={scope}"
             f"&state={state}"

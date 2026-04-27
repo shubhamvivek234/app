@@ -230,7 +230,7 @@ async def get_oauth_url(
         auth_url = LinkedInAuth().get_auth_url(state)
     else:
         try:
-            auth_url = _build_oauth_url(platform, state)
+            auth_url = _build_oauth_url(platform, state, frontend_base)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
@@ -268,13 +268,14 @@ async def oauth_callback(
         )
 
     # Validate CSRF state (only if state is provided, e.g. not for some platforms)
+    state_context = None
     if payload.state:
         state_context = await _consume_oauth_state(cache_redis, payload.state)
         if state_context is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state")
 
     user_id = current_user["user_id"]
-    token_data = await _exchange_code_for_tokens(platform, payload.code, payload.code_verifier)
+    token_data = await _exchange_code_for_tokens(platform, payload.code, payload.code_verifier, state_context)
     account_id = await _persist_oauth_account(db, user_id, platform, token_data)
 
     logger.info("OAuth connected: %s user=%s platform=%s", account_id, user_id, platform)
@@ -323,6 +324,7 @@ async def oauth_callback_redirect(
         platform,
         code,
         (state_context or {}).get("code_verifier"),
+        state_context,
     )
     try:
         await _persist_oauth_account(db, user_id, platform, token_data)
@@ -526,6 +528,13 @@ def _normalize_frontend_base(candidate: str | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _build_frontend_oauth_callback(frontend_base: str | None) -> str | None:
+    normalized = _normalize_frontend_base(frontend_base)
+    if not normalized:
+        return None
+    return f"{normalized}/oauth/callback"
+
+
 async def _consume_oauth_state(cache_redis: CacheRedis, state: str) -> dict | None:
     stored_value = await cache_redis.get(f"oauth_state:{state}")
     if stored_value is None:
@@ -576,7 +585,7 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
     )
     return account_id
 
-def _build_oauth_url(platform: str, state: str) -> str:
+def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None) -> str:
     """Build platform-specific OAuth authorization URL with required scopes."""
     if platform == "instagram":
         from utils.instagram_oauth import get_auth_url as _ig_get_auth_url
@@ -620,6 +629,8 @@ def _build_oauth_url(platform: str, state: str) -> str:
         redirect_uri_env_map.get(platform, "OAUTH_REDIRECT_URI"),
         os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback"),
     )
+    if platform == "youtube":
+        redirect_uri = _build_frontend_oauth_callback(frontend_base) or redirect_uri
     base = base_urls.get(platform, "")
     scope = scopes.get(platform, "")
     # URL-encode all params to handle special characters in redirect_uri/state (LB-4)
@@ -634,14 +645,19 @@ def _build_oauth_url(platform: str, state: str) -> str:
     return f"{base}?{urlencode(params)}"
 
 
-async def _exchange_code_for_tokens(platform: str, code: str, code_verifier: str | None = None) -> dict | None:
+async def _exchange_code_for_tokens(
+    platform: str,
+    code: str,
+    code_verifier: str | None = None,
+    state_context: dict | None = None,
+) -> dict | None:
     """Exchange authorization code for access/refresh tokens. Platform-specific logic."""
     if platform == "instagram":
         return await _exchange_instagram_code(code)
     if platform == "facebook":
         return await _exchange_facebook_code(code)
     if platform == "youtube":
-        return await _exchange_youtube_code(code)
+        return await _exchange_youtube_code(code, state_context)
     if platform == "twitter":
         return await _exchange_twitter_code(code, code_verifier or "")
     if platform == "linkedin":
@@ -715,15 +731,18 @@ async def _exchange_facebook_code(code: str) -> dict | None:
         return None
 
 
-async def _exchange_youtube_code(code: str) -> dict | None:
+async def _exchange_youtube_code(code: str, state_context: dict | None = None) -> dict | None:
     """YouTube/Google OAuth: exchange authorization code for tokens."""
     import httpx
     from datetime import timedelta
 
     client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get("YOUTUBE_REDIRECT_URI",
-                                  os.environ.get("OAUTH_REDIRECT_URI", ""))
+    redirect_uri = (
+        _build_frontend_oauth_callback((state_context or {}).get("frontend_base"))
+        or os.environ.get("YOUTUBE_REDIRECT_URI")
+        or os.environ.get("OAUTH_REDIRECT_URI", "")
+    )
     if not client_id or not client_secret:
         logger.error("YouTube OAuth: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set")
         return None

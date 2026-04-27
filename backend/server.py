@@ -1612,6 +1612,7 @@ def _normalize_frontend_base(url: Optional[str]) -> Optional[str]:
 
     allowed_hosts = {
         "unravler.com",
+        "www.unravler.com",
         "app.unravler.com",
     }
     if host not in allowed_hosts:
@@ -1631,6 +1632,13 @@ def _create_oauth_state(user_id: str, platform: str, frontend_base: Optional[str
     if safe_frontend:
         payload["frontend_base"] = safe_frontend
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _frontend_oauth_callback(frontend_base: Optional[str]) -> Optional[str]:
+    safe_frontend = _normalize_frontend_base(frontend_base)
+    if not safe_frontend:
+        return None
+    return f"{safe_frontend}/oauth/callback"
 
 def _verify_oauth_state(state: str) -> dict:
     """Decode and verify a state token; raises HTTPException on failure."""
@@ -1693,7 +1701,8 @@ async def oauth_authorize(platform: str, request: Request, current_user: User = 
             return {"authorization_url": url}
         elif platform in ("youtube", "google"):
             from app.social.google import GoogleAuth
-            url = GoogleAuth().get_auth_url(state)
+            redirect_uri = _frontend_oauth_callback(origin)
+            url = GoogleAuth().get_auth_url(state, redirect_uri=redirect_uri)
             return {"authorization_url": url}
         elif platform == "reddit":
             from app.social.reddit import RedditAuth
@@ -1731,6 +1740,7 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
     """Exchange OAuth code for token, fetch profile, save account. Returns account info."""
     claims = _verify_oauth_state(state)
     user_id = claims["user_id"]
+    frontend_callback = _frontend_oauth_callback(claims.get("frontend_base"))
 
     try:
         picture_url: Optional[str] = None
@@ -1798,7 +1808,9 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
         elif platform in ("youtube", "google"):
             from app.social.google import GoogleAuth
             auth = GoogleAuth()
-            redirect_uri = auth.youtube_redirect_uri if platform == "youtube" else None
+            redirect_uri = frontend_callback if platform == "youtube" else None
+            if platform == "youtube" and not redirect_uri:
+                redirect_uri = auth.youtube_redirect_uri
             token_data = await auth.exchange_code_for_token(code, redirect_uri=redirect_uri)
             access_token = token_data.get("access_token")
             refresh_token = token_data.get("refresh_token")
