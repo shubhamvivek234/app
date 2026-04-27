@@ -1798,7 +1798,8 @@ async def _process_oauth_callback(platform: str, code: str, state: str,
         elif platform in ("youtube", "google"):
             from app.social.google import GoogleAuth
             auth = GoogleAuth()
-            token_data = await auth.exchange_code_for_token(code)
+            redirect_uri = auth.youtube_redirect_uri if platform == "youtube" else None
+            token_data = await auth.exchange_code_for_token(code, redirect_uri=redirect_uri)
             access_token = token_data.get("access_token")
             refresh_token = token_data.get("refresh_token")
             expires_in = token_data.get("expires_in", 3600)

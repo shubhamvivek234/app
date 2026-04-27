@@ -16,7 +16,8 @@ class GoogleAuth:
         self.client_id = os.environ.get('GOOGLE_CLIENT_ID')
         self.client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
         self.redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI')
-        self.youtube_redirect_uri = os.environ.get('YOUTUBE_REDIRECT_URI', 'http://localhost:3000/oauth/callback')
+        frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+        self.youtube_redirect_uri = os.environ.get('YOUTUBE_REDIRECT_URI', f'{frontend_url}/oauth/callback')
         
         if not self.client_id:
              logging.error(f"DEBUG: GOOGLE_CLIENT_ID NOT FOUND. ENV VARS KEYS: {[k for k in os.environ.keys() if 'GOOGLE' in k]}")

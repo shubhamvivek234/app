@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import axios from 'axios';
 import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } from '@/lib/oauthPopup';
+import { submitOAuthCallback } from '@/lib/requestOAuthCallback';
 
 const OAuthCallback = () => {
   const navigate = useNavigate();
@@ -68,7 +68,6 @@ const OAuthCallback = () => {
 
       try {
         const token = localStorage.getItem('token');
-        const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
         const platform = sessionStorage.getItem('oauth_platform');
         const returnTo = sessionStorage.getItem('oauth_return_to');
 
@@ -93,22 +92,11 @@ const OAuthCallback = () => {
           }
         }
 
-        // Send callback to backend
-        console.log(`[OAuthCallback] Sending payload to ${apiUrl}/api/v1/oauth/${platform}/callback:`, callbackData);
-        const response = await axios.post(
-          `${apiUrl}/api/v1/oauth/${platform}/callback`,
-          callbackData,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            withCredentials: true,
-          }
-        );
-        console.log(`[OAuthCallback] Response received:`, response.data);
-
-        const connected = response.data.success || response.data.connected;
+        const responseData = await submitOAuthCallback(platform, callbackData, token);
+        const connected = responseData.success || responseData.connected;
         if (connected) {
           setStatus('success');
-          const resolvedPlatform = response.data.platform || platform;
+          const resolvedPlatform = responseData.platform || platform;
           if (popupExpected) {
             finishPopupFlow({ status: 'success', platform: resolvedPlatform, returnTo });
             return;
@@ -118,7 +106,7 @@ const OAuthCallback = () => {
           clearOAuthPopupExpected();
 
           // Redirect based on return destination securely provided by backend or fallback to session
-          const finalReturnTo = response.data.return_to || returnTo;
+          const finalReturnTo = responseData.return_to || returnTo;
 
           setTimeout(() => {
             if (finalReturnTo === 'onboarding') {
