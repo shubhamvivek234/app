@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { toast } from 'sonner';
 import axios from 'axios';
 import { FaInstagram, FaYoutube, FaFacebook, FaTwitter, FaPlus } from 'react-icons/fa';
+import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
@@ -27,6 +28,23 @@ const OnboardingConnect = () => {
 
   useEffect(() => {
     fetchConnectedAccounts();
+  }, []);
+
+  useEffect(() => {
+    return listenForOAuthResult((message) => {
+      if (!message || message.returnTo !== 'onboarding') return;
+
+      clearOAuthPopupExpected();
+      setLoading(false);
+      setShowPlatformModal(false);
+
+      if (message.status === 'success') {
+        toast.success(`${message.platform || 'Account'} connected successfully!`);
+        fetchConnectedAccounts();
+      } else if (message.status === 'error') {
+        toast.error(message.error || 'Failed to connect platform');
+      }
+    });
   }, []);
 
   const fetchConnectedAccounts = async () => {
@@ -59,6 +77,7 @@ const OnboardingConnect = () => {
     // is treated as a non-user gesture and is frequently blocked).
     const popup = window.open('', '_blank', 'noopener,noreferrer');
     if (popup) popup.opener = null;
+    markOAuthPopupExpected(Boolean(popup));
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
@@ -92,6 +111,7 @@ const OnboardingConnect = () => {
 
     } catch (error) {
       console.error('Error initiating OAuth:', error);
+      clearOAuthPopupExpected();
       if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error(`${selectedPlatform.name} API credentials not configured. Please contact administrator.`);

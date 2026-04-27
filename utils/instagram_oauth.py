@@ -14,7 +14,7 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 _API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
-_OAUTH_URL = "https://api.instagram.com/oauth/authorize"
+_OAUTH_URL = "https://www.instagram.com/oauth/authorize"
 _TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 _GRAPH_URL = f"https://graph.instagram.com/{_API_VERSION}"
 
@@ -22,7 +22,8 @@ _SCOPES = (
     "instagram_business_basic,"
     "instagram_business_content_publish,"
     "instagram_business_manage_comments,"
-    "instagram_business_manage_insights"
+    "instagram_business_manage_insights,"
+    "instagram_business_manage_messages"
 )
 
 

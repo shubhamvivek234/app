@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } from '@/lib/oauthPopup';
 
 const OAuthCallback = () => {
   const navigate = useNavigate();
@@ -17,20 +18,43 @@ const OAuthCallback = () => {
       const platform = searchParams.get('platform') || sessionStorage.getItem('oauth_platform') || '';
 
       const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
+      const returnTo = sessionStorage.getItem('oauth_return_to') || 'accounts';
+      const popupExpected = isOAuthPopupExpected();
+
+      const cleanup = () => {
+        sessionStorage.removeItem('oauth_platform');
+        sessionStorage.removeItem('oauth_return_to');
+      };
+
+      const finishPopupFlow = (result) => {
+        broadcastOAuthResult(result);
+        cleanup();
+        clearOAuthPopupExpected();
+        setTimeout(() => window.close(), 500);
+      };
 
       // Backend-redirect flow: backend already processed the OAuth and redirected here
       if (success === 'true') {
         setStatus('success');
+        if (popupExpected) {
+          finishPopupFlow({ status: 'success', platform, returnTo });
+          return;
+        }
         toast.success(`${platform} connected successfully!`);
-        sessionStorage.removeItem('oauth_platform');
-        sessionStorage.removeItem('oauth_return_to');
-        setTimeout(() => navigate('/accounts'), 1500);
+        cleanup();
+        clearOAuthPopupExpected();
+        setTimeout(() => navigate(returnTo === 'onboarding' ? '/onboarding/connect' : '/accounts'), 1500);
         return;
       }
 
       if (error) {
         setStatus('error');
+        if (popupExpected) {
+          finishPopupFlow({ status: 'error', platform, returnTo, error: `OAuth error: ${error}` });
+          return;
+        }
         toast.error(`OAuth error: ${error}`);
+        clearOAuthPopupExpected();
         setTimeout(() => navigate(fallbackUrl), 2000);
         return;
       }
@@ -81,13 +105,17 @@ const OAuthCallback = () => {
         );
         console.log(`[OAuthCallback] Response received:`, response.data);
 
-        if (response.data.success) {
+        const connected = response.data.success || response.data.connected;
+        if (connected) {
           setStatus('success');
-          toast.success(`${response.data.platform} connected successfully!`);
-
-          // Clean up session storage
-          sessionStorage.removeItem('oauth_platform');
-          sessionStorage.removeItem('oauth_return_to');
+          const resolvedPlatform = response.data.platform || platform;
+          if (popupExpected) {
+            finishPopupFlow({ status: 'success', platform: resolvedPlatform, returnTo });
+            return;
+          }
+          toast.success(`${resolvedPlatform} connected successfully!`);
+          cleanup();
+          clearOAuthPopupExpected();
 
           // Redirect based on return destination securely provided by backend or fallback to session
           const finalReturnTo = response.data.return_to || returnTo;
@@ -103,13 +131,20 @@ const OAuthCallback = () => {
       } catch (error) {
         console.error('OAuth callback error:', error);
         setStatus('error');
+        const message = error.response?.data?.detail || 'Failed to connect account';
+
+        if (popupExpected) {
+          finishPopupFlow({ status: 'error', platform, returnTo, error: message });
+          return;
+        }
 
         if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
           toast.error('API credentials not configured. Please contact administrator.');
         } else {
-          toast.error(error.response?.data?.detail || 'Failed to connect account');
+          toast.error(message);
         }
 
+        clearOAuthPopupExpected();
         const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
         setTimeout(() => navigate(fallbackUrl), 2000);
       }

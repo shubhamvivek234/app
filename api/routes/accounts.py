@@ -243,7 +243,7 @@ async def oauth_callback(
         await cache_redis.delete(f"oauth_state:{payload.state}")
 
     user_id = current_user["user_id"]
-    token_data = await _exchange_code_for_tokens(platform, payload.code)
+    token_data = await _exchange_code_for_tokens(platform, payload.code, payload.code_verifier)
 
     if not token_data:
         raise HTTPException(
@@ -468,8 +468,13 @@ def _build_oauth_url(platform: str, state: str) -> str:
         "linkedin": "w_member_social r_liteprofile",
         "tiktok": "video.upload,user.info.basic",
     }
-    # YouTube uses Google OAuth — env var is GOOGLE_CLIENT_ID not YOUTUBE_CLIENT_ID (CFG-3)
-    client_id_env = "GOOGLE_CLIENT_ID" if platform == "youtube" else f"{platform.upper()}_CLIENT_ID"
+    # Some providers use APP_ID naming instead of CLIENT_ID.
+    if platform == "youtube":
+        client_id_env = "GOOGLE_CLIENT_ID"
+    elif platform == "facebook":
+        client_id_env = "FACEBOOK_APP_ID"
+    else:
+        client_id_env = f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
     if not client_id:
@@ -513,12 +518,12 @@ async def _exchange_facebook_code(code: str) -> dict | None:
     import httpx
     from datetime import timedelta
 
-    app_id = os.environ.get("FACEBOOK_CLIENT_ID", "")
-    app_secret = os.environ.get("FACEBOOK_CLIENT_SECRET", "")
+    app_id = os.environ.get("FACEBOOK_APP_ID", "")
+    app_secret = os.environ.get("FACEBOOK_APP_SECRET", "")
     redirect_uri = os.environ.get("FACEBOOK_REDIRECT_URI",
                                   os.environ.get("OAUTH_REDIRECT_URI", ""))
     if not app_id or not app_secret:
-        logger.error("Facebook OAuth: FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET not set")
+        logger.error("Facebook OAuth: FACEBOOK_APP_ID / FACEBOOK_APP_SECRET not set")
         return None
 
     try:

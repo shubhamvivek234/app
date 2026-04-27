@@ -6,6 +6,7 @@ import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
   connectBluesky, connectDiscord, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
 } from '@/lib/api';
+import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { toast } from 'sonner';
 import {
   FaTwitter, FaLinkedin, FaInstagram, FaFacebook, FaYoutube,
@@ -295,6 +296,22 @@ const ConnectedAccounts = () => {
   useEffect(() => { fetchAccounts(); }, []);
 
   useEffect(() => {
+    return listenForOAuthResult((message) => {
+      if (!message || message.returnTo !== 'accounts') return;
+
+      clearOAuthPopupExpected();
+      setConnecting(null);
+
+      if (message.status === 'success') {
+        toast.success(`${message.platform || 'Account'} connected successfully!`);
+        fetchAccounts();
+      } else if (message.status === 'error') {
+        toast.error(message.error || 'Failed to connect account');
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     if (searchParams.get('linkedin_orgs') === '1') {
       if (searchParams.get('personal_connected') === 'true') toast.success('LinkedIn personal account connected!');
       fetchAccounts();
@@ -333,6 +350,7 @@ const ConnectedAccounts = () => {
     // Open a popup synchronously so browsers don't block it.
     const popup = window.open('', '_blank', 'noopener,noreferrer');
     if (popup) popup.opener = null;
+    markOAuthPopupExpected(Boolean(popup));
     try {
       const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
@@ -355,6 +373,7 @@ const ConnectedAccounts = () => {
         return;
       }
     } catch (error) {
+      clearOAuthPopupExpected();
       if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error('API credentials not configured for this platform.');
