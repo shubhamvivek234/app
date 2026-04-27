@@ -479,7 +479,18 @@ def _build_oauth_url(platform: str, state: str) -> str:
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
     if not client_id:
         raise ValueError(f"OAuth not configured for platform '{platform}': {client_id_env} env var is missing")
-    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback")
+
+    redirect_uri_env_map = {
+        "facebook": "FACEBOOK_REDIRECT_URI",
+        "youtube": "YOUTUBE_REDIRECT_URI",
+        "twitter": "TWITTER_REDIRECT_URI",
+        "linkedin": "LINKEDIN_REDIRECT_URI",
+        "tiktok": "TIKTOK_REDIRECT_URI",
+    }
+    redirect_uri = os.environ.get(
+        redirect_uri_env_map.get(platform, "OAUTH_REDIRECT_URI"),
+        os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback"),
+    )
     base = base_urls.get(platform, "")
     scope = scopes.get(platform, "")
     # URL-encode all params to handle special characters in redirect_uri/state (LB-4)
