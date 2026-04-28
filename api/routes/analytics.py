@@ -363,6 +363,52 @@ async def analytics_overview(
         else:
             type_counts["text"] += doc["count"]
 
+    # When an analytics account is explicitly selected, local published-post
+    # history may be empty even though the connected platform account has live
+    # content (for example, YouTube videos posted directly on YouTube). In that
+    # case, fall back to the platform feed for overview counts.
+    if account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS and published_in_period == 0:
+        accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
+        fallback_platform_counts: dict[str, int] = {}
+        fallback_type_counts = {"text": 0, "image": 0, "video": 0}
+        fallback_published_count = 0
+        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+
+        for account in accounts:
+            try:
+                feed, _ = await _fetch_account_feed_and_stats(db, account)
+            except Exception as exc:
+                logger.warning("Failed overview feed fallback for %s account %s: %s", platform, account_id, exc)
+                continue
+
+            in_period_posts = []
+            for post in feed:
+                ts = _parse_platform_timestamp(post.get("timestamp"))
+                if ts and ts < since_dt:
+                    continue
+                in_period_posts.append(post)
+
+            if not in_period_posts:
+                continue
+
+            fallback_published_count += len(in_period_posts)
+            fallback_platform_counts[account.get("platform", platform)] = (
+                fallback_platform_counts.get(account.get("platform", platform), 0) + len(in_period_posts)
+            )
+            for post in in_period_posts:
+                media_type = str(post.get("media_type") or "").upper()
+                if media_type == "VIDEO":
+                    fallback_type_counts["video"] += 1
+                elif media_type == "IMAGE":
+                    fallback_type_counts["image"] += 1
+                else:
+                    fallback_type_counts["text"] += 1
+
+        if fallback_published_count:
+            published_in_period = fallback_published_count
+            platform_counts = fallback_platform_counts
+            type_counts = fallback_type_counts
+
     return {
         "published_in_period": published_in_period,
         "scheduled_count": scheduled_count,
