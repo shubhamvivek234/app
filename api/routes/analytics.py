@@ -37,7 +37,7 @@ def _published_match(
     if platform:
         query["platforms"] = platform
     if account_id:
-        query["social_account_ids"] = account_id
+        query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
     return query
 
 
@@ -53,7 +53,7 @@ def _scheduled_match(
     if platform:
         query["platforms"] = platform
     if account_id:
-        query["social_account_ids"] = account_id
+        query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
     return query
 
 
@@ -137,6 +137,31 @@ async def _fetch_account_feed_and_stats(account: dict[str, Any]) -> tuple[list[d
         return feed, engagement
 
     return [], {}
+
+
+def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
+    likes = _metric_int(post.get("likes"))
+    comments = _metric_int(post.get("comments_count"))
+    shares = _metric_int(post.get("shares"))
+    views = _metric_int(post.get("views"))
+    return {
+        "id": post.get("id"),
+        "platform": account.get("platform"),
+        "account_id": account.get("account_id") or account.get("id"),
+        "account_username": account.get("platform_username") or account.get("display_name"),
+        "content": post.get("content", ""),
+        "media_url": post.get("media_url"),
+        "video_url": post.get("video_url"),
+        "media_type": post.get("media_type"),
+        "published_at": post.get("timestamp"),
+        "post_url": post.get("permalink"),
+        "metrics": {
+            "likes": likes,
+            "comments": comments,
+            "shares": shares,
+            "views": views,
+        },
+    }
 
 
 @router.get("/analytics/overview")
@@ -438,4 +463,71 @@ async def analytics_demographics(
             "cities": _merge_named_counts(result["cities"], "name")[:10],
             "countries": _merge_named_counts(result["countries"], "name")[:10],
         },
+    }
+
+
+@router.get("/publish/feed")
+async def publish_feed(
+    current_user: CurrentUser,
+    db: DB,
+    platform: str | None = Query(None),
+    account_id: str | None = Query(None, alias="accountId"),
+    limit: int = Query(50, ge=1, le=100),
+):
+    accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
+    if not accounts:
+        return {
+            "posts": [],
+            "connected_accounts": [],
+            "message": "No connected account found for the selected filters.",
+        }
+
+    posts: list[dict[str, Any]] = []
+    connected_accounts: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+
+    for account in accounts:
+        plat = account.get("platform")
+        account_identifier = account.get("account_id") or account.get("id")
+        connected_accounts.append(
+            {
+                "id": account_identifier,
+                "account_id": account_identifier,
+                "platform": plat,
+                "platform_username": account.get("platform_username"),
+                "display_name": account.get("display_name"),
+                "picture_url": account.get("picture_url"),
+            }
+        )
+
+        if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+            errors.append(
+                {
+                    "account": account.get("platform_username") or account_identifier or plat or "unknown",
+                    "error": f"{plat.title()} post feed is not available yet.",
+                }
+            )
+            continue
+
+        feed, _ = await _fetch_account_feed_and_stats(account)
+        if not feed:
+            errors.append(
+                {
+                    "account": account.get("platform_username") or account_identifier or plat or "unknown",
+                    "error": "No recent posts were returned from the platform API.",
+                }
+            )
+            continue
+
+        posts.extend(_normalize_feed_post(account, post) for post in feed[:limit])
+
+    posts.sort(
+        key=lambda post: _parse_platform_timestamp(post.get("published_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    return {
+        "posts": posts[:limit],
+        "connected_accounts": connected_accounts,
+        "errors": errors,
     }
