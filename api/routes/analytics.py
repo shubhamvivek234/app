@@ -453,16 +453,26 @@ async def analytics_demographics(
             "errors": errors,
         }
 
+    merged = {
+        "age": _merge_named_counts(result["age"], "range"),
+        "gender": _merge_named_counts(result["gender"], "label"),
+        "cities": _merge_named_counts(result["cities"], "name")[:10],
+        "countries": _merge_named_counts(result["countries"], "name")[:10],
+    }
+
+    if not any(merged.values()):
+        return {
+            "supported": False,
+            "message": "Demographics are not available for this account yet. Instagram typically requires a Business/Creator account with at least 100 followers before follower demographics appear.",
+            "accounts_used": accounts_used,
+            "errors": errors,
+        }
+
     return {
         "supported": True,
         "accounts_used": accounts_used,
         "errors": errors,
-        "demographics": {
-            "age": _merge_named_counts(result["age"], "range"),
-            "gender": _merge_named_counts(result["gender"], "label"),
-            "cities": _merge_named_counts(result["cities"], "name")[:10],
-            "countries": _merge_named_counts(result["countries"], "name")[:10],
-        },
+        "demographics": merged,
     }
 
 
