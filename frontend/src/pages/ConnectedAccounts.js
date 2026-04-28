@@ -14,7 +14,7 @@ import {
   FaCheckCircle, FaPlus, FaLink, FaDiscord,
 } from 'react-icons/fa';
 import { SiThreads, SiReddit, SiSnapchat, SiBluesky, SiMastodon } from 'react-icons/si';
-import BrandLoader from '@/components/BrandLoader';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 // ── Token status helper ───────────────────────────────────────────────────────
 const getTokenStatus = (account) => {
@@ -484,7 +484,7 @@ const ConnectedAccounts = () => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <BrandLoader />
+          <BrandMarkLoader />
         </div>
       </DashboardLayout>
     );

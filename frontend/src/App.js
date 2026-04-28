@@ -4,7 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import '@/App.css';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
-import BrandLoader from '@/components/BrandLoader';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 // Pages
 import LandingPage from '@/pages/LandingPage';
@@ -108,7 +108,7 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
-        <BrandLoader />
+        <BrandMarkLoader />
       </div>
     );
   }
@@ -164,7 +164,7 @@ const PublicRoute = ({ children }) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
-        <BrandLoader />
+        <BrandMarkLoader />
       </div>
     );
   }

@@ -6,7 +6,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOf
 import { FaChevronLeft, FaChevronRight, FaInfoCircle, FaShare, FaLink, FaTimes } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import BrandLoader from '@/components/BrandLoader';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 const NOTE_COLORS = ['green', 'blue', 'yellow', 'red'];
 
@@ -150,7 +150,7 @@ const CalendarView = () => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <BrandLoader />
+          <BrandMarkLoader />
         </div>
       </DashboardLayout>
     );

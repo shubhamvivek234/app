@@ -7,7 +7,7 @@ import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, Fa
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import BrandLoader from '@/components/BrandLoader';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -85,7 +85,7 @@ const Dashboard = () => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <BrandLoader />
+          <BrandMarkLoader />
         </div>
       </DashboardLayout>
     );

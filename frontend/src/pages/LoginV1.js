@@ -319,12 +319,23 @@ const LoginV1 = () => {
           position: absolute;
           top: 50%;
           left: 50%;
-          transform: translate(-50%,-54%);
-          font-size: 52px;
+          transform: translate(-50%,-50%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
           line-height: 1;
           z-index: 20;
-          filter: drop-shadow(0 2px 8px rgba(210,170,0,.35));
+          width: 92px;
+          height: 72px;
+          filter: drop-shadow(0 10px 22px rgba(12,65,79,.14));
           user-select: none;
+        }
+
+        .center-bolt .brand-center-mark {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
         }
 
         .ring-track {
@@ -454,7 +465,7 @@ const LoginV1 = () => {
       <div className="left">
         <div className="form-wrap">
           <div className="brand-container">
-            <UnravlerLogo showText={false} />
+            <UnravlerLogo />
             <button onClick={() => navigate('/')} className="back-home">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
               Back to home
@@ -516,8 +527,8 @@ const LoginV1 = () => {
         <p className="tagline-sub">Schedule, publish &amp; analyze across every platform</p>
 
         <div className="orbit-wrap">
-          <div className="center-bolt" style={{ transform: 'translate(-50%, -50%)', marginTop: '0' }}>
-            <UnravlerLogo size="large" showText={false} />
+          <div className="center-bolt" style={{ marginTop: '0' }}>
+            <UnravlerLogo className="brand-center-mark" size="xl" showText={false} darkText />
           </div>
 
           {/* ════════ OUTER RING (CW 34s) ════════ */}
