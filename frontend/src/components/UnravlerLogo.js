@@ -3,8 +3,8 @@ import { cn } from "@/lib/utils";
 
 import logoDark from "@/assets/brand/unravler-logo-dark.png";
 import logoWhite from "@/assets/brand/unravler-logo-white.png";
-import markDark from "@/assets/brand/unravler-mark-clean-dark.svg";
-import markWhite from "@/assets/brand/unravler-mark-clean-white.svg";
+import markDark from "@/assets/brand/unravler-mark-upload-dark.png";
+import markWhite from "@/assets/brand/unravler-mark-upload-white.png";
 
 const UnravlerLogo = ({ 
   size = 'default', 
