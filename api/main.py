@@ -135,6 +135,42 @@ async def lifespan(app: FastAPI):
 from api.limiter import limiter  # noqa: E402 — must be after route imports to avoid circular
 
 
+def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: bool = True) -> None:
+    """
+    Mount the API under a given prefix.
+
+    We keep both `/api/v1/*` and legacy `/api/*` routes live because the
+    production frontend bundle still has a mix of both URL styles. Keeping the
+    alias on the backend prevents auth and dashboard regressions during
+    staggered frontend/backend deploys.
+    """
+    app.include_router(auth_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(posts_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(upload_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(accounts_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(stream_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(public_api_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(user_webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(admin_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(user_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(payments_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(ai_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(bulk_upload_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(timeslots_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(notifications_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(hashtags_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(stats_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(analytics_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(api_keys_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(team_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(recurring_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(media_assets_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(calendar_notes_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(inbox_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(support_router, prefix=prefix, include_in_schema=include_in_schema)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="SocialEntangler API",
@@ -168,31 +204,8 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(health_router)
-    app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(posts_router, prefix="/api/v1")
-    app.include_router(upload_router, prefix="/api/v1")
-    app.include_router(accounts_router, prefix="/api/v1")
-    app.include_router(webhooks_router, prefix="/api/v1")
-    app.include_router(stream_router, prefix="/api/v1")
-    app.include_router(public_api_router, prefix="/api/v1")    # Phase 5.8
-    app.include_router(user_webhooks_router, prefix="/api/v1") # Phase 5.8
-    app.include_router(admin_router, prefix="/api/v1")         # Phase 9
-    app.include_router(user_router, prefix="/api/v1")          # user account / GDPR
-    app.include_router(payments_router, prefix="/api/v1")      # checkout + billing
-    app.include_router(ai_router, prefix="/api/v1")            # AI content generation
-    app.include_router(bulk_upload_router, prefix="/api/v1")   # bulk CSV upload
-    app.include_router(timeslots_router, prefix="/api/v1")     # timeslots CRUD
-    app.include_router(notifications_router, prefix="/api/v1") # notifications
-    app.include_router(hashtags_router, prefix="/api/v1")      # hashtag groups
-    app.include_router(stats_router, prefix="/api/v1")         # dashboard stats
-    app.include_router(analytics_router, prefix="/api/v1")     # analytics
-    app.include_router(api_keys_router, prefix="/api/v1")      # API key management
-    app.include_router(team_router, prefix="/api/v1")          # workspace team
-    app.include_router(recurring_router, prefix="/api/v1")     # recurring rules
-    app.include_router(media_assets_router, prefix="/api/v1")  # media library
-    app.include_router(calendar_notes_router, prefix="/api/v1") # calendar notes
-    app.include_router(inbox_router, prefix="/api/v1")         # inbox
-    app.include_router(support_router, prefix="/api/v1")       # support
+    _include_versioned_routes(app, "/api/v1")
+    _include_versioned_routes(app, "/api", include_in_schema=False)
 
     # Prometheus metrics — exposes /metrics (Prometheus scrape endpoint)
     Instrumentator(
