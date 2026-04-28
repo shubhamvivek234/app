@@ -597,6 +597,17 @@ const Analytics = () => {
   const platformAccounts = accounts.filter(
     (a) => !selectedPlatform || a.platform === selectedPlatform
   );
+  const selectedConnectedAccount =
+    (engagement?.connected_accounts || []).find(
+      (a) => (a.account_id || a.id) === selectedAccount
+    ) ||
+    platformAccounts.find((a) => a.id === selectedAccount);
+  const hasContentOutsideWindow =
+    !!selectedPlatform &&
+    !!selectedAccount &&
+    !loadingOverview &&
+    (overview?.published_in_period || 0) === 0 &&
+    (selectedConnectedAccount?.posts_count || 0) > 0;
   const isNotConnected = selectedPlatform &&
     accounts.filter((a) => a.platform === selectedPlatform).length === 0;
   const SelectedIcon = selectedPlatform ? PLATFORM_ICONS[selectedPlatform] : null;
@@ -741,6 +752,15 @@ const Analytics = () => {
         {/* ━━━━━━━━━━━━━━━━━ OVERVIEW TAB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
+
+            {hasContentOutsideWindow && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                This {PLATFORM_LABELS[selectedPlatform] || selectedPlatform} account has{' '}
+                <span className="font-semibold">{fmt(selectedConnectedAccount?.posts_count || 0)}</span>{' '}
+                total {selectedPlatform === 'youtube' ? 'videos' : 'posts'}, but none fall within the selected{' '}
+                <span className="font-semibold">{days}-day</span> range. The Posts tab can still show recent account content outside this window.
+              </div>
+            )}
 
             {/* Engagement stat cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
