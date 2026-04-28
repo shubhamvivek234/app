@@ -109,7 +109,7 @@ def _pick_facebook_page(account: dict[str, Any], pages: list[dict[str, Any]]) ->
     return next((page for page in pages if str(page.get("id")) == platform_user_id), None) or pages[0]
 
 
-async def _fetch_account_feed_and_stats(account: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     platform = account.get("platform")
     platform_user_id = account.get("platform_user_id")
     encrypted_token = account.get("access_token")
@@ -150,16 +150,17 @@ async def _fetch_account_feed_and_stats(account: dict[str, Any]) -> tuple[list[d
         return feed, engagement
 
     if platform == "youtube":
+        from api.routes.accounts import _get_youtube_access_token
         from backend.app.social.google import GoogleAuth
 
         auth = GoogleAuth()
-        channel_id = str(platform_user_id)
-        if not channel_id.startswith("UC"):
-            try:
-                channel = await auth.get_channel_info(access_token)
-                channel_id = str(channel.get("id", channel_id))
-            except Exception as exc:
-                logger.warning("Failed to resolve YouTube channel id for analytics: %s", exc)
+        try:
+            channel = await auth.get_channel_info(access_token)
+        except Exception:
+            access_token = await _get_youtube_access_token(db, account, force_refresh=True)
+            channel = await auth.get_channel_info(access_token)
+
+        channel_id = str(channel.get("id") or platform_user_id)
         feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=50)
         engagement = await auth.fetch_youtube_engagement(access_token, channel_id)
         return feed, engagement
@@ -428,7 +429,7 @@ async def analytics_engagement(
         feed: list[dict[str, Any]] = []
         engagement: dict[str, Any] = {}
         if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-            feed, engagement = await _fetch_account_feed_and_stats(account)
+            feed, engagement = await _fetch_account_feed_and_stats(db, account)
 
         connected_accounts.append(_normalize_connected_account(account, engagement))
 
@@ -646,7 +647,7 @@ async def publish_feed(
         if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
             feed = []
         else:
-            feed, _ = await _fetch_account_feed_and_stats(account)
+            feed, _ = await _fetch_account_feed_and_stats(db, account)
 
         if not feed:
             feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=limit)

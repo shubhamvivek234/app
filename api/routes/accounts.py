@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import quote, urlencode, urlparse
 
@@ -177,7 +177,11 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
             from backend.app.social.google import GoogleAuth
 
             auth = GoogleAuth()
-            channel = await auth.get_channel_info(access_token)
+            try:
+                channel = await auth.get_channel_info(access_token)
+            except Exception:
+                access_token = await _get_youtube_access_token(db, doc, force_refresh=True)
+                channel = await auth.get_channel_info(access_token)
             engagement = await auth.fetch_youtube_engagement(access_token, channel.get("id", ""))
             snippet = channel.get("snippet", {})
             updates = {
@@ -234,6 +238,57 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
         logger.warning("Unable to hydrate %s account metadata for %s: %s", platform, platform_user_id, exc)
 
     return doc
+
+
+async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = False) -> str:
+    """Return a usable YouTube access token, refreshing it when needed."""
+    encrypted_access_token = doc.get("access_token")
+    if not encrypted_access_token:
+        raise ValueError("Missing YouTube access token")
+
+    access_token = decrypt(encrypted_access_token)
+    refresh_token_encrypted = doc.get("refresh_token")
+
+    expires_at = doc.get("expires_at") or doc.get("token_expiry")
+    is_expired = isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+    if not (force_refresh or is_expired):
+        return access_token
+
+    if not refresh_token_encrypted:
+        return access_token
+
+    refresh_token = decrypt(refresh_token_encrypted)
+
+    from backend.app.social.google import GoogleAuth
+
+    refreshed = await GoogleAuth().refresh_access_token(refresh_token)
+    new_access_token = refreshed.get("access_token")
+    if not new_access_token:
+        raise ValueError("Failed to refresh YouTube access token")
+
+    updates: dict[str, object] = {
+        "access_token": encrypt(new_access_token),
+        "token_error": None,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    expires_in = refreshed.get("expires_in")
+    if expires_in:
+        updates["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+    new_refresh_token = refreshed.get("refresh_token")
+    if new_refresh_token:
+        updates["refresh_token"] = encrypt(new_refresh_token)
+
+    await db.social_accounts.update_one(
+        {
+            "user_id": doc.get("user_id"),
+            "platform": "youtube",
+            "platform_user_id": doc.get("platform_user_id"),
+            "is_active": True,
+        },
+        {"$set": updates},
+    )
+    doc.update(updates)
+    return new_access_token
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_200_OK,
