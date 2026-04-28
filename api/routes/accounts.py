@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
 from api.deps import CurrentUser, DB, CacheRedis, require_permission
-from utils.encryption import encrypt
+from utils.encryption import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
@@ -28,11 +28,17 @@ _SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin
 class SocialAccountResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str
     account_id: str
     user_id: str
     platform: str
     platform_user_id: str | None = None
     platform_username: str | None = None
+    display_name: str | None = None
+    picture_url: str | None = None
+    followers_count: int | None = None
+    following_count: int | None = None
+    posts_count: int | None = None
     is_active: bool
     scopes: list[str] = []
     connected_at: datetime
@@ -97,10 +103,74 @@ async def list_accounts(
     user_id = current_user["user_id"]
     cursor = db.social_accounts.find(
         {"user_id": user_id, "is_active": True},
-        {"_id": 0, "access_token": 0, "refresh_token": 0},
+        {"_id": 0, "refresh_token": 0},
     )
     docs = await cursor.to_list(length=50)
-    return [SocialAccountResponse(**d) for d in docs]
+    response_docs: list[SocialAccountResponse] = []
+    for doc in docs:
+        doc = await _hydrate_social_account_metadata(db, doc)
+        account_identifier = doc.get("account_id") or doc.get("id")
+        if not account_identifier:
+            continue
+        response_docs.append(
+            SocialAccountResponse(
+                id=account_identifier,
+                account_id=account_identifier,
+                user_id=doc["user_id"],
+                platform=doc["platform"],
+                platform_user_id=doc.get("platform_user_id"),
+                platform_username=doc.get("platform_username"),
+                display_name=doc.get("display_name"),
+                picture_url=doc.get("picture_url"),
+                followers_count=doc.get("followers_count"),
+                following_count=doc.get("following_count"),
+                posts_count=doc.get("posts_count"),
+                is_active=doc.get("is_active", True),
+                scopes=doc.get("scopes", []),
+                connected_at=doc.get("connected_at"),
+                expires_at=doc.get("expires_at") or doc.get("token_expiry"),
+                token_error=doc.get("token_error"),
+            )
+        )
+    return response_docs
+
+
+async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
+    """Backfill light profile metadata for accounts created before we stored it."""
+    platform = doc.get("platform")
+    platform_user_id = doc.get("platform_user_id")
+    encrypted_token = doc.get("access_token")
+    if platform != "instagram" or not platform_user_id or not encrypted_token:
+        return doc
+
+    if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
+        return doc
+
+    try:
+        access_token = decrypt(encrypted_token)
+        from backend.app.social.instagram import InstagramAuth
+
+        auth = InstagramAuth()
+        profile = await auth.get_user_profile(access_token)
+        engagement = await auth.fetch_engagement(access_token, platform_user_id)
+        updates = {
+            "display_name": profile.get("name") or doc.get("platform_username"),
+            "picture_url": profile.get("profile_picture_url"),
+            "followers_count": engagement.get("followers"),
+            "following_count": engagement.get("following"),
+            "posts_count": engagement.get("posts_count"),
+        }
+        updates = {k: v for k, v in updates.items() if v is not None}
+        if updates:
+            await db.social_accounts.update_one(
+                {"user_id": doc.get("user_id"), "platform": platform, "platform_user_id": platform_user_id},
+                {"$set": updates},
+            )
+            doc.update(updates)
+    except Exception as exc:
+        logger.warning("Unable to hydrate Instagram account metadata for %s: %s", platform_user_id, exc)
+
+    return doc
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_200_OK,
@@ -568,15 +638,22 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
         {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")},
         {
             "$set": {
+                "id": account_id,
                 "account_id": account_id,
                 "user_id": user_id,
                 "platform": platform,
                 "platform_user_id": token_data.get("platform_user_id"),
                 "platform_username": token_data.get("username"),
+                "display_name": token_data.get("display_name"),
+                "picture_url": token_data.get("picture_url"),
+                "followers_count": token_data.get("followers_count"),
+                "following_count": token_data.get("following_count"),
+                "posts_count": token_data.get("posts_count"),
                 "access_token": encrypt(token_data["access_token"]),
                 "refresh_token": encrypt(token_data.get("refresh_token", "")),
                 "scopes": token_data.get("scopes", []),
                 "expires_at": token_data.get("expires_at"),
+                "token_expiry": token_data.get("expires_at"),
                 "is_active": True,
                 "connected_at": now,
             }
@@ -863,6 +940,7 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
             "refresh_token": tokens.get("refresh_token"),
             "platform_user_id": str(profile.get("sub", "")),
             "username": profile.get("name", profile.get("email", "")),
+            "display_name": profile.get("name", profile.get("email", "")),
             "scopes": ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
         }
@@ -893,6 +971,8 @@ async def _exchange_tiktok_code(code: str, code_verifier: str) -> dict | None:
             "refresh_token": token_data.get("refresh_token"),
             "platform_user_id": str(profile.get("id", "")),
             "username": profile.get("username") or profile.get("name") or profile.get("id", ""),
+            "display_name": profile.get("name") or profile.get("username") or profile.get("id", ""),
+            "picture_url": profile.get("picture_url"),
             "scopes": ["user.info.basic", "video.publish", "video.upload"],
             "expires_at": expires_at,
         }
@@ -945,6 +1025,10 @@ async def _exchange_instagram_code(code: str) -> dict | None:
             "refresh_token": None,
             "platform_user_id": platform_user_id,
             "username": username,
+            "display_name": profile.get("name") or username,
+            "picture_url": profile.get("profile_picture_url"),
+            "followers_count": profile.get("followers_count"),
+            "posts_count": profile.get("media_count"),
             "scopes": ["instagram_business_basic", "instagram_business_content_publish"],
             "expires_at": expires_at,
         }

@@ -119,7 +119,7 @@ async def get_user_profile(access_token: str) -> dict:
         resp = await client.get(
             f"{_GRAPH_URL}/me",
             params={
-                "fields": "id,name,username,profile_picture_url",
+                "fields": "id,name,username,profile_picture_url,followers_count,media_count",
                 "access_token": access_token,
             },
         )

@@ -248,9 +248,10 @@ export const getPublicCalendar = async (workspaceId) => {
 };
 
 // ── Publish Feed (Stub - to be implemented) ──
-export const getPublishFeed = async () => {
+export const getPublishFeed = async (params = {}) => {
   const response = await axios.get(`${API}/publish/feed`, {
     headers: getAuthHeaders(),
+    params,
   });
   return response.data;
 };
@@ -585,7 +586,7 @@ export const getAnalyticsOverview = async (params) => {
 
 export const getAnalyticsTimeline = async (params) => {
   const response = await axios.get(`${API}/analytics/timeline`, { headers: getAuthHeaders(), params });
-  return response.data;
+  return response.data?.timeline || [];
 };
 
 export const getAnalyticsEngagement = async (params) => {
