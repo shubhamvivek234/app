@@ -29,4 +29,8 @@ def _rate_limit_key(request: Request) -> str:
 limiter = Limiter(
     key_func=_rate_limit_key,
     storage_uri=os.environ.get("REDIS_CACHE_URL", "redis://localhost:6379/1"),
+    # Upstash quota exhaustion or transient Redis outages should not take auth
+    # and basic app navigation down. slowapi can transparently fall back to an
+    # in-memory limiter for the current process when the shared backend fails.
+    in_memory_fallback_enabled=True,
 )

@@ -9,6 +9,7 @@ from datetime import timedelta
 import firebase_admin.auth as fb_auth
 from fastapi import HTTPException, Request, Response, status
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
@@ -83,29 +84,30 @@ async def verify_session_cookie(request: Request) -> dict:
     jti = claims.get("jti") or claims.get("sub")
     uid = claims.get("uid", claims.get("sub"))
 
-    cache_redis = await get_cache_redis()
-
-    # Check individual JTI blocklist
-    if jti:
-        blocked = await cache_redis.get(f"jti_blocklist:{jti}")
-        if blocked:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session has been revoked",
-            )
-
-    # Check user-level blocklist (revoke_all_sessions)
-    if uid:
-        user_blocked = await cache_redis.get(f"jti_blocklist:uid:{uid}")
-        if user_blocked:
-            # Check if session was issued before the revocation timestamp
-            revoked_at = float(user_blocked)
-            issued_at = claims.get("iat", 0)
-            if issued_at <= revoked_at:
+    cache_redis = get_cache_redis()
+    try:
+        # Check individual JTI blocklist
+        if jti:
+            blocked = await cache_redis.get(f"jti_blocklist:{jti}")
+            if blocked:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="All sessions have been revoked",
+                    detail="Session has been revoked",
                 )
+        # Check user-level blocklist (revoke_all_sessions)
+        if uid:
+            user_blocked = await cache_redis.get(f"jti_blocklist:uid:{uid}")
+            if user_blocked:
+                # Check if session was issued before the revocation timestamp
+                revoked_at = float(user_blocked)
+                issued_at = claims.get("iat", 0)
+                if issued_at <= revoked_at:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="All sessions have been revoked",
+                    )
+    except RedisError as exc:
+        logger.warning("Skipping session blocklist check because cache Redis is unavailable: %s", exc)
 
     return claims
 
@@ -123,11 +125,14 @@ async def revoke_session(cache_redis: Redis, session_claims: dict) -> None:
     exp = session_claims.get("exp", 0)
     remaining_ttl = max(int(exp - time.time()), 1)
 
-    await cache_redis.setex(f"jti_blocklist:{jti}", remaining_ttl, "1")
-    logger.info(
-        "Session revoked: jti=%s uid=%s ttl=%d",
-        jti, session_claims.get("uid", "unknown"), remaining_ttl,
-    )
+    try:
+        await cache_redis.setex(f"jti_blocklist:{jti}", remaining_ttl, "1")
+        logger.info(
+            "Session revoked: jti=%s uid=%s ttl=%d",
+            jti, session_claims.get("uid", "unknown"), remaining_ttl,
+        )
+    except RedisError as exc:
+        logger.warning("Failed to persist revoked-session blocklist entry: %s", exc)
 
 
 async def revoke_all_sessions(cache_redis: Redis, uid: str) -> None:
@@ -145,9 +150,12 @@ async def revoke_all_sessions(cache_redis: Redis, uid: str) -> None:
 
     # Store revocation timestamp — sessions issued before this time are invalid.
     # TTL matches max session cookie lifetime (5 days).
-    await cache_redis.setex(
-        f"jti_blocklist:uid:{uid}",
-        _DEFAULT_EXPIRES_IN,
-        str(time.time()),
-    )
-    logger.info("All sessions revoked for uid=%s", uid)
+    try:
+        await cache_redis.setex(
+            f"jti_blocklist:uid:{uid}",
+            _DEFAULT_EXPIRES_IN,
+            str(time.time()),
+        )
+        logger.info("All sessions revoked for uid=%s", uid)
+    except RedisError as exc:
+        logger.warning("Failed to persist revoke-all-sessions marker for uid=%s: %s", uid, exc)

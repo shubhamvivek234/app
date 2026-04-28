@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 
 from api.deps import CurrentUser, DB, CacheRedis
 from api.limiter import limiter
@@ -74,7 +75,11 @@ async def _check_login_attempts(cache_redis, email: str, ip: str) -> None:
     """Raise 429 if too many failed login attempts for this email or IP."""
     email_key = f"login_attempts:{email}"
     ip_key = f"login_attempts:ip:{ip}"
-    email_count, ip_count = await cache_redis.mget(email_key, ip_key)
+    try:
+        email_count, ip_count = await cache_redis.mget(email_key, ip_key)
+    except RedisError as exc:
+        logger.warning("Skipping login-attempt check because cache Redis is unavailable: %s", exc)
+        return
     if email_count and int(email_count) >= _MAX_LOGIN_ATTEMPTS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -89,17 +94,23 @@ async def _check_login_attempts(cache_redis, email: str, ip: str) -> None:
 
 async def _record_failed_login(cache_redis, email: str, ip: str) -> None:
     """Increment failed login counters (per-email and per-IP) with TTL."""
-    pipe = cache_redis.pipeline()
-    pipe.incr(f"login_attempts:{email}")
-    pipe.expire(f"login_attempts:{email}", _LOGIN_LOCKOUT_SECONDS)
-    pipe.incr(f"login_attempts:ip:{ip}")
-    pipe.expire(f"login_attempts:ip:{ip}", _LOGIN_LOCKOUT_SECONDS)
-    await pipe.execute()
+    try:
+        pipe = cache_redis.pipeline()
+        pipe.incr(f"login_attempts:{email}")
+        pipe.expire(f"login_attempts:{email}", _LOGIN_LOCKOUT_SECONDS)
+        pipe.incr(f"login_attempts:ip:{ip}")
+        pipe.expire(f"login_attempts:ip:{ip}", _LOGIN_LOCKOUT_SECONDS)
+        await pipe.execute()
+    except RedisError as exc:
+        logger.warning("Skipping failed-login tracking because cache Redis is unavailable: %s", exc)
 
 
 async def _clear_login_attempts(cache_redis, email: str) -> None:
     """Clear per-email failed login counter on successful login."""
-    await cache_redis.delete(f"login_attempts:{email}")
+    try:
+        await cache_redis.delete(f"login_attempts:{email}")
+    except RedisError as exc:
+        logger.warning("Skipping login-attempt reset because cache Redis is unavailable: %s", exc)
 
 
 # ── /me ──────────────────────────────────────────────────────────────────────
@@ -318,8 +329,11 @@ async def logout(
     if jti:
         # Block JTI for the remainder of its TTL (Firebase tokens last 1 hour = 3600s)
         block_key = f"jti_blocklist:{jti}"
-        await cache_redis.setex(block_key, 3600, "1")
-        logger.info("JTI blocklisted on logout: user=%s", current_user["user_id"])
+        try:
+            await cache_redis.setex(block_key, 3600, "1")
+            logger.info("JTI blocklisted on logout: user=%s", current_user["user_id"])
+        except RedisError as exc:
+            logger.warning("Failed to persist logout JTI blocklist entry: %s", exc)
 
 
 # ── /workspace ────────────────────────────────────────────────────────────────
