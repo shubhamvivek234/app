@@ -140,26 +140,89 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
     platform = doc.get("platform")
     platform_user_id = doc.get("platform_user_id")
     encrypted_token = doc.get("access_token")
-    if platform != "instagram" or not platform_user_id or not encrypted_token:
-        return doc
-
-    if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
+    if not platform or not encrypted_token:
         return doc
 
     try:
         access_token = decrypt(encrypted_token)
-        from backend.app.social.instagram import InstagramAuth
+        updates: dict[str, object] = {}
 
-        auth = InstagramAuth()
-        profile = await auth.get_user_profile(access_token)
-        engagement = await auth.fetch_engagement(access_token, platform_user_id)
-        updates = {
-            "display_name": profile.get("name") or doc.get("platform_username"),
-            "picture_url": profile.get("profile_picture_url"),
-            "followers_count": engagement.get("followers"),
-            "following_count": engagement.get("following"),
-            "posts_count": engagement.get("posts_count"),
-        }
+        if platform == "instagram" and platform_user_id:
+            if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
+                return doc
+
+            from backend.app.social.instagram import InstagramAuth
+
+            auth = InstagramAuth()
+            profile = await auth.get_user_profile(access_token)
+            engagement = await auth.fetch_engagement(access_token, platform_user_id)
+            updates = {
+                "display_name": profile.get("name") or doc.get("platform_username"),
+                "picture_url": profile.get("profile_picture_url"),
+                "followers_count": engagement.get("followers"),
+                "following_count": engagement.get("following"),
+                "posts_count": engagement.get("posts_count"),
+            }
+
+        elif platform == "youtube":
+            needs_refresh = (
+                not str(platform_user_id or "").startswith("UC")
+                or not doc.get("picture_url")
+                or not doc.get("display_name")
+                or doc.get("followers_count") is None
+            )
+            if not needs_refresh:
+                return doc
+
+            from backend.app.social.google import GoogleAuth
+
+            auth = GoogleAuth()
+            channel = await auth.get_channel_info(access_token)
+            engagement = await auth.fetch_youtube_engagement(access_token, channel.get("id", ""))
+            snippet = channel.get("snippet", {})
+            updates = {
+                "platform_user_id": channel.get("id"),
+                "platform_username": snippet.get("title") or doc.get("platform_username"),
+                "display_name": snippet.get("title") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": snippet.get("thumbnails", {}).get("high", {}).get("url")
+                or snippet.get("thumbnails", {}).get("default", {}).get("url"),
+                "followers_count": engagement.get("subscribers"),
+                "posts_count": engagement.get("video_count"),
+            }
+
+        elif platform == "linkedin":
+            if doc.get("picture_url") and doc.get("display_name"):
+                return doc
+
+            from backend.app.social.linkedin import LinkedInAuth
+
+            profile = await LinkedInAuth().get_user_profile(access_token)
+            updates = {
+                "display_name": profile.get("name") or profile.get("email") or doc.get("display_name") or doc.get("platform_username"),
+                "platform_username": profile.get("name") or profile.get("email") or doc.get("platform_username"),
+                "picture_url": profile.get("picture"),
+            }
+
+        elif platform == "facebook":
+            from backend.app.social.facebook import FacebookAuth
+
+            auth = FacebookAuth()
+            pages = await auth.get_accounts(access_token)
+            if not pages:
+                return doc
+
+            selected_page = next((page for page in pages if str(page.get("id")) == str(platform_user_id)), None) or pages[0]
+            page_id = str(selected_page.get("id", ""))
+            page_token = selected_page.get("access_token") or access_token
+            engagement = await auth.fetch_page_engagement(page_token, page_id)
+            updates = {
+                "platform_user_id": page_id or platform_user_id,
+                "platform_username": selected_page.get("name") or doc.get("platform_username"),
+                "display_name": selected_page.get("name") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": selected_page.get("picture", {}).get("data", {}).get("url") or doc.get("picture_url"),
+                "followers_count": engagement.get("followers") or engagement.get("fans"),
+            }
+
         updates = {k: v for k, v in updates.items() if v is not None}
         if updates:
             await db.social_accounts.update_one(
@@ -168,7 +231,7 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
             )
             doc.update(updates)
     except Exception as exc:
-        logger.warning("Unable to hydrate Instagram account metadata for %s: %s", platform_user_id, exc)
+        logger.warning("Unable to hydrate %s account metadata for %s: %s", platform, platform_user_id, exc)
 
     return doc
 
@@ -678,7 +741,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
-        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/userinfo.profile",
+        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
         "twitter": "tweet.read tweet.write users.read offline.access",
         "linkedin": "openid profile email w_member_social",
         "tiktok": "video.upload,user.info.basic",
@@ -787,20 +850,45 @@ async def _exchange_facebook_code(code: str) -> dict | None:
             expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
                           if expires_in else None)
 
-            # Step 3 — profile
+            # Step 3 — profile / first page
             r3 = await client.get(
                 "https://graph.facebook.com/v18.0/me",
-                params={"fields": "id,name", "access_token": access_token},
+                params={"fields": "id,name,picture", "access_token": access_token},
             )
             r3.raise_for_status()
             profile = r3.json()
 
+        page_id = str(profile.get("id", ""))
+        page_name = profile.get("name", "")
+        picture_url = profile.get("picture", {}).get("data", {}).get("url")
+        followers_count = None
+        scopes = ["pages_show_list", "pages_manage_posts", "pages_read_engagement"]
+
+        try:
+            from backend.app.social.facebook import FacebookAuth
+
+            auth = FacebookAuth()
+            pages = await auth.get_accounts(access_token)
+            if pages:
+                selected_page = pages[0]
+                page_id = str(selected_page.get("id") or page_id)
+                page_name = selected_page.get("name") or page_name
+                picture_url = selected_page.get("picture", {}).get("data", {}).get("url") or picture_url
+                page_token = selected_page.get("access_token") or access_token
+                engagement = await auth.fetch_page_engagement(page_token, page_id)
+                followers_count = engagement.get("followers") or engagement.get("fans")
+        except Exception as exc:
+            logger.warning("Facebook page discovery failed during OAuth exchange: %s", exc)
+
         return {
             "access_token": access_token,
             "refresh_token": None,
-            "platform_user_id": str(profile.get("id", "")),
-            "username": profile.get("name", ""),
-            "scopes": ["pages_show_list", "pages_manage_posts"],
+            "platform_user_id": page_id,
+            "username": page_name,
+            "display_name": page_name,
+            "picture_url": picture_url,
+            "followers_count": followers_count,
+            "scopes": scopes,
             "expires_at": expires_at,
         }
     except Exception as exc:
@@ -842,20 +930,24 @@ async def _exchange_youtube_code(code: str, state_context: dict | None = None) -
             expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
                           if expires_in else None)
 
-            # Get user profile
-            r2 = await client.get(
-                "https://www.googleapis.com/oauth2/v2/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            r2.raise_for_status()
-            profile = r2.json()
+        from backend.app.social.google import GoogleAuth
+
+        auth = GoogleAuth()
+        channel = await auth.get_channel_info(access_token)
+        engagement = await auth.fetch_youtube_engagement(access_token, channel.get("id", ""))
+        snippet = channel.get("snippet", {})
 
         return {
             "access_token": access_token,
             "refresh_token": tokens.get("refresh_token"),
-            "platform_user_id": str(profile.get("id", "")),
-            "username": profile.get("name", profile.get("email", "")),
-            "scopes": ["youtube.upload"],
+            "platform_user_id": str(channel.get("id", "")),
+            "username": snippet.get("title", ""),
+            "display_name": snippet.get("title", ""),
+            "picture_url": snippet.get("thumbnails", {}).get("high", {}).get("url")
+            or snippet.get("thumbnails", {}).get("default", {}).get("url"),
+            "followers_count": engagement.get("subscribers"),
+            "posts_count": engagement.get("video_count"),
+            "scopes": ["youtube.upload", "youtube.readonly"],
             "expires_at": expires_at,
         }
     except Exception as exc:

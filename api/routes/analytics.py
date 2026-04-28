@@ -90,13 +90,23 @@ async def _load_social_accounts(
     platform: str | None = None,
     account_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    from api.routes.accounts import _hydrate_social_account_metadata
+
     query: dict[str, Any] = {"user_id": user_id, "is_active": True}
     if platform:
         query["platform"] = platform
     if account_id:
         query["$or"] = [{"account_id": account_id}, {"id": account_id}]
     cursor = db.social_accounts.find(query, {"_id": 0})
-    return await cursor.to_list(length=50)
+    docs = await cursor.to_list(length=50)
+    return [await _hydrate_social_account_metadata(db, doc) for doc in docs]
+
+
+def _pick_facebook_page(account: dict[str, Any], pages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not pages:
+        return None
+    platform_user_id = str(account.get("platform_user_id") or "")
+    return next((page for page in pages if str(page.get("id")) == platform_user_id), None) or pages[0]
 
 
 async def _fetch_account_feed_and_stats(account: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -126,17 +136,150 @@ async def _fetch_account_feed_and_stats(account: dict[str, Any]) -> tuple[list[d
         auth = FacebookAuth()
         feed = await auth.fetch_page_feed(access_token, platform_user_id, limit=50)
         engagement = await auth.fetch_page_engagement(access_token, platform_user_id)
+        if not feed and not engagement:
+            try:
+                pages = await auth.get_accounts(access_token)
+                selected_page = _pick_facebook_page(account, pages)
+                if selected_page:
+                    page_id = str(selected_page.get("id", "")) or platform_user_id
+                    page_token = selected_page.get("access_token") or access_token
+                    feed = await auth.fetch_page_feed(page_token, page_id, limit=50)
+                    engagement = await auth.fetch_page_engagement(page_token, page_id)
+            except Exception as exc:
+                logger.warning("Failed to resolve Facebook page analytics for %s: %s", platform_user_id, exc)
         return feed, engagement
 
     if platform == "youtube":
         from backend.app.social.google import GoogleAuth
 
         auth = GoogleAuth()
-        feed = await auth.fetch_youtube_feed(access_token, platform_user_id, limit=50)
-        engagement = await auth.fetch_youtube_engagement(access_token, platform_user_id)
+        channel_id = str(platform_user_id)
+        if not channel_id.startswith("UC"):
+            try:
+                channel = await auth.get_channel_info(access_token)
+                channel_id = str(channel.get("id", channel_id))
+            except Exception as exc:
+                logger.warning("Failed to resolve YouTube channel id for analytics: %s", exc)
+        feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=50)
+        engagement = await auth.fetch_youtube_engagement(access_token, channel_id)
         return feed, engagement
 
     return [], {}
+
+
+def _db_post_media_url(post: dict[str, Any]) -> str | None:
+    thumbnails = post.get("thumbnail_urls") or []
+    media_urls = post.get("media_urls") or []
+    return (thumbnails[0] if thumbnails else None) or (media_urls[0] if media_urls else None) or post.get("video_url")
+
+
+def _db_post_media_type(post: dict[str, Any]) -> str:
+    post_type = str(post.get("post_type") or "").lower()
+    if post.get("video_url") or "video" in post_type or post_type == "reel":
+        return "VIDEO"
+    if _db_post_media_url(post):
+        return "IMAGE"
+    return "TEXT"
+
+
+async def _fetch_db_published_posts(
+    db,
+    user_id: str,
+    account: dict[str, Any],
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    platform = account.get("platform")
+    account_identifier = account.get("account_id") or account.get("id")
+    if not platform or not account_identifier:
+        return []
+
+    cursor = db.posts.find(
+        {
+            "user_id": user_id,
+            "platforms": platform,
+            "$or": [{"social_account_ids": account_identifier}, {"account_ids": account_identifier}],
+            "status": {"$in": ["published", "partial"]},
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "content": 1,
+            "media_urls": 1,
+            "thumbnail_urls": 1,
+            "video_url": 1,
+            "post_type": 1,
+            "published_at": 1,
+            "updated_at": 1,
+            "platform_results": 1,
+            "platform_post_urls": 1,
+        },
+    ).sort("updated_at", -1)
+
+    docs = await cursor.to_list(length=limit)
+    feed: list[dict[str, Any]] = []
+    for post in docs:
+        platform_result = (post.get("platform_results") or {}).get(platform, {})
+        if post.get("status") == "partial" and platform_result.get("status") not in {"success", "published"}:
+            continue
+        feed.append(
+            {
+                "id": platform_result.get("platform_post_id") or post.get("id"),
+                "content": post.get("content", ""),
+                "media_url": _db_post_media_url(post),
+                "media_type": _db_post_media_type(post),
+                "timestamp": platform_result.get("published_at") or post.get("published_at") or post.get("updated_at"),
+                "likes": 0,
+                "comments_count": 0,
+                "shares": 0,
+                "views": 0,
+                "permalink": platform_result.get("post_url") or (post.get("platform_post_urls") or {}).get(platform),
+                "platform": platform,
+            }
+        )
+    return feed
+
+
+def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, Any]) -> dict[str, Any]:
+    platform = account.get("platform")
+    followers_count = next(
+        (
+            value
+            for value in (
+                engagement.get("followers"),
+                engagement.get("fans"),
+                engagement.get("subscribers"),
+                account.get("followers_count"),
+            )
+            if value is not None
+        ),
+        None,
+    )
+    following_count = next(
+        (value for value in (engagement.get("following"), account.get("following_count")) if value is not None),
+        None,
+    )
+    posts_count = next(
+        (value for value in (engagement.get("posts_count"), engagement.get("video_count"), account.get("posts_count")) if value is not None),
+        None,
+    )
+    impressions = engagement.get("impressions")
+    if impressions is None and platform == "youtube":
+        impressions = engagement.get("total_views")
+
+    return {
+        "id": account.get("account_id") or account.get("id"),
+        "account_id": account.get("account_id") or account.get("id"),
+        "platform": platform,
+        "platform_username": account.get("platform_username"),
+        "picture_url": account.get("picture_url"),
+        "display_name": account.get("display_name"),
+        "followers_count": followers_count,
+        "following_count": following_count,
+        "posts_count": posts_count,
+        "impressions": impressions,
+        "reach": engagement.get("reach"),
+        "profile_views": engagement.get("profile_views"),
+    }
 
 
 def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
@@ -282,35 +425,25 @@ async def analytics_engagement(
 
     for account in accounts:
         plat = account.get("platform")
-        if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-            continue
+        feed: list[dict[str, Any]] = []
+        engagement: dict[str, Any] = {}
+        if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+            feed, engagement = await _fetch_account_feed_and_stats(account)
 
-        feed, engagement = await _fetch_account_feed_and_stats(account)
-        account_identifier = account.get("account_id") or account.get("id")
-        connected_accounts.append(
-            {
-                "id": account_identifier,
-                "account_id": account_identifier,
-                "platform": plat,
-                "platform_username": account.get("platform_username"),
-                "picture_url": account.get("picture_url"),
-                "display_name": account.get("display_name"),
-                "followers_count": engagement.get("followers") or account.get("followers_count"),
-                "following_count": engagement.get("following") or account.get("following_count"),
-                "posts_count": engagement.get("posts_count") or account.get("posts_count"),
-                "impressions": engagement.get("impressions"),
-                "reach": engagement.get("reach"),
-                "profile_views": engagement.get("profile_views"),
-            }
-        )
+        connected_accounts.append(_normalize_connected_account(account, engagement))
+
+        if not feed:
+            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=50)
 
         if not feed and not engagement:
-            errors.append(
-                {
-                    "account": account.get("platform_username") or account_identifier or plat,
-                    "error": "Unable to fetch recent analytics from the platform API.",
-                }
-            )
+            account_identifier = account.get("account_id") or account.get("id")
+            if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+                errors.append(
+                    {
+                        "account": account.get("platform_username") or account_identifier or plat,
+                        "error": "Unable to fetch recent analytics from the platform API.",
+                    }
+                )
             continue
 
         filtered_feed: list[dict[str, Any]] = []
@@ -372,7 +505,7 @@ async def analytics_engagement(
 
     message = None
     if platform and platform not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-        message = f"{platform.title()} account-level analytics are not available yet."
+        message = f"{platform.title()} account-level engagement is limited by the platform API. Published post history is shown where available."
     elif not top_posts and not errors:
         message = "No recent post-level engagement data found for the selected period."
 
@@ -511,20 +644,17 @@ async def publish_feed(
         )
 
         if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-            errors.append(
-                {
-                    "account": account.get("platform_username") or account_identifier or plat or "unknown",
-                    "error": f"{plat.title()} post feed is not available yet.",
-                }
-            )
-            continue
+            feed = []
+        else:
+            feed, _ = await _fetch_account_feed_and_stats(account)
 
-        feed, _ = await _fetch_account_feed_and_stats(account)
+        if not feed:
+            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=limit)
         if not feed:
             errors.append(
                 {
                     "account": account.get("platform_username") or account_identifier or plat or "unknown",
-                    "error": "No recent posts were returned from the platform API.",
+                    "error": "No recent posts were returned from the platform API or local publish history.",
                 }
             )
             continue
