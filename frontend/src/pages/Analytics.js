@@ -66,7 +66,7 @@ const PLATFORM_ICONS = {
 const PLATFORM_METRICS = {
   instagram: { likes: true,  comments: true,  shares: false, views: false },
   facebook:  { likes: true,  comments: true,  shares: true,  views: false },
-  twitter:   { likes: true,  comments: true,  shares: true,  views: true  },
+  twitter:   { likes: true,  comments: true,  shares: true,  views: false },
   tiktok:    { likes: true,  comments: true,  shares: true,  views: true  },
   threads:   { likes: true,  comments: true,  shares: true,  views: true  },
   reddit:    { likes: true,  comments: true,  shares: false, views: true  },
@@ -87,6 +87,8 @@ const ALL_PLATFORMS = [
 const PLATFORM_NOTICES = {
   linkedin: "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
   snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
+  twitter: 'X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.',
+  threads: 'Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.',
   discord: 'Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.',
   tiktok: 'TikTok post analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.',
   pinterest: 'Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.',

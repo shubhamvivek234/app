@@ -157,23 +157,26 @@ class TwitterAuth:
                 return []
 
             media_map = {}
+            media_types = {}
             for m in response.json().get("includes", {}).get("media", []):
                 media_map[m.get("media_key")] = m.get("url") or m.get("preview_image_url")
+                media_types[m.get("media_key")] = m.get("type")
 
             posts = []
             for t in response.json().get("data", []):
                 metrics = t.get("public_metrics", {})
                 media_keys = t.get("attachments", {}).get("media_keys", [])
                 media_url = media_map.get(media_keys[0]) if media_keys else None
+                media_kind = media_types.get(media_keys[0]) if media_keys else None
                 posts.append({
                     "id": t.get("id"),
                     "content": t.get("text", ""),
                     "media_url": media_url,
-                    "media_type": "IMAGE",
+                    "media_type": "VIDEO" if media_kind == "video" else ("IMAGE" if media_url else "TEXT"),
                     "timestamp": t.get("created_at"),
                     "likes": metrics.get("like_count", 0),
                     "comments_count": metrics.get("reply_count", 0),
-                    "retweets": metrics.get("retweet_count", 0),
+                    "shares": metrics.get("retweet_count", 0),
                     "permalink": f"https://twitter.com/i/status/{t['id']}",
                     "platform": "twitter",
                 })
@@ -194,6 +197,6 @@ class TwitterAuth:
             return {
                 "followers": metrics.get("followers_count", 0),
                 "following": metrics.get("following_count", 0),
-                "tweet_count": metrics.get("tweet_count", 0),
+                "posts_count": metrics.get("tweet_count", 0),
                 "platform": "twitter",
             }

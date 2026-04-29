@@ -21,7 +21,7 @@ from utils.encryption import decrypt, encrypt
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
 
-_SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok"}
+_SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
 
 # ── Response models (access_token / refresh_token intentionally absent) ───────
 
@@ -208,6 +208,48 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
                 "picture_url": profile.get("picture"),
             }
 
+        elif platform == "twitter":
+            needs_refresh = (
+                not doc.get("picture_url")
+                or not doc.get("display_name")
+                or doc.get("followers_count") is None
+            )
+            if not needs_refresh:
+                return doc
+
+            from backend.app.social.twitter import TwitterAuth
+
+            auth = TwitterAuth()
+            try:
+                profile = await auth.get_user_profile(access_token)
+            except Exception:
+                access_token = await _get_twitter_access_token(db, doc, force_refresh=True)
+                profile = await auth.get_user_profile(access_token)
+            engagement = await auth.fetch_engagement(access_token, str(profile.get("id") or platform_user_id))
+            updates = {
+                "platform_user_id": str(profile.get("id") or platform_user_id or ""),
+                "platform_username": profile.get("username") or doc.get("platform_username"),
+                "display_name": profile.get("name") or doc.get("display_name") or profile.get("username") or doc.get("platform_username"),
+                "picture_url": profile.get("profile_image_url") or doc.get("picture_url"),
+                "followers_count": engagement.get("followers"),
+                "following_count": engagement.get("following"),
+                "posts_count": engagement.get("posts_count"),
+            }
+
+        elif platform == "threads":
+            if doc.get("picture_url") and doc.get("display_name"):
+                return doc
+
+            from backend.app.social.threads import ThreadsAuth
+
+            profile = await ThreadsAuth().get_user_profile(access_token)
+            updates = {
+                "platform_user_id": str(profile.get("id") or platform_user_id or ""),
+                "platform_username": profile.get("username") or doc.get("platform_username"),
+                "display_name": profile.get("name") or doc.get("display_name") or profile.get("username") or doc.get("platform_username"),
+                "picture_url": profile.get("threads_profile_picture_url") or doc.get("picture_url"),
+            }
+
         elif platform == "facebook":
             from backend.app.social.facebook import FacebookAuth
 
@@ -354,6 +396,61 @@ async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = Fal
         {
             "user_id": doc.get("user_id"),
             "platform": "youtube",
+            "platform_user_id": doc.get("platform_user_id"),
+            "is_active": True,
+        },
+        {"$set": updates},
+    )
+    doc.update(updates)
+    return new_access_token
+
+
+async def _get_twitter_access_token(db: DB, doc: dict, force_refresh: bool = False) -> str:
+    """Return a usable Twitter access token, refreshing it when needed."""
+    encrypted_access_token = doc.get("access_token")
+    if not encrypted_access_token:
+        raise ValueError("Missing Twitter access token")
+
+    access_token = decrypt(encrypted_access_token)
+    refresh_token_encrypted = doc.get("refresh_token")
+
+    expires_at = doc.get("expires_at") or doc.get("token_expiry")
+    is_expired = isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+    if not (force_refresh or is_expired):
+        return access_token
+
+    if not refresh_token_encrypted:
+        return access_token
+
+    try:
+        refresh_token = decrypt(refresh_token_encrypted)
+    except Exception:
+        return access_token
+
+    from backend.app.social.twitter import TwitterAuth
+
+    refreshed = await TwitterAuth().refresh_token(refresh_token)
+    new_access_token = refreshed.get("access_token")
+    if not new_access_token:
+        raise ValueError("Failed to refresh Twitter access token")
+
+    updates: dict[str, object] = {
+        "access_token": encrypt(new_access_token),
+        "token_error": None,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    expires_in = refreshed.get("expires_in")
+    if expires_in:
+        updates["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        updates["token_expiry"] = updates["expires_at"]
+    new_refresh_token = refreshed.get("refresh_token")
+    if new_refresh_token:
+        updates["refresh_token"] = encrypt(new_refresh_token)
+
+    await db.social_accounts.update_one(
+        {
+            "user_id": doc.get("user_id"),
+            "platform": "twitter",
             "platform_user_id": doc.get("platform_user_id"),
             "is_active": True,
         },
@@ -864,6 +961,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "twitter": "https://twitter.com/i/oauth2/authorize",
         "linkedin": "https://www.linkedin.com/oauth/v2/authorization",
         "tiktok": "https://www.tiktok.com/v2/auth/authorize/",
+        "threads": "https://threads.net/oauth/authorize",
     }
     
     scopes = {
@@ -872,15 +970,20 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "twitter": "tweet.read tweet.write users.read offline.access",
         "linkedin": "openid profile email w_member_social",
         "tiktok": "video.upload,user.info.basic",
+        "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
     }
     # Some providers use APP_ID naming instead of CLIENT_ID.
     if platform == "youtube":
         client_id_env = "GOOGLE_CLIENT_ID"
     elif platform == "facebook":
         client_id_env = "FACEBOOK_APP_ID"
+    elif platform == "threads":
+        client_id_env = "THREADS_APP_ID"
     else:
         client_id_env = f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
+    if platform == "threads" and not client_id:
+        client_id = os.environ.get("FACEBOOK_APP_ID", "")
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
     if not client_id:
         raise ValueError(f"OAuth not configured for platform '{platform}': {client_id_env} env var is missing")
@@ -891,6 +994,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "twitter": "TWITTER_REDIRECT_URI",
         "linkedin": "LINKEDIN_REDIRECT_URI",
         "tiktok": "TIKTOK_REDIRECT_URI",
+        "threads": "THREADS_REDIRECT_URI",
     }
     redirect_uri = os.environ.get(
         redirect_uri_env_map.get(platform, "OAUTH_REDIRECT_URI"),
@@ -931,6 +1035,8 @@ async def _exchange_code_for_tokens(
         return await _exchange_linkedin_code(code)
     if platform == "tiktok":
         return await _exchange_tiktok_code(code, code_verifier or "")
+    if platform == "threads":
+        return await _exchange_threads_code(code)
     logger.warning("Token exchange not implemented for platform=%s", platform)
     return None
 
@@ -1115,6 +1221,7 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
             r2 = await client.get(
                 "https://api.twitter.com/2/users/me",
                 headers={"Authorization": f"Bearer {access_token}"},
+                params={"user.fields": "id,name,username,profile_image_url"},
             )
             r2.raise_for_status()
             user_data = r2.json().get("data", {})
@@ -1128,11 +1235,49 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
             "refresh_token": tokens.get("refresh_token"),
             "platform_user_id": str(user_data.get("id", "")),
             "username": user_data.get("username", user_data.get("name", "")),
-            "scopes": ["tweet.read", "tweet.write"],
+            "display_name": user_data.get("name") or user_data.get("username"),
+            "picture_url": user_data.get("profile_image_url"),
+            "scopes": ["tweet.read", "tweet.write", "users.read", "offline.access"],
             "expires_at": expires_at,
         }
     except Exception as exc:
         logger.error("Twitter token exchange failed: %s", exc)
+        return None
+
+
+async def _exchange_threads_code(code: str) -> dict | None:
+    """Threads OAuth: exchange code for access token and fetch profile metadata."""
+    from backend.app.social.threads import ThreadsAuth
+
+    try:
+        auth = ThreadsAuth()
+        short_lived = await auth.exchange_code_for_token(code)
+        short_token = short_lived.get("access_token")
+        if not short_token:
+            logger.error("Threads token missing: %s", short_lived)
+            return None
+
+        long_lived = await auth.get_long_lived_token(short_token)
+        access_token = long_lived.get("access_token", short_token)
+        expires_in = long_lived.get("expires_in")
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+            if expires_in else None
+        )
+        profile = await auth.get_user_profile(access_token)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": None,
+            "platform_user_id": str(profile.get("id", "")),
+            "username": profile.get("username") or profile.get("name") or profile.get("id", ""),
+            "display_name": profile.get("name") or profile.get("username") or profile.get("id", ""),
+            "picture_url": profile.get("threads_profile_picture_url"),
+            "scopes": ["threads_basic", "threads_content_publish", "threads_manage_insights", "threads_manage_replies"],
+            "expires_at": expires_at,
+        }
+    except Exception as exc:
+        logger.error("Threads token exchange failed: %s", exc)
         return None
 
 

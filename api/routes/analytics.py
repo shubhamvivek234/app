@@ -15,6 +15,14 @@ _PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
     "instagram": {"live_feed": True},
     "facebook": {"live_feed": True},
     "youtube": {"live_feed": True},
+    "twitter": {
+        "live_feed": True,
+        "message": "X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.",
+    },
+    "threads": {
+        "live_feed": True,
+        "message": "Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.",
+    },
     "bluesky": {
         "live_feed": True,
         "message": "Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.",
@@ -206,6 +214,33 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
         engagement = await auth.fetch_youtube_engagement(access_token, channel_id)
         return [_standardize_feed_post(post) for post in feed], engagement
 
+    if platform == "twitter":
+        from api.routes.accounts import _get_twitter_access_token
+        from backend.app.social.twitter import TwitterAuth
+
+        auth = TwitterAuth()
+        try:
+            profile = await auth.get_user_profile(access_token)
+        except Exception:
+            access_token = await _get_twitter_access_token(db, account, force_refresh=True)
+            profile = await auth.get_user_profile(access_token)
+
+        twitter_user_id = str(profile.get("id") or platform_user_id)
+        feed = await auth.fetch_tweets(access_token, twitter_user_id, limit=50)
+        engagement = await auth.fetch_engagement(access_token, twitter_user_id)
+        return [_standardize_feed_post(post) for post in feed], engagement
+
+    if platform == "threads":
+        from backend.app.social.threads import ThreadsAuth
+
+        auth = ThreadsAuth()
+        profile = await auth.get_user_profile(access_token)
+        threads_user_id = str(profile.get("id") or platform_user_id)
+        feed = await auth.fetch_posts(access_token, threads_user_id, limit=50)
+        return [_standardize_feed_post(post) for post in feed], {
+            "display_name": profile.get("name") or account.get("display_name") or account.get("platform_username"),
+        }
+
     if platform == "bluesky":
         from backend.app.social.bluesky import BlueskyAuth
 
@@ -389,9 +424,12 @@ def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
         "likes": post.get("likes", metrics.get("likes")),
         "comments_count": post.get(
             "comments_count",
-            metrics.get("comments_count", metrics.get("comments", metrics.get("replies"))),
+            post.get("replies", metrics.get("comments_count", metrics.get("comments", metrics.get("replies")))),
         ),
-        "shares": post.get("shares", metrics.get("shares", metrics.get("reblogs", metrics.get("reposts")))),
+        "shares": post.get(
+            "shares",
+            post.get("retweets", metrics.get("shares", metrics.get("reblogs", metrics.get("reposts", metrics.get("retweet_count"))))),
+        ),
         "views": post.get("views", metrics.get("views", metrics.get("impressions"))),
     }
 
