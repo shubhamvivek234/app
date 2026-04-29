@@ -16,9 +16,10 @@ import {
 import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
+  FaDiscord,
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown,
 } from 'react-icons/fa';
-import { SiThreads, SiBluesky } from 'react-icons/si';
+import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import { format, parseISO, isValid } from 'date-fns';
 
 // ── Platform config ────────────────────────────────────────────────────────────
@@ -34,13 +35,15 @@ const PLATFORM_COLORS = {
   bluesky:   '#0085FF',
   reddit:    '#FF4500',
   snapchat:  '#FFFC00',
+  discord:   '#5865F2',
+  mastodon:  '#6364FF',
 };
 
 const PLATFORM_LABELS = {
   instagram: 'Instagram', twitter: 'Twitter / X', facebook: 'Facebook',
   linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok',
   pinterest: 'Pinterest', threads: 'Threads', bluesky: 'Bluesky',
-  reddit: 'Reddit', snapchat: 'Snapchat',
+  reddit: 'Reddit', snapchat: 'Snapchat', discord: 'Discord', mastodon: 'Mastodon',
 };
 
 const PLATFORM_ICONS = {
@@ -55,6 +58,8 @@ const PLATFORM_ICONS = {
   bluesky:   SiBluesky,
   reddit:    FaReddit,
   snapchat:  FaSnapchat,
+  discord:   FaDiscord,
+  mastodon:  SiMastodon,
 };
 
 // Metrics that each platform supports (false = not available from API)
@@ -70,12 +75,24 @@ const PLATFORM_METRICS = {
   linkedin:  { likes: false, comments: false, shares: false, views: false },
   bluesky:   { likes: true,  comments: true,  shares: true,  views: false },
   snapchat:  { likes: false, comments: false, shares: false, views: false },
+  discord:   { likes: false, comments: false, shares: false, views: false },
+  mastodon:  { likes: true,  comments: true,  shares: true,  views: false },
 };
 
 const ALL_PLATFORMS = [
   'instagram', 'facebook', 'twitter', 'linkedin', 'youtube',
-  'tiktok', 'pinterest', 'threads', 'bluesky', 'snapchat', 'reddit',
+  'tiktok', 'pinterest', 'threads', 'bluesky', 'snapchat', 'reddit', 'discord', 'mastodon',
 ];
+
+const PLATFORM_NOTICES = {
+  linkedin: "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
+  snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
+  discord: 'Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.',
+  tiktok: 'TikTok post analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.',
+  pinterest: 'Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.',
+  bluesky: 'Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.',
+  mastodon: 'Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.',
+};
 
 const DAYS_OPTIONS = [
   { label: '7d',  value: 7  },
@@ -98,6 +115,16 @@ const fmt = (n) => {
   if (n >= 1000)    return (n / 1000).toFixed(1) + 'K';
   return String(n);
 };
+
+const supportedMetricsFor = (platform) => {
+  if (!platform) return { likes: true, comments: true, shares: true, views: true };
+  return PLATFORM_METRICS[platform] || { likes: false, comments: false, shares: false, views: false };
+};
+
+const metricIsSupported = (platform, metric) => !!supportedMetricsFor(platform)?.[metric];
+
+const hasAnyEngagementMetrics = (platform) =>
+  ['likes', 'comments', 'shares', 'views'].some((metric) => metricIsSupported(platform, metric));
 
 const parseDate = (val) => {
   if (!val) return null;
@@ -435,9 +462,6 @@ const Analytics = () => {
   const [demographics, setDemographics]             = useState(null);
   const [loadingDemos, setLoadingDemos]             = useState(false);
 
-  // Unique platforms from connected accounts
-  const connectedPlatforms = [...new Set(accounts.map((a) => a.platform))];
-
   // Fetch accounts once
   useEffect(() => {
     getSocialAccounts()
@@ -612,6 +636,37 @@ const Analytics = () => {
     accounts.filter((a) => a.platform === selectedPlatform).length === 0;
   const SelectedIcon = selectedPlatform ? PLATFORM_ICONS[selectedPlatform] : null;
   const selectedColor = selectedPlatform ? (PLATFORM_COLORS[selectedPlatform] || '#6b7280') : null;
+  const selectedPlatformMetrics = supportedMetricsFor(selectedPlatform);
+  const selectedPlatformNotice = selectedPlatform
+    ? (engagement?.message || PLATFORM_NOTICES[selectedPlatform] || null)
+    : null;
+  const showEngagementInsights = !selectedPlatform || hasAnyEngagementMetrics(selectedPlatform);
+  const visibleMetricCards = [
+    { key: 'likes', label: 'Total Likes', icon: FaHeart, value: engagement?.totals?.total_likes, color: 'bg-rose-500' },
+    { key: 'comments', label: 'Comments', icon: FaComment, value: engagement?.totals?.total_comments, color: 'bg-blue-500' },
+    { key: 'shares', label: 'Shares', icon: FaShare, value: engagement?.totals?.total_shares, color: 'bg-emerald-500' },
+    { key: 'views', label: 'Views', icon: FaEye, value: engagement?.totals?.total_views, color: 'bg-purple-500' },
+  ].filter((metric) => !selectedPlatform || selectedPlatformMetrics[metric.key]);
+  const visibleSortOptions = SORT_OPTIONS.filter((opt) => opt.value === 'date' || !selectedPlatform || selectedPlatformMetrics[opt.value]);
+  const topPostMetricLabel = selectedPlatformNotice || (!showEngagementInsights ? 'This platform does not expose post engagement metrics through the current integration.' : null);
+  const summaryMetricColumns = [
+    { key: 'likes', label: 'Likes' },
+    { key: 'comments', label: 'Comments' },
+    { key: 'shares', label: 'Shares' },
+    { key: 'views', label: 'Views' },
+  ].filter(({ key }) => {
+    if (!overview?.platform_counts) return true;
+    return Object.keys(overview.platform_counts).some((plat) => metricIsSupported(plat, key));
+  });
+  const showEngRateColumn = !!overview?.platform_counts && Object.keys(overview.platform_counts).some((plat) =>
+    ['likes', 'comments', 'shares'].some((metric) => metricIsSupported(plat, metric))
+  );
+
+  useEffect(() => {
+    if (!visibleSortOptions.some((opt) => opt.value === postsSort)) {
+      setPostsSort('date');
+    }
+  }, [postsSort, visibleSortOptions]);
 
   return (
     <DashboardLayout hideSidebar>
@@ -713,23 +768,13 @@ const Analytics = () => {
         ) : (
           <>
 
-        {/* ── LinkedIn API limitation notice ──────────────────────── */}
-        {selectedPlatform === 'linkedin' && (
+        {/* ── Platform analytics notice ───────────────────────────── */}
+        {selectedPlatformNotice && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             <svg className="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
-            LinkedIn's API does not provide engagement metrics (likes, comments, shares) for organic posts. Post counts and publishing data are available.
-          </div>
-        )}
-
-        {/* ── Snapchat API limitation notice ──────────────────────── */}
-        {selectedPlatform === 'snapchat' && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <svg className="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-            </svg>
-            Snapchat's API does not support fetching organic post analytics. Only Snap Ads metrics are available through their Marketing API.
+            {selectedPlatformNotice}
           </div>
         )}
 
@@ -762,8 +807,18 @@ const Analytics = () => {
               </div>
             )}
 
+            {!!engagement?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {engagement.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Engagement stat cards */}
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+            <div className={`grid gap-4 ${visibleMetricCards.length >= 4 ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
               <EngagementCard
                 icon={FaFileAlt}
                 label="Posts Published"
@@ -771,38 +826,20 @@ const Analytics = () => {
                 color="bg-indigo-500"
                 loading={loadingOverview}
               />
-              <EngagementCard
-                icon={FaHeart}
-                label="Total Likes"
-                value={engagement?.totals?.total_likes}
-                color="bg-rose-500"
-                loading={loadingEngagement}
-              />
-              <EngagementCard
-                icon={FaComment}
-                label="Comments"
-                value={engagement?.totals?.total_comments}
-                color="bg-blue-500"
-                loading={loadingEngagement}
-              />
-              <EngagementCard
-                icon={FaShare}
-                label="Shares"
-                value={engagement?.totals?.total_shares}
-                color="bg-emerald-500"
-                loading={loadingEngagement}
-              />
-              <EngagementCard
-                icon={FaEye}
-                label="Views"
-                value={engagement?.totals?.total_views}
-                color="bg-purple-500"
-                loading={loadingEngagement}
-              />
+              {visibleMetricCards.map(({ key, label, icon, value, color }) => (
+                <EngagementCard
+                  key={key}
+                  icon={icon}
+                  label={label}
+                  value={value}
+                  color={color}
+                  loading={loadingEngagement}
+                />
+              ))}
             </div>
 
             {/* Engagement insights row */}
-            {!loadingEngagement && engagement?.totals?.total_posts > 0 && (
+            {!loadingEngagement && engagement?.totals?.total_posts > 0 && showEngagementInsights && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Average engagement per post */}
                 <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
@@ -862,7 +899,7 @@ const Analytics = () => {
             )}
 
             {/* Charts row */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className={`grid grid-cols-1 gap-4 ${showEngagementInsights ? 'xl:grid-cols-2' : ''}`}>
 
               {/* Posts Over Time */}
               <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
@@ -890,35 +927,47 @@ const Analytics = () => {
                 )}
               </div>
 
-              {/* Platform Engagement Breakdown */}
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
-                {loadingEngagement ? (
-                  <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
-                ) : platformEngData.length === 0 ? (
-                  <div className="h-48 flex items-center justify-center text-sm text-gray-400">No engagement data</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={platformEngData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="platform"
-                        tick={{ fontSize: 11, fill: '#9ca3af' }}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(v) => PLATFORM_LABELS[v]?.split(' ')[0] || v}
-                      />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
-                      <Tooltip content={<EngagementTooltip />} />
-                      <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                      <Bar dataKey="likes" name="Likes" stackId="engagement" fill="#ef4444" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="comments" name="Comments" stackId="engagement" fill="#3b82f6" />
-                      <Bar dataKey="shares" name="Shares" stackId="engagement" fill="#22c55e" />
-                      <Bar dataKey="views" name="Views" stackId="engagement" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
+              {showEngagementInsights && (
+                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
+                  {loadingEngagement ? (
+                    <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
+                  ) : platformEngData.length === 0 ? (
+                    <div className="h-48 flex items-center justify-center text-sm text-gray-400">No engagement data</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={platformEngData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis
+                          dataKey="platform"
+                          tick={{ fontSize: 11, fill: '#9ca3af' }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => PLATFORM_LABELS[v]?.split(' ')[0] || v}
+                        />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
+                        <Tooltip content={<EngagementTooltip />} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                        {summaryMetricColumns.map(({ key, label }, index) => (
+                          <Bar
+                            key={key}
+                            dataKey={key}
+                            name={label}
+                            stackId="engagement"
+                            fill={
+                              key === 'likes' ? '#ef4444'
+                                : key === 'comments' ? '#3b82f6'
+                                : key === 'shares' ? '#22c55e'
+                                : '#f59e0b'
+                            }
+                            radius={index === summaryMetricColumns.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Post type breakdown */}
@@ -955,60 +1004,62 @@ const Analytics = () => {
               </div>
             )}
 
-            {/* Top performing posts */}
-            <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
-              {loadingEngagement ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-lg" />
-                  ))}
-                </div>
-              ) : !engagement?.top_posts?.length ? (
-                <div className="py-8 text-center text-sm text-gray-400">
-                  No posts with engagement data yet. Connect accounts and publish posts to see results here.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {(engagement?.top_posts || []).slice(0, 5).map((post, i) => {
-                    const plat = post.platform || 'unknown';
-                    const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-                    const color = PLATFORM_COLORS[plat] || '#6b7280';
-                    const m = post.metrics || {};
-                    const dt = parseDate(post.published_at);
-                    return (
-                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                        <span className="w-5 text-center text-xs font-bold text-gray-400">{i + 1}</span>
-                        <Icon style={{ color, flexShrink: 0 }} className="text-base" />
-                        {post.media_url && (
-                          <img
-                            src={post.media_url}
-                            alt=""
-                            className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
-                        )}
-                        <p className="flex-1 text-sm text-gray-700 truncate min-w-0">
-                          {post.content || '(no caption)'}
-                        </p>
-                        <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500">
-                          {m.likes != null && <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(m.likes)}</span>}
-                          {m.comments != null && <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(m.comments)}</span>}
-                          {m.shares != null && <span className="flex items-center gap-1"><FaShare className="text-green-400" />{fmt(m.shares)}</span>}
-                          {m.views != null && <span className="flex items-center gap-1"><FaEye className="text-purple-400" />{fmt(m.views)}</span>}
-                          {dt && <span className="text-gray-400 hidden sm:block">{format(dt, 'MMM d')}</span>}
-                          {post.post_url && (
-                            <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:text-indigo-700">
-                              <FaExternalLinkAlt />
-                            </a>
+            {showEngagementInsights && (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
+                {loadingEngagement ? (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-lg" />
+                    ))}
+                  </div>
+                ) : !engagement?.top_posts?.length ? (
+                  <div className="py-8 text-center text-sm text-gray-400">
+                    {topPostMetricLabel || 'No posts with engagement data yet. Connect accounts and publish posts to see results here.'}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(engagement?.top_posts || []).slice(0, 5).map((post, i) => {
+                      const plat = post.platform || 'unknown';
+                      const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
+                      const color = PLATFORM_COLORS[plat] || '#6b7280';
+                      const m = post.metrics || {};
+                      const dt = parseDate(post.published_at);
+                      const support = PLATFORM_METRICS[plat] || {};
+                      return (
+                        <div key={i} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                          <span className="w-5 text-center text-xs font-bold text-gray-400">{i + 1}</span>
+                          <Icon style={{ color, flexShrink: 0 }} className="text-base" />
+                          {post.media_url && (
+                            <img
+                              src={post.media_url}
+                              alt=""
+                              className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
                           )}
+                          <p className="flex-1 text-sm text-gray-700 truncate min-w-0">
+                            {post.content || '(no caption)'}
+                          </p>
+                          <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500">
+                            {support.likes && <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(m.likes)}</span>}
+                            {support.comments && <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(m.comments)}</span>}
+                            {support.shares && <span className="flex items-center gap-1"><FaShare className="text-green-400" />{fmt(m.shares)}</span>}
+                            {support.views && <span className="flex items-center gap-1"><FaEye className="text-purple-400" />{fmt(m.views)}</span>}
+                            {dt && <span className="text-gray-400 hidden sm:block">{format(dt, 'MMM d')}</span>}
+                            {post.post_url && (
+                              <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:text-indigo-700">
+                                <FaExternalLinkAlt />
+                              </a>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Platform summary table */}
             {overview?.platform_counts && Object.keys(overview.platform_counts).length > 0 && (
@@ -1020,11 +1071,10 @@ const Analytics = () => {
                       <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
                         <th className="text-left py-2 pr-4">Platform</th>
                         <th className="text-right py-2 pr-4">Posts</th>
-                        <th className="text-right py-2 pr-4">Likes</th>
-                        <th className="text-right py-2 pr-4">Comments</th>
-                        <th className="text-right py-2 pr-4">Shares</th>
-                        <th className="text-right py-2 pr-4">Views</th>
-                        <th className="text-right py-2">Eng. Rate</th>
+                        {summaryMetricColumns.map(({ key, label }) => (
+                          <th key={key} className="text-right py-2 pr-4">{label}</th>
+                        ))}
+                        {showEngRateColumn && <th className="text-right py-2">Eng. Rate</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -1044,16 +1094,19 @@ const Analytics = () => {
                                 </div>
                               </td>
                               <td className="text-right py-2.5 pr-4 font-semibold text-gray-900">{count}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{sup.likes ? fmt(pd.likes ?? 0) : '—'}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{sup.comments ? fmt(pd.comments ?? 0) : '—'}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{sup.shares ? fmt(pd.shares ?? 0) : '—'}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{sup.views ? fmt(pd.views ?? 0) : '—'}</td>
-                              <td className="text-right py-2.5 text-gray-600">
-                                {pd.posts > 0 && (sup.likes || sup.comments || sup.shares)
-                                  ? (((pd.likes || 0) + (pd.comments || 0) + (pd.shares || 0)) / pd.posts).toFixed(1)
-                                  : '—'
-                                }
-                              </td>
+                              {summaryMetricColumns.map(({ key }) => (
+                                <td key={key} className="text-right py-2.5 pr-4 text-gray-600">
+                                  {sup[key] ? fmt(pd[key] ?? 0) : '—'}
+                                </td>
+                              ))}
+                              {showEngRateColumn && (
+                                <td className="text-right py-2.5 text-gray-600">
+                                  {pd.posts > 0 && (sup.likes || sup.comments || sup.shares)
+                                    ? (((pd.likes || 0) + (pd.comments || 0) + (pd.shares || 0)) / pd.posts).toFixed(1)
+                                    : '—'
+                                  }
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
@@ -1074,7 +1127,7 @@ const Analytics = () => {
             <div className="flex items-center gap-2 flex-wrap">
               <FaSortAmountDown className="text-gray-400 text-sm" />
               <span className="text-sm text-gray-500 mr-1">Sort by:</span>
-              {SORT_OPTIONS.map((opt) => (
+              {visibleSortOptions.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setPostsSort(opt.value)}
@@ -1096,18 +1149,20 @@ const Analytics = () => {
 
             {/* Post summary stats */}
             {!loadingPosts && sortedPosts.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[
-                  { label: 'Total Likes',    val: sortedPosts.reduce((s, p) => s + (p.metrics?.likes || 0), 0),    icon: FaHeart,   color: 'text-rose-500'   },
-                  { label: 'Total Comments', val: sortedPosts.reduce((s, p) => s + (p.metrics?.comments || 0), 0), icon: FaComment, color: 'text-blue-500'   },
-                  { label: 'Total Shares',   val: sortedPosts.reduce((s, p) => s + (p.metrics?.shares || 0), 0),   icon: FaShare,   color: 'text-green-500'  },
-                  { label: 'Total Views',    val: sortedPosts.reduce((s, p) => s + (p.metrics?.views || 0), 0),    icon: FaEye,     color: 'text-purple-500' },
-                ].map(({ label, val, icon: Icon, color }) => (
+              <div className={`grid gap-3 ${visibleMetricCards.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
+                {visibleMetricCards.map(({ key, label, icon: Icon }) => (
                   <div key={label} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-                    <Icon className={`${color} text-lg`} />
+                    <Icon className={`${
+                      key === 'likes' ? 'text-rose-500'
+                        : key === 'comments' ? 'text-blue-500'
+                        : key === 'shares' ? 'text-green-500'
+                        : 'text-purple-500'
+                    } text-lg`} />
                     <div>
                       <p className="text-xs text-gray-500">{label}</p>
-                      <p className="text-lg font-bold text-gray-900">{fmt(val)}</p>
+                      <p className="text-lg font-bold text-gray-900">
+                        {fmt(sortedPosts.reduce((sum, post) => sum + (post.metrics?.[key] || 0), 0))}
+                      </p>
                     </div>
                   </div>
                 ))}

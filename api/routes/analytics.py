@@ -11,7 +11,42 @@ from utils.encryption import decrypt
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
 
-_SUPPORTED_ENGAGEMENT_PLATFORMS = {"instagram", "facebook", "youtube"}
+_PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
+    "instagram": {"live_feed": True},
+    "facebook": {"live_feed": True},
+    "youtube": {"live_feed": True},
+    "bluesky": {
+        "live_feed": True,
+        "message": "Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.",
+    },
+    "tiktok": {
+        "live_feed": True,
+        "message": "TikTok analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.",
+    },
+    "pinterest": {
+        "live_feed": True,
+        "message": "Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.",
+    },
+    "mastodon": {
+        "live_feed": True,
+        "message": "Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.",
+    },
+    "linkedin": {
+        "live_feed": False,
+        "message": "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
+    },
+    "discord": {
+        "live_feed": False,
+        "message": "Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.",
+    },
+    "snapchat": {
+        "live_feed": False,
+        "message": "Snapchat's current integration does not expose organic post analytics through the connected account APIs.",
+    },
+}
+_SUPPORTED_ENGAGEMENT_PLATFORMS = {
+    platform for platform, capability in _PLATFORM_ANALYTICS_CAPABILITIES.items() if capability.get("live_feed")
+}
 _SUPPORTED_DEMOGRAPHIC_PLATFORMS = {"instagram", "facebook"}
 
 
@@ -74,6 +109,12 @@ def _metric_int(value: Any) -> int:
         return 0
 
 
+def _platform_message(platform: str | None) -> str | None:
+    if not platform:
+        return None
+    return (_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("message")
+
+
 def _merge_named_counts(items: list[dict[str, Any]], key_name: str) -> list[dict[str, Any]]:
     merged: dict[str, int] = {}
     for item in items:
@@ -128,7 +169,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
         auth = InstagramAuth()
         feed = await auth.fetch_feed(access_token, platform_user_id, limit=50)
         engagement = await auth.fetch_engagement(access_token, platform_user_id)
-        return feed, engagement
+        return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "facebook":
         from backend.app.social.facebook import FacebookAuth
@@ -147,7 +188,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
                     engagement = await auth.fetch_page_engagement(page_token, page_id)
             except Exception as exc:
                 logger.warning("Failed to resolve Facebook page analytics for %s: %s", platform_user_id, exc)
-        return feed, engagement
+        return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "youtube":
         from api.routes.accounts import _get_youtube_access_token
@@ -163,7 +204,59 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
         channel_id = str(channel.get("id") or platform_user_id)
         feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=50)
         engagement = await auth.fetch_youtube_engagement(access_token, channel_id)
-        return feed, engagement
+        return [_standardize_feed_post(post) for post in feed], engagement
+
+    if platform == "bluesky":
+        from backend.app.social.bluesky import BlueskyAuth
+
+        auth = BlueskyAuth()
+        profile = await auth.get_user_profile(access_token, platform_user_id)
+        handle = profile.get("username") or account.get("platform_username") or platform_user_id
+        feed = await auth.fetch_posts(access_token, handle, limit=50)
+        return [
+            _standardize_feed_post(post) for post in feed
+        ], {
+            "followers": profile.get("followers_count"),
+            "following": profile.get("following_count"),
+            "posts_count": profile.get("posts_count"),
+        }
+
+    if platform == "tiktok":
+        from backend.app.social.tiktok import TikTokAuth
+
+        auth = TikTokAuth()
+        feed = await auth.fetch_posts(access_token, limit=50)
+        profile = await auth.get_user_profile(access_token)
+        return [_standardize_feed_post(post) for post in feed], {
+            "profile_views": None,
+            "display_name": profile.get("name"),
+        }
+
+    if platform == "pinterest":
+        from backend.app.social.pinterest import PinterestAuth
+
+        auth = PinterestAuth()
+        feed = await auth.fetch_pins(access_token, limit=50)
+        profile = await auth.get_user_profile(access_token)
+        return [_standardize_feed_post(post) for post in feed], {
+            "display_name": profile.get("business_name") or profile.get("username"),
+        }
+
+    if platform == "mastodon":
+        from backend.app.social.mastodon import MastodonAuth
+
+        instance_url = (account.get("metadata") or {}).get("instance_url")
+        if not instance_url:
+            return [], {}
+
+        auth = MastodonAuth()
+        profile = await auth.get_user_profile(instance_url, access_token)
+        feed = await auth.fetch_posts(instance_url, access_token, str(profile.get("id") or platform_user_id), limit=50)
+        return [_standardize_feed_post(post) for post in feed], {
+            "followers": profile.get("followers_count"),
+            "following": profile.get("following_count"),
+            "posts_count": profile.get("posts_count"),
+        }
 
     return [], {}
 
@@ -280,6 +373,26 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
         "impressions": impressions,
         "reach": engagement.get("reach"),
         "profile_views": engagement.get("profile_views"),
+    }
+
+
+def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
+    metrics = post.get("metrics") or {}
+    return {
+        "id": post.get("id") or post.get("platform_post_id") or post.get("uri"),
+        "content": post.get("content", ""),
+        "media_url": post.get("media_url"),
+        "video_url": post.get("video_url"),
+        "media_type": post.get("media_type"),
+        "timestamp": post.get("timestamp") or post.get("published_at") or post.get("created_at"),
+        "permalink": post.get("permalink") or post.get("post_url") or post.get("url"),
+        "likes": post.get("likes", metrics.get("likes")),
+        "comments_count": post.get(
+            "comments_count",
+            metrics.get("comments_count", metrics.get("comments", metrics.get("replies"))),
+        ),
+        "shares": post.get("shares", metrics.get("shares", metrics.get("reblogs", metrics.get("reposts")))),
+        "views": post.get("views", metrics.get("views", metrics.get("impressions"))),
     }
 
 
@@ -551,8 +664,8 @@ async def analytics_engagement(
     )
 
     message = None
-    if platform and platform not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-        message = f"{platform.title()} account-level engagement is limited by the platform API. Published post history is shown where available."
+    if platform:
+        message = _platform_message(platform)
     elif not top_posts and not errors:
         message = "No recent post-level engagement data found for the selected period."
 

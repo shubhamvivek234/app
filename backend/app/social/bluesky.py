@@ -65,6 +65,9 @@ class BlueskyAuth:
                 "name":        data.get("displayName") or data.get("handle", ""),
                 "username":    data.get("handle", ""),
                 "picture_url": data.get("avatar"),
+                "followers_count": data.get("followersCount"),
+                "following_count": data.get("followsCount"),
+                "posts_count": data.get("postsCount"),
             }
 
     async def publish_post(

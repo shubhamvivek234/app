@@ -146,6 +146,7 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
     try:
         access_token = decrypt(encrypted_token)
         updates: dict[str, object] = {}
+        metadata = doc.get("metadata") or {}
 
         if platform == "instagram" and platform_user_id:
             if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
@@ -225,6 +226,77 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
                 "display_name": selected_page.get("name") or doc.get("display_name") or doc.get("platform_username"),
                 "picture_url": selected_page.get("picture", {}).get("data", {}).get("url") or doc.get("picture_url"),
                 "followers_count": engagement.get("followers") or engagement.get("fans"),
+            }
+
+        elif platform == "bluesky" and platform_user_id:
+            if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
+                return doc
+
+            from backend.app.social.bluesky import BlueskyAuth
+
+            profile = await BlueskyAuth().get_user_profile(access_token, platform_user_id)
+            updates = {
+                "platform_username": profile.get("username") or doc.get("platform_username"),
+                "display_name": profile.get("name") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": profile.get("picture_url"),
+                "followers_count": profile.get("followers_count"),
+                "following_count": profile.get("following_count"),
+                "posts_count": profile.get("posts_count"),
+            }
+
+        elif platform == "tiktok":
+            if doc.get("picture_url") and doc.get("display_name"):
+                return doc
+
+            from backend.app.social.tiktok import TikTokAuth
+
+            profile = await TikTokAuth().get_user_profile(access_token)
+            updates = {
+                "platform_user_id": profile.get("id") or platform_user_id,
+                "platform_username": profile.get("username") or doc.get("platform_username"),
+                "display_name": profile.get("name") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": profile.get("picture_url"),
+            }
+
+        elif platform == "pinterest":
+            if doc.get("picture_url") and doc.get("display_name"):
+                return doc
+
+            from backend.app.social.pinterest import PinterestAuth
+
+            profile = await PinterestAuth().get_user_profile(access_token)
+            updates = {
+                "platform_user_id": str(profile.get("id") or platform_user_id or profile.get("username", "")),
+                "platform_username": profile.get("username") or profile.get("business_name") or doc.get("platform_username"),
+                "display_name": profile.get("business_name") or profile.get("username") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": profile.get("profile_image") or profile.get("profile_image_url"),
+            }
+
+        elif platform == "mastodon":
+            instance_url = metadata.get("instance_url")
+            if not instance_url:
+                return doc
+            if doc.get("picture_url") and doc.get("display_name") and doc.get("followers_count") is not None:
+                return doc
+
+            from backend.app.social.mastodon import MastodonAuth
+
+            profile = await MastodonAuth().get_user_profile(instance_url, access_token)
+            updates = {
+                "platform_user_id": profile.get("id") or platform_user_id,
+                "platform_username": profile.get("acct") or profile.get("username") or doc.get("platform_username"),
+                "display_name": profile.get("display_name") or metadata.get("display_name") or doc.get("display_name") or doc.get("platform_username"),
+                "picture_url": profile.get("picture_url"),
+                "followers_count": profile.get("followers_count"),
+                "following_count": profile.get("following_count"),
+                "posts_count": profile.get("posts_count"),
+                "metadata": {
+                    **metadata,
+                    "instance_url": profile.get("instance_url") or instance_url,
+                    "profile_url": profile.get("url") or metadata.get("profile_url"),
+                    "display_name": profile.get("display_name") or metadata.get("display_name"),
+                    "acct": profile.get("acct") or metadata.get("acct"),
+                },
             }
 
         updates = {k: v for k, v in updates.items() if v is not None}
