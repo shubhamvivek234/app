@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
 from api.deps import CurrentUser, DB, CacheRedis, require_permission
+from api.task_queue import enqueue_task
 from utils.encryption import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
@@ -526,9 +527,12 @@ async def disconnect_account(
 
         # Schedule media cleanup for each cancelled post
         try:
-            from celery_workers.tasks.cleanup import schedule_media_cleanup
             for pid in cancelled_post_ids:
-                schedule_media_cleanup.apply_async(args=[pid], countdown=300)
+                enqueue_task(
+                    "celery_workers.tasks.cleanup.schedule_media_cleanup",
+                    args=[pid],
+                    countdown=300,
+                )
         except Exception as exc:
             logger.warning("Failed to schedule media cleanup after disconnect for account %s: %s", account_id, exc)
 

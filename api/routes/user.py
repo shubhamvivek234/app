@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from api.deps import CurrentUser, DB
 from api.limiter import limiter
+from api.task_queue import enqueue_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["user"])
@@ -64,8 +65,8 @@ async def request_data_export(
     })
 
     try:
-        from celery_workers.tasks.gdpr import generate_data_export
-        generate_data_export.apply_async(
+        enqueue_task(
+            "celery_workers.tasks.gdpr.generate_data_export",
             kwargs={
                 "user_id": user_id,
                 "workspace_id": current_user.get("default_workspace_id", user_id),
@@ -109,8 +110,8 @@ async def delete_account(
     )
 
     try:
-        from celery_workers.tasks.gdpr import process_erasure_request
-        process_erasure_request.apply_async(
+        enqueue_task(
+            "celery_workers.tasks.gdpr.process_erasure_request",
             kwargs={
                 "user_id": user_id,
                 "workspace_id": current_user.get("default_workspace_id", user_id),

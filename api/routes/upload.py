@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis, require_permission
 from api.limiter import limiter
 from api.models.media import MediaAssetResponse, MediaStatus, MediaUploadResponse
+from api.task_queue import enqueue_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["upload"])
@@ -174,9 +175,9 @@ async def upload_media(
         }
         await db.media_assets.insert_one(asset_doc)
 
-        # 8. Enqueue Celery task
-        from celery_workers.tasks.media import process_media
-        process_media.apply_async(
+        # 8. Enqueue media processing task without importing worker modules into API
+        enqueue_task(
+            "celery_workers.tasks.media.process_media",
             args=[media_job_id, user_id],
             queue="media_processing",
         )

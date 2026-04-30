@@ -26,6 +26,7 @@ from api.models.post import (
     UpdatePostRequest,
     PlatformOverride,
 )
+from api.task_queue import enqueue_task, revoke_task
 from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
 from utils.schedule_density import check_schedule_density
@@ -588,15 +589,17 @@ async def delete_post(
     queue_job_id = existing.get("queue_job_id")
     if queue_job_id:
         try:
-            from celery_workers.celery_app import celery_app
-            celery_app.control.revoke(queue_job_id, terminate=False)
+            revoke_task(queue_job_id, terminate=False)
         except Exception as exc:
             logger.warning("Failed to revoke Celery task %s: %s", queue_job_id, exc)
 
     # Schedule media cleanup with 5-minute delay
     try:
-        from celery_workers.tasks.cleanup import schedule_media_cleanup
-        schedule_media_cleanup.apply_async(args=[post_id], countdown=300)
+        enqueue_task(
+            "celery_workers.tasks.cleanup.schedule_media_cleanup",
+            args=[post_id],
+            countdown=300,
+        )
     except Exception as exc:
         logger.warning("Failed to schedule media cleanup for %s: %s", post_id, exc)
 
@@ -651,9 +654,9 @@ async def retry_failed_post(
     )
 
     try:
-        from celery_workers.tasks.publish import publish_post
         new_version = post.get("version", 1) + 1
-        publish_post.apply_async(
+        enqueue_task(
+            "celery_workers.tasks.publish.publish_post",
             kwargs={"post_id": post_id, "version": new_version},
             queue="default",
         )

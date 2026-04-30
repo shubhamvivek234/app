@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis
 from api.limiter import limiter
+from api.task_queue import enqueue_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -413,10 +414,9 @@ async def retry_dlq_item(
     post_id = dlq_item.get("post_id")
 
     try:
-        from celery_workers.celery_app import celery_app
         task_name = payload.get("task_name", "celery_workers.tasks.publish.publish_post")
         task_args = payload.get("args", [post_id] if post_id else [])
-        celery_app.send_task(task_name, args=task_args)
+        enqueue_task(task_name, args=task_args)
     except Exception as exc:
         logger.error("Failed to retry DLQ item %s: %s", task_id, exc)
         raise HTTPException(
