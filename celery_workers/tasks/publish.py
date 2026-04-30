@@ -200,6 +200,76 @@ _PRE_UPLOAD_POLL_INTERVAL = 5   # seconds between status checks
 _PRE_UPLOAD_MAX_WAIT = 600      # 10 minutes maximum
 
 
+async def _hydrate_post_media(db, post: dict) -> dict:
+    media_ids = post.get("media_ids") or []
+    if not media_ids:
+        return post
+
+    if post.get("media_url") and post.get("media_urls"):
+        return post
+
+    docs = await db.media_assets.find(
+        {"media_id": {"$in": media_ids}},
+        {"_id": 0, "media_id": 1, "media_url": 1, "thumbnail_url": 1, "file_size_bytes": 1},
+    ).to_list(len(media_ids))
+    by_id = {doc.get("media_id"): doc for doc in docs}
+    ordered = [by_id[media_id] for media_id in media_ids if media_id in by_id]
+
+    media_urls = [doc.get("media_url") for doc in ordered if doc.get("media_url")]
+    thumbnail_urls = [
+        doc.get("thumbnail_url") or doc.get("media_url")
+        for doc in ordered
+        if doc.get("thumbnail_url") or doc.get("media_url")
+    ]
+    file_size_bytes = next(
+        (doc.get("file_size_bytes") for doc in ordered if doc.get("file_size_bytes")),
+        None,
+    )
+    video_size_mb = post.get("video_size_mb")
+    if file_size_bytes and not video_size_mb:
+        video_size_mb = round(file_size_bytes / (1024 * 1024), 2)
+
+    return {
+        **post,
+        "media_urls": post.get("media_urls") or media_urls,
+        "media_url": post.get("media_url") or (media_urls[0] if media_urls else None),
+        "thumbnail_urls": post.get("thumbnail_urls") or thumbnail_urls,
+        "video_size_mb": video_size_mb,
+    }
+
+
+def _normalize_account_doc(account_doc: dict | None) -> dict | None:
+    if not account_doc:
+        return None
+    if account_doc.get("id"):
+        return account_doc
+    return {
+        **account_doc,
+        "id": account_doc.get("account_id") or account_doc.get("id"),
+    }
+
+
+async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
+    selected_ids = post.get("social_account_ids") or post.get("account_ids") or []
+    query = {
+        "user_id": post.get("user_id"),
+        "platform": platform,
+        "is_active": True,
+    }
+    if selected_ids:
+        query["account_id"] = {"$in": selected_ids}
+
+    account_doc = await db.social_accounts.find_one(query)
+    if not account_doc and selected_ids:
+        account_doc = await db.social_accounts.find_one({
+            "user_id": post.get("user_id"),
+            "platform": platform,
+            "is_active": True,
+        })
+
+    return _normalize_account_doc(account_doc)
+
+
 # ── Per-platform task ─────────────────────────────────────────────────────────
 @celery_app.task(
     name="celery_workers.tasks.publish.publish_to_platform",
@@ -270,6 +340,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
         return {"status": "post_deleted"}
+    post = await _hydrate_post_media(db, post)
 
     # EC15: Check subscription is still active before publishing
     try:
@@ -343,13 +414,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         account_id: str | None = None
         try:
             from utils.encryption import decrypt
-            account_doc = await db.social_accounts.find_one({
-                "user_id": post.get("user_id"),
-                "platform": platform,
-                "is_active": True,
-            })
+            account_doc = await _resolve_post_account(db, post, platform)
             if account_doc and account_doc.get("access_token"):
-                account_id = account_doc.get("account_id")
+                account_id = account_doc.get("account_id") or account_doc.get("id")
                 post = {**post, "access_token": decrypt(account_doc["access_token"]), "account": account_doc}
         except Exception as _token_err:
             logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
@@ -659,6 +726,12 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     try:
         adapter = get_adapter(platform)
         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+        if not post:
+            return {"status": "post_deleted"}
+        post = await _hydrate_post_media(db, post)
+        account_doc = await _resolve_post_account(db, post, platform)
+        if account_doc:
+            post = {**post, "account": account_doc}
         # EC-1: Post deleted or cancelled before pre_upload executed — abort cleanly
         if not post or post.get("status") in {"deleted", "cancelled"}:
             logger.info("pre_upload EC-1: post %s deleted/cancelled before pre_upload — aborting", post_id)

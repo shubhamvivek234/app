@@ -67,9 +67,16 @@ class CreatePostRequest(BaseModel):
 
     content: str = Field(..., min_length=1, max_length=10000)
     platforms: list[str] = Field(..., min_length=1, max_length=10)
+    account_ids: list[str] = Field(default_factory=list, max_length=20)
     scheduled_time: datetime | None = None
     media_ids: list[str] = Field(default_factory=list, max_length=10)
+    media_urls: list[str] = Field(default_factory=list, max_length=10)
     post_type: str = Field(default="text", max_length=50)
+    title: str | None = Field(None, max_length=500)
+    tiktok_privacy: str | None = Field(None, max_length=100)
+    disable_duet: bool = False
+    disable_comment: bool = False
+    disable_stitch: bool = False
     workspace_id: str | None = Field(None, max_length=100)
     timezone: str = Field(default="UTC", max_length=100)
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)

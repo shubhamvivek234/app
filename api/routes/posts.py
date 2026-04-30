@@ -36,6 +36,7 @@ router = APIRouter(tags=["posts"])
 
 _BLOCKED_STATUSES = {PostStatus.QUEUED, PostStatus.PROCESSING}
 _SUBSCRIPTION_ALLOWED = {"active", "grace"}
+_READY_MEDIA_STATUSES = {"ready", "archived"}
 
 
 def _plan_post_limit(plan: str) -> int:
@@ -47,6 +48,95 @@ def _doc_to_response(doc: dict) -> PostResponse:
     doc.pop("_id", None)
     doc.pop("deleted_at", None)
     return PostResponse(**doc)
+
+
+async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostRequest) -> list[str]:
+    if body.account_ids:
+        accounts = await db.social_accounts.find(
+            {
+                "user_id": user_id,
+                "account_id": {"$in": body.account_ids},
+                "is_active": True,
+            },
+            {"_id": 0, "account_id": 1, "platform": 1},
+        ).to_list(len(body.account_ids))
+        found_ids = {acct.get("account_id") for acct in accounts}
+        missing = [account_id for account_id in body.account_ids if account_id not in found_ids]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"One or more account_ids are invalid or inactive: {missing}",
+            )
+
+        selected_platforms = {acct.get("platform") for acct in accounts}
+        requested_platforms = set(body.platforms)
+        if not requested_platforms.issubset(selected_platforms):
+            missing_platforms = sorted(requested_platforms - selected_platforms)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Selected accounts do not cover requested platforms: {missing_platforms}",
+            )
+        return list(body.account_ids)
+
+    social_account_ids: list[str] = []
+    if body.platforms:
+        account_cursor = db.social_accounts.find(
+            {"user_id": user_id, "platform": {"$in": body.platforms}, "is_active": True},
+            {"_id": 0, "account_id": 1},
+        )
+        async for acct in account_cursor:
+            if acct.get("account_id"):
+                social_account_ids.append(acct["account_id"])
+    return social_account_ids
+
+
+async def _resolve_media_payload(db, user_id: str, body: CreatePostRequest) -> tuple[list[str], list[str], str | None, float | None]:
+    media_urls = list(body.media_urls or [])
+    thumbnail_urls: list[str] = []
+    video_size_mb: float | None = None
+
+    if not body.media_ids:
+        return media_urls, thumbnail_urls, (media_urls[0] if media_urls else None), video_size_mb
+
+    media_docs = await db.media_assets.find(
+        {
+            "media_id": {"$in": body.media_ids},
+            "user_id": user_id,
+        },
+        {"_id": 0},
+    ).to_list(len(body.media_ids))
+    by_id = {doc.get("media_id"): doc for doc in media_docs}
+
+    if len(by_id) != len(body.media_ids):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="One or more media_ids are invalid or do not belong to you",
+        )
+
+    ordered_docs = [by_id[media_id] for media_id in body.media_ids if media_id in by_id]
+    not_ready = [
+        doc.get("media_id")
+        for doc in ordered_docs
+        if (doc.get("status") or "").lower() not in _READY_MEDIA_STATUSES or not doc.get("media_url")
+    ]
+    if not_ready:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"One or more uploads are still processing or failed: {not_ready}",
+        )
+
+    media_urls = [doc["media_url"] for doc in ordered_docs if doc.get("media_url")]
+    thumbnail_urls = [
+        doc.get("thumbnail_url") or doc.get("media_url")
+        for doc in ordered_docs
+        if doc.get("thumbnail_url") or doc.get("media_url")
+    ]
+    if ordered_docs:
+        first_size = ordered_docs[0].get("file_size_bytes")
+        if first_size:
+            video_size_mb = round(first_size / (1024 * 1024), 2)
+
+    return media_urls, thumbnail_urls, (media_urls[0] if media_urls else None), video_size_mb
 
 
 # ── Create ───────────────────────────────────────────────────────────────────
@@ -145,28 +235,7 @@ async def create_post(
         logger.warning("Schedule density warning: %s", dw.message)
         all_warnings.append(dw.message)
 
-    # 9.3 — Resolve platform names to social_account_ids so EC7 disconnect guard works
-    social_account_ids: list[str] = []
-    if body.platforms:
-        account_cursor = db.social_accounts.find(
-            {"user_id": user_id, "platform": {"$in": body.platforms}, "is_active": True},
-            {"_id": 0, "account_id": 1},
-        )
-        async for acct in account_cursor:
-            if acct.get("account_id"):
-                social_account_ids.append(acct["account_id"])
-
-    # 9.13/9.14 — Validate media_ids belong to current user + workspace membership check
-    if body.media_ids:
-        owned = await db.media_assets.count_documents({
-            "media_id": {"$in": body.media_ids},
-            "user_id": user_id,
-        })
-        if owned != len(body.media_ids):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="One or more media_ids are invalid or do not belong to you",
-            )
+    social_account_ids = await _resolve_selected_account_ids(db, user_id, body)
 
     if body.workspace_id and body.workspace_id != current_user.get("default_workspace_id"):
         member = await db.workspace_members.find_one(
@@ -185,27 +254,42 @@ async def create_post(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
+    media_urls, thumbnail_urls, primary_media_url, video_size_mb = await _resolve_media_payload(
+        db, user_id, body
+    )
+
+    post_status = PostStatus.SCHEDULED if body.scheduled_time else PostStatus.DRAFT
+
     doc: dict = {
         "id": str(ObjectId()),
         "user_id": user_id,
         "workspace_id": workspace_id,
         "content": body.content,
+        "title": body.title,
         "platforms": body.platforms,
+        "account_ids": social_account_ids,
         "social_account_ids": social_account_ids,
         "media_ids": body.media_ids,
+        "media_urls": media_urls,
+        "media_url": primary_media_url,
         "post_type": body.post_type,
+        "tiktok_privacy": body.tiktok_privacy,
+        "disable_duet": body.disable_duet,
+        "disable_comment": body.disable_comment,
+        "disable_stitch": body.disable_stitch,
         "timezone": body.timezone,
         "scheduled_time": body.scheduled_time,
-        "status": PostStatus.SCHEDULED,
+        "status": post_status,
         "platform_results": {},
         "platform_post_urls": {},
         "status_history": [
-            {"status": PostStatus.SCHEDULED, "timestamp": now, "actor": user_id}
+            {"status": post_status, "timestamp": now, "actor": user_id}
         ],
-        "thumbnail_urls": [],
+        "thumbnail_urls": thumbnail_urls,
         "pre_upload_status": None,
         "queue_job_id": None,
         "jitter_seconds": None,
+        "video_size_mb": video_size_mb,
         "version": 1,
         "dlq_reason": None,
         "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
@@ -227,7 +311,11 @@ async def create_post(
         actor_id=user_id,
         resource_type="post",
         resource_id=doc["id"],
-        metadata={"platforms": body.platforms, "scheduled_time": body.scheduled_time.isoformat()},
+        metadata={
+            "platforms": body.platforms,
+            "scheduled_time": body.scheduled_time.isoformat() if body.scheduled_time else None,
+            "status": post_status,
+        },
     )
 
     logger.info("Post created: %s user=%s workspace=%s", doc["id"], user_id, workspace_id)

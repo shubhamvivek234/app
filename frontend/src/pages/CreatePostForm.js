@@ -12,7 +12,14 @@ import { Calendar } from '@/components/ui/calendar';
 import { toast } from 'sonner';
 import axios from 'axios';
 import Cropper from 'react-easy-crop';
-import { getSocialAccounts, uploadMedia, generateImage, getHashtagGroups, generateContent } from '@/lib/api';
+import {
+  getSocialAccounts,
+  uploadMedia,
+  waitForUploadReady,
+  generateImage,
+  getHashtagGroups,
+  generateContent,
+} from '@/lib/api';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
@@ -631,6 +638,20 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       img.src = url;
     });
 
+  const resolveUploadedAsset = useCallback(async (file, onProgress = () => {}) => {
+    const uploadJob = await uploadMedia(file, onProgress);
+    if (!uploadJob?.media_job_id) {
+      throw new Error('Upload job id missing');
+    }
+    return waitForUploadReady(uploadJob.media_job_id, {
+      onPoll: (asset) => {
+        if (asset?.status === 'processing') {
+          setUploadProgress(100);
+        }
+      },
+    });
+  }, []);
+
   const uploadToBackend = useCallback(async (file, { skipValidation = false } = {}) => {
     if (!file) return;
     const isVideo = file.type.startsWith('video/');
@@ -671,36 +692,41 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setUploading(true);
     setUploadProgress(0);
     try {
-      const response = await uploadMedia(file, (e) =>
+      const asset = await resolveUploadedAsset(file, (e) =>
         setUploadProgress(Math.round((e.loaded * 100) / e.total))
       );
-      if (response.success) {
-        const base = process.env.REACT_APP_BACKEND_URL || '';
-        const mediaUrl = `${base}${response.url}`;
-        const dims = isVideo ? { width: 0, height: 0 } : await getImageDimensions(mediaUrl);
-        setUploadedMedia(prev => [
-          ...prev,
-          {
-            file,
-            url: mediaUrl,
-            originalUrl: mediaUrl,
-            type: isVideo ? 'video' : 'image',
-            name: file.name,
-            width: dims.width,
-            height: dims.height,
-          },
-        ]);
-        toast.success('Media uploaded');
-      } else {
-        throw new Error('Upload failed');
+      const mediaUrl = asset.media_url;
+      if (!mediaUrl) {
+        throw new Error('Processed upload did not return a media URL');
       }
-    } catch {
-      toast.error('Failed to upload media');
+      const inferredIsVideo = (asset.mime_type || file.type || '').startsWith('video/');
+      const dims = inferredIsVideo
+        ? { width: asset.width || 0, height: asset.height || 0 }
+        : await getImageDimensions(mediaUrl);
+
+      setUploadedMedia(prev => [
+        ...prev,
+        {
+          file,
+          mediaId: asset.media_id,
+          url: mediaUrl,
+          originalUrl: mediaUrl,
+          thumbnailUrl: asset.thumbnail_url || mediaUrl,
+          type: inferredIsVideo ? 'video' : 'image',
+          name: file.name,
+          width: asset.width || dims.width,
+          height: asset.height || dims.height,
+        },
+      ]);
+      toast.success('Media uploaded');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to upload media');
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableAccounts, selectedAccounts, uploadedMedia]);
+  }, [availableAccounts, resolveUploadedAsset, selectedAccounts, uploadedMedia]);
 
   // Upload multiple files sequentially
   const uploadFilesToBackend = async (files) => {
@@ -729,14 +755,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     if (!file) return;
     setCoverImageUploading(true);
     try {
-      const response = await uploadMedia(file, () => {});
-      if (response.success) {
-        const base = process.env.REACT_APP_BACKEND_URL || '';
-        setCoverImage(`${base}${response.url}`);
-        toast.success('Cover image uploaded');
+      const asset = await resolveUploadedAsset(file);
+      if (!asset?.media_url) {
+        throw new Error('Processed cover image did not return a media URL');
       }
-    } catch {
-      toast.error('Failed to upload cover image');
+      setCoverImage(asset.media_url);
+      toast.success('Cover image uploaded');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to upload cover image');
     } finally {
       setCoverImageUploading(false);
     }
@@ -783,24 +809,34 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const file = new File([blob], 'cropped_image.jpg', { type: 'image/jpeg' });
       if (cropMediaIndex !== null) {
         // Crop a post media item — replace it in place
-        const base = process.env.REACT_APP_BACKEND_URL || '';
         setUploading(true);
         try {
-          const response = await uploadMedia(file, (e) =>
+          const asset = await resolveUploadedAsset(file, (e) =>
             setUploadProgress(Math.round((e.loaded * 100) / e.total))
           );
-          if (response.success) {
-            const mediaUrl = `${base}${response.url}`;
-            const dims = await getImageDimensions(mediaUrl);
-            setUploadedMedia(prev => {
-              const next = [...prev];
-              next[cropMediaIndex] = { ...next[cropMediaIndex], url: mediaUrl, file, width: dims.width, height: dims.height, originalUrl: next[cropMediaIndex].originalUrl || next[cropMediaIndex].url };
-              return next;
-            });
-            toast.success('Image cropped');
+          const mediaUrl = asset.media_url;
+          if (!mediaUrl) {
+            throw new Error('Processed cropped image did not return a media URL');
           }
+          const dims = await getImageDimensions(mediaUrl);
+          setUploadedMedia(prev => {
+            const next = [...prev];
+            next[cropMediaIndex] = {
+              ...next[cropMediaIndex],
+              mediaId: asset.media_id,
+              url: mediaUrl,
+              originalUrl: mediaUrl,
+              thumbnailUrl: asset.thumbnail_url || mediaUrl,
+              file,
+              width: asset.width || dims.width,
+              height: asset.height || dims.height,
+            };
+            return next;
+          });
+          toast.success('Image cropped');
         } finally {
           setUploading(false);
+          setUploadProgress(0);
           setCropMediaIndex(null);
           setCropTargetRatio(null);
         }
@@ -870,50 +906,55 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
     setLoading(true);
     try {
-      const token  = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
       let scheduledDateTime = null;
-      let status;
 
-      if (mode === 'draft') {
-        status = 'draft';
-      } else if (mode === 'now') {
+      if (mode === 'now') {
         scheduledDateTime = new Date().toISOString();
-        status = 'scheduled';
       } else if (mode === 'scheduled') {
         if (!scheduledDate || !scheduledTime) {
           toast.error('Please pick a date and time'); setLoading(false); return;
         }
         scheduledDateTime = localToUTC(scheduledDate, scheduledTime, selectedTimezone);
         if (!scheduledDateTime) { toast.error('Invalid date / time'); setLoading(false); return; }
-        status = 'scheduled';
       }
+
+      const mediaIds = uploadedMedia.map((m) => m.mediaId).filter(Boolean);
+      const mediaUrls = uploadedMedia.map((m) => m.url).filter(Boolean);
+      if (linkedinDocumentUrl && !mediaUrls.includes(linkedinDocumentUrl)) {
+        mediaUrls.push(linkedinDocumentUrl);
+      }
+
+      const fallbackTitle = videoTitle || linkedinDocumentTitle || '';
+      const platformOverrides = Object.fromEntries(
+        selectedPlatforms.map((platform) => {
+          const override = {
+            content: (platformCaptions[platform] ?? primaryContent) || primaryContent,
+          };
+          if ((platform === 'youtube' || platform === 'tiktok') && videoTitle) {
+            override.title = videoTitle;
+          } else if (platform === 'linkedin' && linkedinDocumentTitle) {
+            override.title = linkedinDocumentTitle;
+          }
+          return [platform, override];
+        })
+      );
 
       await axios.post(`${apiUrl}/api/posts`, {
         content: primaryContent,
         platforms: selectedPlatforms,
-        accounts: selectedAccounts,
+        account_ids: selectedAccounts,
         scheduled_time: scheduledDateTime,
-        status,
         post_type: type,
-        cover_image: coverImage,
-        media_urls: uploadedMedia.map(m => m.url),
-        media_types: uploadedMedia.map(m => m.type),
-      media_alt_texts: altTexts,
-        youtube_title: videoTitle,
-        youtube_privacy: youtubePrivacy,
-        instagram_post_format: postFormat,
-        instagram_first_comment: firstComment,
-        instagram_location: location,
-        instagram_shop_grid_link: shopGridLink,
-        linkedin_document_url: linkedinDocumentUrl,
-        linkedin_document_title: linkedinDocumentTitle,
+        media_ids: mediaIds,
+        media_urls: mediaUrls,
+        title: fallbackTitle || null,
         tiktok_privacy: tiktokPrivacy,
-        tiktok_allow_duet: tiktokAllowDuet,
-        tiktok_allow_stitch: tiktokAllowStitch,
-        tiktok_allow_comments: tiktokAllowComments,
-        platform_specific_content: platformCaptions,
+        disable_duet: !tiktokAllowDuet,
+        disable_stitch: !tiktokAllowStitch,
+        disable_comment: !tiktokAllowComments,
+        platform_overrides: platformOverrides,
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         withCredentials: true,
@@ -1141,8 +1182,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               onLinkedinDocumentChange={async ({ file, url, title }) => {
                 if (file) {
                   try {
-                    const result = await uploadMedia(file);
-                    setLinkedinDocumentUrl(result.url);
+                    const uploadJob = await uploadMedia(file);
+                    const asset = await waitForUploadReady(uploadJob.media_job_id);
+                    setLinkedinDocumentUrl(asset.media_url || null);
                     setLinkedinDocumentTitle(title || file.name.replace(/\.[^.]+$/, ''));
                   } catch { toast.error('Failed to upload document'); }
                 } else {

@@ -138,6 +138,36 @@ export const uploadMedia = async (file, onProgress) => {
   return response.data;
 };
 
+export const getUploadStatus = async (mediaJobId) => {
+  const response = await axios.get(`${API}/upload/${mediaJobId}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const waitForUploadReady = async (
+  mediaJobId,
+  { intervalMs = 2000, timeoutMs = 300000, onPoll = null } = {}
+) => {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const asset = await getUploadStatus(mediaJobId);
+    onPoll?.(asset);
+
+    if (asset.status === 'ready' || asset.status === 'archived') {
+      return asset;
+    }
+    if (asset.status === 'failed') {
+      throw new Error(asset.error_message || 'Upload processing failed');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error('Upload processing timed out');
+};
+
 // Failed Posts (Dead Letter Queue)
 export const getFailedPosts = async () => {
   const response = await axios.get(`${API}/posts/failed`, {
