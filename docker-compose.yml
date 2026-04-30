@@ -164,6 +164,7 @@ services:
     command: celery -A celery_workers.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler -s /app/beat_schedule/celerybeat-schedule
     environment:
       <<: *common-env
+      PYTHONPATH: /home/appuser/.local/lib/python3.11/site-packages
     volumes:
       - beat_schedule:/app/beat_schedule
     depends_on:
