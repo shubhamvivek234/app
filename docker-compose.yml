@@ -139,7 +139,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter,media_processing
     # Scale tip: run multiple worker containers for higher throughput
     # e.g. docker-compose up -d --scale worker=5  → 5 × 8 = 40 concurrent slots
     environment:
@@ -160,7 +160,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.beat
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
+    command: celery -A celery_workers.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler -s /app/beat_schedule/celerybeat-schedule
     environment:
       <<: *common-env
     volumes:
