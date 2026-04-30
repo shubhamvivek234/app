@@ -12,6 +12,7 @@ from typing import Annotated
 
 import magic
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
+from redis.exceptions import RedisError
 
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis, require_permission
 from api.limiter import limiter
@@ -41,7 +42,12 @@ _QUARANTINE_BASE = os.environ.get("QUARANTINE_PATH", "/tmp/quarantine")
 
 async def _check_queue_depth(queue_redis: QueueRedis) -> None:
     """Raise 503 if media_processing queue is overloaded."""
-    depth = await queue_redis.llen("media_processing")
+    try:
+        depth = await queue_redis.llen("media_processing")
+    except RedisError as exc:
+        logger.warning("Skipping queue depth check because Redis is unavailable: %s", exc)
+        return
+
     if depth > _QUEUE_DEPTH_LIMIT:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -54,12 +60,20 @@ async def _check_concurrent_uploads(cache_redis: CacheRedis, user_id: str, plan:
     """Enforce per-user concurrent upload limit (atomic incr-then-check, LB-3)."""
     limit = _CONCURRENT_LIMIT.get(plan, 2)
     key = f"upload:concurrent:{user_id}"
-    # Atomic increment first, then check — avoids GET/INCR race condition
-    current = await cache_redis.incr(key)
-    await cache_redis.expire(key, 300)  # auto-expire after 5 min
+    try:
+        # Atomic increment first, then check — avoids GET/INCR race condition
+        current = await cache_redis.incr(key)
+        await cache_redis.expire(key, 300)  # auto-expire after 5 min
+    except RedisError as exc:
+        logger.warning("Skipping concurrent upload limit because Redis is unavailable: %s", exc)
+        return
+
     if current > limit:
-        # Roll back the increment before raising
-        await cache_redis.decr(key)
+        try:
+            # Roll back the increment before raising
+            await cache_redis.decr(key)
+        except RedisError as exc:
+            logger.warning("Failed to roll back concurrent upload counter: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Concurrent upload limit reached ({limit} for {plan} plan)",
@@ -69,9 +83,12 @@ async def _check_concurrent_uploads(cache_redis: CacheRedis, user_id: str, plan:
 
 async def _release_concurrent_slot(cache_redis: CacheRedis, user_id: str) -> None:
     key = f"upload:concurrent:{user_id}"
-    val = await cache_redis.get(key)
-    if val and int(val) > 0:
-        await cache_redis.decr(key)
+    try:
+        val = await cache_redis.get(key)
+        if val and int(val) > 0:
+            await cache_redis.decr(key)
+    except RedisError as exc:
+        logger.warning("Failed to release concurrent upload slot: %s", exc)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
