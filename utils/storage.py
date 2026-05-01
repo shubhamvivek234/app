@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,41 @@ _R2_PUBLIC_URL_BASE = os.environ.get(
     "CF_R2_PUBLIC_URL",
     f"https://pub-{_CF_ACCOUNT_ID}.r2.dev" if _CF_ACCOUNT_ID else "",
 )
+
+
+def _ensure_firebase_app():
+    """Initialize Firebase Admin in non-API processes such as Celery workers."""
+    import firebase_admin  # noqa: PLC0415
+    from firebase_admin import credentials  # noqa: PLC0415
+
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        cred_path = os.environ.get("FIREBASE_ADMIN_SDK_JSON", "/app/serviceAccountKey.json")
+        if not Path(cred_path).is_file():
+            raise RuntimeError(
+                "Firebase Admin SDK credential file not found. "
+                f"Expected FIREBASE_ADMIN_SDK_JSON at '{cred_path}'."
+            )
+
+        options = {}
+        bucket_name = os.environ.get("FIREBASE_STORAGE_BUCKET", "").strip()
+        if bucket_name:
+            options["storageBucket"] = bucket_name
+
+        app = firebase_admin.initialize_app(credentials.Certificate(cred_path), options)
+        logger.info("Firebase Admin SDK initialized for storage from %s", cred_path)
+        return app
+
+
+def _get_firebase_bucket():
+    import firebase_admin.storage as fb_storage  # noqa: PLC0415
+
+    _ensure_firebase_app()
+    bucket_name = os.environ.get("FIREBASE_STORAGE_BUCKET", "").strip()
+    if bucket_name:
+        return fb_storage.bucket(bucket_name)
+    return fb_storage.bucket()
 
 
 def _get_r2_client():
@@ -287,9 +323,7 @@ def _firebase_upload_from_path(
 ) -> str:
     """Upload from file path to Firebase Storage using streaming."""
     try:
-        import firebase_admin.storage as fb_storage
-
-        bucket = fb_storage.bucket()
+        bucket = _get_firebase_bucket()
         blob_path = f"{folder}/{filename}"
         blob = bucket.blob(blob_path)
         blob.upload_from_filename(file_path, content_type=content_type)
@@ -331,9 +365,7 @@ def _firebase_upload(
 ) -> str:
     """Wrap existing Firebase Storage upload logic."""
     try:
-        import firebase_admin.storage as fb_storage  # noqa: PLC0415
-
-        bucket = fb_storage.bucket()
+        bucket = _get_firebase_bucket()
         blob_path = f"{folder}/{filename}"
         blob = bucket.blob(blob_path)
         blob.upload_from_string(file_bytes, content_type=content_type)
@@ -349,15 +381,13 @@ def _firebase_upload(
 def _firebase_delete(url: str) -> None:
     """Delete a Firebase Storage object identified by its public URL."""
     try:
-        import firebase_admin.storage as fb_storage  # noqa: PLC0415
-
         parsed = urlparse(url)
         # GCS public URL path: /storage/v1/b/<bucket>/o/<encoded-path>
         # Simple approach: strip prefix to derive blob name
         path = parsed.path  # e.g. /bucket-name/folder/file.jpg
         parts = path.lstrip("/").split("/", 1)
         blob_name = parts[1] if len(parts) > 1 else path
-        bucket = fb_storage.bucket()
+        bucket = _get_firebase_bucket()
         blob = bucket.blob(blob_name)
         blob.delete()
         logger.info("Firebase delete complete: blob=%s", blob_name)
@@ -370,9 +400,8 @@ def _firebase_signed_url(key: str, expires_in: int) -> str:
     """Generate a signed URL for a Firebase Storage object."""
     try:
         import datetime  # noqa: PLC0415
-        import firebase_admin.storage as fb_storage  # noqa: PLC0415
 
-        bucket = fb_storage.bucket()
+        bucket = _get_firebase_bucket()
         blob = bucket.blob(key)
         url = blob.generate_signed_url(
             expiration=datetime.timedelta(seconds=expires_in),
