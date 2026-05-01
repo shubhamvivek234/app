@@ -86,6 +86,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     client = None
     quarantine_path: str | None = None
     processed_path: str | None = None
+    completed_successfully = False
     try:
         from media_pipeline.validation import validate_media
         from media_pipeline.ffmpeg_worker import process_video
@@ -163,23 +164,30 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         )
 
         logger.info("Media %s processed and uploaded successfully", media_job_id)
+        completed_successfully = True
         return {"status": "ready", "media_url": media_url, "thumbnail_url": thumbnail_url}
 
     except Exception as exc:
         logger.error("Media processing failed for %s: %s", media_job_id, exc)
-        await _mark_media_failed(media_job_id, str(exc))
+        current_retries = getattr(task.request, "retries", 0)
+        max_retries = getattr(task, "max_retries", 0)
+        if current_retries >= max_retries:
+            await _mark_media_failed(media_job_id, str(exc))
+            raise
         raise task.retry(countdown=30, exc=exc)
 
     finally:
         if client is not None:
             client.close()
-        # EC-14: Remove local quarantine/temp files to prevent disk accumulation
-        for path in {quarantine_path, processed_path}:
-            if path and os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except OSError as _e:
-                    logger.warning("Could not delete temp file %s: %s", path, _e)
+        if completed_successfully:
+            # EC-14: Remove local quarantine/temp files only after successful processing.
+            # Retried jobs still need the original quarantine file.
+            for path in {quarantine_path, processed_path}:
+                if path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                    except OSError as _e:
+                        logger.warning("Could not delete temp file %s: %s", path, _e)
 
 
 # ── Section 18.8 — Per-platform Publish Notifications ────────────────────────

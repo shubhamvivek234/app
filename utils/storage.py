@@ -15,7 +15,31 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-_STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "r2").lower()
+
+def _detect_storage_backend() -> str:
+    configured = os.environ.get("STORAGE_BACKEND", "").strip().lower()
+    if configured in {"r2", "firebase"}:
+        return configured
+
+    has_r2 = bool(
+        os.environ.get("CF_R2_ENDPOINT")
+        and os.environ.get("CF_R2_ACCESS_KEY_ID")
+        and os.environ.get("CF_R2_SECRET_ACCESS_KEY")
+    )
+    if has_r2:
+        return "r2"
+
+    has_firebase = bool(
+        os.environ.get("FIREBASE_STORAGE_BUCKET")
+        and os.environ.get("FIREBASE_ADMIN_SDK_JSON")
+    )
+    if has_firebase:
+        return "firebase"
+
+    return "r2"
+
+
+_STORAGE_BACKEND = _detect_storage_backend()
 
 # ── R2 configuration ──────────────────────────────────────────────────────────
 _R2_ENDPOINT = os.environ.get("CF_R2_ENDPOINT", "")
