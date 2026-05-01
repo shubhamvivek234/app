@@ -14,11 +14,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from celery import group
+from redis.exceptions import RedisError
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_queue_redis, get_cache_redis
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 from utils.feature_flags import is_enabled
+from utils.redis_resilience import safe_expire, safe_get, safe_incr, safe_setex
 
 logger = logging.getLogger(__name__)
 
@@ -50,23 +52,34 @@ async def _acquire_platform_slot(redis, platform: str) -> bool:
     """
     limit = _PLATFORM_CONCURRENCY.get(platform, 15)
     key = f"pub_slots:{platform}"
-    async with redis.pipeline(transaction=True) as pipe:
-        await pipe.incr(key)
-        await pipe.expire(key, _PLATFORM_SLOT_TTL)
-        results = await pipe.execute()
-    current = int(results[0])
-    if current > limit:
-        await redis.decr(key)
-        return False
-    return True
+    try:
+        async with redis.pipeline(transaction=True) as pipe:
+            await pipe.incr(key)
+            await pipe.expire(key, _PLATFORM_SLOT_TTL)
+            results = await pipe.execute()
+        current = int(results[0])
+        if current > limit:
+            await redis.decr(key)
+            return False
+        return True
+    except RedisError as exc:
+        logger.warning(
+            "Platform slot control degraded for %s because cache Redis is unavailable: %s",
+            platform,
+            exc,
+        )
+        return True
 
 
 async def _release_platform_slot(redis, platform: str) -> None:
     """Release a previously acquired platform slot."""
     key = f"pub_slots:{platform}"
-    val = await redis.decr(key)
-    if val < 0:
-        await redis.set(key, 0)  # guard against going negative on restart
+    try:
+        val = await redis.decr(key)
+        if val < 0:
+            await redis.set(key, 0)  # guard against going negative on restart
+    except RedisError as exc:
+        logger.warning("Platform slot release degraded for %s: %s", platform, exc)
 
 
 # ── Poison pill guard (Phase 7.3) ────────────────────────────────────────────
@@ -74,8 +87,8 @@ async def _check_poison_pill(task_id: str) -> bool:
     """Returns True if this task has been delivered too many times → DLQ."""
     r = get_queue_redis()
     key = f"delivery_count:{task_id}"
-    count = await r.incr(key)
-    await r.expire(key, 86400)  # 24-hour TTL
+    count = await safe_incr(r, key, default=1, feature="Publish poison-pill counter")
+    await safe_expire(r, key, 86400, default=True, feature="Publish poison-pill TTL")  # 24-hour TTL
     return int(count) > MAX_DELIVERY_COUNT
 
 
@@ -309,8 +322,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     # 20.5: Per-platform poison pill guard — each platform has its own delivery counter
     r_queue = get_queue_redis()
     pp_key = f"delivery_count:{task.request.id}:{platform}"
-    pp_count = await r_queue.incr(pp_key)
-    await r_queue.expire(pp_key, 86400)
+    pp_count = await safe_incr(r_queue, pp_key, default=1, feature="Per-platform poison-pill counter")
+    await safe_expire(r_queue, pp_key, 86400, default=True, feature="Per-platform poison-pill TTL")
     if int(pp_count) > MAX_DELIVERY_COUNT:
         logger.error("20.5: Poison pill on %s/%s (delivered %d times) — moving to DLQ", post_id, platform, pp_count)
         await _move_to_dlq(post_id, "poison_pill_exceeded", platform=platform)
@@ -332,7 +345,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
     # EC17: Check Redis confirmation cache first — may already be done
     confirm_key = f"confirmed:{post_id}:{platform}"
-    cached = await r_cache.get(confirm_key)
+    cached = await safe_get(r_cache, confirm_key, default=None, feature="Publish confirmation cache read")
     if cached:
         logger.info("Platform %s/%s already confirmed in Redis — skipping API call", post_id, platform)
         return {"status": "already_confirmed"}
@@ -487,7 +500,14 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             "platform_post_id": platform_post_id,
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
-        await r_cache.setex(confirm_key, 86400, json.dumps(confirmation_payload))
+        await safe_setex(
+            r_cache,
+            confirm_key,
+            86400,
+            json.dumps(confirmation_payload),
+            default=True,
+            feature="Publish confirmation cache write",
+        )
 
         # ── Circuit breaker: record success (Section 20.1) ────────────────────
         await record_success(r_cache, platform, account_id)

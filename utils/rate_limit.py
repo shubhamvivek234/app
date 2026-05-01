@@ -6,6 +6,8 @@ Never count rate-limit hits as retry failures.
 import logging
 from datetime import timedelta
 
+from utils.redis_resilience import safe_decr, safe_get, safe_setex
+
 logger = logging.getLogger(__name__)
 
 # Platform token limits (posts per hour unless noted)
@@ -34,10 +36,10 @@ async def check_rate_limit(redis, platform: str, social_account_id: str) -> bool
     max_tokens = limits["tokens_per_window"]
 
     # Atomic: SETNX (set if not exists) to initialise bucket, then DECR
-    current = await redis.get(key)
+    current = await safe_get(redis, key, default=None, feature="Platform rate-limit read")
     if current is None:
         # Initialise bucket with max tokens - 1 (consuming one now)
-        await redis.setex(key, window, max_tokens - 1)
+        await safe_setex(redis, key, window, max_tokens - 1, default=True, feature="Platform rate-limit init")
         return True
 
     current_int = int(current)
@@ -45,7 +47,7 @@ async def check_rate_limit(redis, platform: str, social_account_id: str) -> bool
         logger.warning("Rate limit exceeded: %s/%s (%d tokens)", platform, social_account_id, current_int)
         return False
 
-    await redis.decr(key)
+    await safe_decr(redis, key, default=current_int - 1, feature="Platform rate-limit consume")
     return True
 
 
@@ -55,13 +57,13 @@ async def pause_account(redis, platform: str, social_account_id: str, pause_seco
     Sets tokens to 0 for the specified duration (Retry-After).
     """
     key = f"ratelimit:{platform}:{social_account_id}:tokens"
-    await redis.setex(key, pause_seconds, 0)
+    await safe_setex(redis, key, pause_seconds, 0, default=True, feature="Platform rate-limit pause")
     logger.info("Account %s/%s paused for %ds after 429", platform, social_account_id, pause_seconds)
 
 
 async def get_remaining_tokens(redis, platform: str, social_account_id: str) -> int:
     key = f"ratelimit:{platform}:{social_account_id}:tokens"
-    val = await redis.get(key)
+    val = await safe_get(redis, key, default=None, feature="Platform rate-limit remaining")
     if val is None:
         return PLATFORM_LIMITS.get(platform, {}).get("tokens_per_window", 0)
     return max(0, int(val))

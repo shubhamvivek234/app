@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from celery_workers.celery_app import celery_app
 from utils.encryption import decrypt, encrypt
+from utils.redis_resilience import best_effort_lock
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,13 @@ async def _refresh_with_lock(db, account_id: str, platform: str) -> None:
     r = get_cache_redis()
     lock_key = f"token_refresh_lock:{account_id}"
 
-    async with r.lock(lock_key, timeout=30, blocking_timeout=25):
+    async with best_effort_lock(
+        r,
+        lock_key,
+        timeout=30,
+        blocking_timeout=25,
+        feature="Token refresh lock",
+    ):
         # Re-read inside lock — another worker may have refreshed already
         account = await db.social_accounts.find_one(
             {"account_id": account_id},

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import quote, urlencode, urlparse
 
+import jwt
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
@@ -18,11 +19,14 @@ from pydantic import BaseModel, ConfigDict
 from api.deps import CurrentUser, DB, CacheRedis, require_permission
 from api.task_queue import enqueue_task
 from utils.encryption import decrypt, encrypt
+from utils.redis_resilience import safe_delete, safe_get, safe_setex
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
 
 _SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
+_OAUTH_STATE_JWT_SECRET = os.environ.get("JWT_SECRET", "your-secret-key")
+_OAUTH_STATE_JWT_ALGORITHM = "HS256"
 
 # ── Response models (access_token / refresh_token intentionally absent) ───────
 
@@ -573,38 +577,58 @@ async def get_oauth_url(
         )
 
     user_id = current_user["user_id"]
-    state = secrets.token_urlsafe(32)
+    redis_state = secrets.token_urlsafe(32)
     frontend_base = (
         _normalize_frontend_base(request.headers.get("origin"))
         or _normalize_frontend_base(request.headers.get("referer"))
         or _default_frontend_base()
     )
     code_verifier: str | None = None
+    state = redis_state
 
     if platform == "tiktok":
         from backend.app.social.tiktok import TikTokAuth
-        auth_payload = TikTokAuth().get_auth_url(state)
+        auth_payload = TikTokAuth().get_auth_url(redis_state)
         auth_url = auth_payload["url"]
         code_verifier = auth_payload.get("verifier")
     elif platform == "linkedin":
         from backend.app.social.linkedin import LinkedInAuth
-        auth_url = LinkedInAuth().get_auth_url(state)
+        auth_url = LinkedInAuth().get_auth_url(redis_state)
     else:
         try:
-            auth_url = _build_oauth_url(platform, state, frontend_base)
+            auth_url = _build_oauth_url(platform, redis_state, frontend_base)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
     # Store enough context to finish redirect-based OAuth on the backend.
-    await cache_redis.setex(
-        f"oauth_state:{state}",
+    state_context = {
+        "user_id": user_id,
+        "frontend_base": frontend_base,
+        "code_verifier": code_verifier,
+    }
+    stored = await safe_setex(
+        cache_redis,
+        f"oauth_state:{redis_state}",
         600,
-        json.dumps({
-            "user_id": user_id,
-            "frontend_base": frontend_base,
-            "code_verifier": code_verifier,
-        }),
+        json.dumps(state_context),
+        default=False,
+        feature="OAuth state store",
     )
+    if not stored:
+        # Redis cache exhaustion should not block social account connection.
+        if platform == "tiktok":
+            from backend.app.social.tiktok import TikTokAuth
+            state = _create_stateless_oauth_state(state_context)
+            auth_payload = TikTokAuth().get_auth_url(state, verifier=code_verifier)
+            auth_url = auth_payload["url"]
+        elif platform == "linkedin":
+            state = _create_stateless_oauth_state(state_context)
+            from backend.app.social.linkedin import LinkedInAuth
+            auth_url = LinkedInAuth().get_auth_url(state)
+        else:
+            state = _create_stateless_oauth_state(state_context)
+            auth_url = _build_oauth_url(platform, state, frontend_base)
+
     return OAuthUrlResponse(
         platform=platform,
         authorization_url=auth_url,
@@ -897,10 +921,15 @@ def _build_frontend_oauth_callback(frontend_base: str | None) -> str | None:
 
 
 async def _consume_oauth_state(cache_redis: CacheRedis, state: str) -> dict | None:
-    stored_value = await cache_redis.get(f"oauth_state:{state}")
+    stored_value = await safe_get(
+        cache_redis,
+        f"oauth_state:{state}",
+        default=None,
+        feature="OAuth state lookup",
+    )
     if stored_value is None:
-        return None
-    await cache_redis.delete(f"oauth_state:{state}")
+        return _decode_stateless_oauth_state(state)
+    await safe_delete(cache_redis, f"oauth_state:{state}", default=0, feature="OAuth state consume")
 
     if isinstance(stored_value, bytes):
         stored_value = stored_value.decode("utf-8")
@@ -914,6 +943,33 @@ async def _consume_oauth_state(cache_redis: CacheRedis, state: str) -> dict | No
         pass
 
     return {"user_id": str(stored_value), "frontend_base": _default_frontend_base()}
+
+
+def _create_stateless_oauth_state(context: dict) -> str:
+    payload = {
+        "kind": "oauth_state",
+        "user_id": context.get("user_id"),
+        "frontend_base": _normalize_frontend_base(context.get("frontend_base")) or _default_frontend_base(),
+        "code_verifier": context.get("code_verifier"),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+    }
+    return jwt.encode(payload, _OAUTH_STATE_JWT_SECRET, algorithm=_OAUTH_STATE_JWT_ALGORITHM)
+
+
+def _decode_stateless_oauth_state(state: str) -> dict | None:
+    try:
+        payload = jwt.decode(state, _OAUTH_STATE_JWT_SECRET, algorithms=[_OAUTH_STATE_JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+
+    if payload.get("kind") != "oauth_state" or not payload.get("user_id"):
+        return None
+
+    return {
+        "user_id": payload["user_id"],
+        "frontend_base": _normalize_frontend_base(payload.get("frontend_base")) or _default_frontend_base(),
+        "code_verifier": payload.get("code_verifier"),
+    }
 
 
 async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data: dict | None) -> str:

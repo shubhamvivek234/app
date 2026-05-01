@@ -8,6 +8,8 @@ import json
 import logging
 from datetime import datetime
 
+from utils.redis_resilience import safe_get, safe_setex
+
 logger = logging.getLogger(__name__)
 
 KEY_TTL = 86400  # 24 hours
@@ -26,7 +28,7 @@ async def check_idempotency(redis, post_id: str, platform: str, attempt: int) ->
     Returns the stored result dict if found, None if this is a fresh attempt.
     """
     key = f"idempotency:{make_idempotency_key(post_id, platform, attempt)}"
-    raw = await redis.get(key)
+    raw = await safe_get(redis, key, default=None, feature="Idempotency read")
     if raw:
         logger.info("Idempotency hit for %s/%s attempt %d", post_id, platform, attempt)
         return json.loads(raw)
@@ -43,14 +45,14 @@ async def mark_idempotency(
 ) -> None:
     """Store the result so future retries can short-circuit."""
     key = f"idempotency:{make_idempotency_key(post_id, platform, attempt)}"
-    await redis.setex(key, ttl, json.dumps(result))
+    await safe_setex(redis, key, ttl, json.dumps(result), default=True, feature="Idempotency write")
     logger.debug("Stored idempotency key for %s/%s attempt %d", post_id, platform, attempt)
 
 
 async def get_container_id(redis, post_id: str, platform: str) -> str | None:
     """Retrieve pre-uploaded container ID stored during pre_upload_task."""
     key = f"idempotency:{make_idempotency_key(post_id, platform, 0)}"
-    raw = await redis.get(key)
+    raw = await safe_get(redis, key, default=None, feature="Idempotency container read")
     if raw:
         data = json.loads(raw)
         return data.get("container_id")

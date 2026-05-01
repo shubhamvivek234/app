@@ -24,11 +24,23 @@ async def health() -> dict:
 @router.get("/ready")
 async def ready() -> JSONResponse:
     """
-    Readiness probe — returns 200 only if both MongoDB and Redis are reachable.
-    Returns 503 if either dependency is down (Kubernetes will stop sending traffic).
+    Readiness probe.
+
+    Hard dependencies:
+      - MongoDB
+      - Redis queue (Celery broker path)
+      - Firebase Admin SDK
+
+    Degradable dependency:
+      - Redis cache
+
+    Returns 200 when hard dependencies are healthy, even if cache Redis is down.
+    Cache Redis failures are reported as "degraded" so the API can stay in
+    service and rely on graceful fallbacks where implemented.
     """
     checks: dict[str, str] = {}
-    all_ok = True
+    hard_ok = True
+    degraded = False
 
     # MongoDB check
     try:
@@ -38,7 +50,7 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         logger.error("Readiness check — MongoDB unreachable: %s", exc)
         checks["mongodb"] = "error"
-        all_ok = False
+        hard_ok = False
 
     # Redis queue check
     try:
@@ -48,7 +60,7 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         logger.error("Readiness check — Redis queue unreachable: %s", exc)
         checks["redis_queue"] = "error"
-        all_ok = False
+        hard_ok = False
 
     # Redis cache check
     try:
@@ -56,9 +68,9 @@ async def ready() -> JSONResponse:
         await r.ping()
         checks["redis_cache"] = "ok"
     except Exception as exc:
-        logger.error("Readiness check — Redis cache unreachable: %s", exc)
-        checks["redis_cache"] = "error"
-        all_ok = False
+        logger.warning("Readiness check — Redis cache unreachable (degraded mode): %s", exc)
+        checks["redis_cache"] = "degraded"
+        degraded = True
 
     # Firebase Admin SDK check
     try:
@@ -67,10 +79,13 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         logger.error("Readiness check — Firebase Admin SDK unavailable: %s", exc)
         checks["firebase_admin"] = "error"
-        all_ok = False
+        hard_ok = False
 
-    status_code = 200 if all_ok else 503
+    status_code = 200 if hard_ok else 503
     return JSONResponse(
-        content={"status": "ready" if all_ok else "not_ready", "checks": checks},
+        content={
+            "status": "ready" if hard_ok and not degraded else "degraded" if hard_ok else "not_ready",
+            "checks": checks,
+        },
         status_code=status_code,
     )

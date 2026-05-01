@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from utils.redis_resilience import safe_set
+
 logger = logging.getLogger(__name__)
 
 _GRACE_PERIOD_DAYS = 7
@@ -124,26 +126,38 @@ async def send_expiry_warnings(db, cache_redis) -> None:
     async for user in pre_expiry_cursor:
         user_id = user.get("user_id", "")
         dedup_key = f"expiry_warning:pre:{user_id}"
-        already_sent = await cache_redis.set(dedup_key, "1", ex=86400 * 8, nx=True)
-        if not already_sent:
+        already_sent = await safe_set(
+            cache_redis,
+            dedup_key,
+            "1",
+            ex=86400 * 8,
+            nx=True,
+            default=True,
+            feature="Subscription pre-expiry dedup",
+        )
+        inserted = await db.notifications.update_one(
+            {"dedup_key": dedup_key},
+            {"$setOnInsert": {
+                "user_id": user_id,
+                "type": "subscription.expiring",
+                "channel": "email",
+                "message": (
+                    "Your subscription expires in 7 days. "
+                    "After expiry, you'll have a 7-day grace period before posts are paused."
+                ),
+                "created_at": now,
+                "read": False,
+                "dedup_key": dedup_key,
+            }},
+            upsert=True,
+        )
+        if not already_sent or inserted.upserted_id is None:
             continue
         logger.info(
             "Sending pre-expiry warning to user %s (expires %s)",
             user_id,
             user.get("subscription_expires_at"),
         )
-        # Actual email dispatch delegated to notification system
-        await db.notifications.insert_one({
-            "user_id": user_id,
-            "type": "subscription.expiring",
-            "channel": "email",
-            "message": (
-                "Your subscription expires in 7 days. "
-                "After expiry, you'll have a 7-day grace period before posts are paused."
-            ),
-            "created_at": now,
-            "read": False,
-        })
 
     # Users whose subscription just expired (on expiry day)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -157,30 +171,42 @@ async def send_expiry_warnings(db, cache_redis) -> None:
     async for user in expired_cursor:
         user_id = user.get("user_id", "")
         dedup_key = f"expiry_warning:expired:{user_id}"
-        already_sent = await cache_redis.set(dedup_key, "1", ex=86400 * 8, nx=True)
-        if not already_sent:
-            continue
-
+        already_sent = await safe_set(
+            cache_redis,
+            dedup_key,
+            "1",
+            ex=86400 * 8,
+            nx=True,
+            default=True,
+            feature="Subscription expiry dedup",
+        )
         # Count affected scheduled posts
         affected_count = await db.posts.count_documents({
             "user_id": user_id,
             "status": "scheduled",
             "scheduled_time": {"$gt": now},
         })
+        inserted = await db.notifications.update_one(
+            {"dedup_key": dedup_key},
+            {"$setOnInsert": {
+                "user_id": user_id,
+                "type": "subscription.expired",
+                "channel": "email",
+                "message": (
+                    f"Your subscription has expired. You have a 7-day grace period. "
+                    f"{affected_count} scheduled post(s) will be paused after the grace period."
+                ),
+                "created_at": now,
+                "read": False,
+                "dedup_key": dedup_key,
+            }},
+            upsert=True,
+        )
+        if not already_sent or inserted.upserted_id is None:
+            continue
 
         logger.info(
             "Sending expiry notification to user %s (%d posts affected)",
             user_id,
             affected_count,
         )
-        await db.notifications.insert_one({
-            "user_id": user_id,
-            "type": "subscription.expired",
-            "channel": "email",
-            "message": (
-                f"Your subscription has expired. You have a 7-day grace period. "
-                f"{affected_count} scheduled post(s) will be paused after the grace period."
-            ),
-            "created_at": now,
-            "read": False,
-        })

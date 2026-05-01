@@ -11,6 +11,8 @@ Do NOT count OPEN-circuit requeues as retry failures.
 import logging
 from enum import Enum
 
+from utils.redis_resilience import safe_delete, safe_expire, safe_get, safe_incr, safe_set, safe_setex, safe_ttl
+
 logger = logging.getLogger(__name__)
 
 FAILURE_THRESHOLD = 5          # failures in window before tripping
@@ -32,10 +34,19 @@ def _key(platform: str, account_id: str | None) -> str:
 
 
 async def get_circuit_state(redis, platform: str, account_id: str | None = None) -> CircuitState:
-    state_raw = await redis.get(f"{_key(platform, account_id)}:state")
+    state_raw = await safe_get(
+        redis,
+        f"{_key(platform, account_id)}:state",
+        default=None,
+        feature="Circuit-breaker state read",
+    )
     if state_raw is None:
         return CircuitState.CLOSED
-    return CircuitState(state_raw)
+    try:
+        return CircuitState(state_raw)
+    except ValueError:
+        logger.warning("Invalid circuit-breaker state for %s: %r", _key(platform, account_id), state_raw)
+        return CircuitState.CLOSED
 
 
 async def record_success(redis, platform: str, account_id: str | None = None) -> None:
@@ -43,8 +54,8 @@ async def record_success(redis, platform: str, account_id: str | None = None) ->
     base = _key(platform, account_id)
     state = await get_circuit_state(redis, platform, account_id)
     if state in (CircuitState.OPEN, CircuitState.HALF_OPEN):
-        await redis.set(f"{base}:state", CircuitState.CLOSED)
-        await redis.delete(f"{base}:failures")
+        await safe_set(redis, f"{base}:state", CircuitState.CLOSED, default=True, feature="Circuit-breaker close")
+        await safe_delete(redis, f"{base}:failures", default=0, feature="Circuit-breaker reset failures")
         logger.info("Circuit CLOSED for %s (recovered)", base)
 
 
@@ -55,14 +66,16 @@ async def record_failure(redis, platform: str, account_id: str | None = None) ->
     """
     base = _key(platform, account_id)
     failure_key = f"{base}:failures"
-    count = await redis.incr(failure_key)
-    await redis.expire(failure_key, FAILURE_WINDOW_SECONDS)
+    count = await safe_incr(redis, failure_key, default=1, feature="Circuit-breaker failure count")
+    await safe_expire(redis, failure_key, FAILURE_WINDOW_SECONDS, default=True, feature="Circuit-breaker failure TTL")
 
     if count >= FAILURE_THRESHOLD:
-        await redis.setex(
+        await safe_setex(
             f"{base}:state",
             OPEN_COOLDOWN_SECONDS,
             CircuitState.OPEN,
+            default=True,
+            feature="Circuit-breaker open",
         )
         logger.warning(
             "Circuit OPEN for %s (%d failures in %ds) — requeuing with 5min backoff",
@@ -88,10 +101,17 @@ async def can_attempt(redis, platform: str, account_id: str | None = None) -> bo
 
     if state == CircuitState.OPEN:
         # Check if cooldown has passed (TTL expired → key gone → CLOSED)
-        ttl = await redis.ttl(f"{base}:state")
+        ttl = await safe_ttl(redis, f"{base}:state", default=-1, feature="Circuit-breaker TTL read")
         if ttl <= 0:
             # Transition to HALF_OPEN for probe
-            await redis.setex(f"{base}:state", OPEN_COOLDOWN_SECONDS, CircuitState.HALF_OPEN)
+            await safe_setex(
+                redis,
+                f"{base}:state",
+                OPEN_COOLDOWN_SECONDS,
+                CircuitState.HALF_OPEN,
+                default=True,
+                feature="Circuit-breaker half-open transition",
+            )
             logger.info("Circuit HALF_OPEN for %s — probe call allowed", base)
             return True
         return False

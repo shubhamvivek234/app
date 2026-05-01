@@ -29,16 +29,22 @@ class TikTokAuth:
 
     def _generate_pkce(self):
         verifier  = secrets.token_urlsafe(64)
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode()).digest()
-        ).decode().rstrip("=")
+        challenge = self._challenge_from_verifier(verifier)
         return verifier, challenge
 
-    def get_auth_url(self, state: str) -> dict:
+    def _challenge_from_verifier(self, verifier: str) -> str:
+        return base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode()).digest()
+        ).decode().rstrip("=")
+
+    def get_auth_url(self, state: str, verifier: str | None = None) -> dict:
         """Return auth URL + PKCE verifier (store verifier in session)."""
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="TikTok credentials not configured")
-        verifier, challenge = self._generate_pkce()
+        if verifier is None:
+            verifier, challenge = self._generate_pkce()
+        else:
+            challenge = self._challenge_from_verifier(verifier)
         params = {
             "client_key":             self.client_id,
             "response_type":          "code",

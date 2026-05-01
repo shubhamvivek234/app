@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from api.deps import CurrentUser, CacheRedis, get_current_user, get_cache_redis
+from utils.redis_resilience import safe_decr, safe_expire, safe_get, safe_incr
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["stream"])
@@ -207,14 +208,36 @@ async def stream_post_updates(
 
     # Rate limit: max concurrent SSE connections per user
     conn_key = f"sse:conn:{user_id}"
-    conn_count = await cache_redis.get(conn_key)
+    conn_count = await safe_get(
+        cache_redis,
+        conn_key,
+        default=None,
+        feature="SSE connection-count read",
+    )
     if conn_count and int(conn_count) >= _MAX_SSE_PER_USER:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Maximum {_MAX_SSE_PER_USER} concurrent SSE connections",
         )
-    await cache_redis.incr(conn_key)
-    await cache_redis.expire(conn_key, 300)  # auto-cleanup after 5 min (matches keepalive; prevents stranded counters on crash)
+    current = await safe_incr(
+        cache_redis,
+        conn_key,
+        default=None,
+        feature="SSE connection-count acquire",
+    )
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Realtime updates are temporarily unavailable. Use polling fallback.",
+            headers={"Retry-After": "30", "X-SSE-Fallback": "polling-30s"},
+        )
+    await safe_expire(
+        cache_redis,
+        conn_key,
+        300,
+        default=True,
+        feature="SSE connection-count TTL",
+    )  # auto-cleanup after 5 min (matches keepalive; prevents stranded counters on crash)
 
     # Last-Event-ID for reconnection (resuming missed events)
     last_event_id = request.headers.get("Last-Event-ID")
@@ -233,9 +256,19 @@ async def stream_post_updates(
         finally:
             # Decrement connection count on disconnect
             try:
-                val = await cache_redis.get(conn_key)
+                val = await safe_get(
+                    cache_redis,
+                    conn_key,
+                    default=None,
+                    feature="SSE connection-count release-read",
+                )
                 if val and int(val) > 0:
-                    await cache_redis.decr(conn_key)
+                    await safe_decr(
+                        cache_redis,
+                        conn_key,
+                        default=int(val) - 1,
+                        feature="SSE connection-count release",
+                    )
             except Exception:
                 pass
 

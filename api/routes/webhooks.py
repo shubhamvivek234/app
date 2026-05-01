@@ -14,10 +14,12 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel
 
 from api.deps import DB, CacheRedis
 from api.limiter import limiter
+from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -96,21 +98,34 @@ async def receive_webhook(
     event_id = _extract_event_id(platform, payload)
     if event_id:
         dedup_key = f"webhook_dedup:{platform}:{event_id}"
-        is_new = await cache_redis.set(dedup_key, "1", ex=_DEDUP_TTL_SECONDS, nx=True)
+        is_new = await safe_set(
+            cache_redis,
+            dedup_key,
+            "1",
+            ex=_DEDUP_TTL_SECONDS,
+            nx=True,
+            default=True,
+            feature="Webhook dedup write",
+        )
         if not is_new:
             logger.info("Duplicate webhook ignored: platform=%s event_id=%s", platform, event_id)
             return WebhookAckResponse()
 
-    # 5. Store raw event for audit trail
+    # 5. Store raw event for audit trail. Mongo unique index is the source of truth
+    # for deduplication when cache Redis is unavailable or evicted.
     now = datetime.now(timezone.utc)
-    await db.webhook_events.insert_one({
-        "platform": platform,
-        "event_id": event_id,
-        "payload": payload,
-        "raw_body": raw_body.decode("utf-8", errors="replace"),
-        "received_at": now,
-        "processed": False,
-    })
+    try:
+        await db.webhook_events.insert_one({
+            "platform": platform,
+            "event_id": event_id,
+            "payload": payload,
+            "raw_body": raw_body.decode("utf-8", errors="replace"),
+            "received_at": now,
+            "processed": False,
+        })
+    except DuplicateKeyError:
+        logger.info("Duplicate webhook ignored by Mongo unique index: platform=%s event_id=%s", platform, event_id)
+        return WebhookAckResponse()
 
     # 6. Update post status from payload
     await _process_webhook_payload(platform, payload, db)
@@ -412,24 +427,37 @@ async def receive_stripe_webhook(
     event_id = event.get("id", "")
     event_type = event.get("type", "")
 
-    # 2. Redis dedup — 72-hour TTL
+    # 2. Redis dedup — 72-hour TTL (best-effort fast path)
     dedup_key = f"stripe_event:{event_id}"
-    is_new = await cache_redis.set(dedup_key, "1", ex=_STRIPE_DEDUP_TTL, nx=True)
+    is_new = await safe_set(
+        cache_redis,
+        dedup_key,
+        "1",
+        ex=_STRIPE_DEDUP_TTL,
+        nx=True,
+        default=True,
+        feature="Stripe webhook dedup write",
+    )
     if not is_new:
         logger.info("Duplicate Stripe event ignored: %s", event_id)
         return WebhookAckResponse(received=True)
 
-    # 3. Store raw event in webhook_events collection
+    # 3. Store raw event in webhook_events collection. Mongo unique index is
+    # the durable dedup source of truth.
     now = datetime.now(timezone.utc)
-    await db.webhook_events.insert_one({
-        "platform": "stripe",
-        "event_id": event_id,
-        "event_type": event_type,
-        "payload": event,
-        "raw_body": raw_body.decode("utf-8", errors="replace"),
-        "received_at": now,
-        "processed": False,
-    })
+    try:
+        await db.webhook_events.insert_one({
+            "platform": "stripe",
+            "event_id": event_id,
+            "event_type": event_type,
+            "payload": event,
+            "raw_body": raw_body.decode("utf-8", errors="replace"),
+            "received_at": now,
+            "processed": False,
+        })
+    except DuplicateKeyError:
+        logger.info("Duplicate Stripe event ignored by Mongo unique index: %s", event_id)
+        return WebhookAckResponse(received=True)
 
     # 4. Process known event types
     if event_type in _STRIPE_EVENT_HANDLERS:
@@ -563,24 +591,36 @@ async def receive_razorpay_webhook(
     event_id = payload.get("event_id", payload.get("id", ""))
     event_type = payload.get("event", "")
 
-    # 3. Redis dedup — 72-hour TTL
+    # 3. Redis dedup — 72-hour TTL (best-effort fast path)
     dedup_key = f"razorpay_event:{event_id}"
-    is_new = await cache_redis.set(dedup_key, "1", ex=_RAZORPAY_DEDUP_TTL, nx=True)
+    is_new = await safe_set(
+        cache_redis,
+        dedup_key,
+        "1",
+        ex=_RAZORPAY_DEDUP_TTL,
+        nx=True,
+        default=True,
+        feature="Razorpay webhook dedup write",
+    )
     if not is_new:
         logger.info("Duplicate Razorpay event ignored: %s", event_id)
         return WebhookAckResponse(received=True)
 
-    # 4. Store raw event
+    # 4. Store raw event. Mongo unique index is the durable dedup source of truth.
     now = datetime.now(timezone.utc)
-    await db.webhook_events.insert_one({
-        "platform": "razorpay",
-        "event_id": event_id,
-        "event_type": event_type,
-        "payload": payload,
-        "raw_body": raw_body.decode("utf-8", errors="replace"),
-        "received_at": now,
-        "processed": False,
-    })
+    try:
+        await db.webhook_events.insert_one({
+            "platform": "razorpay",
+            "event_id": event_id,
+            "event_type": event_type,
+            "payload": payload,
+            "raw_body": raw_body.decode("utf-8", errors="replace"),
+            "received_at": now,
+            "processed": False,
+        })
+    except DuplicateKeyError:
+        logger.info("Duplicate Razorpay event ignored by Mongo unique index: %s", event_id)
+        return WebhookAckResponse(received=True)
 
     # 5. Process known event types
     await _process_razorpay_event(event_type, payload, db)

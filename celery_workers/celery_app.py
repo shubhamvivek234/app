@@ -6,6 +6,7 @@ Sentry SDK integration for task error tracking (Phase 4).
 """
 import os
 import logging
+from urllib.parse import urlparse
 import sentry_sdk
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -38,6 +39,21 @@ def _configure_celery_sentry() -> None:
 
 _configure_celery_sentry()
 
+
+def _warn_if_serverless_broker(url: str) -> None:
+    """
+    Celery broker semantics assume stable long-lived Redis connections.
+    Using serverless/quota-bound Redis for REDIS_QUEUE_URL is operationally risky.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    if "upstash" in host:
+        logging.getLogger(__name__).critical(
+            "REDIS_QUEUE_URL points to Upstash (%s). "
+            "This is not recommended for Celery broker traffic. "
+            "Use dedicated Redis for the queue path.",
+            host,
+        )
+
 # ── Queue definitions ────────────────────────────────────────────────────────
 default_exchange = Exchange("default", type="direct")
 
@@ -56,6 +72,7 @@ CELERY_QUEUES = (
 def create_celery_app() -> Celery:
     broker_url = os.environ.get("REDIS_QUEUE_URL", "redis://redis-queue:6379/0")
     result_backend = os.environ.get("REDIS_CACHE_URL", "redis://redis-cache:6379/1")
+    _warn_if_serverless_broker(broker_url)
 
     app = Celery("socialentangler", broker=broker_url, backend=result_backend)
 
@@ -64,6 +81,16 @@ def create_celery_app() -> Celery:
         task_acks_late=True,                  # ack only after task completes
         worker_prefetch_multiplier=1,         # one task at a time per worker slot
         task_reject_on_worker_lost=True,      # re-queue on worker crash
+        broker_connection_retry_on_startup=True,
+        broker_transport_options={
+            "visibility_timeout": 3600,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 10,
+            "retry_on_timeout": True,
+        },
+        redis_backend_health_check_interval=30,
+        result_backend_always_retry=True,
+        result_backend_max_retries=3,
 
         # Queue config
         task_queues=CELERY_QUEUES,
