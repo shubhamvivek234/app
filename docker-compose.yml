@@ -91,6 +91,16 @@ services:
     networks:
       - app_net
 
+  init-quarantine:
+    image: alpine:3.20
+    command: >
+      sh -c "mkdir -p /quarantine &&
+             chown -R 1001:1001 /quarantine &&
+             chmod -R 775 /quarantine"
+    volumes:
+      - quarantine_data:/quarantine
+    restart: "no"
+
   # ── FastAPI Backend ──────────────────────────────────────────────────────────
   api:
     build:
@@ -105,6 +115,8 @@ services:
       - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
       - quarantine_data:/tmp/quarantine
     depends_on:
+      init-quarantine:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -149,6 +161,8 @@ services:
       - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
       - quarantine_data:/tmp/quarantine
     depends_on:
+      init-quarantine:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
