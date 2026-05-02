@@ -18,13 +18,22 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.resolve()
 load_dotenv(ROOT_DIR / ".env")
 
-# EC26: Separate broker and result-backend Redis instances/DBs so a result-backend
-# storm (e.g., many task results piling up) cannot starve the broker queue.
-# In production, point REDIS_BROKER_URL at a dedicated Redis instance.
-# Fall back to the same REDIS_URL so local dev keeps working with a single Redis.
-_REDIS_DEFAULT = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-REDIS_BROKER_URL = os.environ.get("REDIS_BROKER_URL", _REDIS_DEFAULT)
-REDIS_BACKEND_URL = os.environ.get("REDIS_BACKEND_URL", _REDIS_DEFAULT)
+# Prefer the newer split queue/cache env vars so legacy manual runs cannot drift
+# back to a stale REDIS_URL value. Keep REDIS_URL only as a compatibility fallback.
+_REDIS_QUEUE_DEFAULT = (
+    os.environ.get("REDIS_QUEUE_URL")
+    or os.environ.get("REDIS_BROKER_URL")
+    or os.environ.get("REDIS_URL")
+    or "redis://localhost:6379/0"
+)
+_REDIS_CACHE_DEFAULT = (
+    os.environ.get("REDIS_CACHE_URL")
+    or os.environ.get("REDIS_BACKEND_URL")
+    or os.environ.get("REDIS_URL")
+    or "redis://localhost:6379/1"
+)
+REDIS_BROKER_URL = _REDIS_QUEUE_DEFAULT
+REDIS_BACKEND_URL = _REDIS_CACHE_DEFAULT
 
 # ── App ──────────────────────────────────────────────────────────────────────
 celery_app = Celery(

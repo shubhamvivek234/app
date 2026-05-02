@@ -67,8 +67,14 @@ def encrypt_secret(plaintext: str) -> str:
         _legacy_fernet = Fernet(fernet_key)
     return _legacy_fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
-# Redis URL for SSE pub/sub (20.4)
-REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+# Redis URL for SSE pub/sub (20.4). Prefer cache-specific Redis first so
+# legacy runs do not accidentally reuse a stale generic REDIS_URL value.
+REDIS_URL = (
+    os.environ.get("REDIS_CACHE_URL")
+    or os.environ.get("REDIS_URL")
+    or os.environ.get("REDIS_QUEUE_URL")
+    or "redis://127.0.0.1:6379/1"
+)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
