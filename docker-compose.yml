@@ -10,8 +10,6 @@
 #   docker-compose down           # Stop all services
 #   docker-compose ps             # Check health status
 
-version: "3.9"
-
 x-common-env: &common-env
   MONGO_URL: ${MONGO_URL}
   MONGODB_URI: ${MONGODB_URI:-${MONGO_URL}}

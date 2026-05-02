@@ -1,14 +1,21 @@
 # SocialEntangler Operations Runbook
 
+Canonical production stack:
+- Compose file: `/opt/socialentagler/docker-compose.yml`
+- Deploy command: `./scripts/deploy_backend.sh`
+- Queue diagnostics: `./scripts/check_queue_health.sh`
+
+Do not use `docker-compose.prod.yml` as a separate deployment entrypoint. It is kept only as a compatibility alias.
+
 ## Quick Reference
 
 | Issue | First Step |
 |-------|-----------|
 | Posts not publishing | Check Celery worker logs + Redis queue depth |
-| Backend 500 errors | Check Sentry + `docker-compose logs api` |
-| Redis memory full | `redis-cli info memory` -> increase maxmemory or flush cache DB |
+| Backend 500 errors | Check Sentry + `docker compose logs api` |
+| Redis memory full | `./scripts/check_queue_health.sh` then inspect Redis memory |
 | MongoDB slow queries | Check Atlas Performance Advisor |
-| High CPU on workers | Scale workers: `docker-compose up -d --scale worker=4` |
+| High CPU on workers | Scale workers: `docker compose up -d --scale worker=4` |
 
 ---
 
@@ -20,19 +27,17 @@ curl http://localhost:8001/health
 curl http://localhost:8001/ready
 
 # Docker (production)
-docker-compose ps
-docker-compose logs -f --tail=100 api
-docker-compose logs -f --tail=100 worker
+docker compose ps
+docker compose logs -f --tail=100 api
+docker compose logs -f --tail=100 worker
 
 # Redis
-redis-cli info server | grep uptime
-redis-cli info memory | grep used_memory_human
-redis-cli llen celery   # Celery queue depth
+./scripts/check_queue_health.sh
 
 # Celery
-celery -A celery_app inspect active    # Active tasks
-celery -A celery_app inspect reserved  # Queued tasks
-celery -A celery_app inspect ping      # Worker health
+docker compose exec -T worker celery -A celery_workers.celery_app inspect active
+docker compose exec -T worker celery -A celery_workers.celery_app inspect reserved
+docker compose exec -T worker celery -A celery_workers.celery_app inspect ping
 
 # Migrations
 python -m migrations.runner status
@@ -45,16 +50,16 @@ python -m migrations.runner status
 **Symptom:** Users report posts not publishing, status stuck at "scheduled".
 
 **Steps:**
-1. Check Celery worker is running: `celery -A celery_app inspect ping`
-2. Check Redis queue: `redis-cli llen celery` (should be < 100)
-3. Check Beat is running: `docker-compose logs beat | tail -20`
+1. Check Celery worker is running: `docker compose exec -T worker celery -A celery_workers.celery_app inspect ping`
+2. Check Redis queue: `./scripts/check_queue_health.sh`
+3. Check Beat is running: `docker compose logs beat | tail -20`
 4. Check for failed tasks in DLQ: `GET /api/dlq` endpoint
 5. Check platform API status pages (Instagram, Facebook, YouTube status)
 6. Check error notifications: `db.notifications.find({type: "error"}).sort({created_at:-1}).limit(10)`
 
 **Resolution:**
-- If worker stopped: `docker-compose restart worker`
-- If Beat stopped: `docker-compose restart beat`
+- If worker stopped: `docker compose restart worker`
+- If Beat stopped: `docker compose restart beat`
 - If Redis is down: `brew services restart redis` (local) or failover to managed Redis
 - If platform API is down: posts will auto-retry (3x, 5 min apart)
 
@@ -63,13 +68,10 @@ python -m migrations.runner status
 ## 3. Redis Memory Alert (>70%)
 
 ```bash
-redis-cli info memory
-# Check maxmemory setting
-redis-cli config get maxmemory
-# Flush cache DB (DB 1) -- safe, cache is ephemeral
-redis-cli -n 1 FLUSHDB
-# Check large keys
-redis-cli --bigkeys
+docker compose exec -T redis redis-cli info memory
+docker compose exec -T redis redis-cli config get maxmemory
+docker compose exec -T redis redis-cli -n 1 FLUSHDB
+docker compose exec -T redis redis-cli --bigkeys
 ```
 
 ---
@@ -90,7 +92,7 @@ python -m migrations.runner up
 
 ```bash
 # Docker Compose
-docker-compose up -d --scale worker=4
+docker compose up -d --scale worker=4
 
 # Kubernetes
 kubectl scale deployment socialentangler-worker --replicas=8
@@ -102,9 +104,9 @@ kubectl get hpa  # Check autoscaler status
 ## 6. Emergency: Rollback Deployment
 
 ```bash
-# Docker Compose: revert to previous image tag
-docker-compose pull  # or specify previous tag
-docker-compose up -d
+# Docker Compose: redeploy canonical stack
+git checkout <known-good-commit>
+./scripts/deploy_backend.sh
 
 # Kubernetes
 kubectl rollout undo deployment/socialentangler-api
