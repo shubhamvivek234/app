@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from api.deps import get_firebase_app
 from db.mongo import get_client as get_mongo_client
 from db.redis_client import get_queue_redis, get_cache_redis
+from utils.storage import validate_storage_backend_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
@@ -30,6 +31,7 @@ async def ready() -> JSONResponse:
       - MongoDB
       - Redis queue (Celery broker path)
       - Firebase Admin SDK
+      - Active storage backend
 
     Degradable dependency:
       - Redis cache
@@ -79,6 +81,15 @@ async def ready() -> JSONResponse:
     except Exception as exc:
         logger.error("Readiness check — Firebase Admin SDK unavailable: %s", exc)
         checks["firebase_admin"] = "error"
+        hard_ok = False
+
+    # Active storage backend check
+    try:
+        storage_info = await validate_storage_backend_async()
+        checks["storage"] = f"ok:{storage_info['backend']}"
+    except Exception as exc:
+        logger.error("Readiness check — active storage backend unavailable: %s", exc)
+        checks["storage"] = "error"
         hard_ok = False
 
     status_code = 200 if hard_ok else 503

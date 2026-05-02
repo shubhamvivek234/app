@@ -1,7 +1,7 @@
 """
 Unified storage abstraction for media files.
 
-Feature flag: STORAGE_BACKEND=r2 (default) | firebase
+Feature flag: STORAGE_BACKEND=r2 | firebase
 
 - r2: Cloudflare R2 via boto3 S3-compatible API
 - firebase: Firebase Storage (existing behaviour, wrapped)
@@ -14,7 +14,28 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-_STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "r2").lower()
+
+def _detect_storage_backend() -> str:
+    configured = os.environ.get("STORAGE_BACKEND", "").strip().lower()
+    if configured in {"r2", "firebase"}:
+        return configured
+
+    has_r2 = bool(
+        os.environ.get("CF_R2_ENDPOINT")
+        and os.environ.get("CF_R2_ACCESS_KEY_ID")
+        and os.environ.get("CF_R2_SECRET_ACCESS_KEY")
+    )
+    if has_r2:
+        return "r2"
+
+    has_firebase = bool(os.environ.get("FIREBASE_STORAGE_BUCKET"))
+    if has_firebase:
+        return "firebase"
+
+    return "r2"
+
+
+_STORAGE_BACKEND = _detect_storage_backend()
 
 # ── R2 configuration ──────────────────────────────────────────────────────────
 _R2_ENDPOINT = os.environ.get("CF_R2_ENDPOINT", "")

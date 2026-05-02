@@ -1,7 +1,7 @@
 """
 Unified storage abstraction for media files.
 
-Feature flag: STORAGE_BACKEND=r2 (default) | firebase
+Feature flag: STORAGE_BACKEND=r2 | firebase
 
 - r2: Cloudflare R2 via boto3 S3-compatible API
 - firebase: Firebase Storage (existing behaviour, wrapped)
@@ -58,6 +58,31 @@ _R2_PUBLIC_URL_BASE = os.environ.get(
 
 def get_storage_backend() -> str:
     return _STORAGE_BACKEND
+
+
+def validate_storage_backend() -> dict[str, str]:
+    """
+    Validate the configured storage backend and basic reachability.
+
+    Returns a small status payload that can be surfaced in readiness checks.
+    Raises on invalid configuration or failed provider access.
+    """
+    backend = get_storage_backend()
+
+    if backend == "r2":
+        client = _get_r2_client()
+        client.list_objects_v2(Bucket=_R2_BUCKET, MaxKeys=1)
+        return {"backend": "r2", "bucket": _R2_BUCKET}
+
+    bucket = _get_firebase_bucket()
+    if not bucket.exists():
+        raise RuntimeError(f"Firebase Storage bucket is not accessible: {bucket.name}")
+    return {"backend": "firebase", "bucket": bucket.name}
+
+
+async def validate_storage_backend_async() -> dict[str, str]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, validate_storage_backend)
 
 
 def _ensure_firebase_app():

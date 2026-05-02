@@ -39,4 +39,5 @@ curl -fsS "$HEALTH_URL"
 echo
 curl -fsS "$READY_URL"
 echo
+"$ROOT_DIR/scripts/check_storage_health.sh"
 docker compose -f "$COMPOSE_FILE" ps

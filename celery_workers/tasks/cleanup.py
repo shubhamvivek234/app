@@ -112,7 +112,9 @@ async def _delete_from_storage(storage_key: str) -> None:
     if not storage_key:
         return
 
-    storage_backend = os.environ.get("STORAGE_BACKEND", "r2").lower()
+    from utils.storage import get_storage_backend
+
+    storage_backend = get_storage_backend()
     try:
         import asyncio
         from utils.storage import delete_file  # noqa: PLC0415
