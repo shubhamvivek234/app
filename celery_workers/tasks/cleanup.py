@@ -139,19 +139,14 @@ def scan_orphaned_files(self) -> dict:
 
 
 async def _async_scan_orphans() -> dict:
-    """Scan GCS for orphaned media files and delete them in batches."""
+    """Scan the active storage backend for orphaned media files and delete them in batches."""
     import re
     from db.mongo import get_client
+    from utils.storage import delete_file, get_storage_backend
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
-
-    media_bucket = os.environ.get("GCS_BUCKET_MEDIA", "")
-    quarantine_bucket = os.environ.get("GCS_BUCKET_QUARANTINE", "")
-
-    if not media_bucket and not quarantine_bucket:
-        logger.warning("orphan_scan: GCS bucket env vars not set — skipping")
-        return {"status": "skipped", "reason": "no_buckets_configured"}
+    backend = get_storage_backend()
 
     # UUID pattern used in filenames
     uuid_pattern = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.I)
@@ -161,76 +156,127 @@ async def _async_scan_orphans() -> dict:
     bytes_freed = 0
     errors = 0
 
-    try:
-        from google.cloud import storage as gcs_storage
-        gcs_client = gcs_storage.Client()
-    except (ImportError, Exception) as exc:
-        logger.warning("orphan_scan: GCS client not available — %s", exc)
-        return {"status": "skipped", "reason": str(exc)}
+    if backend == "r2":
+        try:
+            from utils.storage import _R2_BUCKET, _get_r2_client  # noqa: PLC0415
 
-    for bucket_name, prefix_list in [
-        (media_bucket, ["media/", ""]),
-        (quarantine_bucket, ["quarantine/", ""]),
-    ]:
-        if not bucket_name:
-            continue
+            client_r2 = _get_r2_client()
+            continuation_token = None
+
+            while True:
+                kwargs = {"Bucket": _R2_BUCKET, "Prefix": "media/", "MaxKeys": 1000}
+                if continuation_token:
+                    kwargs["ContinuationToken"] = continuation_token
+                resp = client_r2.list_objects_v2(**kwargs)
+                for obj in resp.get("Contents", []):
+                    key = obj.get("Key", "")
+                    files_scanned += 1
+                    match = uuid_pattern.search(key)
+                    if not match:
+                        continue
+
+                    file_uuid = match.group(1)
+                    post = await db.posts.find_one(
+                        {"$or": [{"id": file_uuid}, {"media_ids": file_uuid}]},
+                        {"_id": 1, "deleted_at": 1},
+                    )
+                    asset = await db.media_assets.find_one(
+                        {"$or": [{"media_id": file_uuid}, {"asset_id": file_uuid}]},
+                        {"_id": 1},
+                    )
+
+                    is_orphaned = (post is None and asset is None) or (
+                        post is not None and post.get("deleted_at") is not None
+                    )
+                    if not is_orphaned:
+                        continue
+
+                    try:
+                        delete_file(key)
+                        bytes_freed += obj.get("Size", 0) or 0
+                        orphaned_found += 1
+                    except Exception as del_exc:
+                        logger.warning("orphan_scan: failed to delete %s — %s", key, del_exc)
+                        errors += 1
+
+                if not resp.get("IsTruncated"):
+                    break
+                continuation_token = resp.get("NextContinuationToken")
+        except Exception as exc:
+            logger.warning("orphan_scan: R2 listing unavailable — %s", exc)
+            return {"status": "skipped", "reason": str(exc)}
+    else:
+        media_bucket = os.environ.get("GCS_BUCKET_MEDIA", "")
+        quarantine_bucket = os.environ.get("GCS_BUCKET_QUARANTINE", "")
+        if not media_bucket and not quarantine_bucket:
+            logger.warning("orphan_scan: GCS bucket env vars not set — skipping")
+            return {"status": "skipped", "reason": "no_buckets_configured"}
 
         try:
-            bucket = gcs_client.bucket(bucket_name)
-        except Exception as exc:
-            logger.error("orphan_scan: cannot access bucket %s — %s", bucket_name, exc)
-            errors += 1
-            continue
+            from google.cloud import storage as gcs_storage
+            gcs_client = gcs_storage.Client()
+        except (ImportError, Exception) as exc:
+            logger.warning("orphan_scan: GCS client not available — %s", exc)
+            return {"status": "skipped", "reason": str(exc)}
 
-        for prefix in prefix_list:
-            blobs = bucket.list_blobs(prefix=prefix, max_results=5000)
-            batch_delete = []
+        for bucket_name, prefix_list in [
+            (media_bucket, ["media/", ""]),
+            (quarantine_bucket, ["quarantine/", ""]),
+        ]:
+            if not bucket_name:
+                continue
 
-            for blob in blobs:
-                files_scanned += 1
-                # Extract UUID from blob name
-                match = uuid_pattern.search(blob.name)
-                if not match:
-                    continue
+            try:
+                bucket = gcs_client.bucket(bucket_name)
+            except Exception as exc:
+                logger.error("orphan_scan: cannot access bucket %s — %s", bucket_name, exc)
+                errors += 1
+                continue
 
-                file_uuid = match.group(1)
+            for prefix in prefix_list:
+                blobs = bucket.list_blobs(prefix=prefix, max_results=5000)
+                batch_delete = []
 
-                # Check if any post or media_asset references this UUID
-                post = await db.posts.find_one(
-                    {"$or": [{"id": file_uuid}, {"media_ids": file_uuid}]},
-                    {"_id": 1, "deleted_at": 1},
-                )
-                asset = await db.media_assets.find_one(
-                    {"media_id": file_uuid},
-                    {"_id": 1},
-                )
+                for blob in blobs:
+                    files_scanned += 1
+                    match = uuid_pattern.search(blob.name)
+                    if not match:
+                        continue
 
-                is_orphaned = (post is None and asset is None) or (
-                    post is not None and post.get("deleted_at") is not None
-                )
+                    file_uuid = match.group(1)
+                    post = await db.posts.find_one(
+                        {"$or": [{"id": file_uuid}, {"media_ids": file_uuid}]},
+                        {"_id": 1, "deleted_at": 1},
+                    )
+                    asset = await db.media_assets.find_one(
+                        {"media_id": file_uuid},
+                        {"_id": 1},
+                    )
 
-                if is_orphaned:
-                    batch_delete.append(blob)
-                    bytes_freed += blob.size or 0
-                    orphaned_found += 1
+                    is_orphaned = (post is None and asset is None) or (
+                        post is not None and post.get("deleted_at") is not None
+                    )
 
-                # Delete in batches of 100
-                if len(batch_delete) >= 100:
-                    for b in batch_delete:
-                        try:
-                            b.delete()
-                        except Exception as del_exc:
-                            logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
-                            errors += 1
-                    batch_delete = []
+                    if is_orphaned:
+                        batch_delete.append(blob)
+                        bytes_freed += blob.size or 0
+                        orphaned_found += 1
 
-            # Flush remaining batch
-            for b in batch_delete:
-                try:
-                    b.delete()
-                except Exception as del_exc:
-                    logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
-                    errors += 1
+                    if len(batch_delete) >= 100:
+                        for b in batch_delete:
+                            try:
+                                b.delete()
+                            except Exception as del_exc:
+                                logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
+                                errors += 1
+                        batch_delete = []
+
+                for b in batch_delete:
+                    try:
+                        b.delete()
+                    except Exception as del_exc:
+                        logger.warning("orphan_scan: failed to delete %s — %s", b.name, del_exc)
+                        errors += 1
 
     logger.info(
         "orphan_scan: scanned=%d orphaned=%d bytes_freed=%d errors=%d",

@@ -2,7 +2,7 @@
 Phase 8 — GDPR right to erasure + data export.
 Erasure cascades across: posts, social_accounts, analytics, audit_events,
 login_events, webhook_endpoints, workspace_members.
-Data export generates a ZIP via Celery, stored in GCS, link emailed.
+Data export generates a ZIP via Celery, stored in the active storage backend, link emailed.
 """
 import asyncio
 import csv
@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
@@ -99,7 +99,7 @@ def generate_data_export(user_id: str, workspace_id: str, export_id: str) -> dic
     """
     GDPR Article 20 — Right to data portability.
     Generates a ZIP file with all user data in CSV/JSON format.
-    Stores in GCS and emails the download link.
+    Stores in the active storage backend and emails the download link.
     """
     return asyncio.get_event_loop().run_until_complete(
         _async_export(user_id, workspace_id, export_id)
@@ -142,8 +142,7 @@ async def _async_export(user_id: str, workspace_id: str, export_id: str) -> dict
 
     zip_bytes = zip_buffer.getvalue()
 
-    # Store in GCS and get signed URL (stubbed — implement with google-cloud-storage)
-    download_url = await _upload_export_to_gcs(zip_bytes, export_id)
+    download_url = await _upload_export_to_storage(zip_bytes, export_id)
 
     # Update export record
     await db.data_exports.update_one(
@@ -155,7 +154,7 @@ async def _async_export(user_id: str, workspace_id: str, export_id: str) -> dict
                 "file_size_bytes": len(zip_bytes),
                 "completed_at": datetime.now(timezone.utc),
                 # URL expires in 7 days
-                "expires_at": datetime.now(timezone.utc).replace(day=datetime.now().day + 7),
+                "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
             }
         },
     )
@@ -164,18 +163,21 @@ async def _async_export(user_id: str, workspace_id: str, export_id: str) -> dict
     return {"status": "ready", "export_id": export_id}
 
 
-async def _upload_export_to_gcs(zip_bytes: bytes, export_id: str) -> str:
-    """Upload ZIP to GCS private bucket and return 7-day signed URL."""
-    # Requires: pip install google-cloud-storage
-    # Implemented as stub — raises ImportError if not installed
+async def _upload_export_to_storage(zip_bytes: bytes, export_id: str) -> str:
+    """Upload ZIP to the active storage backend and return a 7-day download URL."""
+    from utils.storage import get_signed_url, upload_file_async
+
+    filename = "data.zip"
+    folder = f"exports/{export_id}"
+    storage_key = f"{folder}/{filename}"
+    public_url = await upload_file_async(
+        zip_bytes,
+        filename,
+        "application/zip",
+        folder=folder,
+    )
     try:
-        from google.cloud import storage
-        bucket_name = os.environ.get("GCS_BUCKET_ARCHIVE", "socialentangler-archive")
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(f"exports/{export_id}/data.zip")
-        blob.upload_from_string(zip_bytes, content_type="application/zip")
-        return blob.generate_signed_url(expiration=604800, method="GET")  # 7 days
-    except ImportError:
-        logger.warning("google-cloud-storage not installed — returning placeholder URL")
-        return f"https://storage.example.com/exports/{export_id}/data.zip"
+        return get_signed_url(storage_key, expires_in=604800)
+    except Exception as exc:
+        logger.warning("Falling back to public export URL for %s: %s", export_id, exc)
+        return public_url

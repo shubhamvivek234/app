@@ -53,7 +53,11 @@ _CF_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
 _R2_PUBLIC_URL_BASE = os.environ.get(
     "CF_R2_PUBLIC_URL",
     f"https://pub-{_CF_ACCOUNT_ID}.r2.dev" if _CF_ACCOUNT_ID else "",
-)
+).rstrip("/")
+
+
+def get_storage_backend() -> str:
+    return _STORAGE_BACKEND
 
 
 def _ensure_firebase_app():
@@ -94,6 +98,11 @@ def _get_firebase_bucket():
 def _get_r2_client():
     """Return a boto3 S3 client pointed at Cloudflare R2."""
     import boto3  # noqa: PLC0415 — imported lazily to avoid hard dep when using Firebase
+    if not _R2_ENDPOINT or not _R2_ACCESS_KEY_ID or not _R2_SECRET_ACCESS_KEY:
+        raise RuntimeError(
+            "Cloudflare R2 is not fully configured. Expected CF_R2_ENDPOINT, "
+            "CF_R2_ACCESS_KEY_ID, and CF_R2_SECRET_ACCESS_KEY."
+        )
     return boto3.client(
         "s3",
         endpoint_url=_R2_ENDPOINT,
@@ -180,6 +189,28 @@ def _r2_object_key(folder: str, filename: str) -> str:
     return f"{folder}/{filename}"
 
 
+def build_storage_key(folder: str, filename: str) -> str:
+    return _r2_object_key(folder, filename)
+
+
+def public_url_for_key(key: str) -> str:
+    normalized_key = key.lstrip("/")
+    if _STORAGE_BACKEND == "r2":
+        if not _R2_PUBLIC_URL_BASE:
+            raise RuntimeError(
+                "CF_R2_PUBLIC_URL or CLOUDFLARE_ACCOUNT_ID must be configured for R2 media URLs"
+            )
+        return f"{_R2_PUBLIC_URL_BASE}/{normalized_key}"
+    return normalized_key
+
+
+def _reference_to_r2_key(reference: str) -> str:
+    parsed = urlparse(reference)
+    if parsed.scheme and parsed.netloc:
+        return parsed.path.lstrip("/")
+    return reference.lstrip("/")
+
+
 def _r2_upload(
     file_bytes: bytes,
     filename: str,
@@ -194,7 +225,7 @@ def _r2_upload(
         Body=file_bytes,
         ContentType=content_type,
     )
-    public_url = f"{_R2_PUBLIC_URL_BASE}/{key}"
+    public_url = public_url_for_key(key)
     logger.info("R2 upload complete: key=%s url=%s", key, public_url)
     return public_url
 
@@ -310,7 +341,7 @@ def _r2_upload_from_path(
                 logger.error("R2 multipart abort failed for key=%s: %s", key, abort_exc)
             raise
 
-    public_url = f"{_R2_PUBLIC_URL_BASE}/{key}"
+    public_url = public_url_for_key(key)
     logger.info("R2 upload complete: key=%s size=%d url=%s", key, file_size, public_url)
     return public_url
 
@@ -337,9 +368,7 @@ def _firebase_upload_from_path(
 
 
 def _r2_delete(url: str) -> None:
-    parsed = urlparse(url)
-    # Strip leading slash to get the object key
-    key = parsed.path.lstrip("/")
+    key = _reference_to_r2_key(url)
     client = _get_r2_client()
     client.delete_object(Bucket=_R2_BUCKET, Key=key)
     logger.info("R2 delete complete: key=%s", key)
@@ -382,11 +411,12 @@ def _firebase_delete(url: str) -> None:
     """Delete a Firebase Storage object identified by its public URL."""
     try:
         parsed = urlparse(url)
-        # GCS public URL path: /storage/v1/b/<bucket>/o/<encoded-path>
-        # Simple approach: strip prefix to derive blob name
-        path = parsed.path  # e.g. /bucket-name/folder/file.jpg
-        parts = path.lstrip("/").split("/", 1)
-        blob_name = parts[1] if len(parts) > 1 else path
+        if parsed.scheme and parsed.netloc:
+            path = parsed.path
+            parts = path.lstrip("/").split("/", 1)
+            blob_name = parts[1] if len(parts) > 1 else path.lstrip("/")
+        else:
+            blob_name = url.lstrip("/")
         bucket = _get_firebase_bucket()
         blob = bucket.blob(blob_name)
         blob.delete()

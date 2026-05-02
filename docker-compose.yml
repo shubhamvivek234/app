@@ -24,6 +24,13 @@ x-common-env: &common-env
   BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-https://api.unravler.com}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.unravler.com,https://unravler.com,https://www.unravler.com}
   CORS_ORIGINS: ${CORS_ORIGINS:-https://app.unravler.com,https://unravler.com,https://www.unravler.com}
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-r2}
+  CF_R2_ENDPOINT: ${CF_R2_ENDPOINT:-}
+  CF_R2_ACCESS_KEY_ID: ${CF_R2_ACCESS_KEY_ID:-}
+  CF_R2_SECRET_ACCESS_KEY: ${CF_R2_SECRET_ACCESS_KEY:-}
+  CF_R2_BUCKET: ${CF_R2_BUCKET:-socialentangler-media}
+  CF_R2_PUBLIC_URL: ${CF_R2_PUBLIC_URL:-}
+  CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
   FIREBASE_STORAGE_BUCKET: ${FIREBASE_STORAGE_BUCKET:-}
   FIREBASE_ADMIN_SDK_JSON: ${FIREBASE_ADMIN_SDK_JSON:-/app/serviceAccountKey.json}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}

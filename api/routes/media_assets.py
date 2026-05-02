@@ -39,7 +39,7 @@ async def upload_media_asset(
     file: UploadFile = File(...),
 ):
     """Upload a bounded image/video file to media library."""
-    from utils.storage import upload_file_async
+    from utils.storage import build_storage_key, upload_file_async
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     user_id = current_user["user_id"]
     now = datetime.now(timezone.utc)
@@ -76,7 +76,9 @@ async def upload_media_asset(
     original_name = Path(file.filename or "").name
     original_ext = Path(original_name).suffix.lower()
     safe_filename = f"{asset_id}{original_ext}" if original_ext else asset_id
-    url = await upload_file_async(bytes(content), safe_filename, content_type, f"media/{user_id}")
+    storage_folder = f"media/{user_id}"
+    storage_key = build_storage_key(storage_folder, safe_filename)
+    url = await upload_file_async(bytes(content), safe_filename, content_type, storage_folder)
 
     doc = {
         "asset_id": asset_id,
@@ -87,6 +89,7 @@ async def upload_media_asset(
         "content_type": content_type,
         "file_size_bytes": len(content),
         "url": url,
+        "storage_key": storage_key,
         "status": "ready",
         "created_at": now,
     }
@@ -97,7 +100,23 @@ async def upload_media_asset(
 
 @router.delete("/media-assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_media_asset(asset_id: str, current_user: CurrentUser, db: DB):
+    from utils.storage import delete_file_async
+
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+    doc = await db.media_assets.find_one(
+        {"$or": [{"asset_id": asset_id}, {"id": asset_id}], "workspace_id": workspace_id},
+        {"_id": 0, "storage_key": 1, "url": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    storage_ref = doc.get("storage_key") or doc.get("url")
+    if storage_ref:
+        try:
+            await delete_file_async(storage_ref)
+        except Exception as exc:
+            logger.warning("Media asset storage delete failed for %s: %s", asset_id, exc)
+
     result = await db.media_assets.update_one(
         {"$or": [{"asset_id": asset_id}, {"id": asset_id}], "workspace_id": workspace_id},
         {"$set": {"status": "deleted", "deleted_at": datetime.now(timezone.utc)}},
