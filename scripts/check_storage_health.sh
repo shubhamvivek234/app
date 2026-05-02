@@ -8,8 +8,14 @@ cd "$ROOT_DIR"
 
 echo "[storage] validating active storage backend inside api container"
 docker compose -f "$COMPOSE_FILE" exec -T api python - <<'PY'
-from utils.storage import validate_storage_backend
+from utils.storage import get_storage_backend, validate_storage_backend
 
-info = validate_storage_backend()
-print(f"[storage] ok backend={info['backend']} bucket={info['bucket']}")
+backend = get_storage_backend()
+try:
+    info = validate_storage_backend()
+    print(f"[storage] ok backend={info['backend']} bucket={info['bucket']}")
+except Exception as exc:
+    if backend == "r2":
+        raise
+    print(f"[storage] warning backend={backend} validation_failed={exc}")
 PY

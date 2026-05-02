@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from api.deps import get_firebase_app
 from db.mongo import get_client as get_mongo_client
 from db.redis_client import get_queue_redis, get_cache_redis
-from utils.storage import validate_storage_backend_async
+from utils.storage import get_storage_backend, validate_storage_backend_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
@@ -88,9 +88,15 @@ async def ready() -> JSONResponse:
         storage_info = await validate_storage_backend_async()
         checks["storage"] = f"ok:{storage_info['backend']}"
     except Exception as exc:
-        logger.error("Readiness check — active storage backend unavailable: %s", exc)
-        checks["storage"] = "error"
-        hard_ok = False
+        backend = get_storage_backend()
+        if backend == "r2":
+            logger.error("Readiness check — R2 storage unavailable: %s", exc)
+            checks["storage"] = "error:r2"
+            hard_ok = False
+        else:
+            logger.warning("Readiness check — Firebase storage unavailable (degraded mode): %s", exc)
+            checks["storage"] = "degraded:firebase"
+            degraded = True
 
     status_code = 200 if hard_ok else 503
     return JSONResponse(
