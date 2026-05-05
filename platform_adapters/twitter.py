@@ -2,8 +2,10 @@
 Twitter/X platform adapter.
 Text-only: POST /2/tweets.
 Media: upload via /1.1/media/upload.json (INIT/APPEND/FINALIZE), then attach media_ids.
+For videos, FINALIZE may return processing_info; we must poll STATUS until the media is ready.
 Error 187 (duplicate tweet) → permanent error, do not retry.
 """
+import asyncio
 import logging
 
 import httpx
@@ -24,12 +26,70 @@ logger = logging.getLogger(__name__)
 
 TWITTER_V2_BASE = "https://api.twitter.com/2"
 TWITTER_V1_MEDIA = "https://upload.twitter.com/1.1/media/upload.json"
+TWITTER_MEDIA_STATUS_POLL_LIMIT = 12
 
 DUPLICATE_TWEET_CODE = 187   # permanent — do not retry
 
 
 class TwitterAdapter(PlatformAdapter):
     platform = "twitter"
+
+    @staticmethod
+    def _media_category_for_type(media_type: str) -> str | None:
+        media_type = (media_type or "").lower()
+        if media_type.startswith("video/"):
+            return "tweet_video"
+        if media_type == "image/gif":
+            return "tweet_gif"
+        if media_type.startswith("image/"):
+            return "tweet_image"
+        return None
+
+    async def _wait_for_media_ready(
+        self,
+        client: httpx.AsyncClient,
+        auth_headers: dict,
+        media_id: str,
+        processing_info: dict | None,
+    ) -> None:
+        """
+        Twitter FINALIZE may return before video processing is complete.
+        Poll STATUS until the media becomes usable or fails definitively.
+        """
+        current = processing_info or {}
+        poll_count = 0
+
+        while current:
+            state = str(current.get("state") or "").lower()
+            if state == "succeeded":
+                return
+            if state == "failed":
+                error = current.get("error") or {}
+                message = error.get("message") or "Twitter media processing failed"
+                code = error.get("code")
+                raise PlatformAPIError(message, code=code)
+            if state not in {"pending", "in_progress"}:
+                return
+
+            if poll_count >= TWITTER_MEDIA_STATUS_POLL_LIMIT:
+                raise PlatformAPIError("Twitter media processing timed out before publish")
+
+            check_after_secs = int(current.get("check_after_secs") or 1)
+            await asyncio.sleep(max(check_after_secs, 1))
+            poll_count += 1
+
+            status_resp = await client.get(
+                TWITTER_V1_MEDIA,
+                headers=auth_headers,
+                params={"command": "STATUS", "media_id": media_id},
+            )
+            if status_resp.status_code != 200:
+                raise PlatformHTTPError(
+                    status_resp.status_code,
+                    f"Media STATUS failed: {status_resp.text}",
+                )
+            status_json = status_resp.json()
+            current = status_json.get("processing_info") or {}
 
     async def publish(self, post: dict, *, redis=None) -> dict:
         """
@@ -114,7 +174,11 @@ class TwitterAdapter(PlatformAdapter):
         content_length = head_resp.headers.get("content-length")
         if not content_length:
             # Fallback: fetch with Range header to get Content-Length
-            range_resp = await client.get(media_url, headers={"Range": "bytes=0-0"})
+            range_resp = await client.get(
+                media_url,
+                headers={"Range": "bytes=0-0"},
+                follow_redirects=True,
+            )
             content_length = range_resp.headers.get("content-range", "").split("/")[-1]
         total_bytes = int(content_length) if content_length else 0
 
@@ -122,16 +186,20 @@ class TwitterAdapter(PlatformAdapter):
             raise PlatformAPIError("Cannot determine media file size for Twitter upload")
 
         media_type = head_resp.headers.get("content-type", "video/mp4")
+        media_category = self._media_category_for_type(media_type)
 
         # INIT
+        init_data = {
+            "command": "INIT",
+            "total_bytes": str(total_bytes),
+            "media_type": media_type,
+        }
+        if media_category:
+            init_data["media_category"] = media_category
         init_resp = await client.post(
             TWITTER_V1_MEDIA,
             headers=auth_headers,
-            data={
-                "command": "INIT",
-                "total_bytes": str(total_bytes),
-                "media_type": media_type,
-            },
+            data=init_data,
         )
         if init_resp.status_code != 202:
             raise PlatformHTTPError(init_resp.status_code, f"Media INIT failed: {init_resp.text}")
@@ -143,7 +211,7 @@ class TwitterAdapter(PlatformAdapter):
         _TWITTER_CHUNK_SIZE = 5 * 1024 * 1024
         segment_index = 0
 
-        async with client.stream("GET", media_url) as media_stream:
+        async with client.stream("GET", media_url, follow_redirects=True) as media_stream:
             if media_stream.status_code not in (200, 206):
                 raise PlatformHTTPError(media_stream.status_code, "Could not stream media for Twitter upload")
 
@@ -184,5 +252,12 @@ class TwitterAdapter(PlatformAdapter):
         )
         if final_resp.status_code not in (200, 201):
             raise PlatformHTTPError(final_resp.status_code, f"Media FINALIZE failed: {final_resp.text}")
+        final_json = final_resp.json()
+        await self._wait_for_media_ready(
+            client,
+            auth_headers,
+            media_id,
+            final_json.get("processing_info"),
+        )
 
         return [media_id]

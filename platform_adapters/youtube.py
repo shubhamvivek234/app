@@ -122,7 +122,12 @@ class YouTubeAdapter(PlatformAdapter):
             upload_resp = None
             offset = start_offset
 
-            async with client.stream("GET", media_url, headers={"Range": f"bytes={offset}-"}) as media_stream:
+            async with client.stream(
+                "GET",
+                media_url,
+                headers={"Range": f"bytes={offset}-"},
+                follow_redirects=True,
+            ) as media_stream:
                 if media_stream.status_code not in (200, 206):
                     raise PlatformHTTPError(media_stream.status_code, "Could not fetch media file")
 

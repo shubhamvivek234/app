@@ -80,16 +80,20 @@ class TikTokAdapter(PlatformAdapter):
         # Previous implementation loaded entire video into memory which would OOM
         # the worker on large files (500MB+) when multiple users upload simultaneously.
         async with httpx.AsyncClient(timeout=120) as client:
-            head_resp = await client.head(media_url)
+            head_resp = await client.head(media_url, follow_redirects=True)
             if head_resp.status_code not in (200, 301, 302):
                 # Fallback: GET with stream to read Content-Length from response headers
-                head_resp = await client.get(media_url, headers={"Range": "bytes=0-0"})
+                head_resp = await client.get(
+                    media_url,
+                    headers={"Range": "bytes=0-0"},
+                    follow_redirects=True,
+                )
             content_length = head_resp.headers.get("content-length")
             if content_length:
                 total_bytes = int(content_length)
             else:
                 # Last resort: download to count bytes (unavoidable if server doesn't send Content-Length)
-                full_resp = await client.get(media_url)
+                full_resp = await client.get(media_url, follow_redirects=True)
                 if full_resp.status_code != 200:
                     raise PlatformHTTPError(full_resp.status_code, "Could not fetch video for TikTok upload")
                 total_bytes = len(full_resp.content)
@@ -137,7 +141,7 @@ class TikTokAdapter(PlatformAdapter):
         # Step 3: Upload video by STREAMING from media_url → upload_url.
         # This avoids loading the entire file into worker memory.
         async with httpx.AsyncClient(timeout=300) as client:
-            async with client.stream("GET", media_url) as media_stream:
+            async with client.stream("GET", media_url, follow_redirects=True) as media_stream:
                 if media_stream.status_code != 200:
                     raise PlatformHTTPError(media_stream.status_code, "Could not stream video for TikTok upload")
                 upload_resp = await client.put(

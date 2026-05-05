@@ -1,9 +1,13 @@
 """
 Facebook platform adapter.
-Supports text/image posts (/{page_id}/feed) and video posts (/{page_id}/videos).
+Supports:
+- text posts via /{page_id}/feed
+- image posts via /{page_id}/photos
+- video posts via /{page_id}/videos
 Idempotency via X-FB-Idempotency-Key header.
 """
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -29,10 +33,21 @@ GRAPH_BASE = f"https://graph.facebook.com/{_FB_API_VERSION}"
 class FacebookAdapter(PlatformAdapter):
     platform = "facebook"
 
+    @staticmethod
+    def _looks_like_video(post: dict) -> bool:
+        post_type = str(post.get("post_type", "")).lower()
+        if post_type in {"video", "reel"}:
+            return True
+
+        media_url = str(post.get("media_url") or "").lower()
+        path = urlparse(media_url).path
+        return path.endswith((".mp4", ".mov", ".avi", ".m4v", ".webm"))
+
     async def publish(self, post: dict, *, redis=None) -> dict:
         """
         Publish to a Facebook Page.
-        - Text/image: POST /{page_id}/feed
+        - Text: POST /{page_id}/feed
+        - Image: POST /{page_id}/photos
         - Video: POST /{page_id}/videos
         Passes X-FB-Idempotency-Key to prevent duplicates on retry.
         """
@@ -53,15 +68,23 @@ class FacebookAdapter(PlatformAdapter):
         idempotency_key = make_idempotency_key(post_id, self.platform, attempt)
         headers = {"X-FB-Idempotency-Key": idempotency_key}
 
-        is_video = post_type == "video" or bool(post.get("media_url", ""))
-
+        media_url = post.get("media_url", "")
+        is_video = self._looks_like_video(post)
+        has_media = bool(media_url)
         effective_content = post.get("effective_content", post.get("content", ""))
 
         if is_video:
             endpoint = f"{GRAPH_BASE}/{page_id}/videos"
             payload = {
-                "file_url": post.get("media_url", ""),
+                "file_url": media_url,
                 "description": effective_content,
+                "access_token": access_token,
+            }
+        elif has_media:
+            endpoint = f"{GRAPH_BASE}/{page_id}/photos"
+            payload = {
+                "url": media_url,
+                "caption": effective_content,
                 "access_token": access_token,
             }
         else:
@@ -70,9 +93,6 @@ class FacebookAdapter(PlatformAdapter):
                 "message": effective_content,
                 "access_token": access_token,
             }
-            image_url = post.get("media_url", "")
-            if image_url:
-                payload["link"] = image_url
 
         # Timeout: 30s for text/image, 120s for video (Facebook processes file_url server-side)
         _timeout = 120 if is_video else 30
