@@ -641,6 +641,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             "platform_post_id": platform_post_id,
             "published_at": datetime.now(timezone.utc),
         })
+        await db.posts.update_one(
+            {"id": post_id},
+            {
+                "$unset": {
+                    f"platform_results.{platform}.error": "",
+                    f"platform_results.{platform}.next_retry_at": "",
+                    f"platform_results.{platform}.dlq_reason": "",
+                    "pre_upload_error": "",
+                }
+            },
+        )
 
         # Recompute aggregate status
         user_id, prev_agg_status, agg_status = await _finalize_post_status(db, post_id)
@@ -916,7 +927,8 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
                 "actual_upload_duration": actual_duration,  # 17.5: feeds future estimates
                 f"platform_container_ids.{platform}": container_id,
                 f"container_expiry_at.{platform}": expiry.isoformat(),
-            }}
+            },
+             "$unset": {"pre_upload_error": ""}}
         )
         logger.info(
             "17.3: pre_upload ready for %s/%s — actual_duration=%ds container=%s",

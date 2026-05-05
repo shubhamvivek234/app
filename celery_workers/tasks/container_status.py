@@ -88,7 +88,8 @@ async def _async_check(task, post_id, container_id, access_token_encrypted, poll
                     f"platform_container_ids.instagram": container_id,
                     f"container_expiry_at.instagram": container_expiry,
                     "updated_at": now,
-                }
+                },
+                "$unset": {"pre_upload_error": ""},
             },
         )
         logger.info("EC12: container %s FINISHED for post %s", container_id, post_id)
