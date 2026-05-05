@@ -613,7 +613,7 @@ const PlatformEditor = ({
                         {/* Crop button (images only) */}
                         {onCropMedia && item.type !== 'video' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); onCropMedia(idx, null); }}
+                            onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
                             className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
                             title="Crop image"
                           >
@@ -800,7 +800,7 @@ const PlatformEditor = ({
                         {/* Crop button for secondary platforms */}
                         {onCropMedia && item.type !== 'video' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); onCropMedia(idx, null); }}
+                            onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
                             className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
                             title="Crop image"
                           >
@@ -811,7 +811,7 @@ const PlatformEditor = ({
                     ))}
                   </div>
                   <p className="text-[10px] text-gray-400 mt-1.5">
-                    Shared from first platform ({mediaArray.length} file{mediaArray.length !== 1 ? 's' : ''})
+                    {mediaArray.length} file{mediaArray.length !== 1 ? 's' : ''} selected for this platform
                   </p>
                 </div>
               )}

@@ -7,6 +7,7 @@ Phase 10.1: Schedule density warning on post save.
 """
 import hashlib
 import io
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -132,30 +133,36 @@ async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostReques
     return social_account_ids
 
 
-async def _resolve_media_payload(db, user_id: str, body: CreatePostRequest) -> tuple[list[str], list[str], str | None, float | None]:
-    media_urls = list(body.media_urls or [])
+async def _resolve_media_payload(
+    db,
+    user_id: str,
+    media_ids: list[str] | None,
+    media_urls_input: list[str] | None,
+) -> tuple[list[str], list[str], str | None, float | None]:
+    media_ids = list(media_ids or [])
+    media_urls = list(media_urls_input or [])
     thumbnail_urls: list[str] = []
     video_size_mb: float | None = None
 
-    if not body.media_ids:
+    if not media_ids:
         return media_urls, thumbnail_urls, (media_urls[0] if media_urls else None), video_size_mb
 
     media_docs = await db.media_assets.find(
         {
-            "media_id": {"$in": body.media_ids},
+            "media_id": {"$in": media_ids},
             "user_id": user_id,
         },
         {"_id": 0},
-    ).to_list(len(body.media_ids))
+    ).to_list(len(media_ids))
     by_id = {doc.get("media_id"): doc for doc in media_docs}
 
-    if len(by_id) != len(body.media_ids):
+    if len(by_id) != len(media_ids):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="One or more media_ids are invalid or do not belong to you",
         )
 
-    ordered_docs = [by_id[media_id] for media_id in body.media_ids if media_id in by_id]
+    ordered_docs = [by_id[media_id] for media_id in media_ids if media_id in by_id]
     not_ready = [
         doc.get("media_id")
         for doc in ordered_docs
@@ -295,10 +302,28 @@ async def create_post(
             assert_safe_url(url)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    for override in (body.platform_overrides or {}).values():
+        for url in (override.media_urls or []):
+            try:
+                assert_safe_url(url)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
     media_urls, thumbnail_urls, primary_media_url, video_size_mb = await _resolve_media_payload(
-        db, user_id, body
+        db, user_id, body.media_ids, body.media_urls
     )
+
+    normalized_platform_overrides: dict[str, dict] = {}
+    for platform, override in (body.platform_overrides or {}).items():
+        override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+            db, user_id, override.media_ids, override.media_urls
+        )
+        normalized_override = override.model_dump(exclude_none=True)
+        normalized_override["media_ids"] = list(override.media_ids or [])
+        normalized_override["media_urls"] = override_media_urls
+        normalized_override["media_url"] = override_primary_media_url
+        normalized_override["thumbnail_urls"] = override_thumbnail_urls
+        normalized_platform_overrides[platform] = normalized_override
 
     post_status = PostStatus.SCHEDULED if body.scheduled_time else PostStatus.DRAFT
 
@@ -311,7 +336,7 @@ async def create_post(
         "platforms": body.platforms,
         "account_ids": social_account_ids,
         "social_account_ids": social_account_ids,
-        "media_ids": body.media_ids,
+        "media_ids": list(body.media_ids or []),
         "media_urls": media_urls,
         "media_url": primary_media_url,
         "post_type": body.post_type,
@@ -336,10 +361,7 @@ async def create_post(
         "dlq_reason": None,
         "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
         "schedule_warnings": all_warnings,
-        "platform_overrides": {
-            p: ov.model_dump(exclude_none=True)
-            for p, ov in body.platform_overrides.items()
-        },
+        "platform_overrides": normalized_platform_overrides,
         "created_at": now,
         "updated_at": now,
     }
@@ -560,10 +582,23 @@ async def update_post(
     if body.platforms is not None:
         updates["platforms"] = body.platforms
     if body.platform_overrides is not None:
-        updates["platform_overrides"] = {
-            p: ov.model_dump(exclude_none=True)
-            for p, ov in body.platform_overrides.items()
-        }
+        normalized_platform_overrides: dict[str, dict] = {}
+        for platform, override in body.platform_overrides.items():
+            for url in (override.media_urls or []):
+                try:
+                    assert_safe_url(url)
+                except ValueError as exc:
+                    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+            override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+                db, user_id, override.media_ids, override.media_urls
+            )
+            normalized_override = override.model_dump(exclude_none=True)
+            normalized_override["media_ids"] = list(override.media_ids or [])
+            normalized_override["media_urls"] = override_media_urls
+            normalized_override["media_url"] = override_primary_media_url
+            normalized_override["thumbnail_urls"] = override_thumbnail_urls
+            normalized_platform_overrides[platform] = normalized_override
+        updates["platform_overrides"] = normalized_platform_overrides
 
     result = await db.posts.update_one(
         {
@@ -659,10 +694,14 @@ async def delete_post(
 
 @router.get("/posts/failed")
 async def list_failed_posts(current_user: CurrentUser, db: DB):
-    """Return posts that failed publishing (DLQ)."""
+    """Return posts with failed or partially failed publishing outcomes."""
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     cursor = db.posts.find(
-        {"workspace_id": workspace_id, "status": "failed", "deleted_at": {"$exists": False}},
+        {
+            "workspace_id": workspace_id,
+            "status": {"$in": ["failed", "partial"]},
+            "deleted_at": {"$exists": False},
+        },
         {"_id": 0},
     ).sort("updated_at", -1).limit(100)
     docs = await cursor.to_list(None)
@@ -676,35 +715,94 @@ async def retry_failed_post(
     db: DB,
     platform: str | None = Query(None),
 ):
-    """Re-queue a failed post for publishing."""
+    """Re-queue failed publishing work, optionally for a single platform."""
     user_id = current_user["user_id"]
     post = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "version": 1, "platforms": 1},
+        {"_id": 0, "status": 1, "version": 1, "platforms": 1, "platform_results": 1},
     )
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    if post.get("status") not in ("failed", "dlq"):
-        raise HTTPException(status_code=409, detail="Only failed posts can be retried")
+    if post.get("status") not in ("failed", "dlq", "partial"):
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed or partially failed posts can be retried",
+        )
+
+    platform_results = post.get("platform_results") or {}
+    retryable_statuses = {"failed", "permanently_failed", "paused"}
+    retry_platforms: list[str]
+
+    if platform:
+        if platform not in set(post.get("platforms") or []):
+            raise HTTPException(status_code=404, detail="Platform not associated with this post")
+        platform_status = (platform_results.get(platform) or {}).get("status")
+        if platform_status not in retryable_statuses:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Platform {platform} is not in a retryable state",
+            )
+        retry_platforms = [platform]
+    else:
+        retry_platforms = [
+            name
+            for name, result in platform_results.items()
+            if (result or {}).get("status") in retryable_statuses
+        ]
+        if not retry_platforms:
+            if post.get("status") in ("failed", "dlq"):
+                retry_platforms = list(post.get("platforms") or [])
+            else:
+                raise HTTPException(status_code=409, detail="No failed platforms to retry")
 
     now = datetime.now(timezone.utc)
+    set_updates = {
+        "status": PostStatus.PROCESSING,
+        "updated_at": now,
+    }
+    unset_updates = {"dlq_reason": ""}
+    for retry_platform in retry_platforms:
+        prefix = f"platform_results.{retry_platform}"
+        set_updates[f"{prefix}.status"] = "queued"
+        set_updates[f"{prefix}.last_attempt_at"] = now
+        set_updates[f"{prefix}.next_retry_at"] = None
+        set_updates[f"{prefix}.error"] = None
+        set_updates[f"{prefix}.dlq_reason"] = None
+        set_updates[f"{prefix}.retry_count"] = 0
+
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {"status": PostStatus.SCHEDULED, "dlq_reason": None, "updated_at": now},
-         "$inc": {"version": 1}},
+        {
+            "$set": set_updates,
+            "$unset": unset_updates,
+            "$inc": {"version": 1},
+        },
     )
 
-    try:
-        new_version = post.get("version", 1) + 1
-        enqueue_task(
-            "celery_workers.tasks.publish.publish_post",
-            kwargs={"post_id": post_id, "version": new_version},
-            queue="default",
-        )
-    except Exception as exc:
-        logger.warning("Failed to enqueue retry for post %s: %s", post_id, exc)
+    enqueue_errors: list[str] = []
+    for retry_platform in retry_platforms:
+        try:
+            enqueue_task(
+                "celery_workers.tasks.publish.publish_to_platform",
+                kwargs={"post_id": post_id, "platform": retry_platform, "attempt": 0},
+                queue="default",
+            )
+        except Exception as exc:
+            enqueue_errors.append(f"{retry_platform}: {exc}")
+            logger.warning(
+                "Failed to enqueue retry for post %s platform %s: %s",
+                post_id,
+                retry_platform,
+                exc,
+            )
 
-    return {"retried": True, "post_id": post_id}
+    if enqueue_errors:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enqueue retry for one or more platforms: {enqueue_errors}",
+        )
+
+    return {"retried": True, "post_id": post_id, "platforms": retry_platforms}
 
 
 # ── Approval workflow ─────────────────────────────────────────────────────────

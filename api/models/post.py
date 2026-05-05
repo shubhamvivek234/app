@@ -55,11 +55,13 @@ class PlatformResult(BaseModel):
 
 
 class PlatformOverride(BaseModel):
-    """Per-platform text override. All fields optional — falls back to post-level content."""
+    """Per-platform override. All fields optional — falls back to post-level values."""
     model_config = ConfigDict(str_strip_whitespace=True)
 
     content: str | None = Field(None, max_length=10000)
     title: str | None = Field(None, max_length=500)   # YouTube title, TikTok title
+    media_ids: list[str] = Field(default_factory=list, max_length=10)
+    media_urls: list[str] = Field(default_factory=list, max_length=10)
 
 
 class CreatePostRequest(BaseModel):

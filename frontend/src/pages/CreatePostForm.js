@@ -326,6 +326,30 @@ const platformIcons = {
   discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
 };
 
+const PLATFORM_CROP_CONFIG = {
+  instagram: {
+    Post: 4 / 5,
+    Reel: 9 / 16,
+    Story: 9 / 16,
+  },
+  tiktok: 9 / 16,
+  youtube: 16 / 9,
+  twitter: 16 / 9,
+  facebook: 1,
+  linkedin: 1.91,
+  pinterest: 2 / 3,
+  threads: 1,
+  bluesky: 1,
+  discord: 1,
+};
+
+const getPlatformCropRatio = (platform, postFormat) => {
+  const config = PLATFORM_CROP_CONFIG[platform];
+  if (!config) return null;
+  if (typeof config === 'number') return config;
+  return config[postFormat] || config.Post || null;
+};
+
 const getAvatarColor = (name) => {
   const colors = [
     'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
@@ -485,6 +509,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [uploading,          setUploading]          = useState(false);
   const [uploadProgress,     setUploadProgress]     = useState(0);
   const [uploadedMedia,      setUploadedMedia]      = useState([]);   // array of {file,url,type,name,width,height}
+  const [platformMediaOverrides, setPlatformMediaOverrides] = useState({});
   // Media validation modal state
   const [mediaValidation,    setMediaValidation]    = useState(null); // { file, violations, pendingUpload }
   const [coverImage,         setCoverImage]         = useState(null);
@@ -497,6 +522,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [cropImageSrc,     setCropImageSrc]     = useState(null);
   const [cropTargetRatio,  setCropTargetRatio]  = useState(null);   // null = cover image mode
   const [cropMediaIndex,   setCropMediaIndex]   = useState(null);   // null = cover image mode
+  const [cropPlatform,     setCropPlatform]     = useState(null);
   const [crop,             setCrop]             = useState({ x: 0, y: 0 });
   const [zoom,             setZoom]             = useState(1);
   const [croppedAreaPixels,setCroppedAreaPixels]= useState(null);
@@ -591,6 +617,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   // Ordered list of platforms (respects manual drag order)
   const orderedPlatforms = platformOrder.filter(p => selectedPlatforms.includes(p));
+  const basePlatform = orderedPlatforms[0] || selectedPlatforms[0] || null;
 
   // Active platform for preview
   const activePlatform = (activePreviewPlatform && selectedPlatforms.includes(activePreviewPlatform))
@@ -600,6 +627,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const activeAccount = availableAccounts.find(
     a => selectedAccounts.includes(a.id) && a.platform === activePlatform
   );
+
+  const getEffectiveMediaForPlatform = useCallback((platform) => {
+    if (!platform) return uploadedMedia;
+    if (Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform)) {
+      const overrideMedia = platformMediaOverrides[platform];
+      return Array.isArray(overrideMedia) ? overrideMedia : uploadedMedia;
+    }
+    return uploadedMedia;
+  }, [platformMediaOverrides, uploadedMedia]);
+
+  const clearDerivedPlatformMediaOverrides = useCallback(() => {
+    setPlatformMediaOverrides({});
+  }, []);
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -728,6 +768,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           height: asset.height || dims.height,
         },
       ]);
+      clearDerivedPlatformMediaOverrides();
       toast.success('Media uploaded');
     } catch (error) {
       toast.error(error?.message || 'Failed to upload media');
@@ -736,7 +777,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       setUploadProgress(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableAccounts, resolveUploadedAsset, selectedAccounts, uploadedMedia]);
+  }, [availableAccounts, clearDerivedPlatformMediaOverrides, resolveUploadedAsset, selectedAccounts, uploadedMedia]);
 
   // Upload multiple files sequentially
   const uploadFilesToBackend = async (files) => {
@@ -749,6 +790,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // Remove a single item by index
   const removeMediaItem = (index) => {
     setUploadedMedia(prev => prev.filter((_, i) => i !== index));
+    clearDerivedPlatformMediaOverrides();
   };
 
   // Reorder media by dragging thumbnails
@@ -759,6 +801,84 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       arr.splice(toIndex, 0, moved);
       return arr;
     });
+    clearDerivedPlatformMediaOverrides();
+  };
+
+  const appendMediaAssets = async (files) => {
+    const arr = [];
+    for (const file of files) {
+      const asset = await resolveUploadedAsset(file, (e) =>
+        setUploadProgress(Math.round((e.loaded * 100) / e.total))
+      );
+      const mediaUrl = asset.media_url;
+      if (!mediaUrl) {
+        throw new Error('Processed upload did not return a media URL');
+      }
+      const inferredIsVideo = (asset.mime_type || file.type || '').startsWith('video/');
+      const dims = inferredIsVideo
+        ? { width: asset.width || 0, height: asset.height || 0 }
+        : await getImageDimensions(mediaUrl);
+      arr.push({
+        file,
+        sourceFile: file,
+        mediaId: asset.media_id,
+        url: mediaUrl,
+        originalUrl: mediaUrl,
+        sourceUrl: mediaUrl,
+        thumbnailUrl: asset.thumbnail_url || mediaUrl,
+        type: inferredIsVideo ? 'video' : 'image',
+        name: file.name,
+        width: asset.width || dims.width,
+        height: asset.height || dims.height,
+      });
+    }
+    return arr;
+  };
+
+  const handleFilesSelectForPlatform = async (platform, files) => {
+    const arr = Array.isArray(files) ? files : Array.from(files || []);
+    if (arr.length === 0) return;
+    if (!platform || platform === basePlatform) {
+      await uploadFilesToBackend(arr);
+      return;
+    }
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const newAssets = await appendMediaAssets(arr);
+      setPlatformMediaOverrides(prev => ({
+        ...prev,
+        [platform]: [...getEffectiveMediaForPlatform(platform), ...newAssets],
+      }));
+      toast.success('Media uploaded');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to upload media');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleRemoveMediaForPlatform = (platform, index) => {
+    if (!platform || platform === basePlatform) {
+      removeMediaItem(index);
+      return;
+    }
+    setPlatformMediaOverrides(prev => ({
+      ...prev,
+      [platform]: getEffectiveMediaForPlatform(platform).filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleReorderMediaForPlatform = (platform, fromIndex, toIndex) => {
+    if (!platform || platform === basePlatform) {
+      reorderMedia(fromIndex, toIndex);
+      return;
+    }
+    const arr = [...getEffectiveMediaForPlatform(platform)];
+    const [moved] = arr.splice(fromIndex, 1);
+    arr.splice(toIndex, 0, moved);
+    setPlatformMediaOverrides(prev => ({ ...prev, [platform]: arr }));
   };
 
   const uploadCoverImageToBackend = async (file) => {
@@ -816,6 +936,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setCropImageSrc(null);
     setCropMediaIndex(null);
     setCropTargetRatio(null);
+    setCropPlatform(null);
     setCrop({ x: 0, y: 0 });
     setZoom(1);
     setCroppedAreaPixels(null);
@@ -842,22 +963,38 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             throw new Error('Processed cropped image did not return a media URL');
           }
           const dims = await getImageDimensions(mediaUrl);
-          setUploadedMedia(prev => {
-            const next = [...prev];
-            next[cropMediaIndex] = {
-              ...next[cropMediaIndex],
-              mediaId: asset.media_id,
-              url: mediaUrl,
-              originalUrl: next[cropMediaIndex].originalUrl || next[cropMediaIndex].url,
-              sourceUrl: next[cropMediaIndex].sourceUrl || next[cropMediaIndex].originalUrl || next[cropMediaIndex].url,
-              sourceFile: next[cropMediaIndex].sourceFile || next[cropMediaIndex].file,
-              thumbnailUrl: asset.thumbnail_url || mediaUrl,
-              file,
-              width: asset.width || dims.width,
-              height: asset.height || dims.height,
-            };
-            return next;
+          const targetPlatform = cropPlatform || basePlatform;
+          const buildNextItem = (currentItem) => ({
+            ...currentItem,
+            mediaId: asset.media_id,
+            url: mediaUrl,
+            originalUrl: currentItem.originalUrl || currentItem.url,
+            sourceUrl: currentItem.sourceUrl || currentItem.originalUrl || currentItem.url,
+            sourceFile: currentItem.sourceFile || currentItem.file,
+            thumbnailUrl: asset.thumbnail_url || mediaUrl,
+            file,
+            width: asset.width || dims.width,
+            height: asset.height || dims.height,
           });
+
+          if (!targetPlatform || targetPlatform === basePlatform) {
+            setUploadedMedia(prev => {
+              const next = [...prev];
+              if (!next[cropMediaIndex]) return prev;
+              next[cropMediaIndex] = buildNextItem(next[cropMediaIndex]);
+              return next;
+            });
+          } else {
+            setPlatformMediaOverrides(prev => {
+              const platformMedia = [...getEffectiveMediaForPlatform(targetPlatform)];
+              if (!platformMedia[cropMediaIndex]) return prev;
+              platformMedia[cropMediaIndex] = buildNextItem(platformMedia[cropMediaIndex]);
+              return {
+                ...prev,
+                [targetPlatform]: platformMedia,
+              };
+            });
+          }
           toast.success('Image cropped');
           resetCropState();
         } finally {
@@ -875,8 +1012,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   // Called from PlatformEditor "Crop" button
-  const handleCropMedia = async (index, targetRatio) => {
-    const item = uploadedMedia[index];
+  const handleCropMedia = async (platform, index, targetRatio) => {
+    const effectiveMedia = getEffectiveMediaForPlatform(platform);
+    const item = effectiveMedia[index];
     if (!item || item.type === 'video') return;
     try {
       const cropSrc = item.sourceFile instanceof File
@@ -889,8 +1027,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         throw new Error('Image source unavailable');
       }
 
+      setCropPlatform(platform || basePlatform || null);
       setCropMediaIndex(index);
-      setCropTargetRatio(targetRatio);
+      setCropTargetRatio(targetRatio ?? getPlatformCropRatio(platform || basePlatform, postFormat));
       setCropImageSrc(cropSrc);
       setCrop({ x: 0, y: 0 });
       setZoom(1);
@@ -926,6 +1065,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const resetForm = () => {
     setPlatformCaptions({});
     setUploadedMedia([]);
+    setPlatformMediaOverrides({});
     setCoverImage(null);
     setFirstComment('');
     setLocation('');
@@ -979,6 +1119,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           const override = {
             content: (platformCaptions[platform] ?? primaryContent) || primaryContent,
           };
+          if (Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform)) {
+            const platformMedia = getEffectiveMediaForPlatform(platform);
+            override.media_ids = platformMedia.map((m) => m.mediaId).filter(Boolean);
+            override.media_urls = platformMedia.map((m) => m.url).filter(Boolean);
+          }
           if ((platform === 'youtube' || platform === 'tiktok') && videoTitle) {
             override.title = videoTitle;
           } else if (platform === 'linkedin' && linkedinDocumentTitle) {
@@ -1165,6 +1310,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                       try {
                         const data = await generateImage(aiPrompt.trim(), aiSize, aiStyle);
                         setUploadedMedia(prev => [...prev, { url: data.url, type: 'image', name: 'ai-generated.png' }]);
+                        clearDerivedPlatformMediaOverrides();
                         toast.success('Image generated!');
                         setShowAiPanel(false);
                         setAiPrompt('');
@@ -1205,12 +1351,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               onDragEnd={handleDragEnd}
               onDragOver={(e) => e.preventDefault()}
               // Media (shared upload controls on every selected platform)
-              media={uploadedMedia}
+              media={getEffectiveMediaForPlatform(platform)}
               uploading={uploading}
               uploadProgress={uploadProgress}
-              onFilesSelect={uploadFilesToBackend}
-              onRemoveMedia={removeMediaItem}
-              onReorderMedia={reorderMedia}
+              onFilesSelect={(files) => handleFilesSelectForPlatform(platform, files)}
+              onRemoveMedia={(idx) => handleRemoveMediaForPlatform(platform, idx)}
+              onReorderMedia={(from, to) => handleReorderMediaForPlatform(platform, from, to)}
               fileInputRef={fileInputRef}
               // Platform-specific
               postFormat={postFormat}             onPostFormatChange={setPostFormat}
@@ -1242,7 +1388,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               altTexts={index === 0 ? altTexts : []}
               onAltTextsChange={index === 0 ? setAltTexts : undefined}
               // Crop + Hashtags
-              onCropMedia={handleCropMedia}
+              onCropMedia={(idx, ratio) => handleCropMedia(platform, idx, ratio)}
               hashtagGroups={hashtagGroups}
             />
           ))}
@@ -1443,7 +1589,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               activePlatform={activePlatform}
               account={activeAccount}
               content={platformCaptions[activePlatform] ?? ''}
-              media={uploadedMedia}
+              media={getEffectiveMediaForPlatform(activePlatform)}
               videoTitle={videoTitle}
               postFormat={postFormat}
             />

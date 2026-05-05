@@ -108,25 +108,60 @@ def recompute_aggregate_status(platform_results: dict) -> str:
     statuses = {v.get("status") for v in platform_results.values()}
     if not statuses:
         return "scheduled"
-    if statuses == {"published"}:
-        return "published"
-    if statuses == {"failed"}:
-        return "failed"
-    if statuses == {"cancelled"}:
+    normalized = {
+        "failed" if status in {"failed", "permanently_failed", "paused"} else status
+        for status in statuses
+    }
+    if normalized == {"cancelled"}:
         return "cancelled"
-    terminal = {"published", "failed", "cancelled"}
-    if statuses & {"processing", "retrying", "queued"}:
+    if normalized == {"published"}:
+        return "published"
+    if normalized == {"failed"}:
+        return "failed"
+    if normalized & {"processing", "retrying", "queued", "pending"}:
         return "processing"
-    if statuses.issubset(terminal) and "published" in statuses:
+    terminal = {"published", "failed", "cancelled"}
+    if normalized.issubset(terminal) and "published" in normalized:
         return "partial"
+    if normalized.issubset(terminal):
+        return "failed"
     return "processing"
 
 
 # ── Media cleanup gate (Phase 2.6.1 / Section 18.9) ──────────────────────────
 def should_cleanup_media(platform_results: dict) -> bool:
     """Only delete source media when ALL platforms are in terminal state."""
-    terminal = {"published", "failed", "cancelled"}
+    terminal = {"published", "failed", "permanently_failed", "cancelled"}
     return all(v.get("status") in terminal for v in platform_results.values())
+
+
+async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | None, str]:
+    from celery_workers.tasks.cleanup import schedule_media_cleanup
+
+    updated_post = await db.posts.find_one(
+        {"id": post_id},
+        {"platform_results": 1, "status": 1, "user_id": 1},
+    )
+    if not updated_post:
+        return None, None, "scheduled"
+
+    prev_agg_status = updated_post.get("status")
+    agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
+
+    set_updates = {"status": agg_status}
+    if agg_status != "failed":
+        set_updates["dlq_reason"] = None
+
+    await db.posts.update_one({"id": post_id}, {"$set": set_updates})
+
+    if should_cleanup_media(updated_post.get("platform_results", {})):
+        schedule_media_cleanup.apply_async(
+            kwargs={"post_id": post_id},
+            countdown=300,
+            queue="default",
+        )
+
+    return updated_post.get("user_id"), prev_agg_status, agg_status
 
 
 # ── Parent publish task ───────────────────────────────────────────────────────
@@ -264,22 +299,31 @@ def _normalize_account_doc(account_doc: dict | None) -> dict | None:
 
 async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
     selected_ids = post.get("social_account_ids") or post.get("account_ids") or []
-    query = {
-        "user_id": post.get("user_id"),
-        "platform": platform,
-        "is_active": True,
-    }
     if selected_ids:
-        query["account_id"] = {"$in": selected_ids}
-
-    account_doc = await db.social_accounts.find_one(query)
-    if not account_doc and selected_ids:
         account_doc = await db.social_accounts.find_one({
             "user_id": post.get("user_id"),
             "platform": platform,
             "is_active": True,
+            "$or": [
+                {"account_id": {"$in": selected_ids}},
+                {"id": {"$in": selected_ids}},
+            ],
         })
+        if not account_doc:
+            logger.warning(
+                "Selected account resolution failed for post %s platform %s with ids=%s",
+                post.get("id"),
+                platform,
+                selected_ids,
+            )
+            return None
+        return _normalize_account_doc(account_doc)
 
+    account_doc = await db.social_accounts.find_one({
+            "user_id": post.get("user_id"),
+            "platform": platform,
+            "is_active": True,
+        })
     return _normalize_account_doc(account_doc)
 
 
@@ -315,6 +359,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "status": "paused",
                 "error": f"Platform {platform} is currently disabled via feature flag",
             })
+            await _finalize_post_status(db, post_id)
             return {"status": "feature_disabled", "platform": platform}
     except ImportError:
         pass
@@ -366,6 +411,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "status": "paused",
                 "error": f"Subscription expired: {reason}",
             })
+            await _finalize_post_status(db, post_id)
             return {"status": "subscription_expired"}
     except ImportError:
         pass  # subscription module not available — skip check
@@ -378,6 +424,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             err = post.get("pre_upload_error", "Pre-upload failed before publish time")
             logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
             await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+            await _finalize_post_status(db, post_id)
             await _send_failure_notification(db, post_id, platform, err)
             return {"status": "failed", "reason": "pre_upload_failed"}
 
@@ -407,6 +454,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
                     logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
                     await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                    await _finalize_post_status(db, post_id)
                     await _send_failure_notification(db, post_id, platform, err)
                     return {"status": "failed", "reason": "pre_upload_failed"}
             else:
@@ -418,6 +466,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 )
                 logger.error("17.4B: %s for post %s", msg, post_id)
                 await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
+                await _finalize_post_status(db, post_id)
                 await _send_failure_notification(db, post_id, platform, msg)
                 return {"status": "failed", "reason": "pre_upload_wait_timeout"}
 
@@ -448,10 +497,18 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # Resolve per-platform text overrides — inject effective_content/effective_title
         # so adapters never need to know about platform_overrides themselves.
         _override = (post.get("platform_overrides") or {}).get(platform) or {}
+        _override_media_ids = _override["media_ids"] if "media_ids" in _override else (post.get("media_ids") or [])
+        _override_media_urls = _override["media_urls"] if "media_urls" in _override else (post.get("media_urls") or [])
+        _override_media_url = _override["media_url"] if "media_url" in _override else (post.get("media_url"))
+        _override_thumbnails = _override["thumbnail_urls"] if "thumbnail_urls" in _override else (post.get("thumbnail_urls") or [])
         post = {
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
             "effective_title": _override.get("title") or post.get("title", ""),
+            "media_ids": _override_media_ids,
+            "media_urls": _override_media_urls,
+            "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
+            "thumbnail_urls": _override_thumbnails,
         }
 
         adapter = get_adapter(platform)
@@ -521,27 +578,14 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         })
 
         # Recompute aggregate status
-        updated_post = await db.posts.find_one({"id": post_id}, {"platform_results": 1, "status": 1, "user_id": 1})
-        prev_agg_status = updated_post.get("status") if updated_post else None
-        if updated_post:
-            agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
-            await db.posts.update_one({"id": post_id}, {"$set": {"status": agg_status}})
+        user_id, prev_agg_status, agg_status = await _finalize_post_status(db, post_id)
 
-            # Media cleanup gate (Phase 2.6.1)
-            if should_cleanup_media(updated_post.get("platform_results", {})):
-                schedule_media_cleanup.apply_async(
-                    kwargs={"post_id": post_id},
-                    countdown=300,  # 5-minute delay
-                    queue="default",
-                )
+        # 18.8: Per-platform success notification
+        await _send_success_notification(db, post_id, platform, post_url or "", user_id or "")
 
-            # 18.8: Per-platform success notification
-            user_id = updated_post.get("user_id", "")
-            await _send_success_notification(db, post_id, platform, post_url or "", user_id)
-
-            # 18.8: Partial-recovery notification — fires when last failed platform publishes
-            if agg_status == "published" and prev_agg_status == "partial":
-                await _send_recovery_notification(db, post_id, user_id)
+        # 18.8: Partial-recovery notification — fires when last failed platform publishes
+        if agg_status == "published" and prev_agg_status == "partial":
+            await _send_recovery_notification(db, post_id, user_id or "")
 
         return {"status": "published", "platform": platform}
 
@@ -628,6 +672,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             # ── Circuit breaker: record failure (Section 20.1) ────────────────
             await record_failure(r_cache, platform, account_id)
 
+            await _finalize_post_status(db, post_id)
             await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
             return {"status": "permanent_failure"}
 
@@ -758,10 +803,18 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             return {"status": "post_deleted"}
         # Inject per-platform text overrides for pre_upload (YouTube uses title/content in metadata)
         _override = (post.get("platform_overrides") or {}).get(platform) or {}
+        _override_media_ids = _override["media_ids"] if "media_ids" in _override else (post.get("media_ids") or [])
+        _override_media_urls = _override["media_urls"] if "media_urls" in _override else (post.get("media_urls") or [])
+        _override_media_url = _override["media_url"] if "media_url" in _override else (post.get("media_url"))
+        _override_thumbnails = _override["thumbnail_urls"] if "thumbnail_urls" in _override else (post.get("thumbnail_urls") or [])
         post = {
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
             "effective_title": _override.get("title") or post.get("title", ""),
+            "media_ids": _override_media_ids,
+            "media_urls": _override_media_urls,
+            "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
+            "thumbnail_urls": _override_thumbnails,
         }
         container_result = await adapter.pre_upload(post, redis=r_cache)
 
@@ -848,9 +901,13 @@ async def _update_platform_result(db, post_id: str, platform: str, update: dict)
 async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -> None:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
-    update: dict = {"dlq_reason": reason, "status": "failed"}
+    update: dict = {"dlq_reason": reason}
     if platform:
         update[f"platform_results.{platform}.status"] = "permanently_failed"
+        update[f"platform_results.{platform}.error"] = reason
+        update[f"platform_results.{platform}.dlq_reason"] = reason
+    else:
+        update["status"] = "failed"
     post = await db.posts.find_one_and_update(
         {"id": post_id},
         {"$set": update},
@@ -875,15 +932,11 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
     except Exception as dlq_err:
         logger.error("Failed to write DLQ record for post %s: %s", post_id, dlq_err)
 
-    # Trigger media cleanup if all platforms are now in terminal state
-    if post:
+    if platform:
         try:
-            updated = await db.posts.find_one({"id": post_id}, {"platform_results": 1})
-            if updated and should_cleanup_media(updated.get("platform_results", {})):
-                from celery_workers.tasks.cleanup import schedule_media_cleanup
-                schedule_media_cleanup.apply_async(args=[post_id], countdown=300)
-        except Exception as _cleanup_err:
-            logger.warning("DLQ: failed to schedule media cleanup for %s: %s", post_id, _cleanup_err)
+            await _finalize_post_status(db, post_id)
+        except Exception as finalize_err:
+            logger.warning("DLQ: failed to finalize aggregate status for %s: %s", post_id, finalize_err)
 
     # 18.8: DLQ notification — "permanently failed — [Reschedule]"
     if post and platform:
