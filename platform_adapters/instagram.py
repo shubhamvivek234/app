@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 import os
 
 _FB_API_VERSION = os.environ.get("FACEBOOK_API_VERSION", "v21.0")
-GRAPH_BASE = f"https://graph.facebook.com/{_FB_API_VERSION}"
+GRAPH_BASE = f"https://graph.instagram.com/{_FB_API_VERSION}"
 CONTAINER_POLL_INTERVAL = 10   # seconds (Celery retry countdown)
-OAUTH_TOKEN_URL = "https://graph.facebook.com/oauth/access_token"
+OAUTH_TOKEN_URL = f"{GRAPH_BASE}/refresh_access_token"
 
 
 class InstagramAdapter(PlatformAdapter):
@@ -213,18 +213,13 @@ class InstagramAdapter(PlatformAdapter):
         }
 
     async def refresh_token(self, refresh_token: str) -> dict:
-        """Exchange a long-lived token using the Graph API OAuth endpoint."""
-        client_id = __import__("os").environ.get("INSTAGRAM_CLIENT_ID", "")
-        client_secret = __import__("os").environ.get("INSTAGRAM_CLIENT_SECRET", "")
-
+        """Refresh a long-lived Instagram token for Instagram Login integrations."""
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
+            resp = await client.get(
                 OAUTH_TOKEN_URL,
-                data={
-                    "grant_type": "fb_exchange_token",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "fb_exchange_token": refresh_token,
+                params={
+                    "grant_type": "ig_refresh_token",
+                    "access_token": refresh_token,
                 },
             )
             if resp.status_code != 200:
