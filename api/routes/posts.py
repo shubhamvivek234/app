@@ -188,6 +188,12 @@ async def _resolve_media_payload(
     return media_urls, thumbnail_urls, (media_urls[0] if media_urls else None), video_size_mb
 
 
+def _override_explicitly_sets_media(override: PlatformOverride) -> bool:
+    """True only when media fields were explicitly sent by the client."""
+    fields_set = getattr(override, "model_fields_set", set())
+    return "media_ids" in fields_set or "media_urls" in fields_set
+
+
 # ── Create ───────────────────────────────────────────────────────────────────
 
 @router.post("/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED,
@@ -306,14 +312,19 @@ async def create_post(
 
     normalized_platform_overrides: dict[str, dict] = {}
     for platform, override in (body.platform_overrides or {}).items():
-        override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
-            db, user_id, override.media_ids, override.media_urls
-        )
         normalized_override = override.model_dump(exclude_none=True)
-        normalized_override["media_ids"] = list(override.media_ids or [])
-        normalized_override["media_urls"] = override_media_urls
-        normalized_override["media_url"] = override_primary_media_url
-        normalized_override["thumbnail_urls"] = override_thumbnail_urls
+        use_media_override = _override_explicitly_sets_media(override)
+        normalized_override["use_media_override"] = use_media_override
+
+        if use_media_override:
+            override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+                db, user_id, override.media_ids, override.media_urls
+            )
+            normalized_override["media_ids"] = list(override.media_ids or [])
+            normalized_override["media_urls"] = override_media_urls
+            normalized_override["media_url"] = override_primary_media_url
+            normalized_override["thumbnail_urls"] = override_thumbnail_urls
+
         normalized_platform_overrides[platform] = normalized_override
 
     if body.publish_now:
@@ -645,14 +656,19 @@ async def update_post(
                     assert_safe_url(url)
                 except ValueError as exc:
                     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-            override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
-                db, user_id, override.media_ids, override.media_urls
-            )
             normalized_override = override.model_dump(exclude_none=True)
-            normalized_override["media_ids"] = list(override.media_ids or [])
-            normalized_override["media_urls"] = override_media_urls
-            normalized_override["media_url"] = override_primary_media_url
-            normalized_override["thumbnail_urls"] = override_thumbnail_urls
+            use_media_override = _override_explicitly_sets_media(override)
+            normalized_override["use_media_override"] = use_media_override
+
+            if use_media_override:
+                override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+                    db, user_id, override.media_ids, override.media_urls
+                )
+                normalized_override["media_ids"] = list(override.media_ids or [])
+                normalized_override["media_urls"] = override_media_urls
+                normalized_override["media_url"] = override_primary_media_url
+                normalized_override["thumbnail_urls"] = override_thumbnail_urls
+
             normalized_platform_overrides[platform] = normalized_override
         updates["platform_overrides"] = normalized_platform_overrides
 

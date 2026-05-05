@@ -43,8 +43,9 @@ class LinkedInAdapter(PlatformAdapter):
         user_id = account.get("platform_user_id", "")
         post_id = str(post.get("id", ""))
         social_account_id = account.get("id", post_id)
-        post_type = post.get("post_type", "text")
-        media_url = post.get("media_url", "")
+        post_type = str(post.get("post_type", "text") or "text").lower()
+        media_urls = [url for url in (post.get("media_urls") or []) if url]
+        media_url = post.get("media_url") or (media_urls[0] if media_urls else "")
 
         if redis:
             if not await check_rate_limit(redis, self.platform, str(social_account_id)):
@@ -62,8 +63,9 @@ class LinkedInAdapter(PlatformAdapter):
         async with httpx.AsyncClient(timeout=120) as client:
             asset_urn: str | None = None
 
-            if post_type == "image" and media_url:
+            if media_url and post_type in {"image", "carousel", "mixed"}:
                 assert_safe_url(media_url)  # Gap 5.4: SSRF guard
+                logger.info("LinkedIn registering image upload for post %s from %s", post_id, media_url)
                 asset_urn = await self._register_and_upload_image(
                     client, auth_headers, author_urn, media_url
                 )
@@ -159,7 +161,7 @@ class LinkedInAdapter(PlatformAdapter):
         post_type: str,
     ) -> dict:
         """Construct the ugcPosts request body."""
-        if asset_urn and post_type == "image":
+        if asset_urn:
             media_category = "IMAGE"
             media = [{"status": "READY", "media": asset_urn}]
         else:

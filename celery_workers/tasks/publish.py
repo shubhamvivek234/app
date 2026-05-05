@@ -562,10 +562,20 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # Resolve per-platform text overrides — inject effective_content/effective_title
         # so adapters never need to know about platform_overrides themselves.
         _override = (post.get("platform_overrides") or {}).get(platform) or {}
-        _override_media_ids = _override["media_ids"] if "media_ids" in _override else (post.get("media_ids") or [])
-        _override_media_urls = _override["media_urls"] if "media_urls" in _override else (post.get("media_urls") or [])
-        _override_media_url = _override["media_url"] if "media_url" in _override else (post.get("media_url"))
-        _override_thumbnails = _override["thumbnail_urls"] if "thumbnail_urls" in _override else (post.get("thumbnail_urls") or [])
+        _use_media_override = _override.get("use_media_override")
+        if _use_media_override is True:
+            _override_media_ids = _override.get("media_ids") or []
+            _override_media_urls = _override.get("media_urls") or []
+            _override_media_url = _override.get("media_url")
+            _override_thumbnails = _override.get("thumbnail_urls") or []
+        else:
+            # Legacy compatibility: older posts persisted empty media override fields for every
+            # platform even when the user did not customize media. Fall back to post-level media
+            # unless the override explicitly opted into media replacement.
+            _override_media_ids = post.get("media_ids") or []
+            _override_media_urls = post.get("media_urls") or []
+            _override_media_url = post.get("media_url")
+            _override_thumbnails = post.get("thumbnail_urls") or []
         post = {
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
@@ -877,10 +887,17 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             return {"status": "post_deleted"}
         # Inject per-platform text overrides for pre_upload (YouTube uses title/content in metadata)
         _override = (post.get("platform_overrides") or {}).get(platform) or {}
-        _override_media_ids = _override["media_ids"] if "media_ids" in _override else (post.get("media_ids") or [])
-        _override_media_urls = _override["media_urls"] if "media_urls" in _override else (post.get("media_urls") or [])
-        _override_media_url = _override["media_url"] if "media_url" in _override else (post.get("media_url"))
-        _override_thumbnails = _override["thumbnail_urls"] if "thumbnail_urls" in _override else (post.get("thumbnail_urls") or [])
+        _use_media_override = _override.get("use_media_override")
+        if _use_media_override is True:
+            _override_media_ids = _override.get("media_ids") or []
+            _override_media_urls = _override.get("media_urls") or []
+            _override_media_url = _override.get("media_url")
+            _override_thumbnails = _override.get("thumbnail_urls") or []
+        else:
+            _override_media_ids = post.get("media_ids") or []
+            _override_media_urls = post.get("media_urls") or []
+            _override_media_url = post.get("media_url")
+            _override_thumbnails = post.get("thumbnail_urls") or []
         post = {
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
