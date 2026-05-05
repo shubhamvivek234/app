@@ -373,9 +373,10 @@ async def create_post(
         db,
         action="post.created",
         actor_id=user_id,
+        workspace_id=workspace_id,
         resource_type="post",
         resource_id=doc["id"],
-        metadata={
+        details={
             "platforms": body.platforms,
             "scheduled_time": body.scheduled_time.isoformat() if body.scheduled_time else None,
             "status": post_status,
@@ -478,8 +479,13 @@ async def bulk_create_posts(
             created_count += 1
             
             await log_audit_event(
-                db, action="post.created.bulk", actor_id=user_id, resource_type="post",
-                resource_id=doc["id"], metadata={"platforms": body.platforms}
+                db,
+                action="post.created.bulk",
+                actor_id=user_id,
+                workspace_id=workspace_id,
+                resource_type="post",
+                resource_id=doc["id"],
+                details={"platforms": body.platforms},
             )
 
         except Exception as e:
@@ -623,9 +629,10 @@ async def update_post(
         db,
         action="post.updated",
         actor_id=user_id,
+        workspace_id=existing["workspace_id"],
         resource_type="post",
         resource_id=post_id,
-        metadata={"fields_changed": list(updates.keys())},
+        details={"fields_changed": list(updates.keys())},
     )
 
     return _doc_to_response(updated)
@@ -644,7 +651,7 @@ async def delete_post(
 
     existing = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "queue_job_id": 1, "media_ids": 1},
+        {"_id": 0, "status": 1, "queue_job_id": 1, "media_ids": 1, "workspace_id": 1},
     )
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
@@ -684,9 +691,10 @@ async def delete_post(
         db,
         action="post.deleted",
         actor_id=user_id,
+        workspace_id=existing["workspace_id"],
         resource_type="post",
         resource_id=post_id,
-        metadata={},
+        details={},
     )
 
 
