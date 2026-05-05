@@ -44,7 +44,20 @@ const MediaGrid = ({ mediaArray }) => {
   }
 
   if (images.length === 0) return null;
-  if (images.length === 1) return <img src={images[0].url} alt="" className="w-full max-h-72 object-cover" />;
+  if (images.length === 1) {
+    return (
+      <div
+        className="relative w-full bg-gray-100 overflow-hidden"
+        style={{ aspectRatio: '1.91 / 1' }}
+      >
+        <img
+          src={images[0].url}
+          alt=""
+          className="w-full h-full object-cover"
+        />
+      </div>
+    );
+  }
 
   if (images.length === 2) {
     return (

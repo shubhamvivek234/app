@@ -716,9 +716,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         ...prev,
         {
           file,
+          sourceFile: file,
           mediaId: asset.media_id,
           url: mediaUrl,
           originalUrl: mediaUrl,
+          sourceUrl: mediaUrl,
           thumbnailUrl: asset.thumbnail_url || mediaUrl,
           type: inferredIsVideo ? 'video' : 'image',
           name: file.name,
@@ -846,7 +848,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               ...next[cropMediaIndex],
               mediaId: asset.media_id,
               url: mediaUrl,
-              originalUrl: mediaUrl,
+              originalUrl: next[cropMediaIndex].originalUrl || next[cropMediaIndex].url,
+              sourceUrl: next[cropMediaIndex].sourceUrl || next[cropMediaIndex].originalUrl || next[cropMediaIndex].url,
+              sourceFile: next[cropMediaIndex].sourceFile || next[cropMediaIndex].file,
               thumbnailUrl: asset.thumbnail_url || mediaUrl,
               file,
               width: asset.width || dims.width,
@@ -875,9 +879,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     const item = uploadedMedia[index];
     if (!item || item.type === 'video') return;
     try {
-      const cropSrc = item.file instanceof File
-        ? await fileToDataUrl(item.file)
-        : (item.originalUrl || item.url);
+      const cropSrc = item.sourceFile instanceof File
+        ? await fileToDataUrl(item.sourceFile)
+        : item.file instanceof File
+          ? await fileToDataUrl(item.file)
+          : (item.sourceUrl || item.originalUrl || item.url);
 
       if (!cropSrc) {
         throw new Error('Image source unavailable');
