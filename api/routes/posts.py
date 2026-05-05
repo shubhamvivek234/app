@@ -325,7 +325,15 @@ async def create_post(
         normalized_override["thumbnail_urls"] = override_thumbnail_urls
         normalized_platform_overrides[platform] = normalized_override
 
-    post_status = PostStatus.SCHEDULED if body.scheduled_time else PostStatus.DRAFT
+    if body.publish_now:
+        post_status = PostStatus.QUEUED
+        scheduled_time = now
+    elif body.scheduled_time:
+        post_status = PostStatus.SCHEDULED
+        scheduled_time = body.scheduled_time
+    else:
+        post_status = PostStatus.DRAFT
+        scheduled_time = None
 
     doc: dict = {
         "id": str(ObjectId()),
@@ -345,7 +353,7 @@ async def create_post(
         "disable_comment": body.disable_comment,
         "disable_stitch": body.disable_stitch,
         "timezone": body.timezone,
-        "scheduled_time": body.scheduled_time,
+        "scheduled_time": scheduled_time,
         "status": post_status,
         "platform_results": {},
         "platform_post_urls": {},
@@ -368,6 +376,45 @@ async def create_post(
 
     await db.posts.insert_one(doc)
 
+    if body.publish_now:
+        try:
+            async_result = enqueue_task(
+                "celery_workers.tasks.publish.publish_post",
+                kwargs={"post_id": doc["id"], "version": doc["version"]},
+                queue="high_priority",
+            )
+            doc["queue_job_id"] = async_result.id
+            await db.posts.update_one(
+                {"id": doc["id"], "workspace_id": workspace_id, "user_id": user_id},
+                {"$set": {"queue_job_id": async_result.id, "updated_at": now}},
+            )
+            logger.info("Enqueued immediate publish for post %s task=%s", doc["id"], async_result.id)
+        except Exception:
+            logger.exception("Failed to enqueue immediate publish for post %s", doc["id"])
+            failed_at = datetime.now(timezone.utc)
+            await db.posts.update_one(
+                {"id": doc["id"], "workspace_id": workspace_id, "user_id": user_id},
+                {
+                    "$set": {
+                        "status": PostStatus.FAILED,
+                        "updated_at": failed_at,
+                        "dlq_reason": "Failed to enqueue immediate publish",
+                    },
+                    "$push": {
+                        "status_history": {
+                            "status": PostStatus.FAILED,
+                            "timestamp": failed_at,
+                            "actor": "api",
+                            "message": "Failed to enqueue immediate publish",
+                        }
+                    },
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to queue post for immediate publishing",
+            )
+
     # Phase 7.5.1 — Audit event
     await log_audit_event(
         db,
@@ -378,8 +425,9 @@ async def create_post(
         resource_id=doc["id"],
         details={
             "platforms": body.platforms,
-            "scheduled_time": body.scheduled_time.isoformat() if body.scheduled_time else None,
-            "status": post_status,
+            "scheduled_time": scheduled_time.isoformat() if scheduled_time else None,
+            "status": post_status.value,
+            "publish_now": body.publish_now,
         },
     )
 

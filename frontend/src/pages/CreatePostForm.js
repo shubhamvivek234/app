@@ -1096,9 +1096,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
       let scheduledDateTime = null;
+      let publishNow = false;
 
       if (mode === 'now') {
-        scheduledDateTime = new Date().toISOString();
+        publishNow = true;
       } else if (mode === 'scheduled') {
         if (!scheduledDate || !scheduledTime) {
           toast.error('Please pick a date and time'); setLoading(false); return;
@@ -1137,6 +1138,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         content: primaryContent,
         platforms: selectedPlatforms,
         account_ids: selectedAccounts,
+        publish_now: publishNow,
         scheduled_time: scheduledDateTime,
         post_type: type,
         media_ids: mediaIds,
