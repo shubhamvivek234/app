@@ -275,15 +275,6 @@ async def create_post(
     if all_warnings:
         logger.info("Post pre-publish warnings user=%s: %s", user_id, all_warnings)
 
-    # Phase 10.1 — Schedule density warning (non-blocking)
-    density_ws = body.workspace_id or current_user.get("default_workspace_id")
-    density_warnings = await check_schedule_density(
-        db, density_ws, body.platforms, body.scheduled_time
-    )
-    for dw in density_warnings:
-        logger.warning("Schedule density warning: %s", dw.message)
-        all_warnings.append(dw.message)
-
     social_account_ids = await _resolve_selected_account_ids(db, user_id, body)
 
     if body.workspace_id and body.workspace_id != current_user.get("default_workspace_id"):
@@ -334,6 +325,17 @@ async def create_post(
     else:
         post_status = PostStatus.DRAFT
         scheduled_time = None
+
+    # Phase 10.1 — Schedule density warning (non-blocking)
+    density_ws = body.workspace_id or current_user.get("default_workspace_id")
+    density_warnings = []
+    if scheduled_time is not None:
+        density_warnings = await check_schedule_density(
+            db, density_ws, body.platforms, scheduled_time
+        )
+    for dw in density_warnings:
+        logger.warning("Schedule density warning: %s", dw.message)
+        all_warnings.append(dw.message)
 
     doc: dict = {
         "id": str(ObjectId()),
