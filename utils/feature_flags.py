@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 # ── Default flag values (env var overrides) ───────────────────────────────────
 _ENV_DEFAULTS: dict[str, bool] = {
     "tiktok_enabled":              os.getenv("TIKTOK_ENABLED", "false").lower() == "true",
+    "instagram_publishing":        os.getenv("INSTAGRAM_PUBLISHING", "true").lower() == "true",
+    "facebook_publishing":         os.getenv("FACEBOOK_PUBLISHING", "true").lower() == "true",
+    "youtube_publishing":          os.getenv("YOUTUBE_PUBLISHING", "true").lower() == "true",
+    "twitter_publishing":          os.getenv("TWITTER_PUBLISHING", "true").lower() == "true",
+    "linkedin_publishing":         os.getenv("LINKEDIN_PUBLISHING", "true").lower() == "true",
+    "tiktok_publishing":           os.getenv("TIKTOK_PUBLISHING", os.getenv("TIKTOK_ENABLED", "false")).lower() == "true",
     "ai_caption_enabled":          os.getenv("AI_CAPTION_ENABLED", "true").lower() == "true",
     "bulk_import_enabled":         os.getenv("BULK_IMPORT_ENABLED", "true").lower() == "true",
     "recurring_posts_enabled":     os.getenv("RECURRING_POSTS_ENABLED", "true").lower() == "true",
