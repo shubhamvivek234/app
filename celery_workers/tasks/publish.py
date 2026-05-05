@@ -316,6 +316,19 @@ def _normalize_account_doc(account_doc: dict | None) -> dict | None:
     }
 
 
+def _requires_pre_upload(platform: str, post: dict) -> bool:
+    post_type = str(post.get("post_type") or "").lower()
+    has_media = bool(post.get("media_url") or post.get("media_urls"))
+
+    if platform == "instagram":
+        return has_media and post_type != "text"
+
+    if platform == "youtube":
+        return post_type in {"video", "reel", "story"} or "video" in post_type
+
+    return False
+
+
 async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
     selected_ids = post.get("social_account_ids") or post.get("account_ids") or []
     if selected_ids:
@@ -417,6 +430,41 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         return {"status": "post_deleted"}
     post = await _hydrate_post_media(db, post)
 
+    # Bootstrap pre-upload for platforms that require a prepared container/video_id
+    # before publish. This is critical for immediate "post now" flows because they do
+    # not always pass through the scheduled pre-upload window first.
+    if _requires_pre_upload(platform, post):
+        container_ids = post.get("platform_container_ids") or {}
+        pre_status = post.get("pre_upload_status", "")
+        has_container = bool(container_ids.get(platform))
+
+        if not has_container or pre_status in ("", None):
+            logger.info(
+                "Bootstrapping pre-upload for %s/%s (post_type=%s, has_container=%s, pre_status=%r)",
+                post_id,
+                platform,
+                post.get("post_type"),
+                has_container,
+                pre_status,
+            )
+            pre_result = await _async_pre_upload(task, post_id, platform)
+            if pre_result.get("status") == "polling":
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "retrying",
+                    "error": f"{platform} media container is still processing",
+                    "last_attempt_at": datetime.now(timezone.utc),
+                })
+                raise task.retry(
+                    countdown=_PRE_UPLOAD_POLL_INTERVAL,
+                    exc=Exception(f"{platform} pre_upload still processing"),
+                    kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+                )
+
+            post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+            if post is None:
+                return {"status": "post_deleted"}
+            post = await _hydrate_post_media(db, post)
+
     # EC15: Check subscription is still active before publishing
     try:
         from utils.subscription import check_subscription_active
@@ -435,7 +483,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
     # 17.4 Scenario B: pre_upload still running at scheduled publish time.
     # Poll every 5s for up to 10 minutes before giving up.
-    if platform in ("instagram", "youtube") and post.get("post_type") in ("video", "reel", "story"):
+    if _requires_pre_upload(platform, post):
         pre_status = post.get("pre_upload_status", "")
         if pre_status == "failed":
             err = post.get("pre_upload_error", "Pre-upload failed before publish time")

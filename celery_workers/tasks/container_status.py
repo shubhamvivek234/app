@@ -22,6 +22,20 @@ _MAX_POLL_RETRIES = 30         # 30 × 10s = 5 minutes max polling time
 _POLL_COUNTDOWN_SECONDS = 10
 
 
+def _run_async(coro):
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    return loop.run_until_complete(coro)
+
+
 @celery_app.task(
     name="celery_workers.tasks.container_status.check_instagram_container_status",
     bind=True,
@@ -40,7 +54,7 @@ def check_instagram_container_status(
     self.retry() with countdown — releases the worker immediately instead
     of blocking in a polling loop.
     """
-    return asyncio.get_event_loop().run_until_complete(
+    return _run_async(
         _async_check(self, post_id, container_id, access_token_encrypted, poll_attempt)
     )
 

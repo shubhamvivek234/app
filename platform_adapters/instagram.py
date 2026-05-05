@@ -1,6 +1,8 @@
 """
 Instagram platform adapter.
-Two-step publish: pre_upload (video container creation + poll) → publish (media_publish).
+Two-step publish for media posts:
+- image posts: create image container, immediately publishable
+- video/reel/story posts: create reel container, poll until FINISHED, then publish
 EC4: container expiry check before publish.
 EC29: error code 9007 treated as success (already published).
 EC24: revocation subcodes 458/460 → permanent error, do not refresh token.
@@ -34,18 +36,35 @@ OAUTH_TOKEN_URL = "https://graph.facebook.com/oauth/access_token"
 class InstagramAdapter(PlatformAdapter):
     platform = "instagram"
 
+    @staticmethod
+    def _is_video_like(post: dict) -> bool:
+        post_type = str(post.get("post_type") or "").lower()
+        return post_type in {"video", "reel", "story"} or "video" in post_type
+
+    @staticmethod
+    def _is_multi_image(post: dict) -> bool:
+        media_urls = [url for url in (post.get("media_urls") or []) if url]
+        return str(post.get("post_type") or "").lower() == "carousel" and len(media_urls) > 1
+
     async def pre_upload(self, post: dict, *, redis=None) -> dict:
         """
-        Phase 1: Create a video container on the Graph API.
-        Returns {"container_id": str}.
-        Polling is driven by Celery: call this once, check status_code once,
-        raise self.retry(countdown=CONTAINER_POLL_INTERVAL) if not FINISHED.
+        Phase 1: Create an Instagram media container.
+        - image posts return ready immediately
+        - video/reel/story posts return pending until processing finishes
         """
         account = post.get("account", {})
         access_token = decrypt(account.get("access_token", ""))
         user_id = account.get("platform_user_id", "")
         post_id = str(post.get("id", ""))
         social_account_id = account.get("id", post_id)
+        media_url = post.get("media_url", "")
+        caption = post.get("effective_content", post.get("content", ""))
+
+        if self._is_multi_image(post):
+            raise PlatformAPIError("Instagram carousel publishing is not supported in the current adapter")
+
+        if not media_url:
+            raise PlatformAPIError("Instagram publish requires a media_url")
 
         if redis:
             if not await check_rate_limit(redis, self.platform, str(social_account_id)):
@@ -58,13 +77,15 @@ class InstagramAdapter(PlatformAdapter):
 
         async with httpx.AsyncClient(timeout=30) as client:
             if not container_id:
-                # Create container
                 payload = {
-                    "video_url": post.get("media_url", ""),
-                    "caption": post.get("effective_content", post.get("content", "")),
-                    "media_type": "REELS",
+                    "caption": caption,
                     "access_token": access_token,
                 }
+                if self._is_video_like(post):
+                    payload["media_type"] = "REELS"
+                    payload["video_url"] = media_url
+                else:
+                    payload["image_url"] = media_url
                 resp = await client.post(f"{GRAPH_BASE}/{user_id}/media", data=payload)
                 if resp.status_code != 200:
                     if redis:
@@ -76,7 +97,13 @@ class InstagramAdapter(PlatformAdapter):
                 if not container_id:
                     raise PlatformResponseError("Missing container id in response")
 
-            # Check container status (single poll — caller retries via Celery)
+            # Image containers are immediately publishable after creation.
+            if not self._is_video_like(post):
+                if redis:
+                    await record_success(redis, self.platform)
+                return {"container_id": container_id, "pre_upload_status": "ready"}
+
+            # Check container status once for video-like media.
             params = {
                 "fields": "status_code",
                 "access_token": access_token,
