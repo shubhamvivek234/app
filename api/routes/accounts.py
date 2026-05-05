@@ -117,6 +117,25 @@ async def list_accounts(
         account_identifier = doc.get("account_id") or doc.get("id")
         if not account_identifier:
             continue
+        updates: dict[str, object] = {}
+        if not doc.get("account_id"):
+            updates["account_id"] = account_identifier
+            doc["account_id"] = account_identifier
+        if not doc.get("id"):
+            updates["id"] = account_identifier
+            doc["id"] = account_identifier
+        if updates:
+            await db.social_accounts.update_one(
+                {
+                    "user_id": user_id,
+                    "platform": doc.get("platform"),
+                    "$or": [
+                        {"account_id": account_identifier},
+                        {"id": account_identifier},
+                    ],
+                },
+                {"$set": updates},
+            )
         response_docs.append(
             SocialAccountResponse(
                 id=account_identifier,

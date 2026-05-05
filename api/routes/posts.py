@@ -51,18 +51,58 @@ def _doc_to_response(doc: dict) -> PostResponse:
     return PostResponse(**doc)
 
 
+def _social_account_identifier(account_doc: dict) -> str | None:
+    return account_doc.get("account_id") or account_doc.get("id")
+
+
 async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostRequest) -> list[str]:
     if body.account_ids:
         accounts = await db.social_accounts.find(
             {
                 "user_id": user_id,
-                "account_id": {"$in": body.account_ids},
+                "$or": [
+                    {"account_id": {"$in": body.account_ids}},
+                    {"id": {"$in": body.account_ids}},
+                ],
                 "is_active": True,
             },
-            {"_id": 0, "account_id": 1, "platform": 1},
+            {"_id": 0, "id": 1, "account_id": 1, "platform": 1},
         ).to_list(len(body.account_ids))
-        found_ids = {acct.get("account_id") for acct in accounts}
-        missing = [account_id for account_id in body.account_ids if account_id not in found_ids]
+        matched_ids: set[str] = set()
+        normalized_ids: list[str] = []
+        backfill_ops = []
+        for acct in accounts:
+            canonical_id = _social_account_identifier(acct)
+            if not canonical_id:
+                continue
+            if canonical_id not in normalized_ids:
+                normalized_ids.append(canonical_id)
+            matched_ids.update(filter(None, [acct.get("account_id"), acct.get("id")]))
+            if not acct.get("account_id"):
+                backfill_ops.append(
+                    db.social_accounts.update_one(
+                        {
+                            "user_id": user_id,
+                            "platform": acct.get("platform"),
+                            "id": canonical_id,
+                        },
+                        {"$set": {"account_id": canonical_id}},
+                    )
+                )
+            if not acct.get("id"):
+                backfill_ops.append(
+                    db.social_accounts.update_one(
+                        {
+                            "user_id": user_id,
+                            "platform": acct.get("platform"),
+                            "account_id": canonical_id,
+                        },
+                        {"$set": {"id": canonical_id}},
+                    )
+                )
+        if backfill_ops:
+            await asyncio.gather(*backfill_ops)
+        missing = [account_id for account_id in body.account_ids if account_id not in matched_ids]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -77,17 +117,18 @@ async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostReques
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Selected accounts do not cover requested platforms: {missing_platforms}",
             )
-        return list(body.account_ids)
+        return normalized_ids
 
     social_account_ids: list[str] = []
     if body.platforms:
         account_cursor = db.social_accounts.find(
             {"user_id": user_id, "platform": {"$in": body.platforms}, "is_active": True},
-            {"_id": 0, "account_id": 1},
+            {"_id": 0, "id": 1, "account_id": 1},
         )
         async for acct in account_cursor:
-            if acct.get("account_id"):
-                social_account_ids.append(acct["account_id"])
+            account_identifier = _social_account_identifier(acct)
+            if account_identifier:
+                social_account_ids.append(account_identifier)
     return social_account_ids
 
 
