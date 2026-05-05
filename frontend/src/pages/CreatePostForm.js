@@ -801,11 +801,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     });
   };
 
+  const resetCropState = () => {
+    setShowCropper(false);
+    setCropImageSrc(null);
+    setCropMediaIndex(null);
+    setCropTargetRatio(null);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
+  };
+
   const handleApplyCrop = async () => {
+    if (!cropImageSrc || !croppedAreaPixels) {
+      toast.error('Select a crop area first');
+      return;
+    }
+
     try {
       const blob = await getCroppedImg(cropImageSrc, croppedAreaPixels);
-      setShowCropper(false);
-      setCropImageSrc(null);
       const file = new File([blob], 'cropped_image.jpg', { type: 'image/jpeg' });
       if (cropMediaIndex !== null) {
         // Crop a post media item — replace it in place
@@ -834,16 +847,15 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             return next;
           });
           toast.success('Image cropped');
+          resetCropState();
         } finally {
           setUploading(false);
           setUploadProgress(0);
-          setCropMediaIndex(null);
-          setCropTargetRatio(null);
         }
       } else {
         // Cover image crop
         uploadCoverImageToBackend(file);
-        setCropTargetRatio(null);
+        resetCropState();
       }
     } catch {
       toast.error('Failed to crop image');
@@ -859,6 +871,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setCropImageSrc(item.originalUrl || item.url);
     setCrop({ x: 0, y: 0 });
     setZoom(1);
+    setCroppedAreaPixels(null);
     setShowCropper(true);
   };
 
@@ -867,7 +880,15 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     if (!file) return;
     if (type === 'video' && mediaRawAspectRatio) {
       const reader = new FileReader();
-      reader.addEventListener('load', () => { setCropImageSrc(reader.result); setShowCropper(true); });
+      reader.addEventListener('load', () => {
+        setCropMediaIndex(null);
+        setCropTargetRatio(null);
+        setCrop({ x: 0, y: 0 });
+        setZoom(1);
+        setCroppedAreaPixels(null);
+        setCropImageSrc(reader.result);
+        setShowCropper(true);
+      });
       reader.readAsDataURL(file);
     } else {
       uploadCoverImageToBackend(file);
@@ -1157,14 +1178,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               onDragEnter={() => handleDragEnter(index)}
               onDragEnd={handleDragEnd}
               onDragOver={(e) => e.preventDefault()}
-              // Media (only first platform has upload controls)
+              // Media (shared upload controls on every selected platform)
               media={uploadedMedia}
-              uploading={index === 0 ? uploading : false}
-              uploadProgress={index === 0 ? uploadProgress : 0}
-              onFilesSelect={index === 0 ? uploadFilesToBackend : null}
-              onRemoveMedia={index === 0 ? removeMediaItem : null}
-              onReorderMedia={index === 0 ? reorderMedia : null}
-              fileInputRef={index === 0 ? fileInputRef : null}
+              uploading={uploading}
+              uploadProgress={uploadProgress}
+              onFilesSelect={uploadFilesToBackend}
+              onRemoveMedia={removeMediaItem}
+              onReorderMedia={reorderMedia}
+              fileInputRef={fileInputRef}
               // Platform-specific
               postFormat={postFormat}             onPostFormatChange={setPostFormat}
               firstComment={firstComment}        onFirstCommentChange={setFirstComment}
@@ -1668,7 +1689,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       })()}
 
       {/* Crop dialog */}
-      <Dialog open={showCropper} onOpenChange={(open) => { setShowCropper(open); if (!open) { setCropMediaIndex(null); setCropTargetRatio(null); } }}>
+      <Dialog open={showCropper} onOpenChange={(open) => { if (open) setShowCropper(true); else resetCropState(); }}>
         <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
@@ -1707,7 +1728,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               <input type="range" value={zoom} min={1} max={3} step={0.1} onChange={(e) => setZoom(Number(e.target.value))} className="w-32" />
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => { setShowCropper(false); setCropMediaIndex(null); setCropTargetRatio(null); }}>Cancel</Button>
+              <Button variant="outline" size="sm" onClick={resetCropState}>Cancel</Button>
               <Button size="sm" onClick={handleApplyCrop} className="bg-green-500 hover:bg-green-600">Crop & Upload</Button>
             </div>
           </div>
