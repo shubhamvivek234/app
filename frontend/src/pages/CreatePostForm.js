@@ -638,6 +638,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       img.src = url;
     });
 
+  const fileToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(reader.result));
+      reader.addEventListener('error', () => reject(new Error('Failed to read file')));
+      reader.readAsDataURL(file);
+    });
+
   const resolveUploadedAsset = useCallback(async (file, onProgress = () => {}) => {
     const uploadJob = await uploadMedia(file, onProgress);
     if (!uploadJob?.media_job_id) {
@@ -863,16 +871,28 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   // Called from PlatformEditor "Crop" button
-  const handleCropMedia = (index, targetRatio) => {
+  const handleCropMedia = async (index, targetRatio) => {
     const item = uploadedMedia[index];
     if (!item || item.type === 'video') return;
-    setCropMediaIndex(index);
-    setCropTargetRatio(targetRatio);
-    setCropImageSrc(item.originalUrl || item.url);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setCroppedAreaPixels(null);
-    setShowCropper(true);
+    try {
+      const cropSrc = item.file instanceof File
+        ? await fileToDataUrl(item.file)
+        : (item.originalUrl || item.url);
+
+      if (!cropSrc) {
+        throw new Error('Image source unavailable');
+      }
+
+      setCropMediaIndex(index);
+      setCropTargetRatio(targetRatio);
+      setCropImageSrc(cropSrc);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setCroppedAreaPixels(null);
+      setShowCropper(true);
+    } catch (error) {
+      toast.error(error?.message || 'Failed to open cropper');
+    }
   };
 
   const handleCoverImageChange = (e) => {
