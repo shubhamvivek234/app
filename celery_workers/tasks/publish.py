@@ -43,6 +43,27 @@ _PLATFORM_CONCURRENCY: dict[str, int] = {
 _PLATFORM_SLOT_TTL = 60  # safety TTL in seconds — clears leaked slots on worker crash
 
 
+def _run_async(coro):
+    """
+    Run async publishing code from Celery's prefork worker process.
+
+    Python 3.11 no longer creates a default event loop automatically for
+    synchronous worker tasks. Keep one loop per worker process so async clients
+    such as Motor are not rebound to a new loop on every task.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    return loop.run_until_complete(coro)
+
+
 async def _acquire_platform_slot(redis, platform: str) -> bool:
     """
     Atomically increment the per-platform concurrent call counter in Redis.
@@ -177,9 +198,7 @@ def publish_post(self, post_id: str, version: int) -> dict:
     Parent task: reads post, applies jitter, spawns one child per platform.
     Phase 1.6.2 — platforms execute in parallel via celery.group().
     """
-    return asyncio.get_event_loop().run_until_complete(
-        _async_publish_post(self, post_id, version)
-    )
+    return _run_async(_async_publish_post(self, post_id, version))
 
 
 async def _async_publish_post(task, post_id: str, version: int) -> dict:
@@ -335,9 +354,7 @@ async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
     acks_late=True,
 )
 def publish_to_platform(self, post_id: str, platform: str, attempt: int = 0) -> dict:
-    return asyncio.get_event_loop().run_until_complete(
-        _async_publish_to_platform(self, post_id, platform, attempt)
-    )
+    return _run_async(_async_publish_to_platform(self, post_id, platform, attempt))
 
 
 async def _async_publish_to_platform(task, post_id: str, platform: str, attempt: int) -> dict:
@@ -770,9 +787,7 @@ def pre_upload_task(self, post_id: str, platform: str) -> dict:
     Stores container_id/video_id for use by publish_task at scheduled_time.
     Records actual_upload_duration for future estimate calibration (17.3).
     """
-    return asyncio.get_event_loop().run_until_complete(
-        _async_pre_upload(self, post_id, platform)
-    )
+    return _run_async(_async_pre_upload(self, post_id, platform))
 
 
 async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
