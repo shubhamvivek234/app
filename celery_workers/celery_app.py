@@ -62,6 +62,10 @@ CELERY_QUEUES = (
     Queue("high_priority", default_exchange, routing_key="high_priority"),
     # SLA: < 30 seconds
     Queue("default", default_exchange, routing_key="default"),
+    # SLA: light publish work (text/image) with higher parallelism
+    Queue("publish_light", default_exchange, routing_key="publish_light"),
+    # SLA: heavy publish work (video / long-running uploads) isolated from light work
+    Queue("publish_video", default_exchange, routing_key="publish_video"),
     # SLA: < 2 minutes — media workers only
     Queue("media_processing", default_exchange, routing_key="media_processing"),
     # Manual / admin review

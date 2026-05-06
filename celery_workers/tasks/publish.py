@@ -20,13 +20,23 @@ from db.mongo import get_client
 from db.redis_client import get_queue_redis, get_cache_redis
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 from utils.feature_flags import is_enabled
-from utils.redis_resilience import safe_expire, safe_get, safe_incr, safe_setex
+from utils.redis_resilience import (
+    safe_delete,
+    safe_expire,
+    safe_get,
+    safe_incr,
+    safe_set,
+    safe_setex,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 MAX_RETRIES = 3
 MAX_DELIVERY_COUNT = 5  # Poison pill threshold
+PUBLISH_LIGHT_QUEUE = "publish_light"
+PUBLISH_VIDEO_QUEUE = "publish_video"
+_PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
 
 # ── Per-platform concurrent API call limits (cross-process via Redis) ─────────
 # Prevents app-level quota exhaustion when 1000 posts hit a platform simultaneously.
@@ -41,6 +51,60 @@ _PLATFORM_CONCURRENCY: dict[str, int] = {
     "pinterest": 10,
 }
 _PLATFORM_SLOT_TTL = 60  # safety TTL in seconds — clears leaked slots on worker crash
+
+
+def _is_video_like(post_type: str | None) -> bool:
+    normalized = str(post_type or "").lower()
+    return normalized in {"video", "reel", "story"} or "video" in normalized
+
+
+def _publish_queue_for(platform: str, post: dict) -> str:
+    """
+    Route heavy media publishes away from light text/image work so one burst of
+    large uploads does not starve every other platform publish.
+    """
+    if platform == "tiktok":
+        return PUBLISH_VIDEO_QUEUE
+    if platform == "youtube":
+        return PUBLISH_VIDEO_QUEUE
+    if _is_video_like(post.get("post_type")):
+        return PUBLISH_VIDEO_QUEUE
+    return PUBLISH_LIGHT_QUEUE
+
+
+def _publish_lock_key(post_id: str, platform: str) -> str:
+    return f"publish_lock:{post_id}:{platform}"
+
+
+async def _acquire_publish_lock(redis, post_id: str, platform: str, owner_token: str) -> bool:
+    key = _publish_lock_key(post_id, platform)
+    acquired = await safe_set(
+        redis,
+        key,
+        owner_token,
+        ex=_PUBLISH_LOCK_TTL_SECONDS,
+        nx=True,
+        default=None,
+        feature="Publish in-flight lock acquisition",
+    )
+    return bool(acquired)
+
+
+async def _release_publish_lock(redis, post_id: str, platform: str, owner_token: str) -> None:
+    key = _publish_lock_key(post_id, platform)
+    current = await safe_get(
+        redis,
+        key,
+        default=None,
+        feature="Publish in-flight lock read",
+    )
+    if current == owner_token:
+        await safe_delete(
+            redis,
+            key,
+            default=0,
+            feature="Publish in-flight lock release",
+        )
 
 
 def _run_async(coro):
@@ -254,10 +318,12 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     # countdown=jitter delays children without blocking the worker thread
     platforms = post.get("platforms", [])
     platform_tasks = group(
-        publish_to_platform.s(post_id=post_id, platform=p, attempt=0)
+        publish_to_platform.s(post_id=post_id, platform=p, attempt=0).set(
+            queue=_publish_queue_for(p, post)
+        )
         for p in platforms
     )
-    platform_tasks.apply_async(queue="default", countdown=jitter)
+    platform_tasks.apply_async(countdown=jitter)
 
     return {"status": "dispatched", "platforms": platforms, "jitter_seconds": jitter}
 
@@ -430,114 +496,133 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         return {"status": "post_deleted"}
     post = await _hydrate_post_media(db, post)
 
-    # Bootstrap pre-upload for platforms that require a prepared container/video_id
-    # before publish. This is critical for immediate "post now" flows because they do
-    # not always pass through the scheduled pre-upload window first.
-    if _requires_pre_upload(platform, post):
-        container_ids = post.get("platform_container_ids") or {}
-        pre_status = post.get("pre_upload_status", "")
-        has_container = bool(container_ids.get(platform))
+    publish_queue = _publish_queue_for(platform, post)
+    lock_owner = task.request.id or f"{post_id}:{platform}:{attempt}"
+    lock_acquired = await _acquire_publish_lock(r_cache, post_id, platform, lock_owner)
+    if not lock_acquired:
+        logger.info(
+            "Publish already in-flight for %s/%s — re-enqueuing after short backoff",
+            post_id,
+            platform,
+        )
+        publish_to_platform.apply_async(
+            kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+            countdown=random.randint(20, 40),
+            queue=publish_queue,
+        )
+        return {"status": "already_inflight_requeued", "platform": platform}
 
-        if not has_container or pre_status in ("", None):
-            logger.info(
-                "Bootstrapping pre-upload for %s/%s (post_type=%s, has_container=%s, pre_status=%r)",
-                post_id,
-                platform,
-                post.get("post_type"),
-                has_container,
-                pre_status,
-            )
-            pre_result = await _async_pre_upload(task, post_id, platform)
-            if pre_result.get("status") == "polling":
-                await _update_platform_result(db, post_id, platform, {
-                    "status": "retrying",
-                    "error": f"{platform} media container is still processing",
-                    "last_attempt_at": datetime.now(timezone.utc),
-                })
-                raise task.retry(
-                    countdown=_PRE_UPLOAD_POLL_INTERVAL,
-                    exc=Exception(f"{platform} pre_upload still processing"),
-                    kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
-                )
-
-            post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-            if post is None:
-                return {"status": "post_deleted"}
-            post = await _hydrate_post_media(db, post)
-
-    # EC15: Check subscription is still active before publishing
     try:
-        from utils.subscription import check_subscription_active
-        user_id = post.get("user_id", "")
-        is_active, reason = await check_subscription_active(db, user_id)
-        if not is_active:
-            logger.warning("EC15: subscription expired for user %s — pausing post %s", user_id, post_id)
-            await _update_platform_result(db, post_id, platform, {
-                "status": "paused",
-                "error": f"Subscription expired: {reason}",
-            })
-            await _finalize_post_status(db, post_id)
-            return {"status": "subscription_expired"}
-    except ImportError:
-        pass  # subscription module not available — skip check
+        # Bootstrap pre-upload for platforms that require a prepared container/video_id
+        # before publish. This is critical for immediate "post now" flows because they do
+        # not always pass through the scheduled pre-upload window first.
+        if _requires_pre_upload(platform, post):
+            container_ids = post.get("platform_container_ids") or {}
+            pre_status = post.get("pre_upload_status", "")
+            has_container = bool(container_ids.get(platform))
 
-    # 17.4 Scenario B: pre_upload still running at scheduled publish time.
-    # Poll every 5s for up to 10 minutes before giving up.
-    if _requires_pre_upload(platform, post):
-        pre_status = post.get("pre_upload_status", "")
-        if pre_status == "failed":
-            err = post.get("pre_upload_error", "Pre-upload failed before publish time")
-            logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
-            await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
-            await _finalize_post_status(db, post_id)
-            await _send_failure_notification(db, post_id, platform, err)
-            return {"status": "failed", "reason": "pre_upload_failed"}
-
-        if pre_status not in ("ready", "", None):
-            # Still uploading — poll every 5s for up to 10 minutes (17.4B)
-            waited = 0
-            logger.info(
-                "17.4B: pre_upload still %r at publish time for %s/%s — polling up to %ds",
-                pre_status, post_id, platform, _PRE_UPLOAD_MAX_WAIT,
-            )
-            while waited < _PRE_UPLOAD_MAX_WAIT:
-                await asyncio.sleep(_PRE_UPLOAD_POLL_INTERVAL)
-                waited += _PRE_UPLOAD_POLL_INTERVAL
-                refreshed = await db.posts.find_one(
-                    {"id": post_id}, {"pre_upload_status": 1, "pre_upload_error": 1}
+            if not has_container or pre_status in ("", None):
+                logger.info(
+                    "Bootstrapping pre-upload for %s/%s (post_type=%s, has_container=%s, pre_status=%r)",
+                    post_id,
+                    platform,
+                    post.get("post_type"),
+                    has_container,
+                    pre_status,
                 )
-                current_status = (refreshed or {}).get("pre_upload_status", "")
-                if current_status == "ready":
-                    logger.info(
-                        "17.4B: pre_upload ready after %ds for %s/%s",
-                        waited, post_id, platform,
+                pre_result = await _async_pre_upload(task, post_id, platform)
+                if pre_result.get("status") == "polling":
+                    await _update_platform_result(db, post_id, platform, {
+                        "status": "retrying",
+                        "error": f"{platform} media container is still processing",
+                        "last_attempt_at": datetime.now(timezone.utc),
+                    })
+                    raise task.retry(
+                        countdown=_PRE_UPLOAD_POLL_INTERVAL,
+                        exc=Exception(f"{platform} pre_upload still processing"),
+                        kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
                     )
-                    # Reload full post with updated container IDs
-                    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-                    break
-                if current_status == "failed":
-                    err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
-                    logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
-                    await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
-                    await _finalize_post_status(db, post_id)
-                    await _send_failure_notification(db, post_id, platform, err)
-                    return {"status": "failed", "reason": "pre_upload_failed"}
-            else:
-                # 10-minute timeout expired
-                msg = (
-                    f"Timed out waiting for pre_upload on {platform} "
-                    f"(waited {_PRE_UPLOAD_MAX_WAIT}s). "
-                    f"Post published {waited}s late."
-                )
-                logger.error("17.4B: %s for post %s", msg, post_id)
-                await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
-                await _finalize_post_status(db, post_id)
-                await _send_failure_notification(db, post_id, platform, msg)
-                return {"status": "failed", "reason": "pre_upload_wait_timeout"}
 
-    try:
-        # Gap 2.7: Inject decrypted access token so adapter can authenticate.
-        # Fetch account first so we have account_id for per-account circuit breaker.
+                post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+                if post is None:
+                    return {"status": "post_deleted"}
+                post = await _hydrate_post_media(db, post)
+
+        # EC15: Check subscription is still active before publishing
+        try:
+            from utils.subscription import check_subscription_active
+            user_id = post.get("user_id", "")
+            is_active, reason = await check_subscription_active(db, user_id)
+            if not is_active:
+                logger.warning("EC15: subscription expired for user %s — pausing post %s", user_id, post_id)
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "paused",
+                    "error": f"Subscription expired: {reason}",
+                })
+                await _finalize_post_status(db, post_id)
+                return {"status": "subscription_expired"}
+        except ImportError:
+            pass
+
+        # 17.4 Scenario B: pre_upload still running at scheduled publish time.
+        # Poll every 5s for up to 10 minutes before giving up.
+        if _requires_pre_upload(platform, post):
+            pre_status = post.get("pre_upload_status", "")
+            if pre_status == "failed":
+                err = post.get("pre_upload_error", "Pre-upload failed before publish time")
+                logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
+                await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                await _finalize_post_status(db, post_id)
+                await _send_failure_notification(db, post_id, platform, err)
+                return {"status": "failed", "reason": "pre_upload_failed"}
+
+            if pre_status not in ("ready", "", None):
+                waited = 0
+                logger.info(
+                    "17.4B: pre_upload still %r at publish time for %s/%s — polling up to %ds",
+                    pre_status, post_id, platform, _PRE_UPLOAD_MAX_WAIT,
+                )
+                while waited < _PRE_UPLOAD_MAX_WAIT:
+                    await asyncio.sleep(_PRE_UPLOAD_POLL_INTERVAL)
+                    waited += _PRE_UPLOAD_POLL_INTERVAL
+                    await safe_expire(
+                        r_cache,
+                        _publish_lock_key(post_id, platform),
+                        _PUBLISH_LOCK_TTL_SECONDS,
+                        default=True,
+                        feature="Publish in-flight lock heartbeat",
+                    )
+                    refreshed = await db.posts.find_one(
+                        {"id": post_id}, {"pre_upload_status": 1, "pre_upload_error": 1}
+                    )
+                    current_status = (refreshed or {}).get("pre_upload_status", "")
+                    if current_status == "ready":
+                        logger.info(
+                            "17.4B: pre_upload ready after %ds for %s/%s",
+                            waited, post_id, platform,
+                        )
+                        post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+                        break
+                    if current_status == "failed":
+                        err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
+                        logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
+                        await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                        await _finalize_post_status(db, post_id)
+                        await _send_failure_notification(db, post_id, platform, err)
+                        return {"status": "failed", "reason": "pre_upload_failed"}
+                else:
+                    msg = (
+                        f"Timed out waiting for pre_upload on {platform} "
+                        f"(waited {_PRE_UPLOAD_MAX_WAIT}s). "
+                        f"Post published {waited}s late."
+                    )
+                    logger.error("17.4B: %s for post %s", msg, post_id)
+                    await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
+                    await _finalize_post_status(db, post_id)
+                    await _send_failure_notification(db, post_id, platform, msg)
+                    return {"status": "failed", "reason": "pre_upload_wait_timeout"}
+                post = await _hydrate_post_media(db, post)
+
         account_id: str | None = None
         try:
             from utils.encryption import decrypt
@@ -548,239 +633,211 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         except Exception as _token_err:
             logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
 
-        # ── Circuit breaker check — per-account to avoid cross-tenant impact ──
-        cb_open = await can_attempt(r_cache, platform, account_id)
-        if not cb_open:
-            logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, account_id, post_id)
-            await _update_platform_result(db, post_id, platform, {
-                "status": "retrying",
-                "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
-                "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
-            })
-            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
-
-        # Resolve per-platform text overrides — inject effective_content/effective_title
-        # so adapters never need to know about platform_overrides themselves.
-        _override = (post.get("platform_overrides") or {}).get(platform) or {}
-        _use_media_override = _override.get("use_media_override")
-        if _use_media_override is True:
-            _override_media_ids = _override.get("media_ids") or []
-            _override_media_urls = _override.get("media_urls") or []
-            _override_media_url = _override.get("media_url")
-            _override_thumbnails = _override.get("thumbnail_urls") or []
-        else:
-            # Legacy compatibility: older posts persisted empty media override fields for every
-            # platform even when the user did not customize media. Fall back to post-level media
-            # unless the override explicitly opted into media replacement.
-            _override_media_ids = post.get("media_ids") or []
-            _override_media_urls = post.get("media_urls") or []
-            _override_media_url = post.get("media_url")
-            _override_thumbnails = post.get("thumbnail_urls") or []
-        post = {
-            **post,
-            "effective_content": _override.get("content") or post.get("content", ""),
-            "effective_title": _override.get("title") or post.get("title", ""),
-            "media_ids": _override_media_ids,
-            "media_urls": _override_media_urls,
-            "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
-            "thumbnail_urls": _override_thumbnails,
-        }
-
-        adapter = get_adapter(platform)
-
-        # Throttle: cap concurrent calls per platform to avoid app-level quota exhaustion.
-        # If at capacity, re-enqueue as a new task (preserves retry budget + poison-pill counter).
-        _slot_acquired = await _acquire_platform_slot(r_cache, platform)
-        if not _slot_acquired:
-            _backoff = random.randint(8, 15)
-            logger.info(
-                "Platform %s at capacity — re-enqueuing post %s after %ds backoff",
-                platform, post_id, _backoff,
-            )
-            await _update_platform_result(db, post_id, platform, {
-                "status": "retrying",
-                "error": f"Platform {platform} throttled — too many concurrent calls",
-                "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=_backoff),
-            })
-            # Re-enqueue as a brand-new task (new task ID — does NOT consume retry budget)
-            publish_to_platform.apply_async(
-                kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
-                countdown=_backoff,
-                queue="default",
-            )
-            return {"status": "throttled_requeued", "platform": platform}
-
         try:
-            result = await adapter.publish(post, redis=r_cache)
-        finally:
-            await _release_platform_slot(r_cache, platform)
+            cb_open = await can_attempt(r_cache, platform, account_id)
+            if not cb_open:
+                logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, account_id, post_id)
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "retrying",
+                    "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
+                    "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+                })
+                raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
 
-        # 20.1: Record success — close circuit if it was half-open
-        try:
-            from utils.circuit_breaker import record_success
-            await record_success(r_cache, platform)
-        except ImportError:
-            pass
+            _override = (post.get("platform_overrides") or {}).get(platform) or {}
+            _use_media_override = _override.get("use_media_override")
+            if _use_media_override is True:
+                _override_media_ids = _override.get("media_ids") or []
+                _override_media_urls = _override.get("media_urls") or []
+                _override_media_url = _override.get("media_url")
+                _override_thumbnails = _override.get("thumbnail_urls") or []
+            else:
+                _override_media_ids = post.get("media_ids") or []
+                _override_media_urls = post.get("media_urls") or []
+                _override_media_url = post.get("media_url")
+                _override_thumbnails = post.get("thumbnail_urls") or []
+            post = {
+                **post,
+                "effective_content": _override.get("content") or post.get("content", ""),
+                "effective_title": _override.get("title") or post.get("title", ""),
+                "media_ids": _override_media_ids,
+                "media_urls": _override_media_urls,
+                "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
+                "thumbnail_urls": _override_thumbnails,
+            }
 
-        post_url = result.get("post_url")
-        platform_post_id = result.get("platform_post_id")
+            adapter = get_adapter(platform)
 
-        # EC17 Phase 2.6.3: Write confirmation to Redis FIRST
-        import json
-        confirmation_payload = {
-            "post_url": post_url,
-            "platform_post_id": platform_post_id,
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await safe_setex(
-            r_cache,
-            confirm_key,
-            86400,
-            json.dumps(confirmation_payload),
-            default=True,
-            feature="Publish confirmation cache write",
-        )
+            _slot_acquired = await _acquire_platform_slot(r_cache, platform)
+            if not _slot_acquired:
+                _backoff = random.randint(8, 15)
+                logger.info(
+                    "Platform %s at capacity — re-enqueuing post %s after %ds backoff",
+                    platform, post_id, _backoff,
+                )
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "retrying",
+                    "error": f"Platform {platform} throttled — too many concurrent calls",
+                    "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=_backoff),
+                })
+                publish_to_platform.apply_async(
+                    kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+                    countdown=_backoff,
+                    queue=publish_queue,
+                )
+                return {"status": "throttled_requeued", "platform": platform}
 
-        # ── Circuit breaker: record success (Section 20.1) ────────────────────
-        await record_success(r_cache, platform, account_id)
+            try:
+                result = await adapter.publish(post, redis=r_cache)
+            finally:
+                await _release_platform_slot(r_cache, platform)
 
-        # Then update MongoDB
-        await _update_platform_result(db, post_id, platform, {
-            "status": "published",
-            "post_url": post_url,
-            "platform_post_id": platform_post_id,
-            "published_at": datetime.now(timezone.utc),
-        })
-        await db.posts.update_one(
-            {"id": post_id},
-            {
-                "$unset": {
-                    f"platform_results.{platform}.error": "",
-                    f"platform_results.{platform}.next_retry_at": "",
-                    f"platform_results.{platform}.dlq_reason": "",
-                    "pre_upload_error": "",
-                }
-            },
-        )
+            try:
+                from utils.circuit_breaker import record_success
+                await record_success(r_cache, platform)
+            except ImportError:
+                pass
 
-        # Recompute aggregate status
-        user_id, prev_agg_status, agg_status = await _finalize_post_status(db, post_id)
+            post_url = result.get("post_url")
+            platform_post_id = result.get("platform_post_id")
 
-        # 18.8: Per-platform success notification
-        await _send_success_notification(db, post_id, platform, post_url or "", user_id or "")
+            import json
+            confirmation_payload = {
+                "post_url": post_url,
+                "platform_post_id": platform_post_id,
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await safe_setex(
+                r_cache,
+                confirm_key,
+                86400,
+                json.dumps(confirmation_payload),
+                default=True,
+                feature="Publish confirmation cache write",
+            )
 
-        # 18.8: Partial-recovery notification — fires when last failed platform publishes
-        if agg_status == "published" and prev_agg_status == "partial":
-            await _send_recovery_notification(db, post_id, user_id or "")
+            await record_success(r_cache, platform, account_id)
 
-        return {"status": "published", "platform": platform}
-
-    except Exception as exc:
-        from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
-
-        # EC-3: Instagram container expired — clear stale container and re-run pre_upload
-        if "container expired" in str(exc).lower() and platform == "instagram":
-            logger.warning("Instagram container expired for %s — clearing and re-queuing pre_upload", post_id)
+            await _update_platform_result(db, post_id, platform, {
+                "status": "published",
+                "post_url": post_url,
+                "platform_post_id": platform_post_id,
+                "published_at": datetime.now(timezone.utc),
+            })
             await db.posts.update_one(
                 {"id": post_id},
                 {
-                    "$unset": {f"platform_container_ids.{platform}": ""},
-                    "$set": {"pre_upload_status": "pending"},
+                    "$unset": {
+                        f"platform_results.{platform}.error": "",
+                        f"platform_results.{platform}.next_retry_at": "",
+                        f"platform_results.{platform}.dlq_reason": "",
+                        "pre_upload_error": "",
+                    }
                 },
             )
-            pre_upload_task.apply_async(
-                kwargs={"post_id": post_id, "platform": platform},
-                queue="default",
-                countdown=5,
-            )
-            await _update_platform_result(db, post_id, platform, {
-                "status": "retrying",
-                "error": "Container expired — re-uploading media",
-                "last_attempt_at": datetime.now(timezone.utc),
-            })
-            return {"status": "container_expired_requeued"}
 
-        error_class = classify_error(exc)
+            user_id, prev_agg_status, agg_status = await _finalize_post_status(db, post_id)
+            await _send_success_notification(db, post_id, platform, post_url or "", user_id or "")
+            if agg_status == "published" and prev_agg_status == "partial":
+                await _send_recovery_notification(db, post_id, user_id or "")
 
-        if error_class == ErrorClass.PERMANENT:
-            logger.error("Permanent error publishing %s/%s: %s", post_id, platform, exc)
-            await _update_platform_result(db, post_id, platform, {
-                "status": "failed",
-                "error": str(exc),
-                "retry_count": attempt,
-                "last_attempt_at": datetime.now(timezone.utc),
-            })
+            return {"status": "published", "platform": platform}
 
-            # EC16: Detect account suspension/revocation and trigger ghost cascade
-            error_code = getattr(exc, "code", None)
-            subcode = getattr(exc, "subcode", None)
-            is_auth_error = (
-                (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
-                or subcode in {458, 460}
-                or error_code in (190, 261, 326)
-            )
-            if is_auth_error:
-                # Attempt an on-the-fly token refresh before giving up.
-                # If the token was simply expired (not revoked), refreshing it
-                # and retrying once can save the post from permanent failure.
-                try:
-                    from celery_workers.tasks.tokens import _refresh_with_lock
-                    _acct = post.get("account", {})
-                    _acct_id = _acct.get("account_id", _acct.get("id", ""))
-                    if _acct_id and attempt == 0:
-                        logger.info(
-                            "Auth error on %s/%s — attempting on-demand token refresh for account %s",
-                            post_id, platform, _acct_id,
-                        )
-                        await _refresh_with_lock(db, _acct_id, platform)
-                        logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
-                        publish_to_platform.apply_async(
-                            kwargs={"post_id": post_id, "platform": platform, "attempt": attempt + 1},
-                            countdown=5,
-                            queue="default",
-                        )
-                        return {"status": "token_refreshed_requeued"}
-                except Exception as _refresh_err:
-                    logger.warning("On-demand token refresh failed for %s: %s", post_id, _refresh_err)
+        except Exception as exc:
+            from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
 
-                # If refresh didn't help or wasn't possible → ghost cascade
-                try:
-                    from utils.ghost_cascade import handle_ghost_account
-                    social_account_id = post.get("social_account_id") or post.get("account", {}).get("id", "")
-                    if social_account_id:
-                        await handle_ghost_account(
-                            db, social_account_id, error_code,
-                            suspension_reason=str(exc),
-                        )
-                except ImportError:
-                    pass
+            if "container expired" in str(exc).lower() and platform == "instagram":
+                logger.warning("Instagram container expired for %s — clearing and re-queuing pre_upload", post_id)
+                await db.posts.update_one(
+                    {"id": post_id},
+                    {
+                        "$unset": {f"platform_container_ids.{platform}": ""},
+                        "$set": {"pre_upload_status": "pending"},
+                    },
+                )
+                pre_upload_task.apply_async(
+                    kwargs={"post_id": post_id, "platform": platform},
+                    queue="media_processing",
+                    countdown=5,
+                )
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "retrying",
+                    "error": "Container expired — re-uploading media",
+                    "last_attempt_at": datetime.now(timezone.utc),
+                })
+                return {"status": "container_expired_requeued"}
 
-            # ── Circuit breaker: record failure (Section 20.1) ────────────────
-            await record_failure(r_cache, platform, account_id)
+            error_class = classify_error(exc)
 
-            await _finalize_post_status(db, post_id)
-            await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
-            return {"status": "permanent_failure"}
+            if error_class == ErrorClass.PERMANENT:
+                logger.error("Permanent error publishing %s/%s: %s", post_id, platform, exc)
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "failed",
+                    "error": str(exc),
+                    "retry_count": attempt,
+                    "last_attempt_at": datetime.now(timezone.utc),
+                })
 
-        elif error_class == ErrorClass.RATE_LIMITED:
-            # Do NOT count as retry failure
-            retry_after = getattr(exc, "retry_after", 3600)
-            logger.warning("Rate limited on %s/%s — re-queuing after %ds", post_id, platform, retry_after)
-            await _update_platform_result(db, post_id, platform, {
-                "status": "retrying",
-                "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
-            })
-            raise task.retry(countdown=retry_after, exc=exc)
+                error_code = getattr(exc, "code", None)
+                subcode = getattr(exc, "subcode", None)
+                is_auth_error = (
+                    (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
+                    or subcode in {458, 460}
+                    or error_code in (190, 261, 326)
+                )
+                if is_auth_error:
+                    try:
+                        from celery_workers.tasks.tokens import _refresh_with_lock
+                        _acct = post.get("account", {})
+                        _acct_id = _acct.get("account_id", _acct.get("id", ""))
+                        if _acct_id and attempt == 0:
+                            logger.info(
+                                "Auth error on %s/%s — attempting on-demand token refresh for account %s",
+                                post_id, platform, _acct_id,
+                            )
+                            await _refresh_with_lock(db, _acct_id, platform)
+                            logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
+                            publish_to_platform.apply_async(
+                                kwargs={"post_id": post_id, "platform": platform, "attempt": attempt + 1},
+                                countdown=5,
+                                queue=publish_queue,
+                            )
+                            return {"status": "token_refreshed_requeued"}
+                    except Exception as _refresh_err:
+                        logger.warning("On-demand token refresh failed for %s: %s", post_id, _refresh_err)
 
-        else:
-            # Transient — exponential backoff
+                    try:
+                        from utils.ghost_cascade import handle_ghost_account
+                        social_account_id = post.get("social_account_id") or post.get("account", {}).get("id", "")
+                        if social_account_id:
+                            await handle_ghost_account(
+                                db, social_account_id, error_code,
+                                suspension_reason=str(exc),
+                            )
+                    except ImportError:
+                        pass
+
+                await record_failure(r_cache, platform, account_id)
+                await _finalize_post_status(db, post_id)
+                await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
+                return {"status": "permanent_failure"}
+
+            if error_class == ErrorClass.RATE_LIMITED:
+                retry_after = getattr(exc, "retry_after", 3600)
+                logger.warning("Rate limited on %s/%s — re-queuing after %ds", post_id, platform, retry_after)
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "retrying",
+                    "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
+                })
+                raise task.retry(countdown=retry_after, exc=exc)
+
             countdown_map = {0: 60, 1: 300, 2: 900}
             jitter = random.randint(0, [30, 60, 120][min(attempt, 2)])
             countdown = countdown_map.get(attempt, 900) + jitter
 
             if attempt >= MAX_RETRIES:
                 logger.error("Max retries exceeded for %s/%s — DLQ", post_id, platform)
-                await record_failure(r_cache, platform, account_id)  # Section 20.1
+                await record_failure(r_cache, platform, account_id)
                 await _move_to_dlq(post_id, str(exc), platform=platform)
                 await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "dlq"}
@@ -796,6 +853,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             raise task.retry(countdown=countdown, exc=exc, kwargs={
                 "post_id": post_id, "platform": platform, "attempt": attempt + 1
             })
+    finally:
+        await _release_publish_lock(r_cache, post_id, platform, lock_owner)
 
 
 # ── 17.3 Pre-upload timing formula ────────────────────────────────────────────

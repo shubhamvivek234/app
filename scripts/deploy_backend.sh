@@ -11,7 +11,7 @@ SLEEP_SECONDS="${SLEEP_SECONDS:-2}"
 cd "$ROOT_DIR"
 
 echo "[deploy] using compose file: $COMPOSE_FILE"
-docker compose -f "$COMPOSE_FILE" up -d --build api worker beat
+docker compose -f "$COMPOSE_FILE" up -d --build api worker worker_video worker_media beat
 
 # Clean up legacy containers from the deprecated compose file if they exist.
 for legacy_container in socialentagler-celery-worker-1 socialentagler-celery-beat-1; do
@@ -26,7 +26,7 @@ until curl -fsS "$HEALTH_URL" >/dev/null && curl -fsS "$READY_URL" >/dev/null; d
   if (( attempt >= MAX_ATTEMPTS )); then
     echo "[deploy] health verification failed after $attempt attempts" >&2
     docker compose -f "$COMPOSE_FILE" ps >&2 || true
-    docker compose -f "$COMPOSE_FILE" logs --tail=100 api worker beat >&2 || true
+    docker compose -f "$COMPOSE_FILE" logs --tail=100 api worker worker_video worker_media beat >&2 || true
     exit 1
   fi
   echo "[deploy] waiting for api readiness (attempt $attempt/$MAX_ATTEMPTS)"

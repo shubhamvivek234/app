@@ -157,9 +157,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=100 --queues=high_priority,default,dead_letter,media_processing
-    # Scale tip: run multiple worker containers for higher throughput
-    # e.g. docker-compose up -d --scale worker=5  → 5 × 8 = 40 concurrent slots
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${PUBLISH_LIGHT_WORKER_CONCURRENCY:-6} --max-tasks-per-child=100 --queues=high_priority,default,publish_light,dead_letter
     environment:
       <<: *common-env
     volumes:
@@ -172,7 +170,46 @@ services:
         condition: service_healthy
     networks:
       - app_net
-    # Graceful shutdown: give workers 120s to finish in-flight tasks
+    stop_grace_period: 120s
+
+  worker_video:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${PUBLISH_VIDEO_WORKER_CONCURRENCY:-2} --max-tasks-per-child=50 --queues=publish_video
+    environment:
+      <<: *common-env
+    volumes:
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
+      - quarantine_data:/tmp/quarantine
+    depends_on:
+      init-quarantine:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+    stop_grace_period: 120s
+
+  worker_media:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.media
+    restart: unless-stopped
+    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${MEDIA_WORKER_CONCURRENCY:-2} --queues=media_processing
+    environment:
+      <<: *common-env
+    volumes:
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json:ro
+      - quarantine_data:/tmp/quarantine
+    depends_on:
+      init-quarantine:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
     stop_grace_period: 120s
 
   # ── Celery Beat (Scheduler) ──────────────────────────────────────────────────
