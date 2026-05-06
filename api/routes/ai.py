@@ -10,12 +10,11 @@ Provider order:
 2. Groq LLaMA 3.3 70B Versatile
 3. Cohere Command R
 4. OpenRouter Gemma 3 12B free
-5. Emergent fallback via gpt-4o-mini
+5. OpenRouter free auto-router
 """
 import logging
 import os
 import re
-import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
@@ -163,8 +162,7 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
 
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
-        try:
-            model_name = "google/gemma-3-12b:free"
+        async def _call_openrouter(model_name: str) -> tuple[str, str, str]:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -183,41 +181,22 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
                     },
                 )
                 if resp.status_code == 429:
-                    raise HTTPException(status_code=429, detail="OpenRouter rate-limited")
+                    raise HTTPException(status_code=429, detail=f"OpenRouter rate-limited for {model_name}")
                 resp.raise_for_status()
                 text = resp.json()["choices"][0]["message"]["content"]
                 if not text:
-                    raise RuntimeError("OpenRouter returned empty content")
+                    raise RuntimeError(f"OpenRouter returned empty content for {model_name}")
                 return text, "openrouter", model_name
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("[AI waterfall] OpenRouter rate-limited: %s", exc)
-                rate_limit_errors.append(f"OpenRouter: {exc}")
-            else:
-                logger.exception("[AI waterfall] OpenRouter failed")
 
-    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
-    if emergent_key:
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
-
-            model_provider = "emergent-openai"
-            model_name = "gpt-4o-mini"
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"content-gen-{uuid.uuid4()}",
-                system_message=system_message,
-            ).with_model("openai", model_name)
-            text = await chat.send_message(UserMessage(text=prompt))
-            if not text:
-                raise RuntimeError("Emergent returned empty content")
-            return text, model_provider, model_name
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("[AI waterfall] Emergent rate-limited: %s", exc)
-                rate_limit_errors.append(f"Emergent: {exc}")
-            else:
-                logger.exception("[AI waterfall] Emergent failed")
+        for model_name in ("google/gemma-3-12b:free", "openrouter/free"):
+            try:
+                return await _call_openrouter(model_name)
+            except Exception as exc:
+                if _is_rate_limit(exc):
+                    logger.warning("[AI waterfall] OpenRouter %s rate-limited: %s", model_name, exc)
+                    rate_limit_errors.append(f"OpenRouter {model_name}: {exc}")
+                else:
+                    logger.exception("[AI waterfall] OpenRouter %s failed", model_name)
 
     if rate_limit_errors:
         raise HTTPException(
