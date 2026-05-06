@@ -139,7 +139,9 @@ class InstagramAdapter(PlatformAdapter):
         EC4: Reject if container expired (older than 24h).
         EC29: error 9007 treated as success.
         """
-        if post.get("pre_upload_status") != "ready":
+        instagram_state = ((post.get("pre_upload_results") or {}).get("instagram") or {})
+        pre_upload_status = instagram_state.get("status") or post.get("pre_upload_status")
+        if pre_upload_status != "ready":
             raise PlatformAPIError("pre_upload not ready — cannot publish")
 
         # EC4: container expiry check

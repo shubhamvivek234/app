@@ -37,6 +37,7 @@ MAX_DELIVERY_COUNT = 5  # Poison pill threshold
 PUBLISH_LIGHT_QUEUE = "publish_light"
 PUBLISH_VIDEO_QUEUE = "publish_video"
 _PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
+_PRE_UPLOAD_LOCK_TTL_SECONDS = int(os.getenv("PRE_UPLOAD_LOCK_TTL_SECONDS", "14400"))
 
 # ── Per-platform concurrent API call limits (cross-process via Redis) ─────────
 # Prevents app-level quota exhaustion when 1000 posts hit a platform simultaneously.
@@ -76,6 +77,10 @@ def _publish_lock_key(post_id: str, platform: str) -> str:
     return f"publish_lock:{post_id}:{platform}"
 
 
+def _pre_upload_lock_key(post_id: str, platform: str) -> str:
+    return f"pre_upload_lock:{post_id}:{platform}"
+
+
 async def _acquire_publish_lock(redis, post_id: str, platform: str, owner_token: str) -> bool:
     key = _publish_lock_key(post_id, platform)
     acquired = await safe_set(
@@ -86,6 +91,20 @@ async def _acquire_publish_lock(redis, post_id: str, platform: str, owner_token:
         nx=True,
         default=None,
         feature="Publish in-flight lock acquisition",
+    )
+    return bool(acquired)
+
+
+async def _acquire_pre_upload_lock(redis, post_id: str, platform: str, owner_token: str) -> bool:
+    key = _pre_upload_lock_key(post_id, platform)
+    acquired = await safe_set(
+        redis,
+        key,
+        owner_token,
+        ex=_PRE_UPLOAD_LOCK_TTL_SECONDS,
+        nx=True,
+        default=None,
+        feature="Pre-upload in-flight lock acquisition",
     )
     return bool(acquired)
 
@@ -104,6 +123,23 @@ async def _release_publish_lock(redis, post_id: str, platform: str, owner_token:
             key,
             default=0,
             feature="Publish in-flight lock release",
+        )
+
+
+async def _release_pre_upload_lock(redis, post_id: str, platform: str, owner_token: str) -> None:
+    key = _pre_upload_lock_key(post_id, platform)
+    current = await safe_get(
+        redis,
+        key,
+        default=None,
+        feature="Pre-upload in-flight lock read",
+    )
+    if current == owner_token:
+        await safe_delete(
+            redis,
+            key,
+            default=0,
+            feature="Pre-upload in-flight lock release",
         )
 
 
@@ -395,6 +431,156 @@ def _requires_pre_upload(platform: str, post: dict) -> bool:
     return False
 
 
+def _pre_upload_result_path(platform: str, field: str) -> str:
+    return f"pre_upload_results.{platform}.{field}"
+
+
+def _get_platform_pre_upload_state(post: dict, platform: str) -> dict:
+    return ((post.get("pre_upload_results") or {}).get(platform) or {})
+
+
+def _coerce_utc_datetime(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _get_platform_pre_upload_status(post: dict, platform: str) -> str | None:
+    state = _get_platform_pre_upload_state(post, platform)
+    return state.get("status") or post.get("pre_upload_status")
+
+
+def _get_platform_pre_upload_error(post: dict, platform: str) -> str | None:
+    state = _get_platform_pre_upload_state(post, platform)
+    return state.get("error") or post.get("pre_upload_error")
+
+
+def _get_platform_pre_upload_started_at(post: dict, platform: str):
+    state = _get_platform_pre_upload_state(post, platform)
+    return _coerce_utc_datetime(state.get("started_at") or post.get("pre_upload_started_at"))
+
+
+def _get_platform_pre_upload_completed_at(post: dict, platform: str):
+    state = _get_platform_pre_upload_state(post, platform)
+    return _coerce_utc_datetime(state.get("completed_at") or post.get("pre_upload_completed_at"))
+
+
+def _pre_upload_platforms_for(post: dict) -> list[str]:
+    selected = post.get("platforms") or []
+    required = [platform for platform in selected if _requires_pre_upload(platform, post)]
+    result_keys = list((post.get("pre_upload_results") or {}).keys())
+    return list(dict.fromkeys(required + result_keys))
+
+
+async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
+    post = await db.posts.find_one(
+        {"id": post_id},
+        {
+            "_id": 0,
+            "platforms": 1,
+            "post_type": 1,
+            "pre_upload_results": 1,
+        },
+    )
+    if not post:
+        return
+
+    platforms = _pre_upload_platforms_for(post)
+    results = post.get("pre_upload_results") or {}
+
+    statuses: list[str] = []
+    errors: list[str] = []
+    start_times = []
+    started_ats = []
+    completed_ats = []
+    estimated_durations = []
+    actual_durations = []
+
+    for platform in platforms:
+        state = results.get(platform) or {}
+        status = state.get("status")
+        if status:
+            statuses.append(status)
+        error = state.get("error")
+        if error:
+            errors.append(f"{platform}: {error}")
+        if state.get("start_time"):
+            start_times.append(state["start_time"])
+        if state.get("started_at"):
+            started_ats.append(state["started_at"])
+        if state.get("completed_at"):
+            completed_ats.append(state["completed_at"])
+        if state.get("estimated_duration_secs") is not None:
+            estimated_durations.append(state["estimated_duration_secs"])
+        if state.get("actual_duration_secs") is not None:
+            actual_durations.append(state["actual_duration_secs"])
+
+    aggregate_status = None
+    if "failed" in statuses:
+        aggregate_status = "failed"
+    elif "timeout" in statuses:
+        aggregate_status = "timeout"
+    elif "uploading" in statuses:
+        aggregate_status = "uploading"
+    elif "pending" in statuses:
+        aggregate_status = "pending"
+    elif statuses and all(status == "ready" for status in statuses):
+        aggregate_status = "ready"
+
+    set_updates: dict[str, object] = {}
+    unset_updates: dict[str, str] = {}
+
+    if aggregate_status:
+        set_updates["pre_upload_status"] = aggregate_status
+    else:
+        unset_updates["pre_upload_status"] = ""
+
+    if errors and aggregate_status in {"failed", "timeout"}:
+        set_updates["pre_upload_error"] = " | ".join(errors)
+    else:
+        unset_updates["pre_upload_error"] = ""
+
+    if start_times:
+        set_updates["pre_upload_start_time"] = min(start_times)
+    else:
+        unset_updates["pre_upload_start_time"] = ""
+
+    if started_ats:
+        set_updates["pre_upload_started_at"] = min(started_ats)
+    else:
+        unset_updates["pre_upload_started_at"] = ""
+
+    if completed_ats:
+        set_updates["pre_upload_completed_at"] = max(completed_ats)
+    else:
+        unset_updates["pre_upload_completed_at"] = ""
+
+    if estimated_durations:
+        set_updates["estimated_upload_duration"] = max(estimated_durations)
+    else:
+        unset_updates["estimated_upload_duration"] = ""
+
+    if actual_durations:
+        set_updates["actual_upload_duration"] = max(actual_durations)
+    else:
+        unset_updates["actual_upload_duration"] = ""
+
+    update_doc: dict[str, dict] = {}
+    if set_updates:
+        update_doc["$set"] = set_updates
+    if unset_updates:
+        update_doc["$unset"] = unset_updates
+
+    if update_doc:
+        await db.posts.update_one({"id": post_id}, update_doc)
+
+
 async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
     selected_ids = post.get("social_account_ids") or post.get("account_ids") or []
     if selected_ids:
@@ -518,7 +704,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # not always pass through the scheduled pre-upload window first.
         if _requires_pre_upload(platform, post):
             container_ids = post.get("platform_container_ids") or {}
-            pre_status = post.get("pre_upload_status", "")
+            pre_status = _get_platform_pre_upload_status(post, platform) or ""
             has_container = bool(container_ids.get(platform))
 
             if not has_container or pre_status in ("", None):
@@ -567,9 +753,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # 17.4 Scenario B: pre_upload still running at scheduled publish time.
         # Poll every 5s for up to 10 minutes before giving up.
         if _requires_pre_upload(platform, post):
-            pre_status = post.get("pre_upload_status", "")
+            pre_status = _get_platform_pre_upload_status(post, platform) or ""
             if pre_status == "failed":
-                err = post.get("pre_upload_error", "Pre-upload failed before publish time")
+                err = _get_platform_pre_upload_error(post, platform) or "Pre-upload failed before publish time"
                 logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
                 await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
                 await _finalize_post_status(db, post_id)
@@ -593,9 +779,15 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                         feature="Publish in-flight lock heartbeat",
                     )
                     refreshed = await db.posts.find_one(
-                        {"id": post_id}, {"pre_upload_status": 1, "pre_upload_error": 1}
+                        {"id": post_id},
+                        {
+                            "_id": 0,
+                            "pre_upload_status": 1,
+                            "pre_upload_error": 1,
+                            f"pre_upload_results.{platform}": 1,
+                        },
                     )
-                    current_status = (refreshed or {}).get("pre_upload_status", "")
+                    current_status = _get_platform_pre_upload_status(refreshed or {}, platform) or ""
                     if current_status == "ready":
                         logger.info(
                             "17.4B: pre_upload ready after %ds for %s/%s",
@@ -604,7 +796,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
                         break
                     if current_status == "failed":
-                        err = (refreshed or {}).get("pre_upload_error", "Pre-upload failed")
+                        err = _get_platform_pre_upload_error(refreshed or {}, platform) or "Pre-upload failed"
                         logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
                         await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
                         await _finalize_post_status(db, post_id)
@@ -731,7 +923,6 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                         f"platform_results.{platform}.error": "",
                         f"platform_results.{platform}.next_retry_at": "",
                         f"platform_results.{platform}.dlq_reason": "",
-                        "pre_upload_error": "",
                     }
                 },
             )
@@ -751,10 +942,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 await db.posts.update_one(
                     {"id": post_id},
                     {
-                        "$unset": {f"platform_container_ids.{platform}": ""},
-                        "$set": {"pre_upload_status": "pending"},
+                        "$unset": {
+                            f"platform_container_ids.{platform}": "",
+                            f"container_expiry_at.{platform}": "",
+                            _pre_upload_result_path(platform, "error"): "",
+                            _pre_upload_result_path(platform, "completed_at"): "",
+                            _pre_upload_result_path(platform, "actual_duration_secs"): "",
+                        },
+                        "$set": {
+                            _pre_upload_result_path(platform, "status"): "pending",
+                            _pre_upload_result_path(platform, "started_at"): None,
+                            "updated_at": datetime.now(timezone.utc),
+                        },
                     },
                 )
+                await _sync_pre_upload_aggregate(db, post_id)
                 pre_upload_task.apply_async(
                     kwargs={"post_id": post_id, "platform": platform},
                     queue="media_processing",
@@ -926,10 +1128,28 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
     r_cache = get_cache_redis()
 
     started_at = datetime.now(timezone.utc)
+    lock_owner = task.request.id or f"{post_id}:{platform}:preupload"
+    lock_acquired = await _acquire_pre_upload_lock(r_cache, post_id, platform, lock_owner)
+    if not lock_acquired:
+        logger.info("Pre-upload already in-flight for %s/%s — skipping duplicate dispatch", post_id, platform)
+        return {"status": "already_inflight", "platform": platform}
+
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {"pre_upload_status": "uploading", "pre_upload_started_at": started_at}}
+        {
+            "$set": {
+                _pre_upload_result_path(platform, "status"): "uploading",
+                _pre_upload_result_path(platform, "started_at"): started_at,
+                "updated_at": started_at,
+            },
+            "$unset": {
+                _pre_upload_result_path(platform, "error"): "",
+                _pre_upload_result_path(platform, "completed_at"): "",
+                _pre_upload_result_path(platform, "actual_duration_secs"): "",
+            },
+        },
     )
+    await _sync_pre_upload_aggregate(db, post_id)
 
     try:
         adapter = get_adapter(platform)
@@ -980,15 +1200,20 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
                     "access_token_encrypted": account.get("access_token", ""),
                     "poll_attempt": 0,
                 },
-                queue="default",
+                queue="media_processing",
             )
             await db.posts.update_one(
                 {"id": post_id},
-                {"$set": {
-                    "pre_upload_status": "uploading",
-                    f"platform_container_ids.{platform}": container_id,
-                }}
+                {
+                    "$set": {
+                        _pre_upload_result_path(platform, "status"): "uploading",
+                        _pre_upload_result_path(platform, "started_at"): started_at,
+                        f"platform_container_ids.{platform}": container_id,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                }
             )
+            await _sync_pre_upload_aggregate(db, post_id)
             return {"status": "polling", "platform": platform, "container_id": container_id}
 
         completed_at = datetime.now(timezone.utc)
@@ -997,15 +1222,22 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         container_id = container_result.get("container_id") or container_result.get("video_id")
         await db.posts.update_one(
             {"id": post_id},
-            {"$set": {
-                "pre_upload_status": "ready",
-                "pre_upload_completed_at": completed_at,
-                "actual_upload_duration": actual_duration,  # 17.5: feeds future estimates
-                f"platform_container_ids.{platform}": container_id,
-                f"container_expiry_at.{platform}": expiry.isoformat(),
-            },
-             "$unset": {"pre_upload_error": ""}}
+            {
+                "$set": {
+                    _pre_upload_result_path(platform, "status"): "ready",
+                    _pre_upload_result_path(platform, "started_at"): started_at,
+                    _pre_upload_result_path(platform, "completed_at"): completed_at,
+                    _pre_upload_result_path(platform, "actual_duration_secs"): actual_duration,
+                    f"platform_container_ids.{platform}": container_id,
+                    f"container_expiry_at.{platform}": expiry.isoformat(),
+                    "updated_at": completed_at,
+                },
+                "$unset": {
+                    _pre_upload_result_path(platform, "error"): "",
+                },
+            }
         )
+        await _sync_pre_upload_aggregate(db, post_id)
         logger.info(
             "17.3: pre_upload ready for %s/%s — actual_duration=%ds container=%s",
             post_id, platform, actual_duration, container_id,
@@ -1016,9 +1248,19 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         logger.error("pre_upload_task failed for %s/%s: %s", post_id, platform, exc)
         await db.posts.update_one(
             {"id": post_id},
-            {"$set": {"pre_upload_status": "failed", "pre_upload_error": str(exc)}}
+            {
+                "$set": {
+                    _pre_upload_result_path(platform, "status"): "failed",
+                    _pre_upload_result_path(platform, "error"): str(exc),
+                    _pre_upload_result_path(platform, "completed_at"): datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            }
         )
+        await _sync_pre_upload_aggregate(db, post_id)
         raise task.retry(countdown=60, exc=exc)
+    finally:
+        await _release_pre_upload_lock(r_cache, post_id, platform, lock_owner)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

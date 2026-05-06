@@ -63,6 +63,7 @@ async def _async_check(task, post_id, container_id, access_token_encrypted, poll
     access_token = decrypt(access_token_encrypted)
     client_db = await get_client()
     db = client_db[os.environ["DB_NAME"]]
+    from celery_workers.tasks.publish import _sync_pre_upload_aggregate
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(
@@ -84,22 +85,32 @@ async def _async_check(task, post_id, container_id, access_token_encrypted, poll
             {"id": post_id},
             {
                 "$set": {
-                    "pre_upload_status": "ready",
+                    "pre_upload_results.instagram.status": "ready",
+                    "pre_upload_results.instagram.completed_at": now,
                     f"platform_container_ids.instagram": container_id,
                     f"container_expiry_at.instagram": container_expiry,
                     "updated_at": now,
                 },
-                "$unset": {"pre_upload_error": ""},
+                "$unset": {"pre_upload_results.instagram.error": ""},
             },
         )
+        await _sync_pre_upload_aggregate(db, post_id)
         logger.info("EC12: container %s FINISHED for post %s", container_id, post_id)
         return {"status": "ready", "container_id": container_id}
 
     if status_code == "ERROR":
         await db.posts.update_one(
             {"id": post_id},
-            {"$set": {"pre_upload_status": "failed", "updated_at": datetime.now(timezone.utc)}},
+            {
+                "$set": {
+                    "pre_upload_results.instagram.status": "failed",
+                    "pre_upload_results.instagram.error": "Instagram media container processing failed",
+                    "pre_upload_results.instagram.completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
         )
+        await _sync_pre_upload_aggregate(db, post_id)
         logger.error("EC12: container %s FAILED for post %s", container_id, post_id)
         return {"status": "failed", "container_id": container_id}
 
