@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import axios from 'axios';
 import Cropper from 'react-easy-crop';
 import {
+  getCachedSocialAccounts,
   getSocialAccounts,
   uploadMedia,
   waitForUploadReady,
@@ -473,6 +474,8 @@ const ScrollTimePicker = ({ value, onChange }) => {
  *   onClose          – fn     – called when back/close is clicked in modal mode
  */
 const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
+  const cachedAccountsRef = useRef(getCachedSocialAccounts());
+  const cachedAccounts = cachedAccountsRef.current;
   const { type: typeFromParam } = useParams();
   const type = postTypeOverride || typeFromParam;
   const navigate = useNavigate();
@@ -485,7 +488,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   // ── Accounts ──────────────────────────────────────────────────────────────
   const [selectedAccounts, setSelectedAccounts]   = useState([]);
-  const [availableAccounts, setAvailableAccounts] = useState([]);
+  const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
+  const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
 
   // ── Per-platform captions ─────────────────────────────────────────────────
   const [platformCaptions, setPlatformCaptions] = useState({});
@@ -561,25 +565,30 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     loadAccounts();
     loadHashtagGroups();
     setScheduledDate(new Date().toISOString().split('T')[0]);
-  }, []);
+  }, [loadAccounts, loadHashtagGroups]);
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
+    setAccountsLoading(true);
     try {
       const accounts = await getSocialAccounts();
       setAvailableAccounts(accounts);
     } catch {
-      setAvailableAccounts([]);
+      if (!cachedAccounts) {
+        setAvailableAccounts([]);
+      }
+    } finally {
+      setAccountsLoading(false);
     }
-  };
+  }, [cachedAccounts]);
 
-  const loadHashtagGroups = async () => {
+  const loadHashtagGroups = useCallback(async () => {
     try {
       const groups = await getHashtagGroups();
       setHashtagGroups(groups || []);
     } catch {
       setHashtagGroups([]);
     }
-  };
+  }, []);
 
   // ── Keep platformOrder and expandedPlatform in sync ───────────────────────
   useEffect(() => {
@@ -1263,6 +1272,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     <div className="bg-white border-b-2 border-gray-200 px-5 py-4 flex-shrink-0">
       <AccountSelector
         accounts={availableAccounts}
+        loading={accountsLoading}
         selectedAccounts={selectedAccounts}
         onToggle={toggleAccountSelection}
         platformIcons={platformIcons}

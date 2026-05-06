@@ -15,6 +15,7 @@ const RING_HEX = {
 
 const AccountSelector = ({
   accounts,
+  loading = false,
   selectedAccounts,
   onToggle,
   platformIcons,
@@ -25,6 +26,14 @@ const AccountSelector = ({
     onToggle(account.id);
     if (onSetActive) onSetActive(account.platform);
   };
+
+  if (loading && accounts.length === 0) {
+    return (
+      <div className="flex items-center gap-3 py-1">
+        <p className="text-sm text-gray-400">Loading connected accounts...</p>
+      </div>
+    );
+  }
 
   if (accounts.length === 0) {
     return (

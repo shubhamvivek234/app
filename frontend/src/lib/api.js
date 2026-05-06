@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const SOCIAL_ACCOUNTS_CACHE_KEY = 'social_accounts_cache_v1';
+const SOCIAL_ACCOUNTS_CACHE_TTL_MS = 60 * 1000;
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('token');
@@ -9,6 +11,37 @@ const getAuthHeaders = () => {
 };
 
 const DIRECT_UPLOAD_FALLBACK_STATUSES = new Set([404, 405, 501]);
+
+const readSocialAccountsCache = (maxAgeMs = SOCIAL_ACCOUNTS_CACHE_TTL_MS) => {
+  try {
+    const raw = localStorage.getItem(SOCIAL_ACCOUNTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.data) || typeof parsed.timestamp !== 'number') {
+      return null;
+    }
+    if (Date.now() - parsed.timestamp > maxAgeMs) {
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+};
+
+const writeSocialAccountsCache = (accounts) => {
+  try {
+    localStorage.setItem(
+      SOCIAL_ACCOUNTS_CACHE_KEY,
+      JSON.stringify({
+        data: Array.isArray(accounts) ? accounts : [],
+        timestamp: Date.now(),
+      })
+    );
+  } catch {
+    // Ignore cache write failures.
+  }
+};
 
 const postLegacyUpload = async (file, onProgress) => {
   const formData = new FormData();
@@ -165,10 +198,14 @@ export const connectSocialAccount = async (platform, platformUsername) => {
   return response.data;
 };
 
+export const getCachedSocialAccounts = (maxAgeMs = SOCIAL_ACCOUNTS_CACHE_TTL_MS) =>
+  readSocialAccountsCache(maxAgeMs);
+
 export const getSocialAccounts = async () => {
   const response = await axios.get(`${API}/social-accounts`, {
     headers: getAuthHeaders(),
   });
+  writeSocialAccountsCache(response.data);
   return response.data;
 };
 
