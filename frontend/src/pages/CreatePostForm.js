@@ -614,6 +614,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     [...new Set(availableAccounts.filter(a => selectedAccounts.includes(a.id)).map(a => a.platform))];
 
   const selectedPlatforms = getSelectedPlatforms();
+  const usePlatformScopedMedia = selectedPlatforms.length > 1;
 
   // Ordered list of platforms (respects manual drag order)
   const orderedPlatforms = platformOrder.filter(p => selectedPlatforms.includes(p));
@@ -629,17 +630,34 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   );
 
   const getEffectiveMediaForPlatform = useCallback((platform) => {
-    if (!platform) return uploadedMedia;
+    if (!platform) return usePlatformScopedMedia ? [] : uploadedMedia;
     if (Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform)) {
       const overrideMedia = platformMediaOverrides[platform];
-      return Array.isArray(overrideMedia) ? overrideMedia : uploadedMedia;
+      return Array.isArray(overrideMedia) ? overrideMedia : [];
     }
-    return uploadedMedia;
-  }, [platformMediaOverrides, uploadedMedia]);
+    return usePlatformScopedMedia ? [] : uploadedMedia;
+  }, [platformMediaOverrides, uploadedMedia, usePlatformScopedMedia]);
 
   const clearDerivedPlatformMediaOverrides = useCallback(() => {
     setPlatformMediaOverrides({});
   }, []);
+
+  useEffect(() => {
+    if (!usePlatformScopedMedia) return;
+    if (!basePlatform) return;
+    if (uploadedMedia.length === 0) return;
+
+    setPlatformMediaOverrides((prev) => {
+      if (Object.prototype.hasOwnProperty.call(prev, basePlatform)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [basePlatform]: uploadedMedia,
+      };
+    });
+    setUploadedMedia([]);
+  }, [basePlatform, uploadedMedia, usePlatformScopedMedia]);
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -838,7 +856,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const handleFilesSelectForPlatform = async (platform, files) => {
     const arr = Array.isArray(files) ? files : Array.from(files || []);
     if (arr.length === 0) return;
-    if (!platform || platform === basePlatform) {
+    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
       await uploadFilesToBackend(arr);
       return;
     }
@@ -860,7 +878,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   const handleRemoveMediaForPlatform = (platform, index) => {
-    if (!platform || platform === basePlatform) {
+    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
       removeMediaItem(index);
       return;
     }
@@ -871,7 +889,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   const handleReorderMediaForPlatform = (platform, fromIndex, toIndex) => {
-    if (!platform || platform === basePlatform) {
+    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
       reorderMedia(fromIndex, toIndex);
       return;
     }
@@ -977,7 +995,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             height: asset.height || dims.height,
           });
 
-          if (!targetPlatform || targetPlatform === basePlatform) {
+          if (!usePlatformScopedMedia && (!targetPlatform || targetPlatform === basePlatform)) {
             setUploadedMedia(prev => {
               const next = [...prev];
               if (!next[cropMediaIndex]) return prev;
@@ -1108,8 +1126,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         if (!scheduledDateTime) { toast.error('Invalid date / time'); setLoading(false); return; }
       }
 
-      const mediaIds = uploadedMedia.map((m) => m.mediaId).filter(Boolean);
-      const mediaUrls = uploadedMedia.map((m) => m.url).filter(Boolean);
+      const primaryPlatformMedia = primaryPlatform
+        ? getEffectiveMediaForPlatform(primaryPlatform)
+        : [];
+      const topLevelMedia = usePlatformScopedMedia ? [] : primaryPlatformMedia;
+      const mediaIds = topLevelMedia.map((m) => m.mediaId).filter(Boolean);
+      const mediaUrls = topLevelMedia.map((m) => m.url).filter(Boolean);
       if (linkedinDocumentUrl && !mediaUrls.includes(linkedinDocumentUrl)) {
         mediaUrls.push(linkedinDocumentUrl);
       }
@@ -1120,8 +1142,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           const override = {
             content: (platformCaptions[platform] ?? primaryContent) || primaryContent,
           };
-          if (Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform)) {
-            const platformMedia = getEffectiveMediaForPlatform(platform);
+          const platformMedia = getEffectiveMediaForPlatform(platform);
+          const shouldSetPlatformMedia = usePlatformScopedMedia
+            ? platformMedia.length > 0
+            : Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform);
+          if (shouldSetPlatformMedia) {
             override.media_ids = platformMedia.map((m) => m.mediaId).filter(Boolean);
             override.media_urls = platformMedia.map((m) => m.url).filter(Boolean);
           }
@@ -1311,8 +1336,17 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                       setAiGenerating(true);
                       try {
                         const data = await generateImage(aiPrompt.trim(), aiSize, aiStyle);
-                        setUploadedMedia(prev => [...prev, { url: data.url, type: 'image', name: 'ai-generated.png' }]);
-                        clearDerivedPlatformMediaOverrides();
+                        const generatedMedia = { url: data.url, type: 'image', name: 'ai-generated.png' };
+                        const targetPlatform = expandedPlatform || activePlatform || basePlatform;
+                        if (usePlatformScopedMedia && targetPlatform) {
+                          setPlatformMediaOverrides(prev => ({
+                            ...prev,
+                            [targetPlatform]: [...getEffectiveMediaForPlatform(targetPlatform), generatedMedia],
+                          }));
+                        } else {
+                          setUploadedMedia(prev => [...prev, generatedMedia]);
+                          clearDerivedPlatformMediaOverrides();
+                        }
                         toast.success('Image generated!');
                         setShowAiPanel(false);
                         setAiPrompt('');
@@ -1591,7 +1625,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               activePlatform={activePlatform}
               account={activeAccount}
               content={platformCaptions[activePlatform] ?? ''}
-              media={getEffectiveMediaForPlatform(activePlatform)}
+                    media={getEffectiveMediaForPlatform(activePlatform)}
               videoTitle={videoTitle}
               postFormat={postFormat}
             />
