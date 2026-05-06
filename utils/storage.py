@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -208,6 +209,65 @@ def get_signed_url(key: str, expires_in: int = 3600) -> str:
     return _firebase_signed_url(key, expires_in)
 
 
+def create_direct_upload_session(
+    *,
+    key: str,
+    content_type: str,
+    file_size_bytes: int,
+    expires_in: int = 14_400,
+) -> dict:
+    if _STORAGE_BACKEND != "r2":
+        raise RuntimeError("Direct browser uploads are currently supported only with R2.")
+    return _r2_create_direct_upload_session(
+        key=key,
+        content_type=content_type,
+        file_size_bytes=file_size_bytes,
+        expires_in=expires_in,
+    )
+
+
+def complete_direct_upload_session(
+    *,
+    key: str,
+    upload_id: str,
+    parts: list[dict[str, int | str]],
+) -> None:
+    if _STORAGE_BACKEND != "r2":
+        raise RuntimeError("Direct browser uploads are currently supported only with R2.")
+    _r2_complete_direct_upload_session(key=key, upload_id=upload_id, parts=parts)
+
+
+def abort_direct_upload_session(*, key: str, upload_id: str) -> None:
+    if _STORAGE_BACKEND != "r2":
+        raise RuntimeError("Direct browser uploads are currently supported only with R2.")
+    _r2_abort_direct_upload_session(key=key, upload_id=upload_id)
+
+
+def head_storage_object(reference: str) -> dict[str, str | int | None]:
+    if _STORAGE_BACKEND == "r2":
+        return _r2_head_object(reference)
+    return _firebase_head_object(reference)
+
+
+async def head_storage_object_async(reference: str) -> dict[str, str | int | None]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: head_storage_object(reference))
+
+
+def download_file_to_path(reference: str, destination_path: str) -> str:
+    if _STORAGE_BACKEND == "r2":
+        return _r2_download_to_path(reference, destination_path)
+    return _firebase_download_to_path(reference, destination_path)
+
+
+async def download_file_to_path_async(reference: str, destination_path: str) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: download_file_to_path(reference, destination_path),
+    )
+
+
 # ── R2 backend ────────────────────────────────────────────────────────────────
 
 def _r2_object_key(folder: str, filename: str) -> str:
@@ -260,6 +320,11 @@ def _r2_upload(
 
 _MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MB — use multipart above this size
 _MULTIPART_CHUNK_SIZE = 100 * 1024 * 1024  # 100 MB chunks
+_DIRECT_UPLOAD_MULTIPART_THRESHOLD = 64 * 1024 * 1024
+_DIRECT_UPLOAD_PART_SIZE = max(
+    5 * 1024 * 1024,
+    int(os.environ.get("R2_DIRECT_UPLOAD_PART_SIZE_BYTES", str(64 * 1024 * 1024))),
+)
 
 
 def upload_file_from_path(
@@ -409,6 +474,118 @@ def _r2_signed_url(key: str, expires_in: int) -> str:
     return url
 
 
+def _r2_create_direct_upload_session(
+    *,
+    key: str,
+    content_type: str,
+    file_size_bytes: int,
+    expires_in: int,
+) -> dict:
+    client = _get_r2_client()
+
+    if file_size_bytes <= _DIRECT_UPLOAD_MULTIPART_THRESHOLD:
+        url = client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": _R2_BUCKET,
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+        return {
+            "mode": "single",
+            "object_key": key,
+            "content_type": content_type,
+            "expires_in_seconds": expires_in,
+            "url": url,
+            "headers": {"Content-Type": content_type},
+        }
+
+    upload = client.create_multipart_upload(
+        Bucket=_R2_BUCKET,
+        Key=key,
+        ContentType=content_type,
+    )
+    upload_id = upload["UploadId"]
+    part_count = math.ceil(file_size_bytes / _DIRECT_UPLOAD_PART_SIZE)
+    parts = []
+    for index in range(part_count):
+        part_number = index + 1
+        url = client.generate_presigned_url(
+            "upload_part",
+            Params={
+                "Bucket": _R2_BUCKET,
+                "Key": key,
+                "UploadId": upload_id,
+                "PartNumber": part_number,
+            },
+            ExpiresIn=expires_in,
+        )
+        parts.append({"part_number": part_number, "url": url})
+
+    return {
+        "mode": "multipart",
+        "object_key": key,
+        "content_type": content_type,
+        "expires_in_seconds": expires_in,
+        "upload_id": upload_id,
+        "part_size_bytes": _DIRECT_UPLOAD_PART_SIZE,
+        "parts": parts,
+        "headers": {"Content-Type": content_type},
+    }
+
+
+def _r2_complete_direct_upload_session(
+    *,
+    key: str,
+    upload_id: str,
+    parts: list[dict[str, int | str]],
+) -> None:
+    client = _get_r2_client()
+    normalized_parts = [
+        {"PartNumber": int(part["PartNumber"]), "ETag": str(part["ETag"])}
+        for part in parts
+    ]
+    normalized_parts.sort(key=lambda item: item["PartNumber"])
+    client.complete_multipart_upload(
+        Bucket=_R2_BUCKET,
+        Key=key,
+        UploadId=upload_id,
+        MultipartUpload={"Parts": normalized_parts},
+    )
+
+
+def _r2_abort_direct_upload_session(*, key: str, upload_id: str) -> None:
+    client = _get_r2_client()
+    client.abort_multipart_upload(
+        Bucket=_R2_BUCKET,
+        Key=key,
+        UploadId=upload_id,
+    )
+
+
+def _r2_head_object(reference: str) -> dict[str, str | int | None]:
+    key = _reference_to_r2_key(reference)
+    client = _get_r2_client()
+    response = client.head_object(Bucket=_R2_BUCKET, Key=key)
+    return {
+        "key": key,
+        "content_type": response.get("ContentType"),
+        "file_size_bytes": int(response.get("ContentLength") or 0),
+        "etag": str(response.get("ETag") or "").strip('"'),
+    }
+
+
+def _r2_download_to_path(reference: str, destination_path: str) -> str:
+    key = _reference_to_r2_key(reference)
+    client = _get_r2_client()
+    Path(destination_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(destination_path, "wb") as handle:
+        client.download_fileobj(_R2_BUCKET, key, handle)
+    return destination_path
+
+
 # ── Firebase backend (existing behaviour wrapped) ─────────────────────────────
 
 def _firebase_upload(
@@ -430,6 +607,30 @@ def _firebase_upload(
     except Exception as exc:
         logger.error("Firebase upload failed: %s", exc, exc_info=True)
         raise
+
+
+def _firebase_head_object(reference: str) -> dict[str, str | int | None]:
+    bucket = _get_firebase_bucket()
+    blob_name = urlparse(reference).path.lstrip("/") if reference.startswith("http") else reference
+    blob = bucket.blob(blob_name)
+    if not blob.exists():
+        raise FileNotFoundError(f"Firebase object not found: {blob_name}")
+    blob.reload()
+    return {
+        "key": blob_name,
+        "content_type": blob.content_type,
+        "file_size_bytes": int(blob.size or 0),
+        "etag": blob.etag,
+    }
+
+
+def _firebase_download_to_path(reference: str, destination_path: str) -> str:
+    bucket = _get_firebase_bucket()
+    blob_name = urlparse(reference).path.lstrip("/") if reference.startswith("http") else reference
+    blob = bucket.blob(blob_name)
+    Path(destination_path).parent.mkdir(parents=True, exist_ok=True)
+    blob.download_to_filename(destination_path)
+    return destination_path
 
 
 def _firebase_delete(url: str) -> None:

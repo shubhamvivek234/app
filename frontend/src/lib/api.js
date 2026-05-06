@@ -8,6 +8,92 @@ const getAuthHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+const DIRECT_UPLOAD_FALLBACK_STATUSES = new Set([404, 405, 501]);
+
+const postLegacyUpload = async (file, onProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await axios.post(`${API}/upload`, formData, {
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: onProgress,
+  });
+  return response.data;
+};
+
+const abortDirectUpload = async (mediaJobId, reason = 'Upload aborted') => {
+  if (!mediaJobId) return;
+  try {
+    await axios.post(
+      `${API}/upload/${mediaJobId}/abort`,
+      { reason },
+      { headers: getAuthHeaders() }
+    );
+  } catch (error) {
+    console.warn('Direct upload abort failed', error);
+  }
+};
+
+const emitUploadProgress = (onProgress, loaded, total) => {
+  if (!onProgress) return;
+  onProgress({
+    loaded,
+    total,
+    progress: total > 0 ? loaded / total : undefined,
+  });
+};
+
+const uploadSinglePartToCloud = async (file, upload, onProgress) => {
+  await axios.put(upload.url, file, {
+    headers: upload.headers || { 'Content-Type': file.type || 'application/octet-stream' },
+    onUploadProgress: (event) => {
+      emitUploadProgress(onProgress, event.loaded || 0, file.size);
+    },
+  });
+};
+
+const uploadMultipartToCloud = async (file, upload, onProgress) => {
+  const partSize = upload.part_size_bytes || 64 * 1024 * 1024;
+  let uploadedBytes = 0;
+  const completedParts = [];
+
+  for (const part of upload.parts || []) {
+    const start = (part.part_number - 1) * partSize;
+    const end = Math.min(start + partSize, file.size);
+    const chunk = file.slice(start, end);
+
+    const response = await axios.put(part.url, chunk, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      onUploadProgress: (event) => {
+        emitUploadProgress(
+          onProgress,
+          uploadedBytes + (event.loaded || 0),
+          file.size
+        );
+      },
+    });
+
+    const etag = response.headers?.etag || response.headers?.ETag;
+    if (!etag) {
+      throw new Error('Missing ETag from multipart upload response. Check R2 CORS exposed headers.');
+    }
+
+    uploadedBytes += chunk.size;
+    emitUploadProgress(onProgress, uploadedBytes, file.size);
+    completedParts.push({
+      PartNumber: part.part_number,
+      ETag: etag,
+    });
+  }
+
+  return completedParts;
+};
+
 // Posts
 export const createPost = async (postData) => {
   const response = await axios.post(`${API}/posts`, postData, {
@@ -125,17 +211,53 @@ export const getStats = async () => {
 
 // Media Upload with progress tracking
 export const uploadMedia = async (file, onProgress) => {
-  const formData = new FormData();
-  formData.append('file', file);
+  let mediaJobId = null;
 
-  const response = await axios.post(`${API}/upload`, formData, {
-    headers: {
-      ...getAuthHeaders(),
-      'Content-Type': 'multipart/form-data',
-    },
-    onUploadProgress: onProgress,
-  });
-  return response.data;
+  try {
+    const sessionResponse = await axios.post(
+      `${API}/upload/session`,
+      {
+        filename: file.name,
+        file_size_bytes: file.size,
+        content_type: file.type || 'application/octet-stream',
+      },
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+
+    const session = sessionResponse.data;
+    mediaJobId = session.media_job_id;
+    const upload = session.upload;
+
+    let completedParts = [];
+    if (upload.mode === 'multipart') {
+      completedParts = await uploadMultipartToCloud(file, upload, onProgress);
+    } else {
+      await uploadSinglePartToCloud(file, upload, onProgress);
+      emitUploadProgress(onProgress, file.size, file.size);
+    }
+
+    const completeResponse = await axios.post(
+      `${API}/upload/complete`,
+      {
+        media_job_id: mediaJobId,
+        upload_id: upload.upload_id || null,
+        parts: completedParts,
+      },
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+    return completeResponse.data;
+  } catch (error) {
+    const status = error?.response?.status;
+    if (DIRECT_UPLOAD_FALLBACK_STATUSES.has(status)) {
+      return postLegacyUpload(file, onProgress);
+    }
+    await abortDirectUpload(mediaJobId, error?.message || 'Upload failed');
+    throw error;
+  }
 };
 
 export const getUploadStatus = async (mediaJobId) => {

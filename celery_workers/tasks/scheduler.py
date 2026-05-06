@@ -39,6 +39,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 7 * 24 * 3600,  # weekly
         "options": {"queue": "default"},
     },
+    "stale-direct-upload-scan": {
+        "task": "celery_workers.tasks.cleanup.scan_stale_direct_uploads",
+        "schedule": 300,  # every 5 minutes
+        "options": {"queue": "default"},
+    },
     "check-subscription-expiry": {
         "task": "celery_workers.tasks.subscription_check.check_expiring_subscriptions",
         "schedule": 86400,  # daily

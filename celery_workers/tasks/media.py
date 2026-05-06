@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import pathlib
+import tempfile
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -85,13 +86,20 @@ async def _mark_media_failed(media_job_id: str, error_message: str) -> None:
 async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     client = None
     quarantine_path: str | None = None
+    source_storage_key: str | None = None
+    source_local_path: str | None = None
     processed_path: str | None = None
     completed_successfully = False
     try:
         from media_pipeline.validation import validate_media
         from media_pipeline.ffmpeg_worker import process_video
         from media_pipeline.thumbnail import generate_thumbnail
-        from utils.storage import upload_file_async, upload_file_from_path_async
+        from utils.storage import (
+            delete_file_async,
+            download_file_to_path_async,
+            upload_file_async,
+            upload_file_from_path_async,
+        )
 
         client, db = await _get_db()
         asset = await db.media_assets.find_one({"media_id": media_job_id}, {"_id": 0})
@@ -99,6 +107,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             return {"status": "not_found"}
 
         quarantine_path = asset.get("quarantine_path")
+        source_storage_key = asset.get("source_storage_key")
         mime_type = asset.get("mime_type", "application/octet-stream")
 
         await db.media_assets.update_one(
@@ -106,14 +115,33 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             {"$set": {"status": "processing"}},
         )
 
+        if source_storage_key:
+            suffix = pathlib.Path(
+                asset.get("original_filename")
+                or source_storage_key
+                or media_job_id
+            ).suffix or pathlib.Path(source_storage_key).suffix or ".bin"
+            fd, source_local_path = tempfile.mkstemp(
+                prefix=f"media-src-{media_job_id}-",
+                suffix=suffix,
+            )
+            os.close(fd)
+            await download_file_to_path_async(source_storage_key, source_local_path)
+            input_path = source_local_path
+        else:
+            input_path = quarantine_path
+
+        if not input_path:
+            raise ValueError("No media source path available for processing")
+
         # Step 1: Validate
-        validation_result = await validate_media(quarantine_path, mime_type)
+        validation_result = await validate_media(input_path, mime_type)
 
         # Step 2: Transcode if video
         if mime_type and mime_type.startswith("video/"):
-            processed_path = await process_video(quarantine_path, validation_result)
+            processed_path = await process_video(input_path, validation_result)
         else:
-            processed_path = quarantine_path
+            processed_path = input_path
 
         # Step 3: Thumbnail
         thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
@@ -146,12 +174,31 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             )
             logger.info("Thumbnail uploaded: media_id=%s url=%s", media_job_id, thumbnail_url)
 
+        source_storage_deleted_at = None
+        source_storage_deleted = False
+        if source_storage_key and source_storage_key != media_storage_key:
+            try:
+                await delete_file_async(source_storage_key)
+                source_storage_deleted_at = datetime.now(timezone.utc).isoformat()
+                source_storage_deleted = True
+                logger.info(
+                    "Raw upload source deleted after processing: media_id=%s key=%s",
+                    media_job_id,
+                    source_storage_key,
+                )
+            except Exception as raw_delete_exc:
+                logger.warning(
+                    "Could not delete raw upload source for media_id=%s key=%s: %s",
+                    media_job_id,
+                    source_storage_key,
+                    raw_delete_exc,
+                )
+
         # Step 6: Persist real URLs + storage key to DB
         # storage_key is stored separately so cleanup can call delete_file(key)
         # without having to parse the public URL (which may change format)
-        await db.media_assets.update_one(
-            {"media_id": media_job_id},
-            {"$set": {
+        media_update = {
+            "$set": {
                 "status": "ready",
                 "media_url": media_url,
                 "storage_key": media_storage_key,
@@ -160,7 +207,15 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 "duration_seconds": validation_result.get("duration"),
                 "width": validation_result.get("width"),
                 "height": validation_result.get("height"),
-            }},
+            },
+        }
+        if source_storage_deleted:
+            media_update["$set"]["source_storage_deleted_at"] = source_storage_deleted_at
+            media_update["$unset"] = {"source_storage_key": ""}
+
+        await db.media_assets.update_one(
+            {"media_id": media_job_id},
+            media_update,
         )
 
         logger.info("Media %s processed and uploaded successfully", media_job_id)
@@ -179,6 +234,15 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     finally:
         if client is not None:
             client.close()
+        transient_paths = {source_local_path}
+        if processed_path and processed_path not in {quarantine_path, source_local_path}:
+            transient_paths.add(processed_path)
+        for path in transient_paths:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError as _e:
+                    logger.warning("Could not delete temp file %s: %s", path, _e)
         if completed_successfully:
             # EC-14: Remove local quarantine/temp files only after successful processing.
             # Retried jobs still need the original quarantine file.

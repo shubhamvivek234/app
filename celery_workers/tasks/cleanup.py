@@ -54,11 +54,32 @@ async def _async_cleanup(post_id: str) -> dict:
             continue
 
         storage_key = asset.get("storage_key", "")
+        source_storage_key = asset.get("source_storage_key", "")
         thumb_url = asset.get("thumbnail_url")
 
         # Always preserve thumbnail URLs — they are stored permanently
         if thumb_url:
             surviving_thumbnail_urls.append(thumb_url)
+
+        # Raw upload sources are transient processing artifacts — delete them
+        # regardless of plan once the post is fully terminal.
+        if source_storage_key and source_storage_key != storage_key:
+            try:
+                await _delete_from_storage(source_storage_key)
+                await db.media_assets.update_one(
+                    {"media_id": media_id},
+                    {
+                        "$set": {"source_storage_deleted_at": datetime.now(timezone.utc).isoformat()},
+                        "$unset": {"source_storage_key": ""},
+                    },
+                )
+            except Exception as raw_exc:
+                logger.warning(
+                    "Failed to delete raw source key for media_id=%s key=%s: %s",
+                    media_id,
+                    source_storage_key,
+                    raw_exc,
+                )
 
         if plan == "starter":
             # Delete immediately from R2
@@ -124,6 +145,164 @@ async def _delete_from_storage(storage_key: str) -> None:
     except Exception as exc:
         logger.error("Storage delete failed for %s: %s", storage_key, exc)
         raise
+
+
+@celery_app.task(
+    name="celery_workers.tasks.cleanup.scan_stale_direct_uploads",
+    bind=True,
+)
+def scan_stale_direct_uploads(self) -> dict:
+    """
+    Scan direct-to-cloud uploads whose session expired before completion.
+    Recovery path:
+    - if the raw object exists, promote to processing and enqueue the worker
+    - otherwise best-effort abort multipart uploads and mark the asset failed
+    """
+    import asyncio
+
+    return asyncio.get_event_loop().run_until_complete(_async_scan_stale_direct_uploads())
+
+
+async def _async_scan_stale_direct_uploads() -> dict:
+    from api.models.media import MediaStatus
+    from db.mongo import get_client
+    from redis.exceptions import RedisError
+    from utils.storage import (
+        abort_direct_upload_session,
+        head_storage_object_async,
+    )
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    now = datetime.now(timezone.utc)
+    now_ts = now.timestamp()
+
+    scanned = 0
+    recovered = 0
+    failed = 0
+    errors = 0
+
+    cursor = db.media_assets.find(
+        {
+            "status": {"$in": [MediaStatus.PENDING_UPLOAD, MediaStatus.UPLOADING]},
+            "upload_expires_at": {"$lte": now_ts},
+            "source_storage_key": {"$exists": True, "$ne": None},
+        },
+        {"_id": 0},
+        limit=500,
+    )
+
+    async for asset in cursor:
+        scanned += 1
+        media_id = asset["media_id"]
+        user_id = asset.get("user_id")
+        source_storage_key = asset.get("source_storage_key")
+        upload_mode = asset.get("upload_mode")
+        upload_session_id = asset.get("upload_session_id")
+
+        try:
+            head = await head_storage_object_async(source_storage_key)
+            if head and int(head.get("size") or 0) > 0:
+                update_result = await db.media_assets.update_one(
+                    {
+                        "media_id": media_id,
+                        "status": {"$in": [MediaStatus.PENDING_UPLOAD, MediaStatus.UPLOADING]},
+                    },
+                    {
+                        "$set": {
+                            "status": MediaStatus.PROCESSING,
+                            "file_size_bytes": int(head.get("size") or asset.get("file_size_bytes") or 0),
+                            "upload_completed_at": now,
+                            "recovered_from_expired_upload": True,
+                            "recovered_at": now,
+                            "error_message": None,
+                        },
+                        "$unset": {
+                            "upload_session_id": "",
+                            "upload_expires_at": "",
+                        },
+                    },
+                )
+                if update_result.modified_count:
+                    from celery_workers.tasks.media import process_media
+
+                    process_media.apply_async(
+                        kwargs={"media_job_id": media_id},
+                        queue="media_processing",
+                    )
+                    await _release_upload_slot_if_possible(user_id)
+                    recovered += 1
+                continue
+
+            if upload_mode == "multipart" and upload_session_id:
+                try:
+                    abort_direct_upload_session(
+                        key=source_storage_key,
+                        upload_id=upload_session_id,
+                    )
+                except Exception as abort_exc:
+                    logger.warning(
+                        "stale_upload_scan: multipart abort failed for media_id=%s upload_id=%s: %s",
+                        media_id,
+                        upload_session_id,
+                        abort_exc,
+                    )
+
+            update_result = await db.media_assets.update_one(
+                {
+                    "media_id": media_id,
+                    "status": {"$in": [MediaStatus.PENDING_UPLOAD, MediaStatus.UPLOADING]},
+                },
+                {
+                    "$set": {
+                        "status": MediaStatus.FAILED,
+                        "error_message": "Direct upload expired before completion",
+                        "aborted_at": now,
+                    },
+                    "$unset": {
+                        "upload_session_id": "",
+                        "upload_expires_at": "",
+                    },
+                },
+            )
+            if update_result.modified_count:
+                await _release_upload_slot_if_possible(user_id)
+                failed += 1
+        except Exception as exc:
+            logger.exception("stale_upload_scan: failed for media_id=%s: %s", media_id, exc)
+            errors += 1
+
+    logger.info(
+        "stale_upload_scan: scanned=%d recovered=%d failed=%d errors=%d",
+        scanned,
+        recovered,
+        failed,
+        errors,
+    )
+    return {
+        "status": "complete",
+        "scanned": scanned,
+        "recovered": recovered,
+        "failed": failed,
+        "errors": errors,
+    }
+
+
+async def _release_upload_slot_if_possible(user_id: str | None) -> None:
+    if not user_id:
+        return
+
+    try:
+        from db.redis_client import get_cache_redis
+
+        cache_redis = get_cache_redis()
+        key = f"upload:concurrent:{user_id}"
+        value = await cache_redis.get(key)
+        if value and int(value) > 0:
+            await cache_redis.decr(key)
+    except Exception as exc:
+        logger.warning("stale_upload_scan: failed to release upload slot for user=%s: %s", user_id, exc)
 
 
 @celery_app.task(
