@@ -43,5 +43,6 @@ async def get_stats(current_user: CurrentUser, db: DB):
         "published_posts": published_posts,
         "draft_posts": draft_posts,
         "failed_posts": failed_posts,
+        "connected_accounts": total_accounts,
         "total_accounts": total_accounts,
     }
