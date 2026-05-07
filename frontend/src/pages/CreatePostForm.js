@@ -560,13 +560,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [aiStyle,               setAiStyle]               = useState('vivid');
   const [aiGenerating,          setAiGenerating]          = useState(false);
 
-  // ── Init ──────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    loadAccounts();
-    loadHashtagGroups();
-    setScheduledDate(new Date().toISOString().split('T')[0]);
-  }, [loadAccounts, loadHashtagGroups]);
-
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
@@ -589,6 +582,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       setHashtagGroups([]);
     }
   }, []);
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    loadAccounts();
+    loadHashtagGroups();
+    setScheduledDate(new Date().toISOString().split('T')[0]);
+  }, [loadAccounts, loadHashtagGroups]);
 
   // ── Keep platformOrder and expandedPlatform in sync ───────────────────────
   useEffect(() => {
