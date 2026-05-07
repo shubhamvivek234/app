@@ -174,11 +174,16 @@ class PostResponse(BaseModel):
     content: str
     platforms: list[str]
     status: PostStatus
+    title: str | None = None
+    post_type: str | None = None
     scheduled_time: datetime | None = None
+    published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
     # v2.9 fields
+    media_ids: list[str] = Field(default_factory=list)
+    media_urls: list[str] = Field(default_factory=list)
     platform_results: dict[str, PlatformResult] = Field(default_factory=dict)
     platform_post_urls: dict[str, str] = Field(default_factory=dict)
     status_history: list[StatusHistoryEntry] = Field(default_factory=list)

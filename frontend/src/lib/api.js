@@ -143,6 +143,13 @@ export const getPosts = async (status = null) => {
   return response.data;
 };
 
+export const getRecentPublishedPosts = async (limit = 25) => {
+  const response = await axios.get(`${API}/posts/recent-published?limit=${limit}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
 export const getPost = async (postId) => {
   const response = await axios.get(`${API}/posts/${postId}`, {
     headers: getAuthHeaders(),

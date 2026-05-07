@@ -1,13 +1,49 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
+import { getStats, getRecentPublishedPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
 import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useNavigate } from 'react-router-dom';
-import { FaPlus, FaCalendarAlt, FaCheckCircle, FaLink, FaExclamationTriangle, FaRedo, FaBell } from 'react-icons/fa';
+import {
+  FaPlus,
+  FaCalendarAlt,
+  FaCheckCircle,
+  FaLink,
+  FaExclamationTriangle,
+  FaRedo,
+  FaBell,
+  FaImage,
+  FaVideo,
+  FaRegFileAlt,
+} from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import BrandMarkLoader from '@/components/BrandMarkLoader';
+
+const PLATFORM_LABELS = {
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  youtube: 'YouTube',
+  twitter: 'X',
+  linkedin: 'LinkedIn',
+  tiktok: 'TikTok',
+};
+
+const getPostKind = (post) => {
+  const normalizedType = (post?.post_type || '').toLowerCase();
+  if (['mixed', 'carousel', 'album'].includes(normalizedType)) {
+    return 'mixed';
+  }
+  if (normalizedType.includes('video') || normalizedType === 'reel' || normalizedType === 'story') {
+    return 'video';
+  }
+  if ((post?.media_urls || []).length > 0 || (post?.thumbnail_urls || []).length > 0) {
+    return 'image';
+  }
+  return 'text';
+};
+
+const getPrimaryThumbnail = (post) => post?.thumbnail_urls?.[0] || post?.media_urls?.[0] || null;
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -21,15 +57,28 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
+  const refreshRecentPostsAndStats = useCallback(async () => {
+    try {
+      const [statsData, postsData] = await Promise.all([
+        getStats(),
+        getRecentPublishedPosts(25),
+      ]);
+      setStats(statsData);
+      setRecentPosts(postsData);
+    } catch (error) {
+      // Keep the existing dashboard state if the live refresh fails.
+    }
+  }, []);
+
   const fetchData = async () => {
     try {
       const [statsData, postsData, failedData] = await Promise.all([
         getStats(),
-        getPosts(),
+        getRecentPublishedPosts(25),
         getFailedPosts().catch(() => []),
       ]);
       setStats(statsData);
-      setRecentPosts(postsData.slice(0, 5));
+      setRecentPosts(postsData);
       setFailedPosts(failedData);
       const notifData = await getNotifications(true).catch(() => []);
       setUnreadCount(notifData.length);
@@ -74,10 +123,13 @@ const Dashboard = () => {
     }
 
     // Toast notifications for status transitions
-    if (status === 'published') toast.success('Post published successfully!');
+    if (status === 'published') {
+      void refreshRecentPostsAndStats();
+      toast.success('Post published successfully!');
+    }
     else if (status === 'failed') toast.error('Post failed to publish');
     else if (status === 'partial') toast.warning('Post partially published — some platforms failed');
-  }, []);
+  }, [refreshRecentPostsAndStats]);
 
   usePostStatusStream(handlePostUpdate);
 
@@ -269,7 +321,7 @@ const Dashboard = () => {
           <div className="divide-y divide-border">
             {recentPosts.length === 0 ? (
               <div className="p-8 text-center text-slate-600">
-                <p>No posts yet. Create your first post to get started!</p>
+                <p>No published posts yet. Publish your first post to populate this feed.</p>
                 <Button
                   className="mt-4"
                   onClick={() => navigate('/create')}
@@ -280,36 +332,82 @@ const Dashboard = () => {
                 </Button>
               </div>
             ) : (
-              recentPosts.map((post) => (
-                <div
-                  key={post.id}
-                  className="p-6 hover:bg-slate-50 cursor-pointer transition-colors"
-                  onClick={() => navigate('/content')}
-                  data-testid={`post-item-${post.id}`}
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <p className="text-slate-900 line-clamp-2">{post.content}</p>
-                      <div className="flex items-center gap-4 mt-2">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          post.status === 'published'
-                            ? 'bg-green-100 text-green-700'
-                            : post.status === 'scheduled'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {post.status}
-                        </span>
-                        <span className="text-sm text-slate-600">
-                          {post.scheduled_time
-                            ? format(new Date(post.scheduled_time), 'MMM d, yyyy h:mm a')
-                            : format(new Date(post.created_at), 'MMM d, yyyy')}
-                        </span>
+              recentPosts.map((post) => {
+                const thumbnail = getPrimaryThumbnail(post);
+                const postKind = getPostKind(post);
+                const publishedAt = post.published_at || post.updated_at || post.created_at;
+                const mediaCount = Math.max(post.media_urls?.length || 0, post.media_ids?.length || 0);
+
+                return (
+                  <div
+                    key={post.id}
+                    className="p-6 hover:bg-slate-50 cursor-pointer transition-colors"
+                    onClick={() => navigate('/content')}
+                    data-testid={`post-item-${post.id}`}
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                      <div className="flex-shrink-0">
+                        {thumbnail ? (
+                          <div className="relative h-16 w-16 overflow-hidden rounded-lg border border-border bg-slate-100">
+                            {postKind === 'video' && (
+                              <div className="absolute left-1.5 top-1.5 z-10 rounded bg-slate-900/70 p-1 text-white">
+                                <FaVideo className="text-[10px]" />
+                              </div>
+                            )}
+                            <img
+                              src={thumbnail}
+                              alt={post.title || post.content || 'Post thumbnail'}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-border bg-slate-50 text-slate-400">
+                            {postKind === 'video' ? (
+                              <FaVideo className="text-lg" />
+                            ) : postKind === 'image' || postKind === 'mixed' ? (
+                              <FaImage className="text-lg" />
+                            ) : (
+                              <FaRegFileAlt className="text-lg" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                            Published
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 capitalize">
+                            {postKind}
+                          </span>
+                          {mediaCount > 1 && (
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
+                              {mediaCount} assets
+                            </span>
+                          )}
+                          {(post.platforms || []).map((platform) => (
+                            <span
+                              key={`${post.id}-${platform}`}
+                              className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700"
+                            >
+                              {PLATFORM_LABELS[platform] || platform}
+                            </span>
+                          ))}
+                        </div>
+
+                        <p className="mt-3 text-sm font-medium text-slate-900 line-clamp-3">
+                          {post.content || post.title || 'No description'}
+                        </p>
+
+                        <div className="mt-3 flex items-center gap-4 text-sm text-slate-600">
+                          <span>{format(new Date(publishedAt), 'MMM d, yyyy h:mm a')}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

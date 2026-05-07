@@ -585,6 +585,31 @@ async def list_posts(
     return [_doc_to_response(d) for d in docs]
 
 
+@router.get("/posts/recent-published", response_model=list[PostResponse],
+            dependencies=[require_permission("post:read")])
+async def list_recent_published_posts(
+    current_user: CurrentUser,
+    db: DB,
+    workspace_id: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=25)] = 25,
+) -> list[PostResponse]:
+    user_id = current_user["user_id"]
+    ws_id = workspace_id or current_user.get("default_workspace_id")
+
+    query: dict = {
+        "workspace_id": ws_id,
+        "user_id": user_id,
+        "status": PostStatus.PUBLISHED,
+        "deleted_at": {"$exists": False},
+    }
+
+    cursor = db.posts.find(query, {"_id": 0}).sort(
+        [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
+    ).limit(limit)
+    docs = await cursor.to_list(length=limit)
+    return [_doc_to_response(d) for d in docs]
+
+
 # ── Get single ───────────────────────────────────────────────────────────────
 
 @router.get("/posts/{post_id}", response_model=PostResponse,

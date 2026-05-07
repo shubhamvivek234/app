@@ -147,6 +147,129 @@ async def _delete_from_storage(storage_key: str) -> None:
         raise
 
 
+def _collect_post_media_ids(post: dict) -> set[str]:
+    media_ids = set(post.get("media_ids") or [])
+    for override in (post.get("platform_overrides") or {}).values():
+        if isinstance(override, dict):
+            media_ids.update(override.get("media_ids") or [])
+    return media_ids
+
+
+def _collect_asset_storage_refs(asset: dict) -> set[str]:
+    refs = {
+        asset.get("storage_key"),
+        asset.get("source_storage_key"),
+        asset.get("thumbnail_url"),
+        asset.get("media_url"),
+    }
+    return {ref for ref in refs if ref}
+
+
+async def _media_id_still_referenced(
+    db,
+    media_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    excluding_post_id: str,
+) -> bool:
+    cursor = db.posts.find(
+        {
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "deleted_at": {"$exists": False},
+            "id": {"$ne": excluding_post_id},
+        },
+        {"_id": 0, "media_ids": 1, "platform_overrides": 1},
+    )
+    async for post in cursor:
+        if media_id in _collect_post_media_ids(post):
+            return True
+    return False
+
+
+async def _delete_media_asset_if_orphaned(
+    db,
+    media_id: str,
+    user_id: str,
+    workspace_id: str | None,
+    excluding_post_id: str,
+) -> None:
+    if await _media_id_still_referenced(db, media_id, user_id, workspace_id, excluding_post_id):
+        return
+
+    asset = await db.media_assets.find_one({"media_id": media_id}, {"_id": 0})
+    if not asset:
+        return
+
+    for storage_ref in _collect_asset_storage_refs(asset):
+        try:
+            await _delete_from_storage(storage_ref)
+        except Exception as exc:
+            logger.warning(
+                "Failed to delete orphaned media ref %s for media_id=%s: %s",
+                storage_ref,
+                media_id,
+                exc,
+            )
+
+    await db.media_assets.delete_one({"media_id": media_id})
+
+
+async def prune_recent_published_posts(
+    db,
+    user_id: str,
+    workspace_id: str | None,
+    keep: int = 25,
+) -> int:
+    query = {
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "status": "published",
+        "deleted_at": {"$exists": False},
+    }
+    total_published = await db.posts.count_documents(query)
+    if total_published <= keep:
+        return 0
+
+    overflow = await db.posts.find(
+        query,
+        {"_id": 0, "id": 1, "media_ids": 1, "platform_overrides": 1},
+    ).sort(
+        [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
+    ).skip(keep).to_list(length=total_published - keep)
+    pruned = 0
+
+    for post in overflow:
+        post_id = post.get("id")
+        if not post_id:
+            continue
+
+        for media_id in _collect_post_media_ids(post):
+            await _delete_media_asset_if_orphaned(
+                db,
+                media_id=media_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                excluding_post_id=post_id,
+            )
+
+        result = await db.posts.delete_one(
+            {"id": post_id, "user_id": user_id, "workspace_id": workspace_id}
+        )
+        if result.deleted_count:
+            pruned += 1
+
+    if pruned:
+        logger.info(
+            "Pruned %d published posts beyond retention window for user=%s workspace=%s",
+            pruned,
+            user_id,
+            workspace_id,
+        )
+
+    return pruned
+
+
 @celery_app.task(
     name="celery_workers.tasks.cleanup.scan_stale_direct_uploads",
     bind=True,

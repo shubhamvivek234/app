@@ -257,23 +257,34 @@ def should_cleanup_media(platform_results: dict) -> bool:
 
 
 async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | None, str]:
-    from celery_workers.tasks.cleanup import schedule_media_cleanup
+    from celery_workers.tasks.cleanup import prune_recent_published_posts, schedule_media_cleanup
 
     updated_post = await db.posts.find_one(
         {"id": post_id},
-        {"platform_results": 1, "status": 1, "user_id": 1},
+        {"platform_results": 1, "status": 1, "user_id": 1, "workspace_id": 1},
     )
     if not updated_post:
         return None, None, "scheduled"
 
     prev_agg_status = updated_post.get("status")
     agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
+    now = datetime.now(timezone.utc)
 
     set_updates = {"status": agg_status}
     if agg_status != "failed":
         set_updates["dlq_reason"] = None
+    if agg_status == "published" and prev_agg_status != "published":
+        set_updates["published_at"] = now
 
     await db.posts.update_one({"id": post_id}, {"$set": set_updates})
+
+    if agg_status == "published" and prev_agg_status != "published":
+        await prune_recent_published_posts(
+            db,
+            user_id=updated_post.get("user_id"),
+            workspace_id=updated_post.get("workspace_id"),
+            keep=25,
+        )
 
     if should_cleanup_media(updated_post.get("platform_results", {})):
         schedule_media_cleanup.apply_async(
