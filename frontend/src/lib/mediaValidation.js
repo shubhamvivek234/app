@@ -86,6 +86,135 @@ export const PLATFORM_LIMITS = {
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
     notes: 'Videos: max 2 GB · 15 min · MP4/MOV/M4V · H.264 or H.265 · 2:3 preferred',
   },
+  threads: {
+    label:        'Threads',
+    maxVideoBytes: 1024 * 1024 * 1024,
+    maxImageBytes: 8    * 1024 * 1024,
+    maxDuration:   300,
+    maxWidth:      1920,
+    allowedVideoTypes: ['video/mp4', 'video/quicktime'],
+    allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    notes: 'Publishing adapter not configured in this workspace yet.',
+  },
+  bluesky: {
+    label:        'Bluesky',
+    maxVideoBytes: 100  * 1024 * 1024,
+    maxImageBytes: 8    * 1024 * 1024,
+    maxDuration:   60,
+    maxWidth:      2000,
+    allowedVideoTypes: ['video/mp4'],
+    allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    notes: 'Publishing adapter not configured in this workspace yet.',
+  },
+};
+
+export const COMMON_POST_UNSUPPORTED = {
+  reddit: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
+  discord: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
+  mastodon: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
+  snapchat: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
+  threads: 'Threads publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
+  bluesky: 'Bluesky publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
+  pinterest: 'Pinterest publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
+};
+
+const PLATFORM_TEXT_LIMITS = {
+  facebook: 63206,
+  instagram: 2200,
+  twitter: 280,
+  linkedin: 3000,
+  youtube: 5000,
+  tiktok: 2200,
+  pinterest: 500,
+  threads: 500,
+  bluesky: 300,
+};
+
+const PLATFORM_ASPECT_RULES = {
+  instagram: {
+    image: {
+      Post: { ratio: 4 / 5, label: '4:5' },
+      Reel: { ratio: 9 / 16, label: '9:16' },
+      Story: { ratio: 9 / 16, label: '9:16' },
+    },
+    video: {
+      Post: { ratio: 4 / 5, label: '4:5' },
+      Reel: { ratio: 9 / 16, label: '9:16' },
+      Story: { ratio: 9 / 16, label: '9:16' },
+    },
+  },
+  facebook: {
+    image: { ratio: 1, label: '1:1' },
+    video: { ratio: 1, label: '1:1' },
+  },
+  linkedin: {
+    image: { ratio: 1.91, label: '1.91:1' },
+    video: { ratio: 1.91, label: '1.91:1' },
+  },
+  youtube: {
+    video: { ratio: 16 / 9, label: '16:9' },
+  },
+  tiktok: {
+    video: { ratio: 9 / 16, label: '9:16' },
+  },
+};
+
+const ASPECT_RATIO_TOLERANCE = 0.1;
+
+const COMMON_POST_RULES = {
+  facebook: {
+    allowTextOnly: true,
+    maxImages: 1,
+    maxVideos: 1,
+    allowMixed: false,
+  },
+  instagram: {
+    allowTextOnly: false,
+    maxImages: 1,
+    maxVideos: 1,
+    allowMixed: false,
+  },
+  twitter: {
+    allowTextOnly: true,
+    maxImages: 0,
+    maxVideos: 0,
+    allowMixed: false,
+    unsupportedMediaMessage: 'Twitter/X media publishing is not wired in this workspace yet. Use text-only or platform-specific composition.',
+  },
+  linkedin: {
+    allowTextOnly: true,
+    maxImages: 1,
+    maxVideos: 1,
+    allowMixed: false,
+  },
+  youtube: {
+    allowTextOnly: false,
+    maxImages: 0,
+    maxVideos: 1,
+    exactVideoCount: 1,
+    allowMixed: false,
+  },
+  tiktok: {
+    allowTextOnly: false,
+    maxImages: 0,
+    maxVideos: 1,
+    exactVideoCount: 1,
+    allowMixed: false,
+  },
+};
+
+const getAspectRule = (platformId, mediaType, postFormat) => {
+  const platformRule = PLATFORM_ASPECT_RULES[platformId];
+  if (!platformRule) return null;
+  const typeRule = platformRule[mediaType];
+  if (!typeRule) return null;
+  if (typeRule[postFormat]) return typeRule[postFormat];
+  return typeRule;
+};
+
+const isAspectRatioOutOfRange = (ratio, targetRatio) => {
+  if (!ratio || !targetRatio) return false;
+  return Math.abs(ratio - targetRatio) / targetRatio > ASPECT_RATIO_TOLERANCE;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -187,4 +316,132 @@ export function getPlatformLimitSummary(platformId) {
   const limits = PLATFORM_LIMITS[platformId];
   if (!limits) return '';
   return limits.notes || '';
+}
+
+export function validateCommonPostPlatform(platformId, {
+  caption = '',
+  media = [],
+  postFormat = 'Post',
+} = {}) {
+  const errors = [];
+  const notes = [];
+
+  if (COMMON_POST_UNSUPPORTED[platformId]) {
+    errors.push(COMMON_POST_UNSUPPORTED[platformId]);
+    return { errors, notes };
+  }
+
+  const rule = COMMON_POST_RULES[platformId];
+  const limit = PLATFORM_LIMITS[platformId];
+  if (!rule || !limit) {
+    errors.push('This platform is not supported in Common Post yet. Use platform-specific composition.');
+    return { errors, notes };
+  }
+
+  const normalizedMedia = Array.isArray(media) ? media : [];
+  const images = normalizedMedia.filter((item) => item?.type === 'image');
+  const videos = normalizedMedia.filter((item) => item?.type === 'video');
+  const hasMedia = normalizedMedia.length > 0;
+  const hasCaption = Boolean((caption || '').trim());
+
+  if (!rule.allowTextOnly && !hasMedia) {
+    errors.push(`${limit.label} requires media in Common Post.`);
+  }
+
+  if (!hasCaption && !hasMedia) {
+    errors.push(`Add a caption or media to continue with ${limit.label}.`);
+  }
+
+  if (rule.exactVideoCount && videos.length !== rule.exactVideoCount) {
+    errors.push(`${limit.label} requires exactly ${rule.exactVideoCount} video in Common Post.`);
+  }
+
+  if (rule.maxImages === 0 && images.length > 0) {
+    errors.push(`${limit.label} does not support image uploads in Common Post.`);
+  } else if (typeof rule.maxImages === 'number' && images.length > rule.maxImages) {
+    errors.push(`${limit.label} supports up to ${rule.maxImages} image${rule.maxImages !== 1 ? 's' : ''}. You uploaded ${images.length}.`);
+  }
+
+  if (rule.maxVideos === 0 && videos.length > 0) {
+    errors.push(`${limit.label} does not support video uploads in Common Post.`);
+  } else if (typeof rule.maxVideos === 'number' && videos.length > rule.maxVideos) {
+    errors.push(`${limit.label} supports up to ${rule.maxVideos} video${rule.maxVideos !== 1 ? 's' : ''}. You uploaded ${videos.length}.`);
+  }
+
+  if (!rule.allowMixed && images.length > 0 && videos.length > 0) {
+    errors.push(`${limit.label} does not support mixed image and video media in Common Post.`);
+  }
+
+  if (rule.unsupportedMediaMessage && hasMedia) {
+    errors.push(rule.unsupportedMediaMessage);
+  }
+
+  const maxChars = PLATFORM_TEXT_LIMITS[platformId];
+  if (maxChars && caption.length > maxChars) {
+    errors.push(`${limit.label} caption is ${caption.length} characters. Maximum is ${maxChars}.`);
+  }
+
+  normalizedMedia.forEach((item, index) => {
+    if (!item) return;
+
+    const mediaLabel = `${item.type === 'video' ? 'Video' : 'Image'} ${index + 1}`;
+    const mimeType = item.mimeType || item.file?.type || '';
+    const sizeBytes = item.size || item.file?.size || 0;
+    const width = item.width || 0;
+    const height = item.height || 0;
+    const duration = item.duration || 0;
+
+    if (item.type === 'image') {
+      if (limit.maxImageBytes && sizeBytes > limit.maxImageBytes) {
+        errors.push(`${mediaLabel} is ${formatBytes(sizeBytes)}. ${limit.label} allows up to ${formatBytes(limit.maxImageBytes)} per image.`);
+      }
+      if (mimeType && limit.allowedImageTypes && !limit.allowedImageTypes.includes(mimeType)) {
+        errors.push(`${mediaLabel} uses ${mimeType}. ${limit.label} accepts ${limit.allowedImageTypes.map((type) => type.split('/')[1].toUpperCase()).join(', ')} images.`);
+      }
+      const aspectRule = getAspectRule(platformId, 'image', postFormat);
+      const actualRatio = width > 0 && height > 0 ? width / height : 0;
+      if (aspectRule && actualRatio && isAspectRatioOutOfRange(actualRatio, aspectRule.ratio)) {
+        errors.push(`Crop image ${index + 1} to ${aspectRule.label} for ${limit.label} before posting.`);
+      }
+    }
+
+    if (item.type === 'video') {
+      if (limit.maxVideoBytes && sizeBytes > limit.maxVideoBytes) {
+        errors.push(`${mediaLabel} is ${formatBytes(sizeBytes)}. ${limit.label} allows up to ${formatBytes(limit.maxVideoBytes)} per video.`);
+      }
+      if (mimeType && limit.allowedVideoTypes && !limit.allowedVideoTypes.includes(mimeType)) {
+        errors.push(`${mediaLabel} uses ${mimeType}. ${limit.label} accepts ${limit.allowedVideoTypes.map((type) => type.split('/')[1].toUpperCase()).join(', ')} videos.`);
+      }
+      if (limit.maxDuration && duration && duration > limit.maxDuration) {
+        errors.push(`${mediaLabel} is ${Math.ceil(duration)} seconds. ${limit.label} allows up to ${limit.maxDuration} seconds.`);
+      }
+      const aspectRule = getAspectRule(platformId, 'video', postFormat);
+      const actualRatio = width > 0 && height > 0 ? width / height : 0;
+      if (aspectRule && actualRatio && isAspectRatioOutOfRange(actualRatio, aspectRule.ratio)) {
+        errors.push(`Adjust video ${index + 1} to ${aspectRule.label} for ${limit.label} before posting.`);
+      }
+    }
+  });
+
+  if (limit.notes) {
+    notes.push(limit.notes);
+  }
+
+  return { errors, notes };
+}
+
+export function buildCommonPostValidation({
+  platforms = [],
+  captionByPlatform = {},
+  mediaByPlatform = {},
+  postFormat = 'Post',
+} = {}) {
+  return platforms.reduce((acc, platformId) => {
+    acc[platformId] = validateCommonPostPlatform(platformId, {
+      caption: captionByPlatform[platformId] || '',
+      media: mediaByPlatform[platformId] || [],
+      postFormat,
+    });
+    return acc;
+  }, {});
 }

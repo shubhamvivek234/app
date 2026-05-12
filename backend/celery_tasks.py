@@ -266,6 +266,52 @@ async def _download_url_to_temp(url: str, suffix: str = ".mp4") -> Optional[str]
         return None
 
 
+def _get_platform_payload(post_doc: dict, platform: str) -> dict:
+    overrides = post_doc.get("platform_overrides") or {}
+    override = overrides.get(platform) or {}
+
+    media_urls = override.get("media_urls")
+    if media_urls is None:
+        media_urls = post_doc.get("media_urls", [])
+    media_urls = list(media_urls or [])
+
+    media_types = override.get("media_types")
+    if media_types is None:
+        media_types = post_doc.get("media_types", [])
+    media_types = list(media_types or [])
+
+    content = override.get("content")
+    if content is None:
+        content = post_doc.get("content", "")
+
+    title = override.get("title")
+    if title is None:
+        title = post_doc.get("video_title")
+
+    video_url = override.get("video_url")
+    if not video_url and media_urls:
+        if media_types:
+            for idx, media_type in enumerate(media_types):
+                if media_type == "video" and idx < len(media_urls):
+                    video_url = media_urls[idx]
+                    break
+        elif len(media_urls) == 1:
+            candidate = media_urls[0]
+            if any(candidate.lower().split("?")[0].endswith(ext) for ext in (".mp4", ".mov", ".webm", ".m4v", ".avi", ".mpeg")):
+                video_url = candidate
+
+    if not video_url:
+        video_url = post_doc.get("video_url")
+
+    return {
+        "content": content or "",
+        "media_urls": media_urls,
+        "media_types": media_types,
+        "video_url": video_url,
+        "video_title": title,
+    }
+
+
 async def publish_to_platform(platform: str, account: dict, post_doc: dict, trace_id: str) -> dict:
     """
     Publish content to a single platform.
@@ -276,9 +322,11 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
       {"status": "failed", "error": "..."}
     """
     access_token = account.get("access_token", "")
-    content = post_doc.get("content", "")
-    media_urls = post_doc.get("media_urls", [])
-    video_url = post_doc.get("video_url")
+    payload = _get_platform_payload(post_doc, platform)
+    content = payload["content"]
+    media_urls = payload["media_urls"]
+    media_types = payload["media_types"]
+    video_url = payload["video_url"]
     media_url = media_urls[0] if media_urls else video_url
     # Resolve URLs so Celery workers can reach local/localhost media
     media_url = _resolve_media_url(media_url) if media_url else None
@@ -360,8 +408,13 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             fb = FacebookAuth()
             page_id = account.get("platform_user_id", "")
             page_token = account.get("page_access_token", access_token)
+            media_kind = "IMAGE"
+            if media_types:
+                media_kind = "VIDEO" if media_types[0] == "video" else "IMAGE"
+            elif video_url and media_url == video_url:
+                media_kind = "VIDEO"
             if media_url:
-                result = await fb.publish_to_facebook(page_token, page_id, media_url, content)
+                result = await fb.publish_to_facebook(page_token, page_id, media_url, content, media_type=media_kind)
             else:
                 async with httpx.AsyncClient() as http_client:
                     resp = await http_client.post(
@@ -393,7 +446,7 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
             if not video_url:
                 return {"status": "failed", "error": "YouTube requires a video file"}
 
-            title = post_doc.get("video_title") or "Untitled"
+            title = payload.get("video_title") or "Untitled"
             cover_image = post_doc.get("cover_image_url")
             tmp_path = None
 
@@ -554,7 +607,12 @@ async def _cleanup_post_media(post_doc: dict):
     """Delete managed storage objects for a post after it reaches terminal state."""
     media_urls = post_doc.get("media_urls", [])
     video_url = post_doc.get("video_url")
-    all_urls = [u for u in media_urls + ([video_url] if video_url else []) if u]
+    override_urls = []
+    for override in (post_doc.get("platform_overrides") or {}).values():
+        override_urls.extend(override.get("media_urls") or [])
+        if override.get("video_url"):
+            override_urls.append(override["video_url"])
+    all_urls = [u for u in media_urls + ([video_url] if video_url else []) + override_urls if u]
 
     for url in all_urls:
         try:

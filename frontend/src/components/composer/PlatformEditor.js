@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   FaFacebook, FaInstagram, FaLinkedin, FaTwitter,
   FaYoutube, FaTiktok, FaPinterest,
-  FaMusic, FaShoppingBag, FaInfoCircle,
+  FaMusic, FaShoppingBag, FaInfoCircle, FaExclamationTriangle,
   FaSmile, FaHashtag, FaCloudUploadAlt, FaTimes,
   FaChevronDown, FaChevronUp, FaGripVertical,
   FaFileAlt, FaFilePdf, FaFilePowerpoint, FaFileWord,
@@ -36,7 +36,7 @@ const PLATFORM_ICONS = {
 
 const CHAR_LIMITS = {
   twitter: 280, bluesky: 300, facebook: 63206, instagram: 2200,
-  linkedin: 3000, youtube: 5000, tiktok: 2200, pinterest: 500, threads: 500,
+  linkedin: 3000, youtube: 5000, tiktok: 2200, pinterest: 500, threads: 500, common: 5000,
 };
 
 // Ideal aspect ratios (width/height) per platform/format
@@ -109,6 +109,9 @@ const EMOJI_LIST = [
 
 const PlatformEditor = ({
   platform,
+  title,
+  headerIcon: HeaderIcon,
+  headerColor,
   postType,
   content,
   onContentChange,
@@ -151,6 +154,10 @@ const PlatformEditor = ({
   onCropMedia,
   // Hashtag groups array: [{id, name, hashtags:[]}]
   hashtagGroups = [],
+  errorMessages = [],
+  infoMessages = [],
+  showPlatformSpecificFields = true,
+  onResetToCommon,
 }) => {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [hashtagOpen, setHashtagOpen] = useState(false);
@@ -195,10 +202,13 @@ const PlatformEditor = ({
     .filter(Boolean);
 
   const meta = PLATFORM_ICONS[platform] || { icon: FaFacebook, color: '#888' };
-  const Icon = meta.icon;
+  const Icon = HeaderIcon || meta.icon;
+  const platformColor = headerColor || meta.color;
+  const label = title || platform;
   const limit = CHAR_LIMITS[platform] || 2200;
   const remaining = limit - content.length;
   const pct = content.length / limit;
+  const issueCount = errorMessages.length;
 
   const counterColor =
     pct >= 1    ? 'text-red-600' :
@@ -476,13 +486,13 @@ const PlatformEditor = ({
         {/* Platform icon with brand color bg */}
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: `${meta.color}1a` }}
+          style={{ backgroundColor: `${platformColor}1a` }}
         >
-          <Icon style={{ color: meta.color }} className="text-sm" />
+          <Icon style={{ color: platformColor }} className="text-sm" />
         </div>
 
         {/* Instagram: inline Post/Reel/Story radios */}
-        {platform === 'instagram' ? (
+        {platform === 'instagram' && !title ? (
           <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
             {['Post', 'Reel', 'Story'].map((fmt) => (
               <label key={fmt} className="flex items-center gap-1.5 cursor-pointer">
@@ -499,10 +509,29 @@ const PlatformEditor = ({
             ))}
           </div>
         ) : (
-          <span className="text-sm font-semibold text-gray-700 capitalize">{platform}</span>
+          <span className="text-sm font-semibold text-gray-700 capitalize">{label}</span>
         )}
 
         <div className="flex-1" />
+
+        {onResetToCommon && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onResetToCommon(); }}
+            className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 mr-2"
+          >
+            Reset to Common
+          </button>
+        )}
+
+        {issueCount > 0 && (
+          <div className="flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 mr-2">
+            <FaExclamationTriangle className="text-[10px] text-red-500" />
+            <span className="text-[11px] font-semibold text-red-700">
+              {issueCount}
+            </span>
+          </div>
+        )}
 
         {/* Content preview snippet when collapsed */}
         {!isExpanded && content.trim() && (
@@ -527,6 +556,35 @@ const PlatformEditor = ({
       {/* ── Collapsible body ─────────────────────────────────────────────────── */}
       {isExpanded && (
         <>
+          {(errorMessages.length > 0 || infoMessages.length > 0) && (
+            <div className="px-4 pt-3 space-y-2">
+              {errorMessages.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <FaExclamationTriangle className="text-red-500 text-xs" />
+                    <span className="text-xs font-semibold text-red-700">Resolve these issues</span>
+                  </div>
+                  <ul className="space-y-1">
+                    {errorMessages.map((message, index) => (
+                      <li key={`${message}-${index}`} className="text-xs text-red-700 leading-snug">
+                        {message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {infoMessages.length > 0 && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 space-y-1">
+                  {infoMessages.map((message, index) => (
+                    <p key={`${message}-${index}`} className="text-xs text-blue-700 leading-snug">
+                      {message}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Textarea */}
           <div className="px-4 pt-3 pb-2">
             <Textarea
@@ -1100,7 +1158,7 @@ const PlatformEditor = ({
           </div>
 
           {/* ── Instagram-specific fields ─────────────────────────────────────── */}
-          {platform === 'instagram' && (
+          {showPlatformSpecificFields && platform === 'instagram' && (
             <div className="border-t border-gray-100 px-4 py-3 space-y-3">
               {/* Add Stickers */}
               <div className="flex items-center gap-3">
@@ -1143,7 +1201,7 @@ const PlatformEditor = ({
           )}
 
           {/* ── LinkedIn-specific fields ──────────────────────────────────────── */}
-          {platform === 'linkedin' && (
+          {showPlatformSpecificFields && platform === 'linkedin' && (
             <div className="border-t border-gray-100 px-4 py-3 space-y-3">
               <div className="grid grid-cols-[100px_1fr] items-center gap-3">
                 <Label className="text-sm font-semibold text-gray-700">First Comment</Label>
@@ -1204,7 +1262,7 @@ const PlatformEditor = ({
           )}
 
           {/* ── YouTube-specific fields ───────────────────────────────────────── */}
-          {platform === 'youtube' && (
+          {showPlatformSpecificFields && platform === 'youtube' && (
             <div className="border-t border-gray-100 px-4 py-3 space-y-3">
               <div className="flex justify-end">
                 <div className="flex items-center gap-1 text-blue-600 text-xs font-medium cursor-pointer">
@@ -1271,7 +1329,7 @@ const PlatformEditor = ({
             </div>
           )}
           {/* ── TikTok-specific fields ─────────────────────────────────────────── */}
-          {platform === 'tiktok' && (
+          {showPlatformSpecificFields && platform === 'tiktok' && (
             <div className="border-t border-gray-100 px-4 py-3 space-y-3">
               <div className="grid grid-cols-[80px_1fr] items-center gap-3">
                 <Label className="text-sm font-semibold text-gray-700">Visibility</Label>

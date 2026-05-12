@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
-import { validateMediaForPlatforms, validatePlanLimit } from '@/lib/mediaValidation';
+import { buildCommonPostValidation } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -17,7 +16,6 @@ import {
   getSocialAccounts,
   uploadMedia,
   waitForUploadReady,
-  generateImage,
   getHashtagGroups,
   generateContent,
 } from '@/lib/api';
@@ -25,7 +23,7 @@ import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
-  FaChevronUp, FaChevronDown, FaMagic, FaRobot, FaDiscord,
+  FaChevronUp, FaChevronDown, FaDiscord, FaImages,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -327,6 +325,8 @@ const platformIcons = {
   discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
 };
 
+const COMMON_POST_SECTION = '__common_post__';
+
 const PLATFORM_CROP_CONFIG = {
   instagram: {
     Post: 4 / 5,
@@ -491,7 +491,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
 
-  // ── Per-platform captions ─────────────────────────────────────────────────
+  // ── Shared + per-platform content ────────────────────────────────────────
+  const [commonCaption, setCommonCaption] = useState('');
   const [platformCaptions, setPlatformCaptions] = useState({});
 
   // ── Platform-specific settings ────────────────────────────────────────────
@@ -514,8 +515,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [uploadProgress,     setUploadProgress]     = useState(0);
   const [uploadedMedia,      setUploadedMedia]      = useState([]);   // array of {file,url,type,name,width,height}
   const [platformMediaOverrides, setPlatformMediaOverrides] = useState({});
-  // Media validation modal state
-  const [mediaValidation,    setMediaValidation]    = useState(null); // { file, violations, pendingUpload }
   const [coverImage,         setCoverImage]         = useState(null);
   const [coverImageUploading,setCoverImageUploading]= useState(false);
   const [mediaRawAspectRatio,setMediaRawAspectRatio]= useState(null);
@@ -552,13 +551,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   );
   const [loading,               setLoading]               = useState(false);
   const [altTexts,              setAltTexts]              = useState([]);
-
-  // ── AI Image Generation state ─────────────────────────────────────────────
-  const [showAiPanel,           setShowAiPanel]           = useState(false);
-  const [aiPrompt,              setAiPrompt]              = useState('');
-  const [aiSize,                setAiSize]                = useState('1024x1024');
-  const [aiStyle,               setAiStyle]               = useState('vivid');
-  const [aiGenerating,          setAiGenerating]          = useState(false);
 
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
@@ -606,8 +598,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     // Auto-expand first platform if none expanded (or expanded was removed)
     setExpandedPlatform(prev => {
       if (platforms.length === 0) return null;
-      if (prev && platforms.includes(prev)) return prev;
-      return platforms[0];
+      if (prev === COMMON_POST_SECTION || (prev && platforms.includes(prev))) return prev;
+      return COMMON_POST_SECTION;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccounts, availableAccounts]);
@@ -623,7 +615,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     [...new Set(availableAccounts.filter(a => selectedAccounts.includes(a.id)).map(a => a.platform))];
 
   const selectedPlatforms = getSelectedPlatforms();
-  const usePlatformScopedMedia = selectedPlatforms.length > 1;
 
   // Ordered list of platforms (respects manual drag order)
   const orderedPlatforms = platformOrder.filter(p => selectedPlatforms.includes(p));
@@ -638,42 +629,64 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     a => selectedAccounts.includes(a.id) && a.platform === activePlatform
   );
 
+  const hasPlatformCaptionOverride = useCallback(
+    (platform) => Object.prototype.hasOwnProperty.call(platformCaptions, platform),
+    [platformCaptions]
+  );
+
+  const hasPlatformMediaOverride = useCallback(
+    (platform) => Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform),
+    [platformMediaOverrides]
+  );
+
+  const getEffectiveCaptionForPlatform = useCallback((platform) => {
+    if (!platform) return commonCaption;
+    return hasPlatformCaptionOverride(platform)
+      ? (platformCaptions[platform] || '')
+      : commonCaption;
+  }, [commonCaption, hasPlatformCaptionOverride, platformCaptions]);
+
   const getEffectiveMediaForPlatform = useCallback((platform) => {
-    if (!platform) return usePlatformScopedMedia ? [] : uploadedMedia;
-    if (Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform)) {
+    if (!platform) return uploadedMedia;
+    if (hasPlatformMediaOverride(platform)) {
       const overrideMedia = platformMediaOverrides[platform];
       return Array.isArray(overrideMedia) ? overrideMedia : [];
     }
-    return usePlatformScopedMedia ? [] : uploadedMedia;
-  }, [platformMediaOverrides, uploadedMedia, usePlatformScopedMedia]);
+    return uploadedMedia;
+  }, [hasPlatformMediaOverride, platformMediaOverrides, uploadedMedia]);
 
   const clearDerivedPlatformMediaOverrides = useCallback(() => {
     setPlatformMediaOverrides({});
   }, []);
 
-  useEffect(() => {
-    if (!usePlatformScopedMedia) return;
-    if (!basePlatform) return;
-    if (uploadedMedia.length === 0) return;
+  const commonFirstComment = firstComment;
 
-    setPlatformMediaOverrides((prev) => {
-      if (Object.prototype.hasOwnProperty.call(prev, basePlatform)) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [basePlatform]: uploadedMedia,
-      };
+  const platformValidation = useMemo(() => {
+    const captionByPlatform = Object.fromEntries(
+      selectedPlatforms.map((platform) => [platform, getEffectiveCaptionForPlatform(platform)])
+    );
+    const mediaByPlatform = Object.fromEntries(
+      selectedPlatforms.map((platform) => [platform, getEffectiveMediaForPlatform(platform)])
+    );
+    return buildCommonPostValidation({
+      platforms: selectedPlatforms,
+      captionByPlatform,
+      mediaByPlatform,
+      postFormat,
     });
-    setUploadedMedia([]);
-  }, [basePlatform, uploadedMedia, usePlatformScopedMedia]);
+  }, [getEffectiveCaptionForPlatform, getEffectiveMediaForPlatform, postFormat, selectedPlatforms]);
+
+  const blockingPlatforms = selectedPlatforms.filter(
+    (platform) => (platformValidation[platform]?.errors || []).length > 0
+  );
+  const hasBlockingErrors = blockingPlatforms.length > 0;
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
     setExpandedPlatform(prev => {
       const next = prev === platform ? null : platform;
       // Sync preview with expanded platform
-      if (next) setActivePreviewPlatform(next);
+      if (next && next !== COMMON_POST_SECTION) setActivePreviewPlatform(next);
       return next;
     });
   };
@@ -705,6 +718,33 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       img.src = url;
     });
 
+  const getVideoMetadata = (file) =>
+    new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.onloadedmetadata = () => {
+        const metadata = {
+          width: video.videoWidth || 0,
+          height: video.videoHeight || 0,
+          duration: Number.isFinite(video.duration) ? video.duration : 0,
+          hasAudio: Boolean(
+            video.mozHasAudio ||
+            video.webkitAudioDecodedByteCount > 0 ||
+            video.audioTracks?.length
+          ),
+        };
+        URL.revokeObjectURL(url);
+        resolve(metadata);
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve({ width: 0, height: 0, duration: 0, hasAudio: false });
+      };
+      video.src = url;
+    });
+
   const fileToDataUrl = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -727,21 +767,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     });
   }, []);
 
-  const uploadToBackend = useCallback(async (file, { skipValidation = false } = {}) => {
+  const uploadToBackend = useCallback(async (file) => {
     if (!file) return;
     const isVideo = file.type.startsWith('video/');
-
-    // ── Client-side platform validation ───────────────────────────────────
-    if (!skipValidation) {
-      const platforms = [...new Set(
-        availableAccounts.filter(a => selectedAccounts.includes(a.id)).map(a => a.platform)
-      )];
-      const violations = validateMediaForPlatforms(file, platforms);
-      if (violations.length > 0) {
-        setMediaValidation({ file, violations, platforms });
-        return; // stop — modal will let user decide
-      }
-    }
 
     // Validate mix of video + images (only for non-mixed post types)
     if (type !== 'mixed') {
@@ -775,8 +803,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         throw new Error('Processed upload did not return a media URL');
       }
       const inferredIsVideo = (asset.mime_type || file.type || '').startsWith('video/');
+      const videoMeta = inferredIsVideo
+        ? await getVideoMetadata(file)
+        : null;
       const dims = inferredIsVideo
-        ? { width: asset.width || 0, height: asset.height || 0 }
+        ? { width: asset.width || videoMeta?.width || 0, height: asset.height || videoMeta?.height || 0 }
         : await getImageDimensions(mediaUrl);
 
       setUploadedMedia(prev => [
@@ -790,9 +821,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           sourceUrl: mediaUrl,
           thumbnailUrl: asset.thumbnail_url || mediaUrl,
           type: inferredIsVideo ? 'video' : 'image',
+          mimeType: asset.mime_type || file.type,
+          size: file.size,
           name: file.name,
           width: asset.width || dims.width,
           height: asset.height || dims.height,
+          duration: videoMeta?.duration || 0,
+          hasAudio: videoMeta?.hasAudio,
         },
       ]);
       clearDerivedPlatformMediaOverrides();
@@ -804,7 +839,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       setUploadProgress(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableAccounts, clearDerivedPlatformMediaOverrides, resolveUploadedAsset, selectedAccounts, uploadedMedia]);
+  }, [clearDerivedPlatformMediaOverrides, resolveUploadedAsset, uploadedMedia]);
 
   // Upload multiple files sequentially
   const uploadFilesToBackend = async (files) => {
@@ -842,8 +877,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         throw new Error('Processed upload did not return a media URL');
       }
       const inferredIsVideo = (asset.mime_type || file.type || '').startsWith('video/');
+      const videoMeta = inferredIsVideo
+        ? await getVideoMetadata(file)
+        : null;
       const dims = inferredIsVideo
-        ? { width: asset.width || 0, height: asset.height || 0 }
+        ? { width: asset.width || videoMeta?.width || 0, height: asset.height || videoMeta?.height || 0 }
         : await getImageDimensions(mediaUrl);
       arr.push({
         file,
@@ -854,9 +892,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         sourceUrl: mediaUrl,
         thumbnailUrl: asset.thumbnail_url || mediaUrl,
         type: inferredIsVideo ? 'video' : 'image',
+        mimeType: asset.mime_type || file.type,
+        size: file.size,
         name: file.name,
         width: asset.width || dims.width,
         height: asset.height || dims.height,
+        duration: videoMeta?.duration || 0,
+        hasAudio: videoMeta?.hasAudio,
       });
     }
     return arr;
@@ -865,7 +907,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const handleFilesSelectForPlatform = async (platform, files) => {
     const arr = Array.isArray(files) ? files : Array.from(files || []);
     if (arr.length === 0) return;
-    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
+    if (!platform) {
       await uploadFilesToBackend(arr);
       return;
     }
@@ -887,7 +929,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   const handleRemoveMediaForPlatform = (platform, index) => {
-    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
+    if (!platform) {
       removeMediaItem(index);
       return;
     }
@@ -898,7 +940,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   const handleReorderMediaForPlatform = (platform, fromIndex, toIndex) => {
-    if (!usePlatformScopedMedia && (!platform || platform === basePlatform)) {
+    if (!platform) {
       reorderMedia(fromIndex, toIndex);
       return;
     }
@@ -1004,7 +1046,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             height: asset.height || dims.height,
           });
 
-          if (!usePlatformScopedMedia && (!targetPlatform || targetPlatform === basePlatform)) {
+          if (!targetPlatform) {
             setUploadedMedia(prev => {
               const next = [...prev];
               if (!next[cropMediaIndex]) return prev;
@@ -1040,7 +1082,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   // Called from PlatformEditor "Crop" button
   const handleCropMedia = async (platform, index, targetRatio) => {
-    const effectiveMedia = getEffectiveMediaForPlatform(platform);
+    const normalizedPlatform = platform === COMMON_POST_SECTION ? null : platform;
+    const effectiveMedia = getEffectiveMediaForPlatform(normalizedPlatform);
     const item = effectiveMedia[index];
     if (!item || item.type === 'video') return;
     try {
@@ -1054,9 +1097,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         throw new Error('Image source unavailable');
       }
 
-      setCropPlatform(platform || basePlatform || null);
+      setCropPlatform(normalizedPlatform);
       setCropMediaIndex(index);
-      setCropTargetRatio(targetRatio ?? getPlatformCropRatio(platform || basePlatform, postFormat));
+      setCropTargetRatio(targetRatio ?? getPlatformCropRatio(normalizedPlatform || basePlatform, postFormat));
       setCropImageSrc(cropSrc);
       setCrop({ x: 0, y: 0 });
       setZoom(1);
@@ -1090,6 +1133,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   // ── Reset (Create Another) ────────────────────────────────────────────────
   const resetForm = () => {
+    setCommonCaption('');
     setPlatformCaptions({});
     setUploadedMedia([]);
     setPlatformMediaOverrides({});
@@ -1106,15 +1150,22 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (mode) => {
     const primaryPlatform = orderedPlatforms[0] || selectedPlatforms[0];
-    const primaryContent  = (primaryPlatform ? platformCaptions[primaryPlatform] : '') || '';
-    const hasContent      = selectedPlatforms.some(p => (platformCaptions[p] || '').trim());
+    const primaryContent = commonCaption || (primaryPlatform ? getEffectiveCaptionForPlatform(primaryPlatform) : '') || '';
+    const hasContent = Boolean(primaryContent.trim()) || selectedPlatforms.some((platform) => {
+      const caption = getEffectiveCaptionForPlatform(platform);
+      return Boolean(caption.trim());
+    }) || uploadedMedia.length > 0;
 
     if (!hasContent) {
-      toast.error('Please enter some content for at least one platform');
+      toast.error('Please enter some content or upload media before posting');
       return;
     }
     if (selectedAccounts.length === 0) {
       toast.error('Please select at least one account');
+      return;
+    }
+    if (mode !== 'draft' && hasBlockingErrors) {
+      toast.error('Resolve all Common Post errors before posting or scheduling.');
       return;
     }
 
@@ -1135,12 +1186,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         if (!scheduledDateTime) { toast.error('Invalid date / time'); setLoading(false); return; }
       }
 
-      const primaryPlatformMedia = primaryPlatform
-        ? getEffectiveMediaForPlatform(primaryPlatform)
-        : [];
-      const topLevelMedia = usePlatformScopedMedia ? [] : primaryPlatformMedia;
+      const topLevelMedia = uploadedMedia;
       const mediaIds = topLevelMedia.map((m) => m.mediaId).filter(Boolean);
       const mediaUrls = topLevelMedia.map((m) => m.url).filter(Boolean);
+      const mediaTypes = topLevelMedia.map((m) => m.type).filter(Boolean);
       if (linkedinDocumentUrl && !mediaUrls.includes(linkedinDocumentUrl)) {
         mediaUrls.push(linkedinDocumentUrl);
       }
@@ -1148,21 +1197,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const fallbackTitle = videoTitle || linkedinDocumentTitle || '';
       const platformOverrides = Object.fromEntries(
         selectedPlatforms.map((platform) => {
-          const override = {
-            content: (platformCaptions[platform] ?? primaryContent) || primaryContent,
-          };
           const platformMedia = getEffectiveMediaForPlatform(platform);
-          const shouldSetPlatformMedia = usePlatformScopedMedia
-            ? platformMedia.length > 0
-            : Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform);
-          if (shouldSetPlatformMedia) {
-            override.media_ids = platformMedia.map((m) => m.mediaId).filter(Boolean);
-            override.media_urls = platformMedia.map((m) => m.url).filter(Boolean);
-          }
+          const effectiveContent = getEffectiveCaptionForPlatform(platform) || primaryContent;
+          const override = {
+            content: effectiveContent,
+            media_ids: platformMedia.map((m) => m.mediaId).filter(Boolean),
+            media_urls: platformMedia.map((m) => m.url).filter(Boolean),
+            media_types: platformMedia.map((m) => m.type).filter(Boolean),
+          };
           if ((platform === 'youtube' || platform === 'tiktok') && videoTitle) {
             override.title = videoTitle;
           } else if (platform === 'linkedin' && linkedinDocumentTitle) {
             override.title = linkedinDocumentTitle;
+          }
+          if (platform === 'instagram' && commonFirstComment.trim()) {
+            override.first_comment = commonFirstComment;
+          }
+          if (platform === 'linkedin' && linkedinFirstComment.trim()) {
+            override.first_comment = linkedinFirstComment;
           }
           return [platform, override];
         })
@@ -1171,17 +1223,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       await axios.post(`${apiUrl}/api/posts`, {
         content: primaryContent,
         platforms: selectedPlatforms,
-        account_ids: selectedAccounts,
-        publish_now: publishNow,
-        scheduled_time: scheduledDateTime,
         post_type: type,
         media_ids: mediaIds,
         media_urls: mediaUrls,
-        title: fallbackTitle || null,
+        media_types: mediaTypes,
+        account_ids: selectedAccounts,
+        publish_now: publishNow,
+        scheduled_time: scheduledDateTime,
+        video_title: fallbackTitle || null,
+        youtube_privacy: youtubePrivacy,
         tiktok_privacy: tiktokPrivacy,
-        disable_duet: !tiktokAllowDuet,
-        disable_stitch: !tiktokAllowStitch,
-        disable_comment: !tiktokAllowComments,
+        tiktok_allow_duet: tiktokAllowDuet,
+        tiktok_allow_stitch: tiktokAllowStitch,
+        tiktok_allow_comment: tiktokAllowComments,
         platform_overrides: platformOverrides,
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
@@ -1301,90 +1355,74 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         </div>
       ) : (
         <>
-          {/* ── AI Image Generation card (image/carousel posts only) ── */}
-          {(type === 'image' || type === 'carousel') && uploadedMedia.length === 0 && (
-            <div className="bg-white rounded-xl border-2 border-purple-200 shadow-sm p-5 mb-5 hover:border-purple-300 transition-colors">
-              <button
-                onClick={() => setShowAiPanel(v => !v)}
-                className="flex items-center gap-2.5 text-sm font-bold text-purple-700 hover:text-purple-900 transition-colors w-full text-left"
-              >
-                <FaMagic className="text-sm" />
-                {showAiPanel ? 'Hide AI Image Generator' : '✨ Generate image with AI (DALL-E 3)'}
-              </button>
-              {showAiPanel && (
-                <div className="mt-3">
-                  <textarea
-                    value={aiPrompt}
-                    onChange={e => setAiPrompt(e.target.value)}
-                    placeholder="Describe the image you want to generate…"
-                    rows={3}
-                    className="w-full border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300 placeholder:text-gray-400 resize-none mb-2 bg-purple-50/30"
-                  />
-                  <div className="flex gap-2 mb-2">
-                    <select
-                      value={aiSize}
-                      onChange={e => setAiSize(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-purple-300"
-                    >
-                      <option value="1024x1024">Square 1:1</option>
-                      <option value="1792x1024">Landscape 16:9</option>
-                      <option value="1024x1792">Portrait 9:16</option>
-                    </select>
-                    <select
-                      value={aiStyle}
-                      onChange={e => setAiStyle(e.target.value)}
-                      className="flex-1 text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-purple-300"
-                    >
-                      <option value="vivid">Vivid</option>
-                      <option value="natural">Natural</option>
-                    </select>
-                  </div>
-                  <button
-                    disabled={aiGenerating || !aiPrompt.trim()}
-                    onClick={async () => {
-                      if (!aiPrompt.trim()) return;
-                      setAiGenerating(true);
-                      try {
-                        const data = await generateImage(aiPrompt.trim(), aiSize, aiStyle);
-                        const generatedMedia = { url: data.url, type: 'image', name: 'ai-generated.png' };
-                        const targetPlatform = expandedPlatform || activePlatform || basePlatform;
-                        if (usePlatformScopedMedia && targetPlatform) {
-                          setPlatformMediaOverrides(prev => ({
-                            ...prev,
-                            [targetPlatform]: [...getEffectiveMediaForPlatform(targetPlatform), generatedMedia],
-                          }));
-                        } else {
-                          setUploadedMedia(prev => [...prev, generatedMedia]);
-                          clearDerivedPlatformMediaOverrides();
-                        }
-                        toast.success('Image generated!');
-                        setShowAiPanel(false);
-                        setAiPrompt('');
-                      } catch (err) {
-                        toast.error(err?.response?.data?.detail || 'Failed to generate image');
-                      } finally {
-                        setAiGenerating(false);
-                      }
-                    }}
-                    className="w-full py-2 text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                  >
-                    {aiGenerating ? (
-                      <><div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
-                    ) : (
-                      <><FaMagic className="text-xs" />Generate</>
-                    )}
-                  </button>
-                </div>
-              )}
+          {hasBlockingErrors && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5">
+              <p className="text-sm font-semibold text-red-700">
+                Resolve {blockingPlatforms.length} platform issue{blockingPlatforms.length !== 1 ? 's' : ''} before posting or scheduling.
+              </p>
             </div>
           )}
+
+          <PlatformEditor
+            platform="common"
+            title="Common Post"
+            headerIcon={FaImages}
+            headerColor="#2563EB"
+            postType={type}
+            content={commonCaption}
+            onContentChange={setCommonCaption}
+            isExpanded={expandedPlatform === COMMON_POST_SECTION}
+            onToggleExpand={() => handleToggleExpand(COMMON_POST_SECTION)}
+            media={uploadedMedia}
+            uploading={uploading}
+            uploadProgress={uploadProgress}
+            onFilesSelect={(files) => handleFilesSelectForPlatform(null, files)}
+            onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
+            onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
+            fileInputRef={fileInputRef}
+            postFormat={postFormat}
+            onPostFormatChange={setPostFormat}
+            firstComment={commonFirstComment}
+            onFirstCommentChange={(value) => {
+              setFirstComment(value);
+              if (!linkedinFirstComment.trim() || linkedinFirstComment === commonFirstComment) {
+                setLinkedinFirstComment(value);
+              }
+            }}
+            location={location}
+            onLocationChange={setLocation}
+            shopGridLink={shopGridLink}
+            onShopGridLinkChange={setShopGridLink}
+            videoTitle={videoTitle}
+            onVideoTitleChange={setVideoTitle}
+            youtubePrivacy={youtubePrivacy}
+            onYoutubePrivacyChange={setYoutubePrivacy}
+            linkedinFirstComment={linkedinFirstComment}
+            onLinkedinFirstCommentChange={setLinkedinFirstComment}
+            linkedinDocumentUrl={linkedinDocumentUrl}
+            linkedinDocumentTitle={linkedinDocumentTitle}
+            onLinkedinDocumentChange={() => {}}
+            tiktokPrivacy={tiktokPrivacy}
+            onTiktokPrivacyChange={setTiktokPrivacy}
+            tiktokAllowDuet={tiktokAllowDuet}
+            onTiktokAllowDuetChange={setTiktokAllowDuet}
+            tiktokAllowStitch={tiktokAllowStitch}
+            onTiktokAllowStitchChange={setTiktokAllowStitch}
+            tiktokAllowComments={tiktokAllowComments}
+            onTiktokAllowCommentsChange={setTiktokAllowComments}
+            altTexts={altTexts}
+            onAltTextsChange={setAltTexts}
+            onCropMedia={(idx, ratio) => handleCropMedia(COMMON_POST_SECTION, idx, ratio)}
+            hashtagGroups={hashtagGroups}
+            showPlatformSpecificFields={false}
+          />
 
           {orderedPlatforms.map((platform, index) => (
             <PlatformEditor
               key={platform}
               platform={platform}
               postType={type}
-              content={platformCaptions[platform] ?? ''}
+              content={getEffectiveCaptionForPlatform(platform)}
               onContentChange={(val) =>
                 setPlatformCaptions(prev => ({ ...prev, [platform]: val }))
               }
@@ -1400,10 +1438,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               media={getEffectiveMediaForPlatform(platform)}
               uploading={uploading}
               uploadProgress={uploadProgress}
-              onFilesSelect={(files) => handleFilesSelectForPlatform(platform, files)}
-              onRemoveMedia={(idx) => handleRemoveMediaForPlatform(platform, idx)}
-              onReorderMedia={(from, to) => handleReorderMediaForPlatform(platform, from, to)}
-              fileInputRef={fileInputRef}
+              onFilesSelect={undefined}
+              onRemoveMedia={undefined}
+              onReorderMedia={undefined}
+              fileInputRef={undefined}
               // Platform-specific
               postFormat={postFormat}             onPostFormatChange={setPostFormat}
               firstComment={firstComment}        onFirstCommentChange={setFirstComment}
@@ -1436,6 +1474,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               // Crop + Hashtags
               onCropMedia={(idx, ratio) => handleCropMedia(platform, idx, ratio)}
               hashtagGroups={hashtagGroups}
+              errorMessages={platformValidation[platform]?.errors || []}
+              infoMessages={platformValidation[platform]?.notes || []}
+              onResetToCommon={
+                hasPlatformCaptionOverride(platform) || hasPlatformMediaOverride(platform)
+                  ? () => {
+                      setPlatformCaptions((prev) => {
+                        const next = { ...prev };
+                        delete next[platform];
+                        return next;
+                      });
+                      setPlatformMediaOverrides((prev) => {
+                        const next = { ...prev };
+                        delete next[platform];
+                        return next;
+                      });
+                    }
+                  : undefined
+              }
             />
           ))}
 
@@ -1476,13 +1532,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const platform = aiCaptionPlatform === 'all' ? null : aiCaptionPlatform;
       const data = await generateContent(aiCaptionPrompt.trim(), platform, aiCaptionTone);
       setAiGeneratedText(data.content);
-      // Also inject into caption editors if platforms are selected
       if (aiCaptionPlatform === 'all') {
-        const updates = {};
-        orderedPlatforms.forEach(p => { updates[p] = data.content; });
-        if (Object.keys(updates).length > 0) {
-          setPlatformCaptions(prev => ({ ...prev, ...updates }));
-        }
+        setCommonCaption(data.content);
       } else {
         setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: data.content }));
       }
@@ -1496,9 +1547,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const handleApplyGeneratedText = () => {
     if (!aiGeneratedText) return;
     if (aiCaptionPlatform === 'all') {
-      const updates = {};
-      orderedPlatforms.forEach(p => { updates[p] = aiGeneratedText; });
-      setPlatformCaptions(prev => ({ ...prev, ...updates }));
+      setCommonCaption(aiGeneratedText);
     } else {
       setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: aiGeneratedText }));
     }
@@ -1634,8 +1683,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             <PreviewPanel
               activePlatform={activePlatform}
               account={activeAccount}
-              content={platformCaptions[activePlatform] ?? ''}
-                    media={getEffectiveMediaForPlatform(activePlatform)}
+              content={getEffectiveCaptionForPlatform(activePlatform)}
+              media={getEffectiveMediaForPlatform(activePlatform)}
               videoTitle={videoTitle}
               postFormat={postFormat}
             />
@@ -1689,7 +1738,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         <Button
           size="sm"
           onClick={() => handleSubmit('now')}
-          disabled={loading}
+          disabled={loading || hasBlockingErrors}
           className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
         >
           {loading ? 'Posting…' : 'Post Now'}
@@ -1699,7 +1748,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         <Button
           variant="outline" size="sm"
           onClick={() => setShowSchedulePicker(true)}
-          disabled={loading}
+          disabled={loading || hasBlockingErrors}
           className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
         >
           <FaClock className="text-xs" />
@@ -1714,26 +1763,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     <>
       {/* Hidden file inputs */}
       <input ref={coverImageInputRef} type="file" accept="image/*" onChange={handleCoverImageChange} className="hidden" />
-
-      {/* ── Media validation error modal ─────────────────────────────────── */}
-      {mediaValidation && (
-        <MediaValidationErrorModal
-          file={mediaValidation.file}
-          violations={mediaValidation.violations}
-          platforms={mediaValidation.platforms}
-          onClose={() => setMediaValidation(null)}
-          onContinue={
-            mediaValidation.platforms.some(p =>
-              !mediaValidation.violations.find(v => v.platform === p)
-            )
-              ? () => {
-                  setMediaValidation(null);
-                  uploadToBackend(mediaValidation.file, { skipValidation: true });
-                }
-              : undefined
-          }
-        />
-      )}
 
       {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
       {(() => {
