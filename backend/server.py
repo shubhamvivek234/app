@@ -41,6 +41,17 @@ import base64
 import json as _json
 import asyncio as _asyncio
 from cryptography.fernet import Fernet
+from app.media_validator import validate_file_size, validate_mime_type
+from utils.storage import (
+    abort_multipart_upload as storage_abort_multipart_upload,
+    complete_multipart_upload as storage_complete_multipart_upload,
+    create_direct_upload_session as storage_create_direct_upload_session,
+    delete_file as storage_delete_file,
+    get_object_metadata as storage_get_object_metadata,
+    get_storage_backend as storage_get_backend,
+    is_managed_storage_url as storage_is_managed_url,
+    upload_file as storage_upload_file,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -202,6 +213,13 @@ _LOCAL_UPLOADS_DIR = Path(__file__).parent / "uploads"
 _LOCAL_UPLOADS_DIR.mkdir(exist_ok=True, parents=True)
 app.mount("/uploads", StaticFiles(directory=str(_LOCAL_UPLOADS_DIR)), name="uploads")
 
+DIRECT_UPLOAD_MULTIPART_THRESHOLD_BYTES = int(
+    os.environ.get("DIRECT_UPLOAD_MULTIPART_THRESHOLD_BYTES", 25 * 1024 * 1024)
+)
+DIRECT_UPLOAD_PART_SIZE_BYTES = int(
+    os.environ.get("DIRECT_UPLOAD_PART_SIZE_BYTES", 25 * 1024 * 1024)
+)
+
 # ==================== PLAN LIMITS ====================
 PLAN_MONTHLY_POST_LIMITS = {
     "free": 30,        # 30 posts/month on free plan (Starter tier per architecture)
@@ -304,6 +322,27 @@ class PostUpdate(BaseModel):
     scheduled_time: Optional[str] = None
     version: Optional[int] = None  # EC25: client must send current version to detect conflicts
     status: Optional[str] = None
+
+
+class UploadSessionRequest(BaseModel):
+    filename: str
+    file_size_bytes: int
+    content_type: str
+
+
+class UploadCompletePart(BaseModel):
+    PartNumber: int
+    ETag: str
+
+
+class UploadCompleteRequest(BaseModel):
+    media_job_id: str
+    upload_id: Optional[str] = None
+    parts: List[UploadCompletePart] = []
+
+
+class UploadAbortRequest(BaseModel):
+    reason: str = "Upload aborted"
 
 class AIContentRequest(BaseModel):
     prompt: str
@@ -977,6 +1016,195 @@ async def _transcode_to_mp4(input_path: str, output_path: str) -> bool:
         return False
 
 
+def _build_media_asset_response(asset_doc: dict) -> dict:
+    return {
+        "media_job_id": asset_doc.get("id"),
+        "media_id": asset_doc.get("id"),
+        "status": asset_doc.get("status"),
+        "media_url": asset_doc.get("media_url"),
+        "mime_type": asset_doc.get("mime_type"),
+        "type": asset_doc.get("type"),
+        "width": asset_doc.get("width"),
+        "height": asset_doc.get("height"),
+        "size_bytes": asset_doc.get("size_bytes"),
+        "filename": asset_doc.get("original_filename"),
+        "error_message": asset_doc.get("error_message"),
+        "lifecycle_status": asset_doc.get("lifecycle_status"),
+    }
+
+
+@api_router.post("/upload/session")
+async def create_upload_session(
+    body: UploadSessionRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if storage_get_backend() != "r2":
+        raise HTTPException(status_code=501, detail="Direct upload requires STORAGE_BACKEND=r2")
+
+    if body.file_size_bytes <= 0:
+        raise HTTPException(status_code=400, detail="file_size_bytes must be greater than 0")
+
+    original_filename = (body.filename or "").strip()
+    if not original_filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    content_type = (body.content_type or "application/octet-stream").strip()
+    media_type = validate_mime_type(original_filename, content_type)
+    validate_file_size(body.file_size_bytes, media_type)
+
+    file_ext = Path(original_filename).suffix.lower()
+    safe_filename = f"{uuid.uuid4().hex}{file_ext}"
+    folder = f"uploads/{current_user.user_id}"
+    upload = storage_create_direct_upload_session(
+        filename=safe_filename,
+        content_type=content_type,
+        folder=folder,
+        file_size_bytes=body.file_size_bytes,
+        multipart_threshold_bytes=DIRECT_UPLOAD_MULTIPART_THRESHOLD_BYTES,
+        part_size_bytes=DIRECT_UPLOAD_PART_SIZE_BYTES,
+    )
+
+    now = datetime.now(timezone.utc)
+    media_job_id = str(uuid.uuid4())
+    asset_doc = {
+        "id": media_job_id,
+        "user_id": current_user.user_id,
+        "original_filename": original_filename,
+        "stored_filename": safe_filename,
+        "storage_key": upload["key"],
+        "media_url": upload["public_url"],
+        "mime_type": content_type,
+        "type": media_type,
+        "size_bytes": body.file_size_bytes,
+        "status": "uploading",
+        "upload_mode": upload["mode"],
+        "upload_id": upload.get("upload_id"),
+        "lifecycle_status": "quarantine",
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.media_assets.insert_one(asset_doc)
+
+    return {
+        "media_job_id": media_job_id,
+        "media_id": media_job_id,
+        "status": "uploading",
+        "upload": upload,
+    }
+
+
+@api_router.post("/upload/complete")
+async def complete_upload(
+    body: UploadCompleteRequest,
+    current_user: User = Depends(get_current_user),
+):
+    asset = await db.media_assets.find_one(
+        {"id": body.media_job_id, "user_id": current_user.user_id},
+        {"_id": 0},
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    if asset.get("status") in {"ready", "archived"}:
+        return _build_media_asset_response(asset)
+    if asset.get("status") in {"aborted", "failed"}:
+        raise HTTPException(status_code=409, detail=asset.get("error_message") or "Upload is not completable")
+
+    try:
+        if asset.get("upload_mode") == "multipart":
+            if not body.upload_id or body.upload_id != asset.get("upload_id"):
+                raise HTTPException(status_code=400, detail="upload_id mismatch")
+            if not body.parts:
+                raise HTTPException(status_code=400, detail="Multipart completion requires parts")
+            ordered_parts = [
+                {"PartNumber": part.PartNumber, "ETag": part.ETag}
+                for part in sorted(body.parts, key=lambda item: item.PartNumber)
+            ]
+            storage_complete_multipart_upload(asset["storage_key"], body.upload_id, ordered_parts)
+
+        metadata = storage_get_object_metadata(asset["storage_key"])
+        updated_asset = {
+            **asset,
+            "status": "ready",
+            "lifecycle_status": "active",
+            "etag": str(metadata.get("ETag", "")).strip('"'),
+            "size_bytes": int(metadata.get("ContentLength") or asset.get("size_bytes") or 0),
+            "updated_at": datetime.now(timezone.utc),
+        }
+        await db.media_assets.update_one(
+            {"id": body.media_job_id, "user_id": current_user.user_id},
+            {"$set": {
+                "status": updated_asset["status"],
+                "lifecycle_status": updated_asset["lifecycle_status"],
+                "etag": updated_asset["etag"],
+                "size_bytes": updated_asset["size_bytes"],
+                "updated_at": updated_asset["updated_at"],
+            }},
+        )
+        return _build_media_asset_response(updated_asset)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await db.media_assets.update_one(
+            {"id": body.media_job_id, "user_id": current_user.user_id},
+            {"$set": {
+                "status": "failed",
+                "error_message": str(exc),
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+        raise HTTPException(status_code=502, detail=f"Failed to finalize upload: {exc}")
+
+
+@api_router.get("/upload/{media_job_id}")
+async def get_upload_status(
+    media_job_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    asset = await db.media_assets.find_one(
+        {"id": media_job_id, "user_id": current_user.user_id},
+        {"_id": 0},
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    return _build_media_asset_response(asset)
+
+
+@api_router.post("/upload/{media_job_id}/abort")
+async def abort_upload(
+    media_job_id: str,
+    body: UploadAbortRequest,
+    current_user: User = Depends(get_current_user),
+):
+    asset = await db.media_assets.find_one(
+        {"id": media_job_id, "user_id": current_user.user_id},
+        {"_id": 0},
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    if asset.get("status") in {"ready", "archived"}:
+        return {"success": True, "status": asset.get("status")}
+
+    try:
+        if asset.get("upload_mode") == "multipart" and asset.get("upload_id"):
+            storage_abort_multipart_upload(asset["storage_key"], asset["upload_id"])
+        elif asset.get("media_url") and storage_is_managed_url(asset["media_url"]):
+            storage_delete_file(asset["media_url"])
+    except Exception as exc:
+        logging.warning(f"Failed to abort upload {media_job_id}: {exc}")
+
+    await db.media_assets.update_one(
+        {"id": media_job_id, "user_id": current_user.user_id},
+        {"$set": {
+            "status": "aborted",
+            "error_message": body.reason,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    return {"success": True, "status": "aborted"}
+
+
 @api_router.post("/upload")
 async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
     """
@@ -1047,58 +1275,39 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
     file_id = uuid.uuid4().hex[:16]
     safe_filename = f"{file_id}.{final_ext}"
 
-    # --- 5. Upload to R2 or local ---
-    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
-    file_url = None
+    # --- 5. Upload to managed storage only ---
+    content_type = mimetypes.guess_type(safe_filename)[0] or file.content_type or "application/octet-stream"
+    if final_ext == "mp4":
+        content_type = "video/mp4"
+    file_url = storage_upload_file(
+        final_content,
+        safe_filename,
+        content_type,
+        folder=f"uploads/{current_user.user_id}",
+    )
 
-    if storage_backend == "r2":
-        try:
-            import boto3
-            from botocore.client import Config
-            import io
-
-            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
-            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
-            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
-
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=r2_endpoint,
-                aws_access_key_id=r2_access_key,
-                aws_secret_access_key=r2_secret_key,
-                config=Config(signature_version="s3v4"),
-                region_name="auto"
-            )
-
-            content_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
-            object_key = f"uploads/{current_user.user_id}/{safe_filename}"
-
-            s3.upload_fileobj(
-                io.BytesIO(final_content),
-                r2_bucket,
-                object_key,
-                ExtraArgs={"ContentType": content_type}
-            )
-
-            file_url = (
-                f"https://{cdn_domain}/{object_key}" if cdn_domain
-                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
-            )
-        except Exception as e:
-            logging.warning(f"R2 upload failed, falling back to local: {e}")
-
-    if not file_url:
-        # Local filesystem fallback
-        upload_dir = _LOCAL_UPLOADS_DIR
-        upload_dir.mkdir(exist_ok=True, parents=True)
-        file_path = upload_dir / safe_filename
-        file_path.write_bytes(final_content)
-        file_url = f"/uploads/{safe_filename}"
+    media_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    await db.media_assets.insert_one(
+        {
+            "id": media_id,
+            "user_id": current_user.user_id,
+            "original_filename": original_filename,
+            "stored_filename": safe_filename,
+            "media_url": file_url,
+            "mime_type": content_type,
+            "type": media_type,
+            "size_bytes": len(final_content),
+            "status": "ready",
+            "lifecycle_status": "active",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
 
     return {
         "success": True,
+        "media_id": media_id,
         "url": file_url,
         "filename": original_filename,
         "media_type": media_type,
@@ -3169,44 +3378,13 @@ async def public_upload_from_url(body: dict, user_id: str = Depends(_resolve_api
         )
 
     safe_filename = f"{_uuid.uuid4().hex}.{file_ext}"
-    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
-    file_url = None
-
-    if storage_backend == "r2":
-        try:
-            import boto3
-            from botocore.client import Config
-
-            r2_endpoint = os.environ.get("CLOUDFLARE_R2_ENDPOINT", "")
-            r2_access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-            r2_secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-            r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
-            cdn_domain = os.environ.get("CLOUDFLARE_CDN_DOMAIN", "")
-
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=r2_endpoint,
-                aws_access_key_id=r2_access_key,
-                aws_secret_access_key=r2_secret_key,
-                config=Config(signature_version="s3v4"),
-                region_name="auto"
-            )
-            content_type = _mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
-            object_key = f"uploads/{user_id}/{safe_filename}"
-            s3.upload_fileobj(io.BytesIO(content), r2_bucket, object_key,
-                              ExtraArgs={"ContentType": content_type})
-            file_url = (
-                f"https://{cdn_domain}/{object_key}" if cdn_domain
-                else f"{r2_endpoint}/{r2_bucket}/{object_key}"
-            )
-        except Exception as e:
-            logging.warning(f"R2 upload failed, falling back to local: {e}")
-
-    if not file_url:
-        upload_dir = _LOCAL_UPLOADS_DIR
-        upload_dir.mkdir(exist_ok=True, parents=True)
-        (upload_dir / safe_filename).write_bytes(content)
-        file_url = f"/uploads/{safe_filename}"
+    content_type = _mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+    file_url = storage_upload_file(
+        content,
+        safe_filename,
+        content_type,
+        folder=f"uploads/{user_id}",
+    )
 
     return {
         "url": file_url,

@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
-import { getSocialAccounts } from '@/lib/api';
+import { getSocialAccounts, uploadMedia, waitForUploadReady } from '@/lib/api';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
 import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
@@ -400,19 +400,9 @@ const BulkVideoUpload = () => {
       // Upload each video via existing media pipeline then schedule posts
       let scheduled = 0;
       for (const video of ready) {
-        const formData = new FormData();
-        formData.append('file', video.file);
-
-        const uploadRes = await fetch(
-          `${process.env.REACT_APP_BACKEND_URL}/api/v1/upload/media`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-            body: formData,
-          }
-        );
-        const uploadData = await uploadRes.json();
-        const mediaId = uploadData.media_id;
+        const uploadJob = await uploadMedia(video.file);
+        const asset = await waitForUploadReady(uploadJob.media_job_id);
+        const mediaId = asset.media_id;
 
         let scheduledTime = null;
         if (video.date && video.time) {

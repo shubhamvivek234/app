@@ -19,6 +19,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 from dotenv import load_dotenv
+from utils.storage import delete_file as storage_delete_file
+from utils.storage import is_managed_storage_url as storage_is_managed_url
 
 ROOT_DIR = Path(__file__).parent.resolve()
 load_dotenv(ROOT_DIR / ".env")
@@ -549,40 +551,16 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
 
 
 async def _cleanup_post_media(post_doc: dict):
-    """Delete R2 objects and local files for a post after it reaches terminal state."""
-    import boto3
-    from botocore.client import Config
-
+    """Delete managed storage objects for a post after it reaches terminal state."""
     media_urls = post_doc.get("media_urls", [])
     video_url = post_doc.get("video_url")
     all_urls = [u for u in media_urls + ([video_url] if video_url else []) if u]
 
-    storage_backend = os.environ.get("STORAGE_BACKEND", "local")
-
     for url in all_urls:
         try:
-            if storage_backend == "r2" and "r2.cloudflarestorage.com" in url:
-                # Extract object key from URL and delete from R2
-                r2_bucket = os.environ.get("CLOUDFLARE_R2_BUCKET_NAME", "socialentangler-media")
-                # URL format: https://{endpoint}/{bucket}/{key} or https://{cdn}/{key}
-                parts = url.split(r2_bucket + "/", 1)
-                if len(parts) == 2:
-                    object_key = parts[1].split("?")[0]
-                    s3 = boto3.client(
-                        "s3",
-                        endpoint_url=os.environ.get("CLOUDFLARE_R2_ENDPOINT"),
-                        aws_access_key_id=os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID"),
-                        aws_secret_access_key=os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
-                        config=Config(signature_version="s3v4"),
-                        region_name="auto",
-                    )
-                    s3.delete_object(Bucket=r2_bucket, Key=object_key)
-                    logger.info(f"Deleted R2 object: {object_key}")
-            elif url.startswith("/uploads/") or url.startswith("file://"):
-                local_path = url.replace("file://", "").replace("/uploads/", "/app/uploads/")
-                if os.path.exists(local_path):
-                    os.unlink(local_path)
-                    logger.info(f"Deleted local file: {local_path}")
+            if storage_is_managed_url(url):
+                storage_delete_file(url)
+                logger.info("Deleted managed media object: %s", url)
         except Exception as e:
             logger.warning(f"Failed to cleanup media {url}: {e}")
 
