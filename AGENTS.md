@@ -19,13 +19,16 @@ Completed tasks:
 - Updated same-platform account tabs in `PlatformEditor` to render circular avatars (or initial fallback) instead of account-name text
 - Normalized cached/live social-account payloads in `frontend/src/lib/api.js` so legacy accounts always have stable `id`, `account_id`, lowercased `platform`, and string-safe profile fields
 - Bumped the social account cache key to `social_accounts_cache_v2` so stale legacy account objects are dropped on next load
+- Reproduced the live failure in-browser with DevTools and confirmed the actual crash is React error `#185` (maximum update depth exceeded)
+- Root cause is in `CreatePostForm`: once any account is selected, the `activeAccountByPlatform` sync effect re-renders forever because `selectedPlatforms` was recreated every render and the effect always returned a fresh object
+- Fixed by memoizing `selectedPlatforms` / `orderedPlatforms` and returning the previous `activeAccountByPlatform` object when nothing actually changed
 - Frontend build passed locally after the fix; changes are local only and not committed/deployed yet
 
 ## Active Work
 
-Currently implementing: Create Post YouTube account loading fix + same-platform avatar-tab UX
-Next concrete step: Push the social-account normalization/cache invalidation fix, then verify YouTube account selection on live frontend
-Blocked on: no manual end-to-end browser run yet; unsupported Common Post publishers remain `threads`, `bluesky`, `pinterest`
+Currently implementing: Create Post YouTube account selection fix + same-platform avatar-tab UX
+Next concrete step: Push the render-loop fix and verify live YouTube account selection after deployment
+Blocked on: no post-deploy live verification yet; unsupported Common Post publishers remain `threads`, `bluesky`, `pinterest`
 
 ## Architecture Notes
 
@@ -49,6 +52,7 @@ Blocked on: no manual end-to-end browser run yet; unsupported Common Post publis
 - Pre-upload/container state for duplicate same-platform accounts must key off target/account id, not raw platform name
 - Account-level overrides must not persist default `undefined` values as explicit field overrides; that breaks platform-specific editor fallbacks
 - Frontend social-account data must be normalized at the API/cache boundary because legacy cached account objects can miss `id` or contain inconsistent field shapes
+- Derived arrays like `selectedPlatforms` in `CreatePostForm` must be memoized before being used in sync effects, otherwise account selection can trigger a maximum-update-depth loop in production
 
 ## Decisions Made This Session
 
@@ -64,6 +68,7 @@ Blocked on: no manual end-to-end browser run yet; unsupported Common Post publis
 - For same-platform multi-account posting, drafts are per account and publishing is per target/account; platform-level state is now only an aggregate summary
 - Same-platform account switchers inside a platform section should be avatar-first chips, not text labels
 - When account identity bugs surface in Create Post, check `frontend/src/lib/api.js` cache normalization before only patching the editor
+- If Create Post crashes after selecting an account, inspect the live browser console for React error `#185` before assuming the issue is platform-specific
 
 ## Test Status
 
@@ -114,6 +119,11 @@ Latest run:
 - `CI=true npm run build --prefix frontend`
 Result: frontend production build passed after social-account normalization and cache-key bump; only the existing Tailwind/PostHog warnings remain
 
+Latest run:
+- Live browser repro on `https://www.unravler.com/create-post` with DevTools open
+- `CI=true npm run build --prefix frontend`
+Result: reproduced React `#185` on account selection; local frontend build passed after memoization/equality-guard fix with only the existing Tailwind/PostHog warnings
+
 ## Notes for Next Session
 
 Start with:
@@ -133,7 +143,7 @@ Important:
 - `frontend/.vercel/project.json` points to the wrong Vercel project locally; deploy the live frontend from repo root linked to `app-fgv2`
 - Current local follow-up changes are in:
  - Current local follow-up changes are in:
-  - `frontend/src/pages/CreatePostForm.js`
+ - `frontend/src/pages/CreatePostForm.js`
   - `frontend/src/components/composer/PlatformEditor.js`
   - `frontend/src/lib/api.js`
 - Same-platform/YouTube follow-up work is not committed yet in this session

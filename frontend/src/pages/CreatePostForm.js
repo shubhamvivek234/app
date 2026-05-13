@@ -632,13 +632,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     );
   };
 
-  const getSelectedPlatforms = () =>
-    [...new Set(availableAccounts.filter(a => selectedAccounts.includes(a.id)).map(a => a.platform))];
-
-  const selectedPlatforms = getSelectedPlatforms();
+  const selectedPlatforms = useMemo(() => (
+    [...new Set(
+      availableAccounts
+        .filter((account) => selectedAccounts.includes(account.id))
+        .map((account) => account.platform)
+    )]
+  ), [availableAccounts, selectedAccounts]);
 
   // Ordered list of platforms (respects manual drag order)
-  const orderedPlatforms = platformOrder.filter(p => selectedPlatforms.includes(p));
+  const orderedPlatforms = useMemo(
+    () => platformOrder.filter((platform) => selectedPlatforms.includes(platform)),
+    [platformOrder, selectedPlatforms]
+  );
   const basePlatform = orderedPlatforms[0] || selectedPlatforms[0] || null;
 
   // Active platform for preview
@@ -664,7 +670,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           ? current
           : platformAccounts[0].id;
       });
-      return next;
+
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      const sameShape = prevKeys.length === nextKeys.length
+        && nextKeys.every((key) => prev[key] === next[key]);
+
+      return sameShape ? prev : next;
     });
   }, [selectedPlatforms, selectedAccountsByPlatform]);
 
