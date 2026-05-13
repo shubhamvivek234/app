@@ -8,9 +8,8 @@ Supports:
 Provider order:
 1. Gemini 2.0 Flash Lite
 2. Groq LLaMA 3.3 70B Versatile
-3. Cohere Command R
-4. OpenRouter Gemma 3 12B free
-5. OpenRouter free auto-router
+3. OpenRouter free models
+4. Cohere Command R
 """
 import logging
 import os
@@ -87,7 +86,19 @@ def _build_system_message(platform: str | None, tone: str | None) -> str:
 
 
 async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str]:
-    rate_limit_errors: list[str] = []
+    provider_errors: list[str] = []
+
+    def _record_provider_error(provider: str, exc: Exception) -> None:
+        detail = str(exc).replace("\n", " ").strip()
+        if len(detail) > 220:
+            detail = detail[:217] + "..."
+        provider_errors.append(f"{provider}: {type(exc).__name__}: {detail}")
+
+    def _ensure_text(provider: str, text: str | None) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            raise RuntimeError(f"{provider} returned empty content")
+        return cleaned
 
     google_key = os.environ.get("GOOGLE_AI_KEY")
     if google_key:
@@ -98,16 +109,11 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
             model_name = "gemini-2.0-flash-lite"
             model = genai.GenerativeModel(model_name, system_instruction=system_message)
             result = model.generate_content(prompt)
-            text = getattr(result, "text", None)
-            if not text:
-                raise RuntimeError("Gemini returned empty content")
+            text = _ensure_text("Gemini", getattr(result, "text", None))
             return text, "google", model_name
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("[AI waterfall] Gemini rate-limited: %s", exc)
-                rate_limit_errors.append(f"Gemini: {exc}")
-            else:
-                logger.exception("[AI waterfall] Gemini failed")
+            logger.warning("[AI waterfall] Gemini failed: %s", exc)
+            _record_provider_error("Gemini", exc)
 
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
@@ -124,16 +130,51 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
                 ],
                 max_tokens=1024,
             )
-            text = resp.choices[0].message.content
-            if not text:
-                raise RuntimeError("Groq returned empty content")
+            text = _ensure_text("Groq", resp.choices[0].message.content)
             return text, "groq", model_name
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("[AI waterfall] Groq rate-limited: %s", exc)
-                rate_limit_errors.append(f"Groq: {exc}")
-            else:
-                logger.exception("[AI waterfall] Groq failed")
+            logger.warning("[AI waterfall] Groq failed: %s", exc)
+            _record_provider_error("Groq", exc)
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
+        async def _call_openrouter(model_name: str) -> tuple[str, str, str]:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://www.unravler.com",
+                        "X-Title": "Unravler AI",
+                    },
+                    json={
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": system_message},
+                            {"role": "user", "content": prompt},
+                        ],
+                    },
+                )
+                resp.raise_for_status()
+                text = _ensure_text(
+                    f"OpenRouter {model_name}",
+                    resp.json()["choices"][0]["message"]["content"],
+                )
+                return text, "openrouter", model_name
+
+        for model_name in (
+            "openai/gpt-oss-120b:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemma-4-31b-it:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "google/gemma-3-12b:free",
+        ):
+            try:
+                return await _call_openrouter(model_name)
+            except Exception as exc:
+                logger.warning("[AI waterfall] OpenRouter %s failed: %s", model_name, exc)
+                _record_provider_error(f"OpenRouter/{model_name}", exc)
 
     cohere_key = os.environ.get("COHERE_API_KEY")
     if cohere_key:
@@ -149,59 +190,26 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
                     {"role": "user", "content": prompt},
                 ],
             )
-            text = resp.message.content[0].text
-            if not text:
-                raise RuntimeError("Cohere returned empty content")
+            text = ""
+            if getattr(resp, "message", None) and getattr(resp.message, "content", None):
+                first_item = resp.message.content[0]
+                text = getattr(first_item, "text", "") or ""
+            text = _ensure_text("Cohere", text)
             return text, "cohere", model_name
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logger.warning("[AI waterfall] Cohere rate-limited: %s", exc)
-                rate_limit_errors.append(f"Cohere: {exc}")
-            else:
-                logger.exception("[AI waterfall] Cohere failed")
+            logger.warning("[AI waterfall] Cohere failed: %s", exc)
+            _record_provider_error("Cohere", exc)
 
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    if openrouter_key:
-        async def _call_openrouter(model_name: str) -> tuple[str, str, str]:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {openrouter_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://app.unravler.com",
-                        "X-Title": "Unravler AI",
-                    },
-                    json={
-                        "model": model_name,
-                        "messages": [
-                            {"role": "system", "content": system_message},
-                            {"role": "user", "content": prompt},
-                        ],
-                    },
-                )
-                if resp.status_code == 429:
-                    raise HTTPException(status_code=429, detail=f"OpenRouter rate-limited for {model_name}")
-                resp.raise_for_status()
-                text = resp.json()["choices"][0]["message"]["content"]
-                if not text:
-                    raise RuntimeError(f"OpenRouter returned empty content for {model_name}")
-                return text, "openrouter", model_name
-
-        for model_name in ("google/gemma-3-12b:free", "openrouter/free"):
-            try:
-                return await _call_openrouter(model_name)
-            except Exception as exc:
-                if _is_rate_limit(exc):
-                    logger.warning("[AI waterfall] OpenRouter %s rate-limited: %s", model_name, exc)
-                    rate_limit_errors.append(f"OpenRouter {model_name}: {exc}")
-                else:
-                    logger.exception("[AI waterfall] OpenRouter %s failed", model_name)
-
-    if rate_limit_errors:
+    if provider_errors:
+        detail = "; ".join(provider_errors)
+        if any("429" in err or "quota" in err.lower() or "rate" in err.lower() for err in provider_errors):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"All configured AI providers failed or were rate-limited. Details: {detail}",
+            )
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"All AI providers are rate-limited. Details: {'; '.join(rate_limit_errors)}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"All configured AI providers failed. Details: {detail}",
         )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -25,6 +25,8 @@ Completed tasks:
 - Hardened AI content/hashtag waterfall to use real provider fallbacks instead of the mocked local Emergent fallback
 - Prioritized free/free-tier models in the AI chain: Gemini free tier, Groq LLaMA 3.3, and multiple OpenRouter free models
 - Improved hashtag generator error handling to surface backend failure details in the UI
+- Found that production AI routes come from `api/routes/ai.py`, not `backend/server.py`
+- Patched the active modular AI route with the same fallback improvements so live `/api/ai/generate-content` and `/api/ai/generate-hashtags` stop returning 503 after Gemini quota failures
 
 Files modified:
 - `backend/server.py`
@@ -35,8 +37,8 @@ Files modified:
 
 ## Active Work
 
-Currently implementing: AI assistant + hashtag generator reliability fix
-Next concrete step: Deploy backend/frontend and verify Create Post AI + Hashtag Generator against live env
+Currently implementing: Production AI route hotfix
+Next concrete step: Redeploy EC2 backend after `api/routes/ai.py` fix and verify live AI requests clear 503s
 Blocked on: some platform publishers are still not fully configured (`threads`, `bluesky`, `pinterest`) and Common Post marks them unsupported
 
 ## Architecture Notes
@@ -49,6 +51,7 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Selected platform panels can upload their own media overrides even when Common Post media is empty
 - AI generation now falls through across configured providers on general provider failure, not just rate limits
 - The local `backend/emergentintegrations` package is a mock; do not treat it as a real production LLM fallback
+- The modular FastAPI app on EC2 mounts `api/routes/ai.py`; changes in `backend/server.py` do not affect live `/api/ai/*`
 
 ## Decisions Made This Session
 
@@ -58,6 +61,7 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Keep unsupported or unconfigured platforms visibly blocked in Common Post instead of silently posting partial payloads
 - Show media-required platforms as advisory when they have no media yet; only block once actual uploaded media violates platform rules
 - Prefer free/free-tier AI models before paid fallbacks for caption and hashtag generation
+- When AI breaks in production, inspect `api/routes/ai.py` and EC2 `api` container logs first, not only `backend/server.py`
 
 ## Test Status
 
@@ -74,6 +78,11 @@ Latest run:
 - `python3 -m compileall backend/server.py`
 - `venv/bin/python` probe calling `_ai_waterfall(...)` from `backend/server.py`
 Result: backend compile passed; Gemini hit quota and fell through successfully to Groq with a real response
+
+Latest run:
+- `python3 -m compileall api/routes/ai.py`
+- `backend/venv/bin/python` probe calling `_ai_waterfall(...)` from `api/routes/ai.py`
+Result: modular app compile passed; active production AI route falls through from Gemini quota failure to Groq with a real response
 
 ## Notes for Next Session
 
