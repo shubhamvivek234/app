@@ -645,9 +645,22 @@ async def list_posts(
         query["status"] = status_filter
     if status_filter == PostStatus.PUBLISHED and published_window == "past_6_months":
         cutoff = _subtract_months(datetime.now(timezone.utc), 6)
+        cutoff_iso = cutoff.isoformat()
         query["$or"] = [
             {"published_at": {"$gte": cutoff}},
-            {"published_at": {"$gte": cutoff.isoformat()}},
+            {"published_at": {"$gte": cutoff_iso}},
+            {"published_at": {"$exists": False}, "updated_at": {"$gte": cutoff}},
+            {"published_at": {"$exists": False}, "updated_at": {"$gte": cutoff_iso}},
+            {
+                "published_at": {"$exists": False},
+                "updated_at": {"$exists": False},
+                "created_at": {"$gte": cutoff},
+            },
+            {
+                "published_at": {"$exists": False},
+                "updated_at": {"$exists": False},
+                "created_at": {"$gte": cutoff_iso},
+            },
         ]
 
     skip = (page - 1) * limit
