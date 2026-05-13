@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote, retryFailedPost } from '@/lib/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
-import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin } from 'react-icons/fa';
+import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
@@ -94,6 +94,19 @@ const platformIcons = {
   twitter: <FaXTwitter className="text-black" />
 };
 
+const PUBLISHED_MEDIA_KIND_META = {
+  text: { label: 'Text', icon: FaAlignLeft, className: 'text-slate-600 bg-slate-100' },
+  image: { label: 'Image', icon: FaImage, className: 'text-emerald-700 bg-emerald-50' },
+  video: { label: 'Video', icon: FaVideo, className: 'text-rose-700 bg-rose-50' },
+  mixed: { label: 'Mixed', icon: FaLayerGroup, className: 'text-violet-700 bg-violet-50' },
+};
+
+const getPublishedSixMonthCutoff = () => {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 6);
+  return cutoff;
+};
+
 const ContentLibrary = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -108,19 +121,22 @@ const ContentLibrary = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState('newest'); // newest, oldest
   const [selectedPlatform, setSelectedPlatform] = useState('all');
-  const [selectedTime, setSelectedTime] = useState('all'); // all, today, tomorrow, this_week, this_month
+  const [selectedTime, setSelectedTime] = useState(initialStatus === 'published' ? 'past_6_months' : 'all');
   const [selectedAccount, setSelectedAccount] = useState('all');
   // Internal notes
   const [openNotePostId, setOpenNotePostId] = useState(null);
   const [noteInput, setNoteInput] = useState('');
 
-  useEffect(() => {
-    fetchAll();
-  }, []);
-
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     try {
-      const [postsData, accountsData] = await Promise.all([getPosts(), getSocialAccounts()]);
+      const statusParam = initialStatus !== 'all' ? initialStatus : null;
+      const postParams = initialStatus === 'published'
+        ? { published_window: 'past_6_months' }
+        : {};
+      const [postsData, accountsData] = await Promise.all([
+        getPosts(statusParam, postParams),
+        getSocialAccounts(),
+      ]);
       setPosts(postsData);
       setAccounts(accountsData);
     } catch (error) {
@@ -128,7 +144,11 @@ const ContentLibrary = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [initialStatus]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   const accountMap = accounts.reduce((acc, a) => {
     acc[a.id] = a;
@@ -250,9 +270,12 @@ const ContentLibrary = () => {
     // Filter by Time
     if (selectedTime !== 'all') {
       result = result.filter(p => {
-        const d = p.scheduled_time ? new Date(p.scheduled_time) : new Date(p.created_at);
+        const d = initialStatus === 'published'
+          ? new Date(p.published_at || p.updated_at || p.created_at)
+          : (p.scheduled_time ? new Date(p.scheduled_time) : new Date(p.created_at));
+        if (selectedTime === 'past_6_months') return d >= getPublishedSixMonthCutoff();
         if (selectedTime === 'today') return isToday(d);
-        if (selectedTime === 'tomorrow') return isTomorrow(d);
+        if (selectedTime === 'tomorrow') return initialStatus !== 'published' && isTomorrow(d);
         if (selectedTime === 'this_week') return isThisWeek(d);
         if (selectedTime === 'this_month') return isThisMonth(d);
         return true;
@@ -261,8 +284,12 @@ const ContentLibrary = () => {
 
     // Sort
     result.sort((a, b) => {
-      const dateA = a.scheduled_time ? new Date(a.scheduled_time) : new Date(a.created_at);
-      const dateB = b.scheduled_time ? new Date(b.scheduled_time) : new Date(b.created_at);
+      const dateA = initialStatus === 'published'
+        ? new Date(a.published_at || a.updated_at || a.created_at)
+        : (a.scheduled_time ? new Date(a.scheduled_time) : new Date(a.created_at));
+      const dateB = initialStatus === 'published'
+        ? new Date(b.published_at || b.updated_at || b.created_at)
+        : (b.scheduled_time ? new Date(b.scheduled_time) : new Date(b.created_at));
       return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
     });
 
@@ -348,9 +375,13 @@ const ContentLibrary = () => {
               className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
               value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}
             >
-              <option value="all">All Time</option>
+              {initialStatus === 'published' ? (
+                <option value="past_6_months">Past 6 Months</option>
+              ) : (
+                <option value="all">All Time</option>
+              )}
               <option value="today">Today</option>
-              <option value="tomorrow">Tomorrow</option>
+              {initialStatus !== 'published' && <option value="tomorrow">Tomorrow</option>}
               <option value="this_week">This Week</option>
               <option value="this_month">This Month</option>
             </select>
@@ -382,10 +413,18 @@ const ContentLibrary = () => {
             filteredPosts.map((post) => {
               const videoTitle = post.youtube_title || post.video_title || null;
               const postAccounts = (post.accounts || []).map((id) => accountMap[id]).filter(Boolean);
-              const postDate = post.scheduled_time ? new Date(post.scheduled_time) : new Date(post.created_at);
+              const postDate = initialStatus === 'published'
+                ? new Date(post.published_at || post.updated_at || post.created_at)
+                : (post.scheduled_time ? new Date(post.scheduled_time) : new Date(post.created_at));
               
               // Only taking the first associated platform to represent the pill if we want, or map them all
               const primaryPlatform = post.platforms?.[0] || 'unknown';
+              const mediaKind = post.published_media_kind || (
+                post.media_urls?.length ? 'image' : 'text'
+              );
+              const mediaKindMeta = PUBLISHED_MEDIA_KIND_META[mediaKind] || PUBLISHED_MEDIA_KIND_META.text;
+              const MediaKindIcon = mediaKindMeta.icon;
+              const publishedCardThumbnail = post.published_card_thumbnail_url || post.thumbnail_urls?.[0] || post.cover_image || post.media_urls?.[0] || null;
 
               return (
                 <div
@@ -433,8 +472,16 @@ const ContentLibrary = () => {
 
                   {/* Top Bar: Platform Name & Date */}
                   <div className="px-4 py-3 bg-offwhite border-b border-slate-100 flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-offwhite border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
-                      {platformIcons[primaryPlatform]} {primaryPlatform}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-offwhite border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
+                        {platformIcons[primaryPlatform]} {primaryPlatform}
+                      </div>
+                      {initialStatus === 'published' && (
+                        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${mediaKindMeta.className}`}>
+                          <MediaKindIcon className="text-[10px]" />
+                          {mediaKindMeta.label}
+                        </div>
+                      )}
                     </div>
                     <div className="text-slate-500 font-medium">
                       {format(postDate, 'MM/dd/yyyy')} • {format(postDate, 'h:mm a')}
@@ -450,9 +497,9 @@ const ContentLibrary = () => {
                     </div>
 
                     {/* Media Preview Thumbnail (If Image/Video provided) */}
-                    {post.media_urls && post.media_urls.length > 0 && (
+                    {publishedCardThumbnail && (
                       <div className="mb-4 h-32 bg-offwhite rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
-                         <img src={post.cover_image || post.media_urls[0]} alt="Media Thumbnail" className="w-full h-full object-cover" />
+                         <img src={publishedCardThumbnail} alt="Media Thumbnail" className="w-full h-full object-cover" />
                       </div>
                     )}
                   </div>

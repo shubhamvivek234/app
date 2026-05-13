@@ -188,6 +188,9 @@ class PostResponse(BaseModel):
     platform_post_urls: dict[str, str] = Field(default_factory=dict)
     status_history: list[StatusHistoryEntry] = Field(default_factory=list)
     thumbnail_urls: list[str] = Field(default_factory=list)
+    published_card_thumbnail_url: str | None = None
+    published_card_thumbnail_created_at: datetime | None = None
+    published_media_kind: str | None = None
     pre_upload_status: PreUploadStatus | None = None
     queue_job_id: str | None = None
     jitter_seconds: int | None = None

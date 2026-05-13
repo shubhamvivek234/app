@@ -11,6 +11,7 @@ import logging
 import os
 import random
 import asyncio
+import io
 from datetime import datetime, timedelta, timezone
 
 from celery import group
@@ -38,6 +39,8 @@ PUBLISH_LIGHT_QUEUE = "publish_light"
 PUBLISH_VIDEO_QUEUE = "publish_video"
 _PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
 _PRE_UPLOAD_LOCK_TTL_SECONDS = int(os.getenv("PRE_UPLOAD_LOCK_TTL_SECONDS", "14400"))
+_PUBLISHED_CARD_THUMB_SIZE = (160, 160)
+_PUBLISHED_CARD_THUMB_QUALITY = int(os.getenv("PUBLISHED_CARD_THUMB_QUALITY", "65"))
 
 # ── Per-platform concurrent API call limits (cross-process via Redis) ─────────
 # Prevents app-level quota exhaustion when 1000 posts hit a platform simultaneously.
@@ -257,11 +260,25 @@ def should_cleanup_media(platform_results: dict) -> bool:
 
 
 async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | None, str]:
-    from celery_workers.tasks.cleanup import prune_recent_published_posts, schedule_media_cleanup
+    from celery_workers.tasks.cleanup import schedule_media_cleanup
 
     updated_post = await db.posts.find_one(
         {"id": post_id},
-        {"platform_results": 1, "status": 1, "user_id": 1, "workspace_id": 1},
+        {
+            "_id": 0,
+            "id": 1,
+            "user_id": 1,
+            "workspace_id": 1,
+            "status": 1,
+            "post_type": 1,
+            "platform_results": 1,
+            "media_ids": 1,
+            "media_urls": 1,
+            "media_url": 1,
+            "thumbnail_urls": 1,
+            "media_types": 1,
+            "published_card_thumbnail_url": 1,
+        },
     )
     if not updated_post:
         return None, None, "scheduled"
@@ -275,16 +292,15 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
         set_updates["dlq_reason"] = None
     if agg_status == "published" and prev_agg_status != "published":
         set_updates["published_at"] = now
+        hydrated_post = await _hydrate_post_media(db, updated_post)
+        set_updates["published_media_kind"] = _derive_published_media_kind(hydrated_post)
+        if not hydrated_post.get("published_card_thumbnail_url"):
+            try:
+                set_updates.update(await _generate_published_card_thumbnail(hydrated_post))
+            except Exception as exc:
+                logger.warning("Published card thumbnail generation failed for post %s: %s", post_id, exc)
 
     await db.posts.update_one({"id": post_id}, {"$set": set_updates})
-
-    if agg_status == "published" and prev_agg_status != "published":
-        await prune_recent_published_posts(
-            db,
-            user_id=updated_post.get("user_id"),
-            workspace_id=updated_post.get("workspace_id"),
-            keep=25,
-        )
 
     if should_cleanup_media(updated_post.get("platform_results", {})):
         schedule_media_cleanup.apply_async(
@@ -390,7 +406,7 @@ async def _hydrate_post_media(db, post: dict) -> dict:
 
     docs = await db.media_assets.find(
         {"media_id": {"$in": media_ids}},
-        {"_id": 0, "media_id": 1, "media_url": 1, "thumbnail_url": 1, "file_size_bytes": 1},
+        {"_id": 0, "media_id": 1, "media_url": 1, "thumbnail_url": 1, "file_size_bytes": 1, "mime_type": 1},
     ).to_list(len(media_ids))
     by_id = {doc.get("media_id"): doc for doc in docs}
     ordered = [by_id[media_id] for media_id in media_ids if media_id in by_id]
@@ -405,6 +421,11 @@ async def _hydrate_post_media(db, post: dict) -> dict:
         (doc.get("file_size_bytes") for doc in ordered if doc.get("file_size_bytes")),
         None,
     )
+    media_types = [
+        "video" if str(doc.get("mime_type") or "").startswith("video/") else "image"
+        for doc in ordered
+        if doc.get("media_url") or doc.get("thumbnail_url")
+    ]
     video_size_mb = post.get("video_size_mb")
     if file_size_bytes and not video_size_mb:
         video_size_mb = round(file_size_bytes / (1024 * 1024), 2)
@@ -414,7 +435,109 @@ async def _hydrate_post_media(db, post: dict) -> dict:
         "media_urls": post.get("media_urls") or media_urls,
         "media_url": post.get("media_url") or (media_urls[0] if media_urls else None),
         "thumbnail_urls": post.get("thumbnail_urls") or thumbnail_urls,
+        "media_types": post.get("media_types") or media_types,
         "video_size_mb": video_size_mb,
+    }
+
+
+def _derive_published_media_kind(post: dict) -> str:
+    media_types = [
+        str(media_type).strip().lower()
+        for media_type in (post.get("media_types") or [])
+        if str(media_type).strip()
+    ]
+    if media_types:
+        has_image = any(media_type == "image" for media_type in media_types)
+        has_video = any(media_type == "video" for media_type in media_types)
+        if has_image and has_video:
+            return "mixed"
+        if has_video:
+            return "video"
+        if has_image:
+            return "image"
+
+    post_type = str(post.get("post_type") or "").strip().lower()
+    if "mixed" in post_type:
+        return "mixed"
+    if post_type in {"video", "reel", "story"} or "video" in post_type:
+        return "video"
+    if (post.get("thumbnail_urls") or []) or (post.get("media_urls") or []) or post.get("media_url"):
+        return "image"
+    return "text"
+
+
+def _published_card_thumbnail_ref(post: dict) -> str | None:
+    thumbnail_urls = post.get("thumbnail_urls") or []
+    media_urls = post.get("media_urls") or []
+    if thumbnail_urls:
+        return thumbnail_urls[0]
+    if media_urls:
+        return media_urls[0]
+    return post.get("media_url")
+
+
+async def _generate_published_card_thumbnail(post: dict) -> dict:
+    source_ref = _published_card_thumbnail_ref(post)
+    if not source_ref:
+        return {}
+
+    from PIL import Image  # noqa: PLC0415
+    import httpx  # noqa: PLC0415
+    from utils.storage import build_storage_key, upload_file_async  # noqa: PLC0415
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(source_ref)
+        response.raise_for_status()
+        source_bytes = response.content
+
+    loop = asyncio.get_running_loop()
+
+    def _render_card_thumbnail() -> bytes:
+        with Image.open(io.BytesIO(source_bytes)) as img:
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+
+            if img.mode == "RGBA":
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.getchannel("A"))
+                img = background
+            else:
+                img = img.convert("RGB")
+
+            width, height = img.size
+            side = min(width, height)
+            left = max(0, (width - side) // 2)
+            top = max(0, (height - side) // 2)
+            cropped = img.crop((left, top, left + side, top + side))
+            resized = cropped.resize(_PUBLISHED_CARD_THUMB_SIZE, Image.LANCZOS)
+
+            output = io.BytesIO()
+            resized.save(
+                output,
+                format="WEBP",
+                quality=_PUBLISHED_CARD_THUMB_QUALITY,
+                optimize=True,
+                method=6,
+            )
+            return output.getvalue()
+
+    thumb_bytes = await loop.run_in_executor(None, _render_card_thumbnail)
+
+    user_id = post.get("user_id") or "unknown"
+    post_id = post.get("id") or "unknown"
+    filename = f"{post_id}.webp"
+    folder = f"published-card-thumbnails/{user_id}"
+    storage_key = build_storage_key(folder, filename)
+    thumbnail_url = await upload_file_async(
+        thumb_bytes,
+        filename,
+        "image/webp",
+        folder=folder,
+    )
+    return {
+        "published_card_thumbnail_key": storage_key,
+        "published_card_thumbnail_url": thumbnail_url,
+        "published_card_thumbnail_created_at": datetime.now(timezone.utc),
     }
 
 

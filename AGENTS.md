@@ -6,7 +6,7 @@
 
 Stage: v2.9 complete
 Branch: main + version-6
-Focus: Create Post Common Post composer + Cloudflare R2 migration follow-up
+Focus: Published Posts retention/thumbnail follow-up + Cloudflare R2 migration follow-up
 Arch refs: Architecture v2.9 / Implementation Plan v3.0
 
 ## Last Session Completed
@@ -27,6 +27,16 @@ Completed tasks:
 - Improved hashtag generator error handling to surface backend failure details in the UI
 - Found that production AI routes come from `api/routes/ai.py`, not `backend/server.py`
 - Patched the active modular AI route with the same fallback improvements so live `/api/ai/generate-content` and `/api/ai/generate-hashtags` stop returning 503 after Gemini quota failures
+- Found the remaining production outage cause: `docker-compose.prod.yml` was not passing AI provider keys into the containers
+- Deployed the compose env fix so live `api` now receives `GOOGLE_AI_KEY`, `GROQ_API_KEY`, `COHERE_API_KEY`, `OPENROUTER_API_KEY`, and `EMERGENT_LLM_KEY`
+- Verified the live container falls through to OpenRouter successfully; current image is missing `google.generativeai` and `groq`, but OpenRouter free fallback works
+- Implemented Published Posts 6-month view retention without deleting post history
+- Added dedicated `published_card_thumbnail_url` / `published_media_kind` support to published post responses
+- Added publish-time 160x160 WebP published-card thumbnail generation in `celery_workers/tasks/publish.py`
+- Added daily cleanup task that deletes only expired published-card thumbnails after 6 months
+- Removed the old production-side published-post pruning path that deleted post data beyond the newest 25 items
+- Updated `ContentLibrary` published view to use the new card thumbnail/type metadata and replace `All Time` with `Past 6 Months`
+- Added focused retention tests in `tests/test_published_post_retention.py`
 
 Files modified:
 - `backend/server.py`
@@ -37,8 +47,8 @@ Files modified:
 
 ## Active Work
 
-Currently implementing: Production AI route hotfix
-Next concrete step: Redeploy EC2 backend after `api/routes/ai.py` fix and verify live AI requests clear 503s
+Currently implementing: None
+Next concrete step: Commit/push/deploy the Published Posts thumbnail + 6-month filtering changes if approved after local review
 Blocked on: some platform publishers are still not fully configured (`threads`, `bluesky`, `pinterest`) and Common Post marks them unsupported
 
 ## Architecture Notes
@@ -52,6 +62,12 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - AI generation now falls through across configured providers on general provider failure, not just rate limits
 - The local `backend/emergentintegrations` package is a mock; do not treat it as a real production LLM fallback
 - The modular FastAPI app on EC2 mounts `api/routes/ai.py`; changes in `backend/server.py` do not affect live `/api/ai/*`
+- `docker-compose.prod.yml` is a symlink to `docker-compose.yml`; env changes for prod must be made in `docker-compose.yml`
+- Current production container image does not have `google.generativeai` or `groq` available at runtime, so OpenRouter is presently the first effective live fallback
+- Published Posts page is `frontend/src/pages/ContentLibrary.js` with `status=published`, not `Publish.js`
+- Published Posts now use dedicated 160x160 WebP card thumbnails (`published-card-thumbnails/{user_id}/{post_id}.webp`) stored separately from the general media thumbnails
+- The new 6-month retention policy applies only to Published Posts card thumbnails and page filtering; post data and analytics history are preserved
+- Old production logic in `celery_workers/tasks/publish.py` used to prune published posts beyond 25 items; that call has been removed locally
 
 ## Decisions Made This Session
 
@@ -62,6 +78,8 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Show media-required platforms as advisory when they have no media yet; only block once actual uploaded media violates platform rules
 - Prefer free/free-tier AI models before paid fallbacks for caption and hashtag generation
 - When AI breaks in production, inspect `api/routes/ai.py` and EC2 `api` container logs first, not only `backend/server.py`
+- If live AI returns `No AI provider configured`, check compose env passthrough before changing route code again
+- Do not reintroduce published-post document deletion for retention; only card-thumbnail cleanup should expire after 6 months
 
 ## Test Status
 
@@ -83,6 +101,17 @@ Latest run:
 - `python3 -m compileall api/routes/ai.py`
 - `backend/venv/bin/python` probe calling `_ai_waterfall(...)` from `api/routes/ai.py`
 Result: modular app compile passed; active production AI route falls through from Gemini quota failure to Groq with a real response
+
+Latest run:
+- EC2 `docker compose exec api` env probe for AI keys
+- EC2 `docker compose exec api` probe calling `api.routes.ai._ai_waterfall(...)`
+Result: live container now sees all AI keys; Gemini/Groq modules are unavailable in-image, and OpenRouter `openai/gpt-oss-120b:free` returns a valid response
+
+Latest run:
+- `python3 -m compileall api/routes/posts.py celery_workers/tasks/publish.py celery_workers/tasks/cleanup.py celery_workers/tasks/scheduler.py api/models/post.py`
+- `backend/venv/bin/pytest tests/test_published_post_retention.py -q`
+- `CI=true npm run build --prefix frontend`
+Result: Python compile passed; 3 retention/media-kind tests passed; frontend production build passed with existing Tailwind/PostHog warnings only
 
 ## Notes for Next Session
 

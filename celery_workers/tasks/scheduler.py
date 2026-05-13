@@ -66,6 +66,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 7 * 24 * 3600,  # weekly
         "options": {"queue": "default"},
     },
+    "cleanup-expired-published-card-thumbnails": {
+        "task": "celery_workers.tasks.cleanup.cleanup_expired_published_card_thumbnails",
+        "schedule": 86400,  # daily
+        "options": {"queue": "default"},
+    },
     # 17.4D: Detect pre_upload tasks stuck > 30 min → DLQ + notify user
     "pre-upload-timeout-scan": {
         "task": "celery_workers.tasks.scheduler.scan_pre_upload_timeouts",

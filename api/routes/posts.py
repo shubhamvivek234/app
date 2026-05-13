@@ -41,6 +41,70 @@ _SUBSCRIPTION_ALLOWED = {"active", "grace"}
 _READY_MEDIA_STATUSES = {"ready", "archived"}
 
 
+def _subtract_months(reference: datetime, months: int) -> datetime:
+    year = reference.year
+    month = reference.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+
+    month_lengths = [
+        31,
+        29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ]
+    day = min(reference.day, month_lengths[month - 1])
+    return reference.replace(year=year, month=month, day=day)
+
+
+def _infer_published_media_kind(doc: dict) -> str:
+    explicit = (doc.get("published_media_kind") or "").strip().lower()
+    if explicit in {"text", "image", "video", "mixed"}:
+        return explicit
+
+    media_types = [
+        str(media_type).strip().lower()
+        for media_type in (doc.get("media_types") or [])
+        if str(media_type).strip()
+    ]
+    has_thumbnail = bool(doc.get("published_card_thumbnail_url") or (doc.get("thumbnail_urls") or []))
+    has_media_url = bool(doc.get("media_urls") or doc.get("media_url"))
+    post_type = str(doc.get("post_type") or "").strip().lower()
+
+    if media_types:
+        has_image = any(media_type == "image" for media_type in media_types)
+        has_video = any(media_type == "video" for media_type in media_types)
+        if has_image and has_video:
+            return "mixed"
+        if has_video:
+            return "video"
+        if has_image:
+            return "image"
+
+    if "mixed" in post_type:
+        return "mixed"
+    if post_type in {"video", "reel", "story"} or "video" in post_type:
+        return "video"
+    if has_thumbnail or has_media_url:
+        return "image"
+    return "text"
+
+
+def _hydrate_post_card_fields(doc: dict) -> dict:
+    if doc.get("published_media_kind") not in {"text", "image", "video", "mixed"}:
+        doc["published_media_kind"] = _infer_published_media_kind(doc)
+    return doc
+
+
 def _plan_post_limit(plan: str) -> int:
     return {"starter": 30, "pro": 200, "agency": 2000}.get(plan, 30)
 
@@ -565,6 +629,7 @@ async def list_posts(
     db: DB,
     workspace_id: Annotated[str | None, Query(max_length=100)] = None,
     status_filter: Annotated[str | None, Query(alias="status", max_length=50)] = None,
+    published_window: Annotated[str | None, Query(max_length=50)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[PostResponse]:
@@ -578,11 +643,20 @@ async def list_posts(
     }
     if status_filter:
         query["status"] = status_filter
+    if status_filter == PostStatus.PUBLISHED and published_window == "past_6_months":
+        cutoff = _subtract_months(datetime.now(timezone.utc), 6)
+        query["$or"] = [
+            {"published_at": {"$gte": cutoff}},
+            {"published_at": {"$gte": cutoff.isoformat()}},
+        ]
 
     skip = (page - 1) * limit
-    cursor = db.posts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    sort_spec = [("created_at", -1)]
+    if status_filter == PostStatus.PUBLISHED:
+        sort_spec = [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
+    cursor = db.posts.find(query, {"_id": 0}).sort(sort_spec).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_response(d) for d in docs]
+    return [_doc_to_response(_hydrate_post_card_fields(d)) for d in docs]
 
 
 @router.get("/posts/recent-published", response_model=list[PostResponse],
@@ -607,7 +681,7 @@ async def list_recent_published_posts(
         [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
     ).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_response(d) for d in docs]
+    return [_doc_to_response(_hydrate_post_card_fields(d)) for d in docs]
 
 
 # ── Get single ───────────────────────────────────────────────────────────────
@@ -637,7 +711,7 @@ async def get_post(
         if not member:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return _doc_to_response(doc)
+    return _doc_to_response(_hydrate_post_card_fields(doc))
 
 
 # ── Update (optimistic lock EC25) ────────────────────────────────────────────
@@ -726,7 +800,7 @@ async def update_post(
         details={"fields_changed": list(updates.keys())},
     )
 
-    return _doc_to_response(updated)
+    return _doc_to_response(_hydrate_post_card_fields(updated))
 
 
 # ── Soft-delete ───────────────────────────────────────────────────────────────

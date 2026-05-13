@@ -1,6 +1,6 @@
 """
 Phase 2.6 — Media lifecycle cleanup.
-Respects plan-based archive tiers. Thumbnails are PERMANENT — never deleted.
+Respects plan-based archive tiers. Media thumbnails survive source cleanup.
 Only cleans up when ALL platforms are in terminal state (EC media cleanup gate).
 """
 import logging
@@ -10,6 +10,31 @@ from datetime import datetime, timezone
 from celery_workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _subtract_months(reference: datetime, months: int) -> datetime:
+    year = reference.year
+    month = reference.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+
+    month_lengths = [
+        31,
+        29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ]
+    day = min(reference.day, month_lengths[month - 1])
+    return reference.replace(year=year, month=month, day=day)
 
 
 @celery_app.task(
@@ -268,6 +293,89 @@ async def prune_recent_published_posts(
         )
 
     return pruned
+
+
+@celery_app.task(
+    name="celery_workers.tasks.cleanup.cleanup_expired_published_card_thumbnails",
+    bind=True,
+)
+def cleanup_expired_published_card_thumbnails(self) -> dict:
+    import asyncio
+    return asyncio.get_event_loop().run_until_complete(_async_cleanup_expired_published_card_thumbnails())
+
+
+async def _async_cleanup_expired_published_card_thumbnails() -> dict:
+    from db.mongo import get_client
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    cutoff = _subtract_months(datetime.now(timezone.utc), 6)
+    cursor = db.posts.find(
+        {
+            "published_card_thumbnail_created_at": {"$lt": cutoff},
+            "$or": [
+                {"published_card_thumbnail_key": {"$exists": True, "$ne": None}},
+                {"published_card_thumbnail_url": {"$exists": True, "$ne": None}},
+            ],
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "published_card_thumbnail_key": 1,
+            "published_card_thumbnail_url": 1,
+        },
+        limit=1000,
+    )
+
+    scanned = 0
+    cleaned = 0
+    errors = 0
+
+    async for post in cursor:
+        scanned += 1
+        post_id = post.get("id")
+        storage_ref = post.get("published_card_thumbnail_key") or post.get("published_card_thumbnail_url")
+        if not storage_ref:
+            continue
+
+        try:
+            await _delete_from_storage(storage_ref)
+            result = await db.posts.update_one(
+                {"id": post_id},
+                {
+                    "$unset": {
+                        "published_card_thumbnail_key": "",
+                        "published_card_thumbnail_url": "",
+                        "published_card_thumbnail_created_at": "",
+                    },
+                },
+            )
+            if result.modified_count:
+                cleaned += 1
+        except Exception as exc:
+            logger.warning(
+                "Failed to delete expired published card thumbnail for post %s: %s",
+                post_id,
+                exc,
+            )
+            errors += 1
+
+    if cleaned:
+        logger.info(
+            "Expired published card thumbnail cleanup removed %d thumbnails (scanned=%d, errors=%d)",
+            cleaned,
+            scanned,
+            errors,
+        )
+
+    return {
+        "status": "complete",
+        "scanned": scanned,
+        "cleaned": cleaned,
+        "errors": errors,
+        "cutoff": cutoff.isoformat(),
+    }
 
 
 @celery_app.task(

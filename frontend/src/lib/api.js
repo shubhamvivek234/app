@@ -135,8 +135,15 @@ export const createPost = async (postData) => {
   return response.data;
 };
 
-export const getPosts = async (status = null) => {
-  const url = status ? `${API}/posts?status=${status}` : `${API}/posts`;
+export const getPosts = async (status = null, params = {}) => {
+  const query = new URLSearchParams();
+  if (status) query.set('status', status);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query.set(key, value);
+    }
+  });
+  const url = query.toString() ? `${API}/posts?${query.toString()}` : `${API}/posts`;
   const response = await axios.get(url, {
     headers: getAuthHeaders(),
   });
