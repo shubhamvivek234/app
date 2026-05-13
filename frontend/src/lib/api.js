@@ -2,13 +2,47 @@ import axios from 'axios';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-const SOCIAL_ACCOUNTS_CACHE_KEY = 'social_accounts_cache_v1';
+const SOCIAL_ACCOUNTS_CACHE_KEY = 'social_accounts_cache_v2';
 const SOCIAL_ACCOUNTS_CACHE_TTL_MS = 60 * 1000;
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
+
+const normalizeSocialAccount = (account) => {
+  if (!account || typeof account !== 'object') return null;
+
+  const platform = typeof account.platform === 'string'
+    ? account.platform.toLowerCase()
+    : null;
+
+  const rawId = account.id
+    || account.account_id
+    || (platform && account.platform_user_id ? `${platform}:${account.platform_user_id}` : null)
+    || (platform && (account.platform_username || account.display_name)
+      ? `${platform}:${account.platform_username || account.display_name}`
+      : null);
+
+  if (!platform || !rawId) return null;
+
+  return {
+    ...account,
+    id: String(rawId),
+    account_id: String(account.account_id || rawId),
+    platform,
+    platform_user_id: account.platform_user_id ? String(account.platform_user_id) : null,
+    platform_username: typeof account.platform_username === 'string' ? account.platform_username : null,
+    display_name: typeof account.display_name === 'string' ? account.display_name : null,
+    picture_url: typeof account.picture_url === 'string' ? account.picture_url : null,
+  };
+};
+
+const normalizeSocialAccounts = (accounts) => (
+  Array.isArray(accounts)
+    ? accounts.map(normalizeSocialAccount).filter(Boolean)
+    : []
+);
 
 const DIRECT_UPLOAD_FALLBACK_STATUSES = new Set([404, 405, 501]);
 
@@ -23,7 +57,7 @@ const readSocialAccountsCache = (maxAgeMs = SOCIAL_ACCOUNTS_CACHE_TTL_MS) => {
     if (Date.now() - parsed.timestamp > maxAgeMs) {
       return null;
     }
-    return parsed.data;
+    return normalizeSocialAccounts(parsed.data);
   } catch {
     return null;
   }
@@ -31,10 +65,11 @@ const readSocialAccountsCache = (maxAgeMs = SOCIAL_ACCOUNTS_CACHE_TTL_MS) => {
 
 const writeSocialAccountsCache = (accounts) => {
   try {
+    const normalizedAccounts = normalizeSocialAccounts(accounts);
     localStorage.setItem(
       SOCIAL_ACCOUNTS_CACHE_KEY,
       JSON.stringify({
-        data: Array.isArray(accounts) ? accounts : [],
+        data: normalizedAccounts,
         timestamp: Date.now(),
       })
     );
@@ -219,8 +254,9 @@ export const getSocialAccounts = async () => {
   const response = await axios.get(`${API}/social-accounts`, {
     headers: getAuthHeaders(),
   });
-  writeSocialAccountsCache(response.data);
-  return response.data;
+  const normalizedAccounts = normalizeSocialAccounts(response.data);
+  writeSocialAccountsCache(normalizedAccounts);
+  return normalizedAccounts;
 };
 
 export const disconnectSocialAccount = async (accountId) => {
