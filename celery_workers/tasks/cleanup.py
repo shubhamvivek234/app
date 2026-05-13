@@ -67,7 +67,7 @@ async def _async_cleanup(post_id: str) -> dict:
     user = await db.users.find_one({"user_id": post["user_id"]}, {"plan": 1})
     plan = (user or {}).get("plan", "starter")
 
-    media_ids = post.get("media_ids", [])
+    media_ids = sorted(_collect_post_media_ids(post))
     cleaned = 0
     # Collect permanent thumbnail URLs to store on the post
     # (thumbnails survive cleanup — needed for dashboard previews)
@@ -136,6 +136,12 @@ async def _async_cleanup(post_id: str) -> dict:
         },
         "$unset": {"media_urls": ""},  # remove dead file references
     }
+    for platform in (post.get("platform_overrides") or {}).keys():
+        post_update["$unset"][f"platform_overrides.{platform}.media_urls"] = ""
+        post_update["$unset"][f"platform_overrides.{platform}.media_url"] = ""
+    for account_id in (post.get("account_overrides") or {}).keys():
+        post_update["$unset"][f"account_overrides.{account_id}.media_urls"] = ""
+        post_update["$unset"][f"account_overrides.{account_id}.media_url"] = ""
     if surviving_thumbnail_urls:
         # Thumbnails are permanent — keep them for dashboard previews
         post_update["$set"]["thumbnail_urls"] = surviving_thumbnail_urls
@@ -177,6 +183,9 @@ def _collect_post_media_ids(post: dict) -> set[str]:
     for override in (post.get("platform_overrides") or {}).values():
         if isinstance(override, dict):
             media_ids.update(override.get("media_ids") or [])
+    for override in (post.get("account_overrides") or {}).values():
+        if isinstance(override, dict):
+            media_ids.update(override.get("media_ids") or [])
     return media_ids
 
 
@@ -204,7 +213,7 @@ async def _media_id_still_referenced(
             "deleted_at": {"$exists": False},
             "id": {"$ne": excluding_post_id},
         },
-        {"_id": 0, "media_ids": 1, "platform_overrides": 1},
+        {"_id": 0, "media_ids": 1, "platform_overrides": 1, "account_overrides": 1},
     )
     async for post in cursor:
         if media_id in _collect_post_media_ids(post):

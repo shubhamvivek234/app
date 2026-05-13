@@ -112,6 +112,7 @@ def scan_and_enqueue() -> dict:
 
 async def _async_scan_and_enqueue() -> dict:
     from celery_workers.tasks.publish import (
+        _get_publish_targets,
         _get_platform_pre_upload_started_at,
         _get_platform_pre_upload_status,
         _pre_upload_result_path,
@@ -193,6 +194,7 @@ async def _async_scan_and_enqueue() -> dict:
             "_id": 0,
             "id": 1,
             "platforms": 1,
+            "publish_targets": 1,
             "scheduled_time": 1,
             "video_size_mb": 1,
             "post_type": 1,
@@ -208,13 +210,12 @@ async def _async_scan_and_enqueue() -> dict:
             continue  # Not yet time to start pre-upload for this post
 
         from celery_workers.tasks.publish import pre_upload_task
-        platforms = post.get("platforms", [])
-        target_platforms = [
-            platform
-            for platform in platforms
-            if _requires_pre_upload(platform, post)
+        publish_targets = [
+            target
+            for target in _get_publish_targets(post)
+            if _requires_pre_upload(target["platform"], post)
         ]
-        if not target_platforms:
+        if not publish_targets:
             continue
 
         # 17.5: Record pre_upload_start_time + estimated_upload_duration on the post
@@ -222,29 +223,30 @@ async def _async_scan_and_enqueue() -> dict:
         estimated_secs = None
         if file_size_mb > 0 and post.get("scheduled_time"):
             _, estimated_secs = calculate_pre_upload_start(
-                post["scheduled_time"], file_size_mb, target_platforms
+                post["scheduled_time"], file_size_mb, [target["platform"] for target in publish_targets]
             )
 
-        for p in target_platforms:
-            current_status = _get_platform_pre_upload_status(post, p)
+        for target in publish_targets:
+            target_key = target["target_key"]
+            current_status = _get_platform_pre_upload_status(post, target_key)
             if current_status in {"uploading", "ready"}:
                 continue
 
             update_doc = {
                 "$set": {
-                    _pre_upload_result_path(p, "start_time"): now,
+                    _pre_upload_result_path(target_key, "start_time"): now,
                     "updated_at": now,
                 },
             }
             if estimated_secs is not None:
-                update_doc["$set"][_pre_upload_result_path(p, "estimated_duration_secs")] = estimated_secs
+                update_doc["$set"][_pre_upload_result_path(target_key, "estimated_duration_secs")] = estimated_secs
 
             claim = await db.posts.update_one(
                 {
                     "id": post["id"],
                     "$or": [
-                        {_pre_upload_result_path(p, "status"): {"$exists": False}},
-                        {_pre_upload_result_path(p, "status"): {"$in": ["pending", "failed", "timeout"]}},
+                        {_pre_upload_result_path(target_key, "status"): {"$exists": False}},
+                        {_pre_upload_result_path(target_key, "status"): {"$in": ["pending", "failed", "timeout"]}},
                     ],
                 },
                 update_doc,
@@ -255,9 +257,9 @@ async def _async_scan_and_enqueue() -> dict:
             if estimated_secs is not None:
                 await _sync_pre_upload_aggregate(db, post["id"])
 
-            if p in ("instagram", "youtube"):
+            if target["platform"] in ("instagram", "youtube"):
                 pre_upload_task.apply_async(
-                    kwargs={"post_id": post["id"], "platform": p},
+                    kwargs={"post_id": post["id"], "platform": target["platform"], "account_id": target["account_id"]},
                     queue="media_processing",
                 )
                 pre_uploads_triggered += 1
@@ -294,7 +296,12 @@ def scan_pre_upload_timeouts() -> dict:
 
 
 async def _async_scan_pre_upload_timeouts() -> dict:
-    from celery_workers.tasks.publish import _move_to_dlq, _pre_upload_result_path, _sync_pre_upload_aggregate
+    from celery_workers.tasks.publish import (
+        _get_publish_targets,
+        _move_to_dlq,
+        _pre_upload_result_path,
+        _sync_pre_upload_aggregate,
+    )
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -302,43 +309,38 @@ async def _async_scan_pre_upload_timeouts() -> dict:
     now = datetime.now(timezone.utc)
     timeout_threshold = now - timedelta(minutes=120)  # 2h — 10GB files need longer upload windows
 
-    target_platforms = ("instagram", "youtube")
-    timeout_conditions = []
-    for platform in target_platforms:
-        timeout_conditions.append({
-            _pre_upload_result_path(platform, "status"): "uploading",
-            _pre_upload_result_path(platform, "started_at"): {"$lte": timeout_threshold},
-        })
-
     cursor = db.posts.find(
-        {"$or": timeout_conditions},
-        {"_id": 0, "id": 1, "user_id": 1, "platforms": 1, "scheduled_time": 1, "pre_upload_results": 1},
+        {"pre_upload_results": {"$exists": True, "$ne": {}}},
+        {"_id": 0, "id": 1, "user_id": 1, "platforms": 1, "scheduled_time": 1, "pre_upload_results": 1, "publish_targets": 1},
         limit=50,
     )
 
     timed_out = 0
     async for post in cursor:
         post_id = post["id"]
-        for platform in target_platforms:
-            started_at = _get_platform_pre_upload_started_at(post, platform)
-            status = _get_platform_pre_upload_status(post, platform)
+        for target in _get_publish_targets(post):
+            if target["platform"] not in {"instagram", "youtube"}:
+                continue
+            target_key = target["target_key"]
+            started_at = _get_platform_pre_upload_started_at(post, target_key)
+            status = _get_platform_pre_upload_status(post, target_key)
             if status != "uploading" or not started_at or started_at > timeout_threshold:
                 continue
 
             result = await db.posts.find_one_and_update(
                 {
                     "id": post_id,
-                    _pre_upload_result_path(platform, "status"): "uploading",
+                    _pre_upload_result_path(target_key, "status"): "uploading",
                 },
                 {
                     "$set": {
-                        _pre_upload_result_path(platform, "status"): "timeout",
-                        _pre_upload_result_path(platform, "error"): "Pre-upload timed out after 2 hours — moved to DLQ",
-                        _pre_upload_result_path(platform, "timed_out_at"): now,
+                        _pre_upload_result_path(target_key, "status"): "timeout",
+                        _pre_upload_result_path(target_key, "error"): "Pre-upload timed out after 2 hours — moved to DLQ",
+                        _pre_upload_result_path(target_key, "timed_out_at"): now,
                         "updated_at": now,
                     },
                 },
-                projection={"_id": 0, _pre_upload_result_path(platform, "started_at"): 1},
+                projection={"_id": 0, _pre_upload_result_path(target_key, "started_at"): 1},
             )
             if result is None:
                 continue
@@ -347,13 +349,13 @@ async def _async_scan_pre_upload_timeouts() -> dict:
 
             logger.error(
                 "17.4D: pre_upload timeout for post %s platform %s (started_at=%s) — moving to DLQ",
-                post_id, platform, _get_platform_pre_upload_started_at(result, platform),
+                post_id, target["platform"], _get_platform_pre_upload_started_at(result, target_key),
             )
 
             try:
-                await _move_to_dlq(post_id, "pre_upload_timeout", platform=platform)
+                await _move_to_dlq(post_id, "pre_upload_timeout", platform=target["platform"], account_id=target["account_id"])
             except Exception as dlq_exc:
-                logger.error("17.4D: Failed to move %s/%s to DLQ: %s", post_id, platform, dlq_exc)
+                logger.error("17.4D: Failed to move %s/%s to DLQ: %s", post_id, target["platform"], dlq_exc)
 
             try:
                 from celery_workers.tasks.media import send_notification
@@ -361,7 +363,7 @@ async def _async_scan_pre_upload_timeouts() -> dict:
                     kwargs={
                         "post_id": post_id,
                         "type": "pre_upload_timeout",
-                        "platform": platform,
+                        "platform": target["platform"],
                         "error": (
                             "Your video upload timed out after 2 hours. "
                             "Please reschedule the post or try again with a smaller file."
@@ -370,7 +372,7 @@ async def _async_scan_pre_upload_timeouts() -> dict:
                     queue="default",
                 )
             except Exception as notify_exc:
-                logger.warning("17.4D: Failed to notify user for post %s/%s: %s", post_id, platform, notify_exc)
+                logger.warning("17.4D: Failed to notify user for post %s/%s: %s", post_id, target["platform"], notify_exc)
 
             timed_out += 1
 

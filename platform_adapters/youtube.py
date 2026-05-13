@@ -229,8 +229,9 @@ class YouTubeAdapter(PlatformAdapter):
         post_id = str(post.get("id", ""))
         social_account_id = account.get("id", post_id)
 
+        target_key = post.get("publish_target_key") or "youtube"
         container_ids: dict = post.get("platform_container_ids") or {}
-        video_id = container_ids.get("youtube", "")
+        video_id = container_ids.get(target_key, "")
         if not video_id:
             raise PlatformResponseError("No youtube video_id found — run pre_upload first")
 

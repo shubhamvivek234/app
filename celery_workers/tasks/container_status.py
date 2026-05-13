@@ -47,6 +47,7 @@ def check_instagram_container_status(
     post_id: str,
     container_id: str,
     access_token_encrypted: str,
+    target_key: str = "instagram",
     poll_attempt: int = 0,
 ) -> dict:
     """
@@ -55,11 +56,11 @@ def check_instagram_container_status(
     of blocking in a polling loop.
     """
     return _run_async(
-        _async_check(self, post_id, container_id, access_token_encrypted, poll_attempt)
+        _async_check(self, post_id, container_id, access_token_encrypted, target_key, poll_attempt)
     )
 
 
-async def _async_check(task, post_id, container_id, access_token_encrypted, poll_attempt):
+async def _async_check(task, post_id, container_id, access_token_encrypted, target_key, poll_attempt):
     access_token = decrypt(access_token_encrypted)
     client_db = await get_client()
     db = client_db[os.environ["DB_NAME"]]
@@ -85,13 +86,13 @@ async def _async_check(task, post_id, container_id, access_token_encrypted, poll
             {"id": post_id},
             {
                 "$set": {
-                    "pre_upload_results.instagram.status": "ready",
-                    "pre_upload_results.instagram.completed_at": now,
-                    f"platform_container_ids.instagram": container_id,
-                    f"container_expiry_at.instagram": container_expiry,
+                    f"pre_upload_results.{target_key}.status": "ready",
+                    f"pre_upload_results.{target_key}.completed_at": now,
+                    f"platform_container_ids.{target_key}": container_id,
+                    f"container_expiry_at.{target_key}": container_expiry,
                     "updated_at": now,
                 },
-                "$unset": {"pre_upload_results.instagram.error": ""},
+                "$unset": {f"pre_upload_results.{target_key}.error": ""},
             },
         )
         await _sync_pre_upload_aggregate(db, post_id)
@@ -103,9 +104,9 @@ async def _async_check(task, post_id, container_id, access_token_encrypted, poll
             {"id": post_id},
             {
                 "$set": {
-                    "pre_upload_results.instagram.status": "failed",
-                    "pre_upload_results.instagram.error": "Instagram media container processing failed",
-                    "pre_upload_results.instagram.completed_at": datetime.now(timezone.utc),
+                    f"pre_upload_results.{target_key}.status": "failed",
+                    f"pre_upload_results.{target_key}.error": "Instagram media container processing failed",
+                    f"pre_upload_results.{target_key}.completed_at": datetime.now(timezone.utc),
                     "updated_at": datetime.now(timezone.utc),
                 }
             },

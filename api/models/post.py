@@ -62,12 +62,21 @@ class PlatformOverride(BaseModel):
     title: str | None = Field(None, max_length=500)   # YouTube title, TikTok title
     media_ids: list[str] = Field(default_factory=list, max_length=10)
     media_urls: list[str] = Field(default_factory=list, max_length=10)
+    media_types: list[str] = Field(default_factory=list, max_length=10)
+    first_comment: str | None = Field(None, max_length=5000)
+    youtube_privacy: str | None = Field(None, max_length=100)
+    tiktok_privacy: str | None = Field(None, max_length=100)
+    tiktok_allow_duet: bool | None = None
+    tiktok_allow_stitch: bool | None = None
+    tiktok_allow_comment: bool | None = None
+    linkedin_document_url: str | None = Field(None, max_length=4000)
+    linkedin_document_title: str | None = Field(None, max_length=500)
 
 
 class CreatePostRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    content: str = Field(..., min_length=1, max_length=10000)
+    content: str = Field(default="", max_length=10000)
     platforms: list[str] = Field(..., min_length=1, max_length=10)
     account_ids: list[str] = Field(default_factory=list, max_length=20)
     publish_now: bool = False
@@ -83,6 +92,7 @@ class CreatePostRequest(BaseModel):
     workspace_id: str | None = Field(None, max_length=100)
     timezone: str = Field(default="UTC", max_length=100)
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
+    account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
 
     @field_validator("platforms")
     @classmethod
@@ -150,6 +160,7 @@ class UpdatePostRequest(BaseModel):
     scheduled_time: datetime | None = None
     platforms: list[str] | None = Field(None, max_length=10)
     platform_overrides: dict[str, PlatformOverride] | None = None
+    account_overrides: dict[str, PlatformOverride] | None = None
     version: int = Field(..., description="Optimistic lock version — must match current DB version")
 
     @field_validator("platforms")
@@ -197,3 +208,5 @@ class PostResponse(BaseModel):
     version: int = 1
     dlq_reason: str | None = None
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
+    account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
+    account_results: dict[str, PlatformResult] = Field(default_factory=dict)

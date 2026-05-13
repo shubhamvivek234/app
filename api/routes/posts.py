@@ -120,7 +120,7 @@ def _social_account_identifier(account_doc: dict) -> str | None:
     return account_doc.get("account_id") or account_doc.get("id")
 
 
-async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostRequest) -> list[str]:
+async def _resolve_selected_accounts(db, user_id: str, body: CreatePostRequest) -> list[dict]:
     if body.account_ids:
         accounts = await db.social_accounts.find(
             {
@@ -182,19 +182,63 @@ async def _resolve_selected_account_ids(db, user_id: str, body: CreatePostReques
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Selected accounts do not cover requested platforms: {missing_platforms}",
             )
-        return normalized_ids
+        ordered_accounts: list[dict] = []
+        accounts_by_identifier: dict[str, dict] = {}
+        for acct in accounts:
+            canonical_id = _social_account_identifier(acct)
+            if canonical_id:
+                accounts_by_identifier[canonical_id] = {
+                    "account_id": canonical_id,
+                    "platform": (acct.get("platform") or "").lower(),
+                }
 
-    social_account_ids: list[str] = []
+        for requested_id in body.account_ids:
+            normalized_account = accounts_by_identifier.get(requested_id)
+            if normalized_account and normalized_account not in ordered_accounts:
+                ordered_accounts.append(normalized_account)
+                continue
+
+            for acct in accounts:
+                if requested_id not in {acct.get("account_id"), acct.get("id")}:
+                    continue
+                canonical_id = _social_account_identifier(acct)
+                if not canonical_id:
+                    continue
+                candidate = {
+                    "account_id": canonical_id,
+                    "platform": (acct.get("platform") or "").lower(),
+                }
+                if candidate not in ordered_accounts:
+                    ordered_accounts.append(candidate)
+                break
+        return ordered_accounts
+
+    selected_accounts: list[dict] = []
     if body.platforms:
         account_cursor = db.social_accounts.find(
             {"user_id": user_id, "platform": {"$in": body.platforms}, "is_active": True},
-            {"_id": 0, "id": 1, "account_id": 1},
+            {"_id": 0, "id": 1, "account_id": 1, "platform": 1},
         )
         async for acct in account_cursor:
             account_identifier = _social_account_identifier(acct)
             if account_identifier:
-                social_account_ids.append(account_identifier)
-    return social_account_ids
+                selected_accounts.append({
+                    "account_id": account_identifier,
+                    "platform": (acct.get("platform") or "").lower(),
+                })
+    return selected_accounts
+
+
+def _effective_override_for_account(
+    body: CreatePostRequest | UpdatePostRequest,
+    account_id: str,
+    platform: str,
+) -> PlatformOverride:
+    return (
+        (body.account_overrides or {}).get(account_id)
+        or (body.platform_overrides or {}).get(platform)
+        or PlatformOverride()
+    )
 
 
 async def _resolve_media_payload(
@@ -280,6 +324,8 @@ async def create_post(
     workspace_id = body.workspace_id or current_user.get("default_workspace_id")
     user_id = current_user["user_id"]
     now = datetime.now(timezone.utc)
+    selected_accounts = await _resolve_selected_accounts(db, user_id, body)
+    social_account_ids = [account["account_id"] for account in selected_accounts]
 
     # EC23 — Validate platform × content-type compatibility
     for platform in body.platforms:
@@ -290,14 +336,19 @@ async def create_post(
 
     # EC8 — Content policy check (local, fast)
     policy_warnings: list[str] = []
-    for platform in body.platforms:
-        result = check_content_policy(body.content or "", platform)
+    for account in selected_accounts:
+        platform = account["platform"]
+        effective_content = _effective_override_for_account(body, account["account_id"], platform).content
+        if effective_content is None:
+            effective_content = body.content or ""
+        result = check_content_policy(effective_content, platform)
         if not result.approved:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
                     "message": "Content policy violation",
                     "platform": platform,
+                    "account_id": account["account_id"],
                     "violations": result.violations,
                 },
             )
@@ -317,16 +368,17 @@ async def create_post(
         if recent > 0:
             intelligence_warnings.append("Duplicate content detected — this post has been published before")
 
-    # Platform character count enforcement (default content + per-platform overrides)
+    # Platform/account character count enforcement (default content + overrides)
     _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000}
-    for platform in body.platforms:
+    for account in selected_accounts:
+        platform = account["platform"]
         limit = _CHAR_LIMITS.get(platform.lower())
-        override_content = (body.platform_overrides.get(platform) or PlatformOverride()).content
+        override_content = _effective_override_for_account(body, account["account_id"], platform).content
         effective = override_content if override_content is not None else body.content
         if limit and effective and len(effective) > limit:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"{platform} character limit is {limit} (got {len(effective)})",
+                detail=f"{platform} character limit is {limit} (got {len(effective)}) for account {account['account_id']}",
             )
 
     # Hashtag limit warnings (platform best practices)
@@ -345,8 +397,6 @@ async def create_post(
     if all_warnings:
         logger.info("Post pre-publish warnings user=%s: %s", user_id, all_warnings)
 
-    social_account_ids = await _resolve_selected_account_ids(db, user_id, body)
-
     if body.workspace_id and body.workspace_id != current_user.get("default_workspace_id"):
         member = await db.workspace_members.find_one(
             {"workspace_id": body.workspace_id, "user_id": user_id}
@@ -364,6 +414,12 @@ async def create_post(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     for override in (body.platform_overrides or {}).values():
+        for url in (override.media_urls or []):
+            try:
+                assert_safe_url(url)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    for override in (body.account_overrides or {}).values():
         for url in (override.media_urls or []):
             try:
                 assert_safe_url(url)
@@ -390,6 +446,28 @@ async def create_post(
             normalized_override["thumbnail_urls"] = override_thumbnail_urls
 
         normalized_platform_overrides[platform] = normalized_override
+
+    normalized_account_overrides: dict[str, dict] = {}
+    for account in selected_accounts:
+        account_id = account["account_id"]
+        override = (body.account_overrides or {}).get(account_id)
+        if override is None:
+            continue
+
+        normalized_override = override.model_dump(exclude_none=True)
+        use_media_override = _override_explicitly_sets_media(override)
+        normalized_override["use_media_override"] = use_media_override
+
+        if use_media_override:
+            override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+                db, user_id, override.media_ids, override.media_urls
+            )
+            normalized_override["media_ids"] = list(override.media_ids or [])
+            normalized_override["media_urls"] = override_media_urls
+            normalized_override["media_url"] = override_primary_media_url
+            normalized_override["thumbnail_urls"] = override_thumbnail_urls
+
+        normalized_account_overrides[account_id] = normalized_override
 
     if body.publish_now:
         post_status = PostStatus.QUEUED
@@ -419,6 +497,7 @@ async def create_post(
         "content": body.content,
         "title": body.title,
         "platforms": body.platforms,
+        "publish_targets": selected_accounts,
         "account_ids": social_account_ids,
         "social_account_ids": social_account_ids,
         "media_ids": list(body.media_ids or []),
@@ -432,7 +511,18 @@ async def create_post(
         "timezone": body.timezone,
         "scheduled_time": scheduled_time,
         "status": post_status,
-        "platform_results": {},
+        "platform_results": {
+            platform: {"status": "pending"}
+            for platform in body.platforms
+        },
+        "account_results": {
+            account["account_id"]: {
+                "status": "pending",
+                "platform": account["platform"],
+                "account_id": account["account_id"],
+            }
+            for account in selected_accounts
+        },
         "platform_post_urls": {},
         "status_history": [
             {"status": post_status, "timestamp": now, "actor": user_id}
@@ -447,6 +537,7 @@ async def create_post(
         "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
         "schedule_warnings": all_warnings,
         "platform_overrides": normalized_platform_overrides,
+        "account_overrides": normalized_account_overrides,
         "created_at": now,
         "updated_at": now,
     }
@@ -783,6 +874,29 @@ async def update_post(
 
             normalized_platform_overrides[platform] = normalized_override
         updates["platform_overrides"] = normalized_platform_overrides
+    if body.account_overrides is not None:
+        normalized_account_overrides: dict[str, dict] = {}
+        for account_id, override in body.account_overrides.items():
+            for url in (override.media_urls or []):
+                try:
+                    assert_safe_url(url)
+                except ValueError as exc:
+                    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+            normalized_override = override.model_dump(exclude_none=True)
+            use_media_override = _override_explicitly_sets_media(override)
+            normalized_override["use_media_override"] = use_media_override
+
+            if use_media_override:
+                override_media_urls, override_thumbnail_urls, override_primary_media_url, _ = await _resolve_media_payload(
+                    db, user_id, override.media_ids, override.media_urls
+                )
+                normalized_override["media_ids"] = list(override.media_ids or [])
+                normalized_override["media_urls"] = override_media_urls
+                normalized_override["media_url"] = override_primary_media_url
+                normalized_override["thumbnail_urls"] = override_thumbnail_urls
+
+            normalized_account_overrides[account_id] = normalized_override
+        updates["account_overrides"] = normalized_account_overrides
 
     result = await db.posts.update_one(
         {
@@ -902,10 +1016,12 @@ async def retry_failed_post(
     platform: str | None = Query(None),
 ):
     """Re-queue failed publishing work, optionally for a single platform."""
+    from celery_workers.tasks.publish import _aggregate_platform_results, _get_publish_targets
+
     user_id = current_user["user_id"]
     post = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "version": 1, "platforms": 1, "platform_results": 1},
+        {"_id": 0, "status": 1, "version": 1, "platforms": 1, "platform_results": 1, "account_results": 1, "publish_targets": 1},
     )
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -916,30 +1032,56 @@ async def retry_failed_post(
         )
 
     platform_results = post.get("platform_results") or {}
+    account_results = post.get("account_results") or {}
     retryable_statuses = {"failed", "permanently_failed", "paused"}
-    retry_platforms: list[str]
+    retry_targets: list[dict]
 
-    if platform:
-        if platform not in set(post.get("platforms") or []):
-            raise HTTPException(status_code=404, detail="Platform not associated with this post")
-        platform_status = (platform_results.get(platform) or {}).get("status")
-        if platform_status not in retryable_statuses:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Platform {platform} is not in a retryable state",
-            )
-        retry_platforms = [platform]
+    if account_results:
+        publish_targets = _get_publish_targets(post)
+        if platform:
+            retry_targets = [
+                target
+                for target in publish_targets
+                if target["platform"] == platform
+                and (account_results.get(target["target_key"]) or {}).get("status") in retryable_statuses
+            ]
+            if not retry_targets:
+                raise HTTPException(status_code=409, detail=f"Platform {platform} is not in a retryable state")
+        else:
+            retry_targets = [
+                target
+                for target in publish_targets
+                if (account_results.get(target["target_key"]) or {}).get("status") in retryable_statuses
+            ]
+            if not retry_targets:
+                if post.get("status") in ("failed", "dlq"):
+                    retry_targets = publish_targets
+                else:
+                    raise HTTPException(status_code=409, detail="No failed accounts to retry")
     else:
-        retry_platforms = [
-            name
-            for name, result in platform_results.items()
-            if (result or {}).get("status") in retryable_statuses
-        ]
-        if not retry_platforms:
-            if post.get("status") in ("failed", "dlq"):
-                retry_platforms = list(post.get("platforms") or [])
-            else:
-                raise HTTPException(status_code=409, detail="No failed platforms to retry")
+        retry_platforms: list[str]
+        if platform:
+            if platform not in set(post.get("platforms") or []):
+                raise HTTPException(status_code=404, detail="Platform not associated with this post")
+            platform_status = (platform_results.get(platform) or {}).get("status")
+            if platform_status not in retryable_statuses:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Platform {platform} is not in a retryable state",
+                )
+            retry_platforms = [platform]
+        else:
+            retry_platforms = [
+                name
+                for name, result in platform_results.items()
+                if (result or {}).get("status") in retryable_statuses
+            ]
+            if not retry_platforms:
+                if post.get("status") in ("failed", "dlq"):
+                    retry_platforms = list(post.get("platforms") or [])
+                else:
+                    raise HTTPException(status_code=409, detail="No failed platforms to retry")
+        retry_targets = [{"platform": retry_platform, "account_id": None, "target_key": retry_platform} for retry_platform in retry_platforms]
 
     now = datetime.now(timezone.utc)
     set_updates = {
@@ -947,14 +1089,44 @@ async def retry_failed_post(
         "updated_at": now,
     }
     unset_updates = {"dlq_reason": ""}
-    for retry_platform in retry_platforms:
-        prefix = f"platform_results.{retry_platform}"
-        set_updates[f"{prefix}.status"] = "queued"
+    for target in retry_targets:
+        target_key = target["target_key"]
+        if account_results:
+            prefix = f"account_results.{target_key}"
+            set_updates[f"{prefix}.status"] = "queued"
+            set_updates[f"{prefix}.platform"] = target["platform"]
+            set_updates[f"{prefix}.account_id"] = target["account_id"] or target_key
+        else:
+            prefix = f"platform_results.{target_key}"
+            set_updates[f"{prefix}.status"] = "queued"
         set_updates[f"{prefix}.last_attempt_at"] = now
         set_updates[f"{prefix}.next_retry_at"] = None
         set_updates[f"{prefix}.error"] = None
         set_updates[f"{prefix}.dlq_reason"] = None
         set_updates[f"{prefix}.retry_count"] = 0
+
+    if account_results:
+        next_post = {
+            **post,
+            "account_results": {
+                **account_results,
+                **{
+                    target["target_key"]: {
+                        **(account_results.get(target["target_key"]) or {}),
+                        "status": "queued",
+                        "platform": target["platform"],
+                        "account_id": target["account_id"] or target["target_key"],
+                        "last_attempt_at": now,
+                        "next_retry_at": None,
+                        "error": None,
+                        "dlq_reason": None,
+                        "retry_count": 0,
+                    }
+                    for target in retry_targets
+                },
+            },
+        }
+        set_updates["platform_results"] = _aggregate_platform_results(next_post)
 
     await db.posts.update_one(
         {"id": post_id},
@@ -966,19 +1138,19 @@ async def retry_failed_post(
     )
 
     enqueue_errors: list[str] = []
-    for retry_platform in retry_platforms:
+    for target in retry_targets:
         try:
             enqueue_task(
                 "celery_workers.tasks.publish.publish_to_platform",
-                kwargs={"post_id": post_id, "platform": retry_platform, "attempt": 0},
+                kwargs={"post_id": post_id, "platform": target["platform"], "account_id": target["account_id"], "attempt": 0},
                 queue="default",
             )
         except Exception as exc:
-            enqueue_errors.append(f"{retry_platform}: {exc}")
+            enqueue_errors.append(f"{target['target_key']}: {exc}")
             logger.warning(
-                "Failed to enqueue retry for post %s platform %s: %s",
+                "Failed to enqueue retry for post %s target %s: %s",
                 post_id,
-                retry_platform,
+                target["target_key"],
                 exc,
             )
 
@@ -988,7 +1160,12 @@ async def retry_failed_post(
             detail=f"Failed to enqueue retry for one or more platforms: {enqueue_errors}",
         )
 
-    return {"retried": True, "post_id": post_id, "platforms": retry_platforms}
+    return {
+        "retried": True,
+        "post_id": post_id,
+        "platforms": sorted({target["platform"] for target in retry_targets}),
+        "account_ids": [target["account_id"] for target in retry_targets if target["account_id"]],
+    }
 
 
 # ── Approval workflow ─────────────────────────────────────────────────────────

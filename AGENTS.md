@@ -13,45 +13,21 @@ Arch refs: Architecture v2.9 / Implementation Plan v3.0
 
 Date: 2026-05-13
 Completed tasks:
-- Removed the `Generate image with AI (DALL-E 3)` block from `CreatePostForm`
-- Added `Common Post` as the shared source for caption + media in Create Post
-- Added platform-level Common Post validation with persistent blocking errors and submit disable
-- Added platform-specific reset-to-common and per-platform crop override flow on top of shared media
-- Persisted `platform_overrides`, `media_types`, `youtube_privacy`, and TikTok options through `/api/posts`
-- Updated Celery publish path to honor per-platform content/media overrides and clean up override media URLs
-- Fixed Common Post empty-state validation so media-required platforms now show guidance, not blocking errors, until media is actually added
-- Re-enabled direct media upload/removal/reorder inside each selected platform panel
-- Fixed submit gating so platform-only media overrides count as real post content
-- Hardened AI content/hashtag waterfall to use real provider fallbacks instead of the mocked local Emergent fallback
-- Prioritized free/free-tier models in the AI chain: Gemini free tier, Groq LLaMA 3.3, and multiple OpenRouter free models
-- Improved hashtag generator error handling to surface backend failure details in the UI
-- Found that production AI routes come from `api/routes/ai.py`, not `backend/server.py`
-- Patched the active modular AI route with the same fallback improvements so live `/api/ai/generate-content` and `/api/ai/generate-hashtags` stop returning 503 after Gemini quota failures
-- Found the remaining production outage cause: `docker-compose.prod.yml` was not passing AI provider keys into the containers
-- Deployed the compose env fix so live `api` now receives `GOOGLE_AI_KEY`, `GROQ_API_KEY`, `COHERE_API_KEY`, `OPENROUTER_API_KEY`, and `EMERGENT_LLM_KEY`
-- Verified the live container falls through to OpenRouter successfully; current image is missing `google.generativeai` and `groq`, but OpenRouter free fallback works
-- Implemented Published Posts 6-month view retention without deleting post history
-- Added dedicated `published_card_thumbnail_url` / `published_media_kind` support to published post responses
-- Added publish-time 160x160 WebP published-card thumbnail generation in `celery_workers/tasks/publish.py`
-- Added daily cleanup task that deletes only expired published-card thumbnails after 6 months
-- Removed the old production-side published-post pruning path that deleted post data beyond the newest 25 items
-- Updated `ContentLibrary` published view to use the new card thumbnail/type metadata and replace `All Time` with `Past 6 Months`
-- Added focused retention tests in `tests/test_published_post_retention.py`
-- Fixed published-post 6-month filtering fallback so published records without `published_at` still appear using `updated_at` / `created_at`
-- Extended `ContentLibrary` scheduled view to show thumbnail + post-type badge, fetch all pages, and auto-refresh so published posts leave Scheduled and appear in Published automatically
-
-Files modified:
-- `backend/server.py`
-- `backend/celery_tasks.py`
-- `frontend/src/pages/CreatePostForm.js`
-- `frontend/src/components/composer/PlatformEditor.js`
-- `frontend/src/lib/mediaValidation.js`
+- Implemented same-platform multi-account Create Post drafts locally
+- `CreatePostForm` is now account-scoped inside each platform section: selected same-platform accounts show as chips/tabs and each account keeps separate caption/media/settings
+- `PlatformEditor` now renders account chips with per-account issue counts; `AccountSelector` now activates the exact clicked account
+- `/api/posts` now accepts `account_overrides` and stores `publish_targets` + `account_results`
+- Celery publish/pre-upload path now uses account targets instead of assuming one account per platform
+- Retry flow updated to preserve `account_id` when re-enqueuing failed targets
+- Cleanup now includes account override media ids and clears stale override media URLs
+- Instagram/YouTube/container-status state keys now use target-specific keys so duplicate same-platform accounts do not overwrite each other
+- Changes are local only; nothing committed or deployed yet
 
 ## Active Work
 
-Currently implementing: None
-Next concrete step: Commit/push/deploy the scheduled-post Content Library card changes if approved after local review
-Blocked on: some platform publishers are still not fully configured (`threads`, `bluesky`, `pinterest`) and Common Post marks them unsupported
+Currently implementing: Same-platform multi-account Create Post support
+Next concrete step: Manual browser verification for multi-account LinkedIn/Instagram/YouTube create + publish/schedule, then commit/push/deploy if approved
+Blocked on: no manual end-to-end run yet; unsupported Common Post publishers remain `threads`, `bluesky`, `pinterest`
 
 ## Architecture Notes
 
@@ -71,6 +47,8 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - The new 6-month retention policy applies only to Published Posts card thumbnails and page filtering; post data and analytics history are preserved
 - Old production logic in `celery_workers/tasks/publish.py` used to prune published posts beyond 25 items; that call has been removed locally
 - `ContentLibrary` now fetches paginated scheduled/published posts in batches of 100 and polls every 30s for status transitions on those views
+- Multi-account publish model is now `publish_targets` + `account_overrides` + `account_results`; do not assume one publish target per platform anymore
+- Pre-upload/container state for duplicate same-platform accounts must key off target/account id, not raw platform name
 
 ## Decisions Made This Session
 
@@ -83,6 +61,7 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - When AI breaks in production, inspect `api/routes/ai.py` and EC2 `api` container logs first, not only `backend/server.py`
 - If live AI returns `No AI provider configured`, check compose env passthrough before changing route code again
 - Do not reintroduce published-post document deletion for retention; only card-thumbnail cleanup should expire after 6 months
+- For same-platform multi-account posting, drafts are per account and publishing is per target/account; platform-level state is now only an aggregate summary
 
 ## Test Status
 
@@ -120,6 +99,11 @@ Latest run:
 - `CI=true npm run build --prefix frontend`
 Result: frontend production build passed after the scheduled-post card updates; only existing Tailwind/PostHog warnings remain
 
+Latest run:
+- `python3 -m compileall api/models/post.py api/routes/posts.py celery_workers/tasks/publish.py celery_workers/tasks/scheduler.py celery_workers/tasks/cleanup.py celery_workers/tasks/container_status.py platform_adapters/instagram.py platform_adapters/youtube.py`
+- `CI=true npm run build --prefix frontend`
+Result: Python compile passed; frontend production build passed with the existing Tailwind/PostHog warnings only
+
 ## Notes for Next Session
 
 Start with:
@@ -128,7 +112,7 @@ cat AGENTS.md
 git status --short
 git log --oneline -5
 CI=true npm run build --prefix frontend
-python3 -m compileall backend/server.py backend/celery_tasks.py
+python3 -m compileall api/models/post.py api/routes/posts.py celery_workers/tasks/publish.py celery_workers/tasks/scheduler.py
 ```
 
 Important:
@@ -137,3 +121,4 @@ Important:
 - `threads`, `bluesky`, and `pinterest` are intentionally blocked in Common Post because publish adapters are not ready
 - Secrets previously shown in chat should be treated as compromised until rotated
 - `frontend/.vercel/project.json` points to the wrong Vercel project locally; deploy the live frontend from repo root linked to `app-fgv2`
+- Same-platform multi-account work is not committed yet in this session

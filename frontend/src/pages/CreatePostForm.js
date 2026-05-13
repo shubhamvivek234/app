@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { buildCommonPostValidation } from '@/lib/mediaValidation';
+import { validateCommonPostPlatform } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -359,6 +359,27 @@ const getAvatarColor = (name) => {
   return colors[(name?.charCodeAt(0) || 0) % colors.length];
 };
 
+const createDefaultAccountOverrides = () => ({
+  content: undefined,
+  media: undefined,
+  firstComment: undefined,
+  location: undefined,
+  shopGridLink: undefined,
+  videoTitle: undefined,
+  youtubePrivacy: undefined,
+  linkedinFirstComment: undefined,
+  linkedinDocumentUrl: undefined,
+  linkedinDocumentTitle: undefined,
+  tiktokPrivacy: undefined,
+  tiktokAllowDuet: undefined,
+  tiktokAllowStitch: undefined,
+  tiktokAllowComments: undefined,
+  altTexts: undefined,
+});
+
+const getAccountDisplayName = (account) =>
+  account?.platform_username || account?.page_name || account?.name || account?.platform || 'Account';
+
 // ── Scroll Time Picker ────────────────────────────────────────────────────────
 /** One drum-wheel column with ▲ / ▼ arrows and low-sensitivity scroll. */
 const DrumColumn = ({ items, selected, onSelect, fmt, wrap = true }) => {
@@ -493,7 +514,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   // ── Shared + per-platform content ────────────────────────────────────────
   const [commonCaption, setCommonCaption] = useState('');
-  const [platformCaptions, setPlatformCaptions] = useState({});
+  const [accountOverrides, setAccountOverrides] = useState({});
 
   // ── Platform-specific settings ────────────────────────────────────────────
   const [postFormat,            setPostFormat]            = useState('Post');
@@ -514,7 +535,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [uploading,          setUploading]          = useState(false);
   const [uploadProgress,     setUploadProgress]     = useState(0);
   const [uploadedMedia,      setUploadedMedia]      = useState([]);   // array of {file,url,type,name,width,height}
-  const [platformMediaOverrides, setPlatformMediaOverrides] = useState({});
   const [coverImage,         setCoverImage]         = useState(null);
   const [coverImageUploading,setCoverImageUploading]= useState(false);
   const [mediaRawAspectRatio,setMediaRawAspectRatio]= useState(null);
@@ -534,6 +554,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [rightPanelMode,        setRightPanelMode]        = useState('preview'); // 'preview' | 'ai'
   const [previewVisible,        setPreviewVisible]        = useState(true);
   const [activePreviewPlatform, setActivePreviewPlatform] = useState(null);
+  const [activeAccountByPlatform, setActiveAccountByPlatform] = useState({});
   // ── AI Assistant state ─────────────────────────────────────────────────────
   const [aiCaptionPrompt,       setAiCaptionPrompt]       = useState('');
   const [aiCaptionTone,         setAiCaptionTone]         = useState('casual');
@@ -625,61 +646,131 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     ? activePreviewPlatform
     : selectedPlatforms[0] || null;
 
+  const selectedAccountsByPlatform = useCallback(
+    (platform) => availableAccounts.filter(
+      (account) => selectedAccounts.includes(account.id) && account.platform === platform
+    ),
+    [availableAccounts, selectedAccounts]
+  );
+
+  useEffect(() => {
+    setActiveAccountByPlatform((prev) => {
+      const next = {};
+      selectedPlatforms.forEach((platform) => {
+        const platformAccounts = selectedAccountsByPlatform(platform);
+        if (platformAccounts.length === 0) return;
+        const current = prev[platform];
+        next[platform] = platformAccounts.some((account) => account.id === current)
+          ? current
+          : platformAccounts[0].id;
+      });
+      return next;
+    });
+  }, [selectedPlatforms, selectedAccountsByPlatform]);
+
+  const getActiveAccountIdForPlatform = useCallback(
+    (platform) => {
+      const platformAccounts = selectedAccountsByPlatform(platform);
+      if (platformAccounts.length === 0) return null;
+      return activeAccountByPlatform[platform] || platformAccounts[0].id;
+    },
+    [activeAccountByPlatform, selectedAccountsByPlatform]
+  );
+
+  const activeAccountId = activePlatform ? getActiveAccountIdForPlatform(activePlatform) : null;
   const activeAccount = availableAccounts.find(
-    a => selectedAccounts.includes(a.id) && a.platform === activePlatform
+    (account) => account.id === activeAccountId
+  ) || null;
+
+  const getAccountOverride = useCallback(
+    (accountId) => accountOverrides[accountId] || createDefaultAccountOverrides(),
+    [accountOverrides]
   );
 
-  const hasPlatformCaptionOverride = useCallback(
-    (platform) => Object.prototype.hasOwnProperty.call(platformCaptions, platform),
-    [platformCaptions]
-  );
+  const updateAccountOverride = useCallback((accountId, partial) => {
+    setAccountOverrides((prev) => ({
+      ...prev,
+      [accountId]: {
+        ...createDefaultAccountOverrides(),
+        ...(prev[accountId] || {}),
+        ...partial,
+      },
+    }));
+  }, []);
 
-  const hasPlatformMediaOverride = useCallback(
-    (platform) => Object.prototype.hasOwnProperty.call(platformMediaOverrides, platform),
-    [platformMediaOverrides]
-  );
+  const resetAccountOverride = useCallback((accountId) => {
+    setAccountOverrides((prev) => {
+      const next = { ...prev };
+      delete next[accountId];
+      return next;
+    });
+  }, []);
 
-  const getEffectiveCaptionForPlatform = useCallback((platform) => {
-    if (!platform) return commonCaption;
-    return hasPlatformCaptionOverride(platform)
-      ? (platformCaptions[platform] || '')
+  const hasAccountFieldOverride = useCallback((accountId, field) => (
+    Object.prototype.hasOwnProperty.call(accountOverrides[accountId] || {}, field)
+  ), [accountOverrides]);
+
+  const getEffectiveCaptionForAccount = useCallback((accountId) => {
+    if (!accountId) return commonCaption;
+    return hasAccountFieldOverride(accountId, 'content')
+      ? (getAccountOverride(accountId).content || '')
       : commonCaption;
-  }, [commonCaption, hasPlatformCaptionOverride, platformCaptions]);
+  }, [commonCaption, getAccountOverride, hasAccountFieldOverride]);
 
-  const getEffectiveMediaForPlatform = useCallback((platform) => {
-    if (!platform) return uploadedMedia;
-    if (hasPlatformMediaOverride(platform)) {
-      const overrideMedia = platformMediaOverrides[platform];
-      return Array.isArray(overrideMedia) ? overrideMedia : [];
-    }
-    return uploadedMedia;
-  }, [hasPlatformMediaOverride, platformMediaOverrides, uploadedMedia]);
+  const getEffectiveMediaForAccount = useCallback((accountId) => {
+    if (!accountId) return uploadedMedia;
+    return hasAccountFieldOverride(accountId, 'media')
+      ? (Array.isArray(getAccountOverride(accountId).media) ? getAccountOverride(accountId).media : [])
+      : uploadedMedia;
+  }, [getAccountOverride, hasAccountFieldOverride, uploadedMedia]);
+
+  const getEffectiveValueForAccount = useCallback((accountId, field, fallbackValue) => (
+    hasAccountFieldOverride(accountId, field)
+      ? getAccountOverride(accountId)[field]
+      : fallbackValue
+  ), [getAccountOverride, hasAccountFieldOverride]);
 
   const clearDerivedPlatformMediaOverrides = useCallback(() => {
-    setPlatformMediaOverrides({});
+    setAccountOverrides((prev) => {
+      const next = {};
+      Object.entries(prev).forEach(([accountId, override]) => {
+        const accountHasNonMediaOverride = Object.keys(override || {}).some(
+          (field) => field !== 'media' && field !== 'altTexts' && override[field] !== undefined
+        );
+        if (accountHasNonMediaOverride) {
+          next[accountId] = {
+            ...override,
+            media: undefined,
+            altTexts: undefined,
+          };
+        }
+      });
+      return next;
+    });
   }, []);
 
   const commonFirstComment = firstComment;
 
-  const platformValidation = useMemo(() => {
-    const captionByPlatform = Object.fromEntries(
-      selectedPlatforms.map((platform) => [platform, getEffectiveCaptionForPlatform(platform)])
-    );
-    const mediaByPlatform = Object.fromEntries(
-      selectedPlatforms.map((platform) => [platform, getEffectiveMediaForPlatform(platform)])
-    );
-    return buildCommonPostValidation({
-      platforms: selectedPlatforms,
-      captionByPlatform,
-      mediaByPlatform,
-      postFormat,
-    });
-  }, [getEffectiveCaptionForPlatform, getEffectiveMediaForPlatform, postFormat, selectedPlatforms]);
+  const accountValidation = useMemo(() => (
+    availableAccounts
+      .filter((account) => selectedAccounts.includes(account.id))
+      .reduce((acc, account) => {
+        acc[account.id] = validateCommonPostPlatform(account.platform, {
+          caption: getEffectiveCaptionForAccount(account.id),
+          media: getEffectiveMediaForAccount(account.id),
+          postFormat,
+        });
+        return acc;
+      }, {})
+  ), [availableAccounts, getEffectiveCaptionForAccount, getEffectiveMediaForAccount, postFormat, selectedAccounts]);
 
-  const blockingPlatforms = selectedPlatforms.filter(
-    (platform) => (platformValidation[platform]?.errors || []).length > 0
+  const blockingAccounts = selectedAccounts.filter(
+    (accountId) => (accountValidation[accountId]?.errors || []).length > 0
   );
-  const hasBlockingErrors = blockingPlatforms.length > 0;
+  const hasBlockingErrors = blockingAccounts.length > 0;
+  const blockingPlatforms = selectedPlatforms.filter((platform) =>
+    selectedAccountsByPlatform(platform).some((account) => (accountValidation[account.id]?.errors || []).length > 0)
+  );
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -904,10 +995,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     return arr;
   };
 
-  const handleFilesSelectForPlatform = async (platform, files) => {
+  const handleFilesSelectForPlatform = async (accountId, files) => {
     const arr = Array.isArray(files) ? files : Array.from(files || []);
     if (arr.length === 0) return;
-    if (!platform) {
+    if (!accountId) {
       await uploadFilesToBackend(arr);
       return;
     }
@@ -915,10 +1006,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setUploadProgress(0);
     try {
       const newAssets = await appendMediaAssets(arr);
-      setPlatformMediaOverrides(prev => ({
-        ...prev,
-        [platform]: [...getEffectiveMediaForPlatform(platform), ...newAssets],
-      }));
+      updateAccountOverride(accountId, {
+        media: [...getEffectiveMediaForAccount(accountId), ...newAssets],
+      });
       toast.success('Media uploaded');
     } catch (error) {
       toast.error(error?.message || 'Failed to upload media');
@@ -928,26 +1018,25 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     }
   };
 
-  const handleRemoveMediaForPlatform = (platform, index) => {
-    if (!platform) {
+  const handleRemoveMediaForPlatform = (accountId, index) => {
+    if (!accountId) {
       removeMediaItem(index);
       return;
     }
-    setPlatformMediaOverrides(prev => ({
-      ...prev,
-      [platform]: getEffectiveMediaForPlatform(platform).filter((_, i) => i !== index),
-    }));
+    updateAccountOverride(accountId, {
+      media: getEffectiveMediaForAccount(accountId).filter((_, i) => i !== index),
+    });
   };
 
-  const handleReorderMediaForPlatform = (platform, fromIndex, toIndex) => {
-    if (!platform) {
+  const handleReorderMediaForPlatform = (accountId, fromIndex, toIndex) => {
+    if (!accountId) {
       reorderMedia(fromIndex, toIndex);
       return;
     }
-    const arr = [...getEffectiveMediaForPlatform(platform)];
+    const arr = [...getEffectiveMediaForAccount(accountId)];
     const [moved] = arr.splice(fromIndex, 1);
     arr.splice(toIndex, 0, moved);
-    setPlatformMediaOverrides(prev => ({ ...prev, [platform]: arr }));
+    updateAccountOverride(accountId, { media: arr });
   };
 
   const uploadCoverImageToBackend = async (file) => {
@@ -1032,7 +1121,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             throw new Error('Processed cropped image did not return a media URL');
           }
           const dims = await getImageDimensions(mediaUrl);
-          const targetPlatform = cropPlatform || basePlatform;
+          const targetAccountId = cropPlatform || basePlatform;
           const buildNextItem = (currentItem) => ({
             ...currentItem,
             mediaId: asset.media_id,
@@ -1046,7 +1135,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             height: asset.height || dims.height,
           });
 
-          if (!targetPlatform) {
+          if (!targetAccountId) {
             setUploadedMedia(prev => {
               const next = [...prev];
               if (!next[cropMediaIndex]) return prev;
@@ -1054,15 +1143,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               return next;
             });
           } else {
-            setPlatformMediaOverrides(prev => {
-              const platformMedia = [...getEffectiveMediaForPlatform(targetPlatform)];
-              if (!platformMedia[cropMediaIndex]) return prev;
-              platformMedia[cropMediaIndex] = buildNextItem(platformMedia[cropMediaIndex]);
-              return {
-                ...prev,
-                [targetPlatform]: platformMedia,
-              };
-            });
+            const accountMedia = [...getEffectiveMediaForAccount(targetAccountId)];
+            if (!accountMedia[cropMediaIndex]) {
+              toast.error('Media item no longer exists');
+              return;
+            }
+            accountMedia[cropMediaIndex] = buildNextItem(accountMedia[cropMediaIndex]);
+            updateAccountOverride(targetAccountId, { media: accountMedia });
           }
           toast.success('Image cropped');
           resetCropState();
@@ -1081,9 +1168,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   };
 
   // Called from PlatformEditor "Crop" button
-  const handleCropMedia = async (platform, index, targetRatio) => {
-    const normalizedPlatform = platform === COMMON_POST_SECTION ? null : platform;
-    const effectiveMedia = getEffectiveMediaForPlatform(normalizedPlatform);
+  const handleCropMedia = async (accountId, index, targetRatio) => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const effectiveMedia = getEffectiveMediaForAccount(normalizedAccountId);
     const item = effectiveMedia[index];
     if (!item || item.type === 'video') return;
     try {
@@ -1097,9 +1184,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         throw new Error('Image source unavailable');
       }
 
-      setCropPlatform(normalizedPlatform);
+      setCropPlatform(normalizedAccountId);
       setCropMediaIndex(index);
-      setCropTargetRatio(targetRatio ?? getPlatformCropRatio(normalizedPlatform || basePlatform, postFormat));
+      const cropPlatform = normalizedAccountId
+        ? (availableAccounts.find((account) => account.id === normalizedAccountId)?.platform || basePlatform)
+        : basePlatform;
+      setCropTargetRatio(targetRatio ?? getPlatformCropRatio(cropPlatform, postFormat));
       setCropImageSrc(cropSrc);
       setCrop({ x: 0, y: 0 });
       setZoom(1);
@@ -1134,9 +1224,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // ── Reset (Create Another) ────────────────────────────────────────────────
   const resetForm = () => {
     setCommonCaption('');
-    setPlatformCaptions({});
+    setAccountOverrides({});
     setUploadedMedia([]);
-    setPlatformMediaOverrides({});
     setCoverImage(null);
     setFirstComment('');
     setLocation('');
@@ -1150,11 +1239,15 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (mode) => {
     const primaryPlatform = orderedPlatforms[0] || selectedPlatforms[0];
-    const primaryContent = commonCaption || (primaryPlatform ? getEffectiveCaptionForPlatform(primaryPlatform) : '') || '';
+    const primaryAccountId = primaryPlatform ? getActiveAccountIdForPlatform(primaryPlatform) : null;
+    const firstAccountContent = selectedAccounts
+      .map((accountId) => getEffectiveCaptionForAccount(accountId))
+      .find((content) => Boolean(content?.trim())) || '';
+    const primaryContent = commonCaption || firstAccountContent || (primaryAccountId ? getEffectiveCaptionForAccount(primaryAccountId) : '') || '';
     const hasContent = Boolean(primaryContent.trim())
-      || selectedPlatforms.some((platform) => {
-        const caption = getEffectiveCaptionForPlatform(platform);
-        const media = getEffectiveMediaForPlatform(platform);
+      || selectedAccounts.some((accountId) => {
+        const caption = getEffectiveCaptionForAccount(accountId);
+        const media = getEffectiveMediaForAccount(accountId);
         return Boolean(caption.trim()) || media.length > 0;
       })
       || uploadedMedia.length > 0;
@@ -1193,33 +1286,50 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const mediaIds = topLevelMedia.map((m) => m.mediaId).filter(Boolean);
       const mediaUrls = topLevelMedia.map((m) => m.url).filter(Boolean);
       const mediaTypes = topLevelMedia.map((m) => m.type).filter(Boolean);
-      if (linkedinDocumentUrl && !mediaUrls.includes(linkedinDocumentUrl)) {
-        mediaUrls.push(linkedinDocumentUrl);
-      }
 
       const fallbackTitle = videoTitle || linkedinDocumentTitle || '';
-      const platformOverrides = Object.fromEntries(
-        selectedPlatforms.map((platform) => {
-          const platformMedia = getEffectiveMediaForPlatform(platform);
-          const effectiveContent = getEffectiveCaptionForPlatform(platform) || primaryContent;
+      const accountOverridesPayload = Object.fromEntries(
+        selectedAccounts.map((accountId) => {
+          const account = availableAccounts.find((candidate) => candidate.id === accountId);
+          const platform = account?.platform;
+          const accountMedia = getEffectiveMediaForAccount(accountId);
+          const effectiveContent = getEffectiveCaptionForAccount(accountId) || primaryContent;
+          const effectiveVideoTitle = getEffectiveValueForAccount(accountId, 'videoTitle', videoTitle) || '';
+          const effectiveLinkedinDocumentTitle = getEffectiveValueForAccount(accountId, 'linkedinDocumentTitle', linkedinDocumentTitle) || '';
+          const effectiveLinkedinDocumentUrl = getEffectiveValueForAccount(accountId, 'linkedinDocumentUrl', linkedinDocumentUrl) || null;
           const override = {
             content: effectiveContent,
-            media_ids: platformMedia.map((m) => m.mediaId).filter(Boolean),
-            media_urls: platformMedia.map((m) => m.url).filter(Boolean),
-            media_types: platformMedia.map((m) => m.type).filter(Boolean),
+            media_ids: accountMedia.map((m) => m.mediaId).filter(Boolean),
+            media_urls: [
+              ...accountMedia.map((m) => m.url).filter(Boolean),
+              ...(effectiveLinkedinDocumentUrl ? [effectiveLinkedinDocumentUrl] : []),
+            ],
+            media_types: accountMedia.map((m) => m.type).filter(Boolean),
+            first_comment: getEffectiveValueForAccount(
+              accountId,
+              platform === 'linkedin' ? 'linkedinFirstComment' : 'firstComment',
+              platform === 'linkedin' ? linkedinFirstComment : commonFirstComment,
+            ) || undefined,
           };
-          if ((platform === 'youtube' || platform === 'tiktok') && videoTitle) {
-            override.title = videoTitle;
-          } else if (platform === 'linkedin' && linkedinDocumentTitle) {
-            override.title = linkedinDocumentTitle;
+          if ((platform === 'youtube' || platform === 'tiktok') && effectiveVideoTitle) {
+            override.title = effectiveVideoTitle;
+          } else if (platform === 'linkedin' && effectiveLinkedinDocumentTitle) {
+            override.title = effectiveLinkedinDocumentTitle;
           }
-          if (platform === 'instagram' && commonFirstComment.trim()) {
-            override.first_comment = commonFirstComment;
+          if (platform === 'youtube') {
+            override.youtube_privacy = getEffectiveValueForAccount(accountId, 'youtubePrivacy', youtubePrivacy);
           }
-          if (platform === 'linkedin' && linkedinFirstComment.trim()) {
-            override.first_comment = linkedinFirstComment;
+          if (platform === 'linkedin') {
+            override.linkedin_document_url = effectiveLinkedinDocumentUrl || undefined;
+            override.linkedin_document_title = effectiveLinkedinDocumentTitle || undefined;
           }
-          return [platform, override];
+          if (platform === 'tiktok') {
+            override.tiktok_privacy = getEffectiveValueForAccount(accountId, 'tiktokPrivacy', tiktokPrivacy);
+            override.tiktok_allow_duet = getEffectiveValueForAccount(accountId, 'tiktokAllowDuet', tiktokAllowDuet);
+            override.tiktok_allow_stitch = getEffectiveValueForAccount(accountId, 'tiktokAllowStitch', tiktokAllowStitch);
+            override.tiktok_allow_comment = getEffectiveValueForAccount(accountId, 'tiktokAllowComments', tiktokAllowComments);
+          }
+          return [accountId, override];
         })
       );
 
@@ -1239,7 +1349,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         tiktok_allow_duet: tiktokAllowDuet,
         tiktok_allow_stitch: tiktokAllowStitch,
         tiktok_allow_comment: tiktokAllowComments,
-        platform_overrides: platformOverrides,
+        platform_overrides: {},
+        account_overrides: accountOverridesPayload,
       }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         withCredentials: true,
@@ -1334,9 +1445,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         onToggle={toggleAccountSelection}
         platformIcons={platformIcons}
         getAvatarColor={getAvatarColor}
-        onSetActive={(platform) => {
-          setActivePreviewPlatform(platform);
-          setExpandedPlatform(platform);
+        onSetActive={(account) => {
+          setActivePreviewPlatform(account.platform);
+          setExpandedPlatform(account.platform);
+          setActiveAccountByPlatform((prev) => ({
+            ...prev,
+            [account.platform]: account.id,
+          }));
         }}
       />
     </div>
@@ -1420,83 +1535,106 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             showPlatformSpecificFields={false}
           />
 
-          {orderedPlatforms.map((platform, index) => (
-            <PlatformEditor
-              key={platform}
-              platform={platform}
-              postType={type}
-              content={getEffectiveCaptionForPlatform(platform)}
-              onContentChange={(val) =>
-                setPlatformCaptions(prev => ({ ...prev, [platform]: val }))
-              }
-              // Accordion
-              isExpanded={expandedPlatform === platform}
-              onToggleExpand={() => handleToggleExpand(platform)}
-              // Drag-to-reorder
-              onDragStart={() => handleDragStart(index)}
-              onDragEnter={() => handleDragEnter(index)}
-              onDragEnd={handleDragEnd}
-              onDragOver={(e) => e.preventDefault()}
-              // Media (shared upload controls on every selected platform)
-              media={getEffectiveMediaForPlatform(platform)}
-              uploading={uploading}
-              uploadProgress={uploadProgress}
-              onFilesSelect={(files) => handleFilesSelectForPlatform(platform, files)}
-              onRemoveMedia={(idx) => handleRemoveMediaForPlatform(platform, idx)}
-              onReorderMedia={(from, to) => handleReorderMediaForPlatform(platform, from, to)}
-              fileInputRef={undefined}
-              // Platform-specific
-              postFormat={postFormat}             onPostFormatChange={setPostFormat}
-              firstComment={firstComment}        onFirstCommentChange={setFirstComment}
-              location={location}                onLocationChange={setLocation}
-              shopGridLink={shopGridLink}        onShopGridLinkChange={setShopGridLink}
-              videoTitle={videoTitle}            onVideoTitleChange={setVideoTitle}
-              youtubePrivacy={youtubePrivacy}    onYoutubePrivacyChange={setYoutubePrivacy}
-              linkedinFirstComment={linkedinFirstComment} onLinkedinFirstCommentChange={setLinkedinFirstComment}
-              linkedinDocumentUrl={linkedinDocumentUrl}
-              linkedinDocumentTitle={linkedinDocumentTitle}
-              tiktokPrivacy={tiktokPrivacy} onTiktokPrivacyChange={setTiktokPrivacy}
-              tiktokAllowDuet={tiktokAllowDuet} onTiktokAllowDuetChange={setTiktokAllowDuet}
-              tiktokAllowStitch={tiktokAllowStitch} onTiktokAllowStitchChange={setTiktokAllowStitch}
-              tiktokAllowComments={tiktokAllowComments} onTiktokAllowCommentsChange={setTiktokAllowComments}
-              onLinkedinDocumentChange={async ({ file, url, title }) => {
-                if (file) {
-                  try {
-                    const uploadJob = await uploadMedia(file);
-                    const asset = await waitForUploadReady(uploadJob.media_job_id);
-                    setLinkedinDocumentUrl(asset.media_url || null);
-                    setLinkedinDocumentTitle(title || file.name.replace(/\.[^.]+$/, ''));
-                  } catch { toast.error('Failed to upload document'); }
-                } else {
-                  setLinkedinDocumentUrl(url || null);
-                  setLinkedinDocumentTitle(title || null);
-                }
-              }}
-              altTexts={index === 0 ? altTexts : []}
-              onAltTextsChange={index === 0 ? setAltTexts : undefined}
-              // Crop + Hashtags
-              onCropMedia={(idx, ratio) => handleCropMedia(platform, idx, ratio)}
-              hashtagGroups={hashtagGroups}
-              errorMessages={platformValidation[platform]?.errors || []}
-              infoMessages={platformValidation[platform]?.notes || []}
-              onResetToCommon={
-                hasPlatformCaptionOverride(platform) || hasPlatformMediaOverride(platform)
-                  ? () => {
-                      setPlatformCaptions((prev) => {
-                        const next = { ...prev };
-                        delete next[platform];
-                        return next;
+          {orderedPlatforms.map((platform, index) => {
+            const platformAccounts = selectedAccountsByPlatform(platform);
+            const activePlatformAccountId = getActiveAccountIdForPlatform(platform);
+            const activePlatformAccount = platformAccounts.find((account) => account.id === activePlatformAccountId) || platformAccounts[0] || null;
+            const activeAccountErrors = activePlatformAccount ? (accountValidation[activePlatformAccount.id]?.errors || []) : [];
+            const activeAccountNotes = activePlatformAccount ? (accountValidation[activePlatformAccount.id]?.notes || []) : [];
+            const platformIssueCount = platformAccounts.reduce(
+              (sum, account) => sum + ((accountValidation[account.id]?.errors || []).length),
+              0,
+            );
+
+            return (
+              <PlatformEditor
+                key={platform}
+                platform={platform}
+                postType={type}
+                content={activePlatformAccount ? getEffectiveCaptionForAccount(activePlatformAccount.id) : ''}
+                onContentChange={(val) => {
+                  if (!activePlatformAccount) return;
+                  updateAccountOverride(activePlatformAccount.id, { content: val });
+                }}
+                isExpanded={expandedPlatform === platform}
+                onToggleExpand={() => handleToggleExpand(platform)}
+                onDragStart={() => handleDragStart(index)}
+                onDragEnter={() => handleDragEnter(index)}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => e.preventDefault()}
+                media={activePlatformAccount ? getEffectiveMediaForAccount(activePlatformAccount.id) : []}
+                uploading={uploading}
+                uploadProgress={uploadProgress}
+                onFilesSelect={(files) => activePlatformAccount && handleFilesSelectForPlatform(activePlatformAccount.id, files)}
+                onRemoveMedia={(idx) => activePlatformAccount && handleRemoveMediaForPlatform(activePlatformAccount.id, idx)}
+                onReorderMedia={(from, to) => activePlatformAccount && handleReorderMediaForPlatform(activePlatformAccount.id, from, to)}
+                fileInputRef={undefined}
+                postFormat={postFormat}
+                onPostFormatChange={setPostFormat}
+                firstComment={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'firstComment', firstComment) : firstComment}
+                onFirstCommentChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { firstComment: value })}
+                location={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'location', location) : location}
+                onLocationChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { location: value })}
+                shopGridLink={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'shopGridLink', shopGridLink) : shopGridLink}
+                onShopGridLinkChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { shopGridLink: value })}
+                videoTitle={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'videoTitle', videoTitle) : videoTitle}
+                onVideoTitleChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { videoTitle: value })}
+                youtubePrivacy={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'youtubePrivacy', youtubePrivacy) : youtubePrivacy}
+                onYoutubePrivacyChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { youtubePrivacy: value })}
+                linkedinFirstComment={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'linkedinFirstComment', linkedinFirstComment) : linkedinFirstComment}
+                onLinkedinFirstCommentChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { linkedinFirstComment: value })}
+                linkedinDocumentUrl={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'linkedinDocumentUrl', linkedinDocumentUrl) : linkedinDocumentUrl}
+                linkedinDocumentTitle={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'linkedinDocumentTitle', linkedinDocumentTitle) : linkedinDocumentTitle}
+                tiktokPrivacy={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'tiktokPrivacy', tiktokPrivacy) : tiktokPrivacy}
+                onTiktokPrivacyChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokPrivacy: value })}
+                tiktokAllowDuet={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'tiktokAllowDuet', tiktokAllowDuet) : tiktokAllowDuet}
+                onTiktokAllowDuetChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokAllowDuet: value })}
+                tiktokAllowStitch={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'tiktokAllowStitch', tiktokAllowStitch) : tiktokAllowStitch}
+                onTiktokAllowStitchChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokAllowStitch: value })}
+                tiktokAllowComments={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'tiktokAllowComments', tiktokAllowComments) : tiktokAllowComments}
+                onTiktokAllowCommentsChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokAllowComments: value })}
+                onLinkedinDocumentChange={async ({ file, url, title }) => {
+                  if (!activePlatformAccount) return;
+                  if (file) {
+                    try {
+                      const uploadJob = await uploadMedia(file);
+                      const asset = await waitForUploadReady(uploadJob.media_job_id);
+                      updateAccountOverride(activePlatformAccount.id, {
+                        linkedinDocumentUrl: asset.media_url || null,
+                        linkedinDocumentTitle: title || file.name.replace(/\.[^.]+$/, ''),
                       });
-                      setPlatformMediaOverrides((prev) => {
-                        const next = { ...prev };
-                        delete next[platform];
-                        return next;
-                      });
+                    } catch {
+                      toast.error('Failed to upload document');
                     }
-                  : undefined
-              }
-            />
-          ))}
+                  } else {
+                    updateAccountOverride(activePlatformAccount.id, {
+                      linkedinDocumentUrl: url || null,
+                      linkedinDocumentTitle: title || null,
+                    });
+                  }
+                }}
+                altTexts={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'altTexts', altTexts) : altTexts}
+                onAltTextsChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { altTexts: value })}
+                onCropMedia={(idx, ratio) => activePlatformAccount && handleCropMedia(activePlatformAccount.id, idx, ratio)}
+                hashtagGroups={hashtagGroups}
+                errorMessages={activeAccountErrors}
+                infoMessages={activeAccountNotes}
+                onResetToCommon={activePlatformAccount && accountOverrides[activePlatformAccount.id] ? () => resetAccountOverride(activePlatformAccount.id) : undefined}
+                accountTabs={platformAccounts.map((account) => ({
+                  id: account.id,
+                  label: getAccountDisplayName(account),
+                  errorCount: (accountValidation[account.id]?.errors || []).length,
+                }))}
+                activeAccountId={activePlatformAccountId}
+                onSelectAccount={(accountId) => {
+                  setActiveAccountByPlatform((prev) => ({ ...prev, [platform]: accountId }));
+                  setActivePreviewPlatform(platform);
+                  setExpandedPlatform(platform);
+                }}
+                issueCountOverride={platformIssueCount}
+              />
+            );
+          })}
 
           {/* Cover image card (video + uploaded media) */}
           {type === 'video' && uploadedMedia.length > 0 && (
@@ -1538,7 +1676,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       if (aiCaptionPlatform === 'all') {
         setCommonCaption(data.content);
       } else {
-        setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: data.content }));
+        const targetAccountId = getActiveAccountIdForPlatform(aiCaptionPlatform);
+        if (targetAccountId) {
+          updateAccountOverride(targetAccountId, { content: data.content });
+        }
       }
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'AI generation failed. Check your API keys.');
@@ -1552,7 +1693,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     if (aiCaptionPlatform === 'all') {
       setCommonCaption(aiGeneratedText);
     } else {
-      setPlatformCaptions(prev => ({ ...prev, [aiCaptionPlatform]: aiGeneratedText }));
+      const targetAccountId = getActiveAccountIdForPlatform(aiCaptionPlatform);
+      if (targetAccountId) {
+        updateAccountOverride(targetAccountId, { content: aiGeneratedText });
+      }
     }
     toast.success('✨ Applied to caption editor!');
   };
@@ -1686,9 +1830,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             <PreviewPanel
               activePlatform={activePlatform}
               account={activeAccount}
-              content={getEffectiveCaptionForPlatform(activePlatform)}
-              media={getEffectiveMediaForPlatform(activePlatform)}
-              videoTitle={videoTitle}
+              content={activeAccountId ? getEffectiveCaptionForAccount(activeAccountId) : commonCaption}
+              media={activeAccountId ? getEffectiveMediaForAccount(activeAccountId) : uploadedMedia}
+              videoTitle={activeAccountId ? getEffectiveValueForAccount(activeAccountId, 'videoTitle', videoTitle) : videoTitle}
               postFormat={postFormat}
             />
             {selectedPlatforms.length > 1 && (

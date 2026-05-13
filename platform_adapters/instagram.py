@@ -72,8 +72,9 @@ class InstagramAdapter(PlatformAdapter):
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)
 
+        target_key = post.get("publish_target_key") or "instagram"
         container_ids: dict = post.get("platform_container_ids") or {}
-        container_id = container_ids.get("instagram")
+        container_id = container_ids.get(target_key)
 
         async with httpx.AsyncClient(timeout=30) as client:
             if not container_id:
@@ -139,14 +140,15 @@ class InstagramAdapter(PlatformAdapter):
         EC4: Reject if container expired (older than 24h).
         EC29: error 9007 treated as success.
         """
-        instagram_state = ((post.get("pre_upload_results") or {}).get("instagram") or {})
+        target_key = post.get("publish_target_key") or "instagram"
+        instagram_state = ((post.get("pre_upload_results") or {}).get(target_key) or {})
         pre_upload_status = instagram_state.get("status") or post.get("pre_upload_status")
         if pre_upload_status != "ready":
             raise PlatformAPIError("pre_upload not ready — cannot publish")
 
         # EC4: container expiry check
         expiry_map: dict = post.get("container_expiry_at") or {}
-        expiry_raw = expiry_map.get("instagram")
+        expiry_raw = expiry_map.get(target_key)
         if expiry_raw:
             try:
                 expiry_dt = datetime.fromisoformat(str(expiry_raw))
@@ -164,7 +166,7 @@ class InstagramAdapter(PlatformAdapter):
         social_account_id = account.get("id", post_id)
 
         container_ids: dict = post.get("platform_container_ids") or {}
-        container_id = container_ids.get("instagram", "")
+        container_id = container_ids.get(target_key, "")
         if not container_id:
             raise PlatformResponseError("No instagram container_id on post")
 

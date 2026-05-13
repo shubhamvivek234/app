@@ -76,16 +76,46 @@ def _publish_queue_for(platform: str, post: dict) -> str:
     return PUBLISH_LIGHT_QUEUE
 
 
-def _publish_lock_key(post_id: str, platform: str) -> str:
-    return f"publish_lock:{post_id}:{platform}"
+def _result_target_key(platform: str, account_id: str | None = None) -> str:
+    return account_id or platform
 
 
-def _pre_upload_lock_key(post_id: str, platform: str) -> str:
-    return f"pre_upload_lock:{post_id}:{platform}"
+def _publish_lock_key(post_id: str, target_key: str) -> str:
+    return f"publish_lock:{post_id}:{target_key}"
 
 
-async def _acquire_publish_lock(redis, post_id: str, platform: str, owner_token: str) -> bool:
-    key = _publish_lock_key(post_id, platform)
+def _pre_upload_lock_key(post_id: str, target_key: str) -> str:
+    return f"pre_upload_lock:{post_id}:{target_key}"
+
+
+def _get_publish_targets(post: dict) -> list[dict]:
+    targets = []
+    for target in (post.get("publish_targets") or []):
+        platform = str(target.get("platform") or "").strip().lower()
+        account_id = str(target.get("account_id") or "").strip() or None
+        if not platform:
+            continue
+        targets.append({
+            "platform": platform,
+            "account_id": account_id,
+            "target_key": _result_target_key(platform, account_id),
+        })
+
+    if targets:
+        return targets
+
+    return [
+        {
+            "platform": platform,
+            "account_id": None,
+            "target_key": _result_target_key(platform, None),
+        }
+        for platform in (post.get("platforms") or [])
+    ]
+
+
+async def _acquire_publish_lock(redis, post_id: str, target_key: str, owner_token: str) -> bool:
+    key = _publish_lock_key(post_id, target_key)
     acquired = await safe_set(
         redis,
         key,
@@ -98,8 +128,8 @@ async def _acquire_publish_lock(redis, post_id: str, platform: str, owner_token:
     return bool(acquired)
 
 
-async def _acquire_pre_upload_lock(redis, post_id: str, platform: str, owner_token: str) -> bool:
-    key = _pre_upload_lock_key(post_id, platform)
+async def _acquire_pre_upload_lock(redis, post_id: str, target_key: str, owner_token: str) -> bool:
+    key = _pre_upload_lock_key(post_id, target_key)
     acquired = await safe_set(
         redis,
         key,
@@ -112,8 +142,8 @@ async def _acquire_pre_upload_lock(redis, post_id: str, platform: str, owner_tok
     return bool(acquired)
 
 
-async def _release_publish_lock(redis, post_id: str, platform: str, owner_token: str) -> None:
-    key = _publish_lock_key(post_id, platform)
+async def _release_publish_lock(redis, post_id: str, target_key: str, owner_token: str) -> None:
+    key = _publish_lock_key(post_id, target_key)
     current = await safe_get(
         redis,
         key,
@@ -129,8 +159,8 @@ async def _release_publish_lock(redis, post_id: str, platform: str, owner_token:
         )
 
 
-async def _release_pre_upload_lock(redis, post_id: str, platform: str, owner_token: str) -> None:
-    key = _pre_upload_lock_key(post_id, platform)
+async def _release_pre_upload_lock(redis, post_id: str, target_key: str, owner_token: str) -> None:
+    key = _pre_upload_lock_key(post_id, target_key)
     current = await safe_get(
         redis,
         key,
@@ -252,6 +282,49 @@ def recompute_aggregate_status(platform_results: dict) -> str:
     return "processing"
 
 
+def _aggregate_platform_results(post: dict) -> dict:
+    account_results = post.get("account_results") or {}
+    if not account_results:
+        return post.get("platform_results") or {}
+
+    grouped: dict[str, dict] = {}
+    for target in _get_publish_targets(post):
+        platform = target["platform"]
+        target_key = target["target_key"]
+        grouped.setdefault(platform, {})[target_key] = account_results.get(target_key) or {"status": "pending"}
+
+    aggregated: dict[str, dict] = {}
+    for platform, results in grouped.items():
+        published_at_values = [
+            result.get("published_at")
+            for result in results.values()
+            if result.get("published_at")
+        ]
+        next_retry_values = [
+            result.get("next_retry_at")
+            for result in results.values()
+            if result.get("next_retry_at")
+        ]
+        aggregated[platform] = {
+            "status": recompute_aggregate_status(results),
+            "error": next((result.get("error") for result in results.values() if result.get("error")), None),
+            "retry_count": max((result.get("retry_count", 0) for result in results.values()), default=0),
+            "last_attempt_at": next((result.get("last_attempt_at") for result in results.values() if result.get("last_attempt_at")), None),
+            "next_retry_at": min(next_retry_values) if next_retry_values else None,
+            "post_url": next((result.get("post_url") for result in results.values() if result.get("post_url")), None),
+            "platform_post_id": next((result.get("platform_post_id") for result in results.values() if result.get("platform_post_id")), None),
+            "published_at": max(published_at_values) if published_at_values else None,
+        }
+    return aggregated
+
+
+def _terminal_results(post: dict) -> dict:
+    account_results = post.get("account_results") or {}
+    if account_results:
+        return account_results
+    return post.get("platform_results") or {}
+
+
 # ── Media cleanup gate (Phase 2.6.1 / Section 18.9) ──────────────────────────
 def should_cleanup_media(platform_results: dict) -> bool:
     """Only delete source media when ALL platforms are in terminal state."""
@@ -272,6 +345,8 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
             "status": 1,
             "post_type": 1,
             "platform_results": 1,
+            "account_results": 1,
+            "publish_targets": 1,
             "media_ids": 1,
             "media_urls": 1,
             "media_url": 1,
@@ -284,10 +359,15 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
         return None, None, "scheduled"
 
     prev_agg_status = updated_post.get("status")
-    agg_status = recompute_aggregate_status(updated_post.get("platform_results", {}))
+    aggregated_platform_results = _aggregate_platform_results(updated_post)
+    result_entries = updated_post.get("account_results") or aggregated_platform_results
+    agg_status = recompute_aggregate_status(result_entries)
     now = datetime.now(timezone.utc)
 
-    set_updates = {"status": agg_status}
+    set_updates = {
+        "status": agg_status,
+        "platform_results": aggregated_platform_results,
+    }
     if agg_status != "failed":
         set_updates["dlq_reason"] = None
     if agg_status == "published" and prev_agg_status != "published":
@@ -302,7 +382,7 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
 
     await db.posts.update_one({"id": post_id}, {"$set": set_updates})
 
-    if should_cleanup_media(updated_post.get("platform_results", {})):
+    if should_cleanup_media(result_entries):
         schedule_media_cleanup.apply_async(
             kwargs={"post_id": post_id},
             countdown=300,
@@ -379,16 +459,26 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
 
     # Spawn per-platform tasks in parallel (Phase 1.6.2)
     # countdown=jitter delays children without blocking the worker thread
-    platforms = post.get("platforms", [])
+    targets = _get_publish_targets(post)
     platform_tasks = group(
-        publish_to_platform.s(post_id=post_id, platform=p, attempt=0).set(
-            queue=_publish_queue_for(p, post)
+        publish_to_platform.s(
+            post_id=post_id,
+            platform=target["platform"],
+            account_id=target["account_id"],
+            attempt=0,
+        ).set(
+            queue=_publish_queue_for(target["platform"], post)
         )
-        for p in platforms
+        for target in targets
     )
     platform_tasks.apply_async(countdown=jitter)
 
-    return {"status": "dispatched", "platforms": platforms, "jitter_seconds": jitter}
+    return {
+        "status": "dispatched",
+        "platforms": post.get("platforms", []),
+        "targets": [target["target_key"] for target in targets],
+        "jitter_seconds": jitter,
+    }
 
 
 # 17.4B: max seconds to wait for pre_upload to become ready at publish time
@@ -565,12 +655,12 @@ def _requires_pre_upload(platform: str, post: dict) -> bool:
     return False
 
 
-def _pre_upload_result_path(platform: str, field: str) -> str:
-    return f"pre_upload_results.{platform}.{field}"
+def _pre_upload_result_path(target_key: str, field: str) -> str:
+    return f"pre_upload_results.{target_key}.{field}"
 
 
-def _get_platform_pre_upload_state(post: dict, platform: str) -> dict:
-    return ((post.get("pre_upload_results") or {}).get(platform) or {})
+def _get_platform_pre_upload_state(post: dict, target_key: str) -> dict:
+    return ((post.get("pre_upload_results") or {}).get(target_key) or {})
 
 
 def _coerce_utc_datetime(value):
@@ -585,31 +675,37 @@ def _coerce_utc_datetime(value):
     return value
 
 
-def _get_platform_pre_upload_status(post: dict, platform: str) -> str | None:
-    state = _get_platform_pre_upload_state(post, platform)
+def _get_platform_pre_upload_status(post: dict, target_key: str) -> str | None:
+    state = _get_platform_pre_upload_state(post, target_key)
     return state.get("status") or post.get("pre_upload_status")
 
 
-def _get_platform_pre_upload_error(post: dict, platform: str) -> str | None:
-    state = _get_platform_pre_upload_state(post, platform)
+def _get_platform_pre_upload_error(post: dict, target_key: str) -> str | None:
+    state = _get_platform_pre_upload_state(post, target_key)
     return state.get("error") or post.get("pre_upload_error")
 
 
-def _get_platform_pre_upload_started_at(post: dict, platform: str):
-    state = _get_platform_pre_upload_state(post, platform)
+def _get_platform_pre_upload_started_at(post: dict, target_key: str):
+    state = _get_platform_pre_upload_state(post, target_key)
     return _coerce_utc_datetime(state.get("started_at") or post.get("pre_upload_started_at"))
 
 
-def _get_platform_pre_upload_completed_at(post: dict, platform: str):
-    state = _get_platform_pre_upload_state(post, platform)
+def _get_platform_pre_upload_completed_at(post: dict, target_key: str):
+    state = _get_platform_pre_upload_state(post, target_key)
     return _coerce_utc_datetime(state.get("completed_at") or post.get("pre_upload_completed_at"))
 
 
-def _pre_upload_platforms_for(post: dict) -> list[str]:
-    selected = post.get("platforms") or []
-    required = [platform for platform in selected if _requires_pre_upload(platform, post)]
-    result_keys = list((post.get("pre_upload_results") or {}).keys())
-    return list(dict.fromkeys(required + result_keys))
+def _pre_upload_platforms_for(post: dict) -> list[dict]:
+    required = [
+        target
+        for target in _get_publish_targets(post)
+        if _requires_pre_upload(target["platform"], post)
+    ]
+    result_keys = set((post.get("pre_upload_results") or {}).keys())
+    for target in _get_publish_targets(post):
+        if target["target_key"] in result_keys and target not in required:
+            required.append(target)
+    return required
 
 
 async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
@@ -625,7 +721,7 @@ async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
     if not post:
         return
 
-    platforms = _pre_upload_platforms_for(post)
+    targets = _pre_upload_platforms_for(post)
     results = post.get("pre_upload_results") or {}
 
     statuses: list[str] = []
@@ -636,14 +732,15 @@ async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
     estimated_durations = []
     actual_durations = []
 
-    for platform in platforms:
-        state = results.get(platform) or {}
+    for target in targets:
+        target_key = target["target_key"]
+        state = results.get(target_key) or {}
         status = state.get("status")
         if status:
             statuses.append(status)
         error = state.get("error")
         if error:
-            errors.append(f"{platform}: {error}")
+            errors.append(f"{target['platform']}:{target_key}: {error}")
         if state.get("start_time"):
             start_times.append(state["start_time"])
         if state.get("started_at"):
@@ -715,7 +812,19 @@ async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
         await db.posts.update_one({"id": post_id}, update_doc)
 
 
-async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
+async def _resolve_post_account(db, post: dict, platform: str, account_id: str | None = None) -> dict | None:
+    if account_id:
+        account_doc = await db.social_accounts.find_one({
+            "user_id": post.get("user_id"),
+            "platform": platform,
+            "is_active": True,
+            "$or": [
+                {"account_id": account_id},
+                {"id": account_id},
+            ],
+        })
+        return _normalize_account_doc(account_doc)
+
     selected_ids = post.get("social_account_ids") or post.get("account_ids") or []
     if selected_ids:
         account_doc = await db.social_accounts.find_one({
@@ -752,11 +861,11 @@ async def _resolve_post_account(db, post: dict, platform: str) -> dict | None:
     max_retries=MAX_RETRIES,
     acks_late=True,
 )
-def publish_to_platform(self, post_id: str, platform: str, attempt: int = 0) -> dict:
-    return _run_async(_async_publish_to_platform(self, post_id, platform, attempt))
+def publish_to_platform(self, post_id: str, platform: str, account_id: str | None = None, attempt: int = 0) -> dict:
+    return _run_async(_async_publish_to_platform(self, post_id, platform, account_id, attempt))
 
 
-async def _async_publish_to_platform(task, post_id: str, platform: str, attempt: int) -> dict:
+async def _async_publish_to_platform(task, post_id: str, platform: str, account_id: str | None, attempt: int) -> dict:
     from platform_adapters import get_adapter
     from celery_workers.tasks.publish import recompute_aggregate_status, should_cleanup_media
     from celery_workers.tasks.cleanup import schedule_media_cleanup
@@ -764,6 +873,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
     r_cache = get_cache_redis()
+    target_key = _result_target_key(platform, account_id)
 
     # 20.14: Feature flag kill-switch — bail out immediately if platform disabled
     try:
@@ -774,21 +884,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             await _update_platform_result(db, post_id, platform, {
                 "status": "paused",
                 "error": f"Platform {platform} is currently disabled via feature flag",
-            })
+            }, account_id=account_id)
             await _finalize_post_status(db, post_id)
-            return {"status": "feature_disabled", "platform": platform}
+            return {"status": "feature_disabled", "platform": platform, "account_id": account_id}
     except ImportError:
         pass
 
     # 20.5: Per-platform poison pill guard — each platform has its own delivery counter
     r_queue = get_queue_redis()
-    pp_key = f"delivery_count:{task.request.id}:{platform}"
+    pp_key = f"delivery_count:{task.request.id}:{target_key}"
     pp_count = await safe_incr(r_queue, pp_key, default=1, feature="Per-platform poison-pill counter")
     await safe_expire(r_queue, pp_key, 86400, default=True, feature="Per-platform poison-pill TTL")
     if int(pp_count) > MAX_DELIVERY_COUNT:
         logger.error("20.5: Poison pill on %s/%s (delivered %d times) — moving to DLQ", post_id, platform, pp_count)
-        await _move_to_dlq(post_id, "poison_pill_exceeded", platform=platform)
-        return {"status": "dlq", "reason": "poison_pill", "platform": platform}
+        await _move_to_dlq(post_id, "poison_pill_exceeded", platform=platform, account_id=account_id)
+        return {"status": "dlq", "reason": "poison_pill", "platform": platform, "account_id": account_id}
 
     # 20.1: Circuit breaker — fail fast if platform is known-down
     try:
@@ -799,17 +909,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "status": "retrying",
                 "error": f"Platform {platform} circuit breaker OPEN — requeued",
                 "next_retry_at": datetime.utcnow() + timedelta(seconds=300),
-            })
+            }, account_id=account_id)
             raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN for {platform}"))
     except ImportError:
         pass
 
     # EC17: Check Redis confirmation cache first — may already be done
-    confirm_key = f"confirmed:{post_id}:{platform}"
+    confirm_key = f"confirmed:{post_id}:{target_key}"
     cached = await safe_get(r_cache, confirm_key, default=None, feature="Publish confirmation cache read")
     if cached:
         logger.info("Platform %s/%s already confirmed in Redis — skipping API call", post_id, platform)
-        return {"status": "already_confirmed"}
+        return {"status": "already_confirmed", "platform": platform, "account_id": account_id}
 
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
@@ -817,8 +927,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
     post = await _hydrate_post_media(db, post)
 
     publish_queue = _publish_queue_for(platform, post)
-    lock_owner = task.request.id or f"{post_id}:{platform}:{attempt}"
-    lock_acquired = await _acquire_publish_lock(r_cache, post_id, platform, lock_owner)
+    lock_owner = task.request.id or f"{post_id}:{target_key}:{attempt}"
+    lock_acquired = await _acquire_publish_lock(r_cache, post_id, target_key, lock_owner)
     if not lock_acquired:
         logger.info(
             "Publish already in-flight for %s/%s — re-enqueuing after short backoff",
@@ -826,11 +936,11 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             platform,
         )
         publish_to_platform.apply_async(
-            kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+            kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
             countdown=random.randint(20, 40),
             queue=publish_queue,
         )
-        return {"status": "already_inflight_requeued", "platform": platform}
+        return {"status": "already_inflight_requeued", "platform": platform, "account_id": account_id}
 
     try:
         # Bootstrap pre-upload for platforms that require a prepared container/video_id
@@ -838,8 +948,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # not always pass through the scheduled pre-upload window first.
         if _requires_pre_upload(platform, post):
             container_ids = post.get("platform_container_ids") or {}
-            pre_status = _get_platform_pre_upload_status(post, platform) or ""
-            has_container = bool(container_ids.get(platform))
+            pre_status = _get_platform_pre_upload_status(post, target_key) or ""
+            has_container = bool(container_ids.get(target_key))
 
             if not has_container or pre_status in ("", None):
                 logger.info(
@@ -850,17 +960,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     has_container,
                     pre_status,
                 )
-                pre_result = await _async_pre_upload(task, post_id, platform)
+                pre_result = await _async_pre_upload(task, post_id, platform, account_id)
                 if pre_result.get("status") == "polling":
                     await _update_platform_result(db, post_id, platform, {
                         "status": "retrying",
                         "error": f"{platform} media container is still processing",
                         "last_attempt_at": datetime.now(timezone.utc),
-                    })
+                    }, account_id=account_id)
                     raise task.retry(
                         countdown=_PRE_UPLOAD_POLL_INTERVAL,
                         exc=Exception(f"{platform} pre_upload still processing"),
-                        kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+                        kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
                     )
 
                 post = await db.posts.find_one({"id": post_id}, {"_id": 0})
@@ -878,7 +988,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 await _update_platform_result(db, post_id, platform, {
                     "status": "paused",
                     "error": f"Subscription expired: {reason}",
-                })
+                }, account_id=account_id)
                 await _finalize_post_status(db, post_id)
                 return {"status": "subscription_expired"}
         except ImportError:
@@ -887,11 +997,11 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
         # 17.4 Scenario B: pre_upload still running at scheduled publish time.
         # Poll every 5s for up to 10 minutes before giving up.
         if _requires_pre_upload(platform, post):
-            pre_status = _get_platform_pre_upload_status(post, platform) or ""
+            pre_status = _get_platform_pre_upload_status(post, target_key) or ""
             if pre_status == "failed":
-                err = _get_platform_pre_upload_error(post, platform) or "Pre-upload failed before publish time"
+                err = _get_platform_pre_upload_error(post, target_key) or "Pre-upload failed before publish time"
                 logger.error("17.4C: pre_upload failed for %s/%s — %s", post_id, platform, err)
-                await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err}, account_id=account_id)
                 await _finalize_post_status(db, post_id)
                 await _send_failure_notification(db, post_id, platform, err)
                 return {"status": "failed", "reason": "pre_upload_failed"}
@@ -907,7 +1017,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     waited += _PRE_UPLOAD_POLL_INTERVAL
                     await safe_expire(
                         r_cache,
-                        _publish_lock_key(post_id, platform),
+                        _publish_lock_key(post_id, target_key),
                         _PUBLISH_LOCK_TTL_SECONDS,
                         default=True,
                         feature="Publish in-flight lock heartbeat",
@@ -918,10 +1028,10 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                             "_id": 0,
                             "pre_upload_status": 1,
                             "pre_upload_error": 1,
-                            f"pre_upload_results.{platform}": 1,
+                            f"pre_upload_results.{target_key}": 1,
                         },
                     )
-                    current_status = _get_platform_pre_upload_status(refreshed or {}, platform) or ""
+                    current_status = _get_platform_pre_upload_status(refreshed or {}, target_key) or ""
                     if current_status == "ready":
                         logger.info(
                             "17.4B: pre_upload ready after %ds for %s/%s",
@@ -930,9 +1040,9 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                         post = await db.posts.find_one({"id": post_id}, {"_id": 0})
                         break
                     if current_status == "failed":
-                        err = _get_platform_pre_upload_error(refreshed or {}, platform) or "Pre-upload failed"
+                        err = _get_platform_pre_upload_error(refreshed or {}, target_key) or "Pre-upload failed"
                         logger.error("17.4B: pre_upload failed while polling %s/%s — %s", post_id, platform, err)
-                        await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err})
+                        await _update_platform_result(db, post_id, platform, {"status": "failed", "error": err}, account_id=account_id)
                         await _finalize_post_status(db, post_id)
                         await _send_failure_notification(db, post_id, platform, err)
                         return {"status": "failed", "reason": "pre_upload_failed"}
@@ -943,34 +1053,38 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                         f"Post published {waited}s late."
                     )
                     logger.error("17.4B: %s for post %s", msg, post_id)
-                    await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg})
+                    await _update_platform_result(db, post_id, platform, {"status": "failed", "error": msg}, account_id=account_id)
                     await _finalize_post_status(db, post_id)
                     await _send_failure_notification(db, post_id, platform, msg)
                     return {"status": "failed", "reason": "pre_upload_wait_timeout"}
                 post = await _hydrate_post_media(db, post)
 
-        account_id: str | None = None
+        resolved_account_id = account_id
         try:
             from utils.encryption import decrypt
-            account_doc = await _resolve_post_account(db, post, platform)
+            account_doc = await _resolve_post_account(db, post, platform, account_id=account_id)
             if account_doc and account_doc.get("access_token"):
-                account_id = account_doc.get("account_id") or account_doc.get("id")
+                resolved_account_id = account_doc.get("account_id") or account_doc.get("id")
                 post = {**post, "access_token": decrypt(account_doc["access_token"]), "account": account_doc}
         except Exception as _token_err:
             logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
 
         try:
-            cb_open = await can_attempt(r_cache, platform, account_id)
+            cb_open = await can_attempt(r_cache, platform, resolved_account_id)
             if not cb_open:
-                logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, account_id, post_id)
+                logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, resolved_account_id, post_id)
                 await _update_platform_result(db, post_id, platform, {
                     "status": "retrying",
                     "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
-                })
+                }, account_id=resolved_account_id)
                 raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
 
-            _override = (post.get("platform_overrides") or {}).get(platform) or {}
+            _override = (
+                (post.get("account_overrides") or {}).get(resolved_account_id or target_key)
+                or (post.get("platform_overrides") or {}).get(platform)
+                or {}
+            )
             _use_media_override = _override.get("use_media_override")
             if _use_media_override is True:
                 _override_media_ids = _override.get("media_ids") or []
@@ -986,6 +1100,19 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 **post,
                 "effective_content": _override.get("content") or post.get("content", ""),
                 "effective_title": _override.get("title") or post.get("title", ""),
+                "effective_first_comment": _override.get("first_comment"),
+                "effective_youtube_privacy": _override.get("youtube_privacy") or post.get("youtube_privacy"),
+                "effective_tiktok_privacy": _override.get("tiktok_privacy") or post.get("tiktok_privacy"),
+                "effective_tiktok_allow_duet": _override.get("tiktok_allow_duet", post.get("tiktok_allow_duet")),
+                "effective_tiktok_allow_stitch": _override.get("tiktok_allow_stitch", post.get("tiktok_allow_stitch")),
+                "effective_tiktok_allow_comment": _override.get("tiktok_allow_comment", post.get("tiktok_allow_comment")),
+                "effective_linkedin_document_url": _override.get("linkedin_document_url"),
+                "effective_linkedin_document_title": _override.get("linkedin_document_title"),
+                "tiktok_privacy": _override.get("tiktok_privacy") or post.get("tiktok_privacy"),
+                "disable_duet": not bool(_override.get("tiktok_allow_duet", post.get("tiktok_allow_duet", True))),
+                "disable_stitch": not bool(_override.get("tiktok_allow_stitch", post.get("tiktok_allow_stitch", True))),
+                "disable_comment": not bool(_override.get("tiktok_allow_comment", post.get("tiktok_allow_comment", True))),
+                "publish_target_key": target_key,
                 "media_ids": _override_media_ids,
                 "media_urls": _override_media_urls,
                 "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
@@ -1005,13 +1132,13 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     "status": "retrying",
                     "error": f"Platform {platform} throttled — too many concurrent calls",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=_backoff),
-                })
+                }, account_id=resolved_account_id)
                 publish_to_platform.apply_async(
-                    kwargs={"post_id": post_id, "platform": platform, "attempt": attempt},
+                    kwargs={"post_id": post_id, "platform": platform, "account_id": resolved_account_id, "attempt": attempt},
                     countdown=_backoff,
                     queue=publish_queue,
                 )
-                return {"status": "throttled_requeued", "platform": platform}
+                return {"status": "throttled_requeued", "platform": platform, "account_id": resolved_account_id}
 
             try:
                 result = await adapter.publish(post, redis=r_cache)
@@ -1020,7 +1147,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
             try:
                 from utils.circuit_breaker import record_success
-                await record_success(r_cache, platform)
+                await record_success(r_cache, platform, resolved_account_id)
             except ImportError:
                 pass
 
@@ -1042,21 +1169,21 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 feature="Publish confirmation cache write",
             )
 
-            await record_success(r_cache, platform, account_id)
+            await record_success(r_cache, platform, resolved_account_id)
 
             await _update_platform_result(db, post_id, platform, {
                 "status": "published",
                 "post_url": post_url,
                 "platform_post_id": platform_post_id,
                 "published_at": datetime.now(timezone.utc),
-            })
+            }, account_id=resolved_account_id)
             await db.posts.update_one(
                 {"id": post_id},
                 {
                     "$unset": {
-                        f"platform_results.{platform}.error": "",
-                        f"platform_results.{platform}.next_retry_at": "",
-                        f"platform_results.{platform}.dlq_reason": "",
+                        f"account_results.{target_key}.error": "",
+                        f"account_results.{target_key}.next_retry_at": "",
+                        f"account_results.{target_key}.dlq_reason": "",
                     }
                 },
             )
@@ -1066,7 +1193,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
             if agg_status == "published" and prev_agg_status == "partial":
                 await _send_recovery_notification(db, post_id, user_id or "")
 
-            return {"status": "published", "platform": platform}
+            return {"status": "published", "platform": platform, "account_id": resolved_account_id}
 
         except Exception as exc:
             from platform_adapters.base import classify_error, ErrorClass, PlatformHTTPError
@@ -1077,22 +1204,22 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     {"id": post_id},
                     {
                         "$unset": {
-                            f"platform_container_ids.{platform}": "",
-                            f"container_expiry_at.{platform}": "",
-                            _pre_upload_result_path(platform, "error"): "",
-                            _pre_upload_result_path(platform, "completed_at"): "",
-                            _pre_upload_result_path(platform, "actual_duration_secs"): "",
+                            f"platform_container_ids.{target_key}": "",
+                            f"container_expiry_at.{target_key}": "",
+                            _pre_upload_result_path(target_key, "error"): "",
+                            _pre_upload_result_path(target_key, "completed_at"): "",
+                            _pre_upload_result_path(target_key, "actual_duration_secs"): "",
                         },
                         "$set": {
-                            _pre_upload_result_path(platform, "status"): "pending",
-                            _pre_upload_result_path(platform, "started_at"): None,
+                            _pre_upload_result_path(target_key, "status"): "pending",
+                            _pre_upload_result_path(target_key, "started_at"): None,
                             "updated_at": datetime.now(timezone.utc),
                         },
                     },
                 )
                 await _sync_pre_upload_aggregate(db, post_id)
                 pre_upload_task.apply_async(
-                    kwargs={"post_id": post_id, "platform": platform},
+                    kwargs={"post_id": post_id, "platform": platform, "account_id": resolved_account_id},
                     queue="media_processing",
                     countdown=5,
                 )
@@ -1100,8 +1227,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     "status": "retrying",
                     "error": "Container expired — re-uploading media",
                     "last_attempt_at": datetime.now(timezone.utc),
-                })
-                return {"status": "container_expired_requeued"}
+                }, account_id=resolved_account_id)
+                return {"status": "container_expired_requeued", "platform": platform, "account_id": resolved_account_id}
 
             error_class = classify_error(exc)
 
@@ -1112,7 +1239,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     "error": str(exc),
                     "retry_count": attempt,
                     "last_attempt_at": datetime.now(timezone.utc),
-                })
+                }, account_id=resolved_account_id)
 
                 error_code = getattr(exc, "code", None)
                 subcode = getattr(exc, "subcode", None)
@@ -1134,7 +1261,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                             await _refresh_with_lock(db, _acct_id, platform)
                             logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
                             publish_to_platform.apply_async(
-                                kwargs={"post_id": post_id, "platform": platform, "attempt": attempt + 1},
+                                kwargs={"post_id": post_id, "platform": platform, "account_id": _acct_id, "attempt": attempt + 1},
                                 countdown=5,
                                 queue=publish_queue,
                             )
@@ -1153,7 +1280,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                     except ImportError:
                         pass
 
-                await record_failure(r_cache, platform, account_id)
+                await record_failure(r_cache, platform, resolved_account_id)
                 await _finalize_post_status(db, post_id)
                 await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "permanent_failure"}
@@ -1164,7 +1291,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 await _update_platform_result(db, post_id, platform, {
                     "status": "retrying",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
-                })
+                }, account_id=resolved_account_id)
                 raise task.retry(countdown=retry_after, exc=exc)
 
             countdown_map = {0: 60, 1: 300, 2: 900}
@@ -1173,8 +1300,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
 
             if attempt >= MAX_RETRIES:
                 logger.error("Max retries exceeded for %s/%s — DLQ", post_id, platform)
-                await record_failure(r_cache, platform, account_id)
-                await _move_to_dlq(post_id, str(exc), platform=platform)
+                await record_failure(r_cache, platform, resolved_account_id)
+                await _move_to_dlq(post_id, str(exc), platform=platform, account_id=resolved_account_id)
                 await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "dlq"}
 
@@ -1185,12 +1312,12 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, attempt:
                 "last_attempt_at": datetime.now(timezone.utc),
                 "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=countdown),
                 "error": str(exc),
-            })
+            }, account_id=resolved_account_id)
             raise task.retry(countdown=countdown, exc=exc, kwargs={
-                "post_id": post_id, "platform": platform, "attempt": attempt + 1
+                "post_id": post_id, "platform": platform, "account_id": resolved_account_id, "attempt": attempt + 1
             })
     finally:
-        await _release_publish_lock(r_cache, post_id, platform, lock_owner)
+        await _release_publish_lock(r_cache, post_id, target_key, lock_owner)
 
 
 # ── 17.3 Pre-upload timing formula ────────────────────────────────────────────
@@ -1244,42 +1371,43 @@ def calculate_pre_upload_start(
     max_retries=2,
     acks_late=True,
 )
-def pre_upload_task(self, post_id: str, platform: str) -> dict:
+def pre_upload_task(self, post_id: str, platform: str, account_id: str | None = None) -> dict:
     """
     Fires at pre_upload_start_time (dynamically calculated, min 15 min ahead).
     Uploads media container (Instagram) or private video (YouTube).
     Stores container_id/video_id for use by publish_task at scheduled_time.
     Records actual_upload_duration for future estimate calibration (17.3).
     """
-    return _run_async(_async_pre_upload(self, post_id, platform))
+    return _run_async(_async_pre_upload(self, post_id, platform, account_id))
 
 
-async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
+async def _async_pre_upload(task, post_id: str, platform: str, account_id: str | None = None) -> dict:
     from platform_adapters import get_adapter
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
     r_cache = get_cache_redis()
+    target_key = _result_target_key(platform, account_id)
 
     started_at = datetime.now(timezone.utc)
-    lock_owner = task.request.id or f"{post_id}:{platform}:preupload"
-    lock_acquired = await _acquire_pre_upload_lock(r_cache, post_id, platform, lock_owner)
+    lock_owner = task.request.id or f"{post_id}:{target_key}:preupload"
+    lock_acquired = await _acquire_pre_upload_lock(r_cache, post_id, target_key, lock_owner)
     if not lock_acquired:
         logger.info("Pre-upload already in-flight for %s/%s — skipping duplicate dispatch", post_id, platform)
-        return {"status": "already_inflight", "platform": platform}
+        return {"status": "already_inflight", "platform": platform, "account_id": account_id}
 
     await db.posts.update_one(
         {"id": post_id},
         {
             "$set": {
-                _pre_upload_result_path(platform, "status"): "uploading",
-                _pre_upload_result_path(platform, "started_at"): started_at,
+                _pre_upload_result_path(target_key, "status"): "uploading",
+                _pre_upload_result_path(target_key, "started_at"): started_at,
                 "updated_at": started_at,
             },
             "$unset": {
-                _pre_upload_result_path(platform, "error"): "",
-                _pre_upload_result_path(platform, "completed_at"): "",
-                _pre_upload_result_path(platform, "actual_duration_secs"): "",
+                _pre_upload_result_path(target_key, "error"): "",
+                _pre_upload_result_path(target_key, "completed_at"): "",
+                _pre_upload_result_path(target_key, "actual_duration_secs"): "",
             },
         },
     )
@@ -1291,7 +1419,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         if not post:
             return {"status": "post_deleted"}
         post = await _hydrate_post_media(db, post)
-        account_doc = await _resolve_post_account(db, post, platform)
+        account_doc = await _resolve_post_account(db, post, platform, account_id=account_id)
         if account_doc:
             post = {**post, "account": account_doc}
         # EC-1: Post deleted or cancelled before pre_upload executed — abort cleanly
@@ -1299,7 +1427,11 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             logger.info("pre_upload EC-1: post %s deleted/cancelled before pre_upload — aborting", post_id)
             return {"status": "post_deleted"}
         # Inject per-platform text overrides for pre_upload (YouTube uses title/content in metadata)
-        _override = (post.get("platform_overrides") or {}).get(platform) or {}
+        _override = (
+            (post.get("account_overrides") or {}).get(account_id or target_key)
+            or (post.get("platform_overrides") or {}).get(platform)
+            or {}
+        )
         _use_media_override = _override.get("use_media_override")
         if _use_media_override is True:
             _override_media_ids = _override.get("media_ids") or []
@@ -1315,6 +1447,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
             "effective_title": _override.get("title") or post.get("title", ""),
+            "publish_target_key": target_key,
             "media_ids": _override_media_ids,
             "media_urls": _override_media_urls,
             "media_url": _override_media_url or (_override_media_urls[0] if _override_media_urls else None),
@@ -1332,6 +1465,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
                     "post_id": post_id,
                     "container_id": container_id,
                     "access_token_encrypted": account.get("access_token", ""),
+                    "target_key": target_key,
                     "poll_attempt": 0,
                 },
                 queue="media_processing",
@@ -1340,15 +1474,15 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
                 {"id": post_id},
                 {
                     "$set": {
-                        _pre_upload_result_path(platform, "status"): "uploading",
-                        _pre_upload_result_path(platform, "started_at"): started_at,
-                        f"platform_container_ids.{platform}": container_id,
+                        _pre_upload_result_path(target_key, "status"): "uploading",
+                        _pre_upload_result_path(target_key, "started_at"): started_at,
+                        f"platform_container_ids.{target_key}": container_id,
                         "updated_at": datetime.now(timezone.utc),
                     }
                 }
             )
             await _sync_pre_upload_aggregate(db, post_id)
-            return {"status": "polling", "platform": platform, "container_id": container_id}
+            return {"status": "polling", "platform": platform, "account_id": account_id, "container_id": container_id}
 
         completed_at = datetime.now(timezone.utc)
         actual_duration = int((completed_at - started_at).total_seconds())
@@ -1358,16 +1492,16 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             {"id": post_id},
             {
                 "$set": {
-                    _pre_upload_result_path(platform, "status"): "ready",
-                    _pre_upload_result_path(platform, "started_at"): started_at,
-                    _pre_upload_result_path(platform, "completed_at"): completed_at,
-                    _pre_upload_result_path(platform, "actual_duration_secs"): actual_duration,
-                    f"platform_container_ids.{platform}": container_id,
-                    f"container_expiry_at.{platform}": expiry.isoformat(),
+                    _pre_upload_result_path(target_key, "status"): "ready",
+                    _pre_upload_result_path(target_key, "started_at"): started_at,
+                    _pre_upload_result_path(target_key, "completed_at"): completed_at,
+                    _pre_upload_result_path(target_key, "actual_duration_secs"): actual_duration,
+                    f"platform_container_ids.{target_key}": container_id,
+                    f"container_expiry_at.{target_key}": expiry.isoformat(),
                     "updated_at": completed_at,
                 },
                 "$unset": {
-                    _pre_upload_result_path(platform, "error"): "",
+                    _pre_upload_result_path(target_key, "error"): "",
                 },
             }
         )
@@ -1376,7 +1510,7 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             "17.3: pre_upload ready for %s/%s — actual_duration=%ds container=%s",
             post_id, platform, actual_duration, container_id,
         )
-        return {"status": "ready", "platform": platform, "actual_duration_secs": actual_duration}
+        return {"status": "ready", "platform": platform, "account_id": account_id, "actual_duration_secs": actual_duration}
 
     except Exception as exc:
         logger.error("pre_upload_task failed for %s/%s: %s", post_id, platform, exc)
@@ -1384,9 +1518,9 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
             {"id": post_id},
             {
                 "$set": {
-                    _pre_upload_result_path(platform, "status"): "failed",
-                    _pre_upload_result_path(platform, "error"): str(exc),
-                    _pre_upload_result_path(platform, "completed_at"): datetime.now(timezone.utc),
+                    _pre_upload_result_path(target_key, "status"): "failed",
+                    _pre_upload_result_path(target_key, "error"): str(exc),
+                    _pre_upload_result_path(target_key, "completed_at"): datetime.now(timezone.utc),
                     "updated_at": datetime.now(timezone.utc),
                 }
             }
@@ -1394,15 +1528,40 @@ async def _async_pre_upload(task, post_id: str, platform: str) -> dict:
         await _sync_pre_upload_aggregate(db, post_id)
         raise task.retry(countdown=60, exc=exc)
     finally:
-        await _release_pre_upload_lock(r_cache, post_id, platform, lock_owner)
+        await _release_pre_upload_lock(r_cache, post_id, target_key, lock_owner)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-async def _update_platform_result(db, post_id: str, platform: str, update: dict) -> None:
+async def _update_platform_result(
+    db,
+    post_id: str,
+    platform: str,
+    update: dict,
+    account_id: str | None = None,
+) -> None:
+    target_key = _result_target_key(platform, account_id)
+    update_fields = {
+        f"account_results.{target_key}.{k}": v
+        for k, v in {
+            **update,
+            "platform": platform,
+            "account_id": account_id or target_key,
+        }.items()
+    }
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {f"platform_results.{platform}.{k}": v for k, v in update.items()}}
+        {"$set": update_fields}
     )
+
+    post_doc = await db.posts.find_one(
+        {"id": post_id},
+        {"_id": 0, "account_results": 1, "platform_results": 1, "publish_targets": 1, "user_id": 1, "status": 1},
+    )
+    if post_doc and post_doc.get("account_results"):
+        await db.posts.update_one(
+            {"id": post_id},
+            {"$set": {"platform_results": _aggregate_platform_results(post_doc)}},
+        )
 
     # 20.4: Publish SSE update so browser is notified in real-time (non-blocking)
     try:
@@ -1410,12 +1569,12 @@ async def _update_platform_result(db, post_id: str, platform: str, update: dict)
         import os as _os
         from db.redis_client import get_cache_redis
         r = get_cache_redis()
-        post_doc = await db.posts.find_one({"id": post_id}, {"user_id": 1, "status": 1})
         if post_doc:
             payload = _json.dumps({
                 "type": "platform_update",
                 "post_id": post_id,
                 "platform": platform,
+                "account_id": account_id,
                 "update": {k: str(v) for k, v in update.items()},
             })
             # Publish to per-post and per-user channels
@@ -1425,14 +1584,17 @@ async def _update_platform_result(db, post_id: str, platform: str, update: dict)
         logger.debug("SSE publish failed (non-blocking): %s", _sse_err)
 
 
-async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -> None:
+async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None, account_id: str | None = None) -> None:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
     update: dict = {"dlq_reason": reason}
     if platform:
-        update[f"platform_results.{platform}.status"] = "permanently_failed"
-        update[f"platform_results.{platform}.error"] = reason
-        update[f"platform_results.{platform}.dlq_reason"] = reason
+        target_key = _result_target_key(platform, account_id)
+        update[f"account_results.{target_key}.status"] = "permanently_failed"
+        update[f"account_results.{target_key}.error"] = reason
+        update[f"account_results.{target_key}.dlq_reason"] = reason
+        update[f"account_results.{target_key}.platform"] = platform
+        update[f"account_results.{target_key}.account_id"] = account_id or target_key
     else:
         update["status"] = "failed"
     post = await db.posts.find_one_and_update(
@@ -1450,6 +1612,7 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None) -
         "user_id": post.get("user_id", "") if post else "",
         "reason": reason,
         "platform": platform,
+        "account_id": account_id,
         "failed_at": datetime.now(timezone.utc),
         "retry_count": 0,
         "payload": {"task_name": "celery_workers.tasks.publish.publish_post", "args": [post_id]},

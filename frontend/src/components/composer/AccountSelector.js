@@ -24,7 +24,7 @@ const AccountSelector = ({
 }) => {
   const handleClick = (account) => {
     onToggle(account.id);
-    if (onSetActive) onSetActive(account.platform);
+    if (onSetActive) onSetActive(account);
   };
 
   if (loading && accounts.length === 0) {

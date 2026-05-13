@@ -158,6 +158,10 @@ const PlatformEditor = ({
   infoMessages = [],
   showPlatformSpecificFields = true,
   onResetToCommon,
+  accountTabs = [],
+  activeAccountId = null,
+  onSelectAccount,
+  issueCountOverride,
 }) => {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [hashtagOpen, setHashtagOpen] = useState(false);
@@ -208,7 +212,7 @@ const PlatformEditor = ({
   const limit = CHAR_LIMITS[platform] || 2200;
   const remaining = limit - content.length;
   const pct = content.length / limit;
-  const issueCount = errorMessages.length;
+  const issueCount = typeof issueCountOverride === 'number' ? issueCountOverride : errorMessages.length;
 
   const counterColor =
     pct >= 1    ? 'text-red-600' :
@@ -552,6 +556,36 @@ const PlatformEditor = ({
           }
         </button>
       </div>
+
+      {accountTabs.length > 0 && (
+        <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/60 flex flex-wrap gap-2">
+          {accountTabs.map((account) => {
+            const isActive = activeAccountId === account.id;
+            return (
+              <button
+                key={account.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectAccount?.(account.id);
+                }}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  isActive
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-800'
+                }`}
+              >
+                <span>{account.label}</span>
+                {account.errorCount > 0 && (
+                  <span className="inline-flex items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">
+                    {account.errorCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Collapsible body ─────────────────────────────────────────────────── */}
       {isExpanded && (
