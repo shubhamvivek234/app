@@ -66,6 +66,8 @@ const getIdealAspectInfo = (platform, postFormat) => {
   return entry;
 };
 
+const getAccountInitial = (label = '') => (label.trim().charAt(0) || '?').toUpperCase();
+
 // Extended emoji list for social media
 const EMOJI_LIST = [
   // Smileys & Emotion
@@ -136,8 +138,8 @@ const PlatformEditor = ({
   location, onLocationChange,
   shopGridLink, onShopGridLinkChange,
   // YouTube
-  videoTitle, onVideoTitleChange,
-  youtubePrivacy, onYoutubePrivacyChange,
+  videoTitle = '', onVideoTitleChange,
+  youtubePrivacy = 'public', onYoutubePrivacyChange,
   // LinkedIn
   linkedinFirstComment, onLinkedinFirstCommentChange,
   linkedinDocumentUrl, linkedinDocumentTitle,
@@ -569,13 +571,24 @@ const PlatformEditor = ({
                   e.stopPropagation();
                   onSelectAccount?.(account.id);
                 }}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                title={account.label}
+                className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                   isActive
                     ? 'border-blue-500 bg-blue-50 text-blue-700'
                     : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-800'
                 }`}
               >
-                <span>{account.label}</span>
+                {account.pictureUrl ? (
+                  <img
+                    src={account.pictureUrl}
+                    alt={account.label}
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-300 text-[11px] font-bold text-white">
+                    {getAccountInitial(account.label)}
+                  </div>
+                )}
                 {account.errorCount > 0 && (
                   <span className="inline-flex items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">
                     {account.errorCount}

@@ -6,28 +6,24 @@
 
 Stage: v2.9 complete
 Branch: main + version-6
-Focus: Content Library scheduled/published card UX follow-up + Cloudflare R2 migration follow-up
+Focus: Create Post multi-account UX follow-up + Cloudflare R2 migration follow-up
 Arch refs: Architecture v2.9 / Implementation Plan v3.0
 
 ## Last Session Completed
 
-Date: 2026-05-13
+Date: 2026-05-14
 Completed tasks:
-- Implemented same-platform multi-account Create Post drafts locally
-- `CreatePostForm` is now account-scoped inside each platform section: selected same-platform accounts show as chips/tabs and each account keeps separate caption/media/settings
-- `PlatformEditor` now renders account chips with per-account issue counts; `AccountSelector` now activates the exact clicked account
-- `/api/posts` now accepts `account_overrides` and stores `publish_targets` + `account_results`
-- Celery publish/pre-upload path now uses account targets instead of assuming one account per platform
-- Retry flow updated to preserve `account_id` when re-enqueuing failed targets
-- Cleanup now includes account override media ids and clears stale override media URLs
-- Instagram/YouTube/container-status state keys now use target-specific keys so duplicate same-platform accounts do not overwrite each other
-- Changes are local only; nothing committed or deployed yet
+- Investigated Create Post YouTube selection crash and same-platform account-tab UX
+- Hardened account override state in `CreatePostForm` so undefined default fields no longer masquerade as explicit overrides
+- Added safer effective-value fallback resolution for account-scoped fields
+- Updated same-platform account tabs in `PlatformEditor` to render circular avatars (or initial fallback) instead of account-name text
+- Frontend build passed locally after the fix; changes are local only and not committed/deployed yet
 
 ## Active Work
 
-Currently implementing: Same-platform multi-account Create Post support
-Next concrete step: Manual browser verification for multi-account LinkedIn/Instagram/YouTube create + publish/schedule, then commit/push/deploy if approved
-Blocked on: no manual end-to-end run yet; unsupported Common Post publishers remain `threads`, `bluesky`, `pinterest`
+Currently implementing: Create Post YouTube-selection crash fix + same-platform avatar-tab UX
+Next concrete step: Manual browser verification for YouTube create and LinkedIn multi-account account-switching, then commit/push/deploy if approved
+Blocked on: no manual end-to-end browser run yet; unsupported Common Post publishers remain `threads`, `bluesky`, `pinterest`
 
 ## Architecture Notes
 
@@ -49,6 +45,7 @@ Blocked on: no manual end-to-end run yet; unsupported Common Post publishers rem
 - `ContentLibrary` now fetches paginated scheduled/published posts in batches of 100 and polls every 30s for status transitions on those views
 - Multi-account publish model is now `publish_targets` + `account_overrides` + `account_results`; do not assume one publish target per platform anymore
 - Pre-upload/container state for duplicate same-platform accounts must key off target/account id, not raw platform name
+- Account-level overrides must not persist default `undefined` values as explicit field overrides; that breaks platform-specific editor fallbacks
 
 ## Decisions Made This Session
 
@@ -62,6 +59,7 @@ Blocked on: no manual end-to-end run yet; unsupported Common Post publishers rem
 - If live AI returns `No AI provider configured`, check compose env passthrough before changing route code again
 - Do not reintroduce published-post document deletion for retention; only card-thumbnail cleanup should expire after 6 months
 - For same-platform multi-account posting, drafts are per account and publishing is per target/account; platform-level state is now only an aggregate summary
+- Same-platform account switchers inside a platform section should be avatar-first chips, not text labels
 
 ## Test Status
 
@@ -104,6 +102,10 @@ Latest run:
 - `CI=true npm run build --prefix frontend`
 Result: Python compile passed; frontend production build passed with the existing Tailwind/PostHog warnings only
 
+Latest run:
+- `CI=true npm run build --prefix frontend`
+Result: frontend production build passed after the Create Post YouTube/account-tab follow-up; only the existing Tailwind/PostHog warnings remain
+
 ## Notes for Next Session
 
 Start with:
@@ -121,4 +123,7 @@ Important:
 - `threads`, `bluesky`, and `pinterest` are intentionally blocked in Common Post because publish adapters are not ready
 - Secrets previously shown in chat should be treated as compromised until rotated
 - `frontend/.vercel/project.json` points to the wrong Vercel project locally; deploy the live frontend from repo root linked to `app-fgv2`
-- Same-platform multi-account work is not committed yet in this session
+- Current local follow-up changes are in:
+  - `frontend/src/pages/CreatePostForm.js`
+  - `frontend/src/components/composer/PlatformEditor.js`
+- Same-platform multi-account follow-up work is not committed yet in this session

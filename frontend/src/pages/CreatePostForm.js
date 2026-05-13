@@ -378,7 +378,7 @@ const createDefaultAccountOverrides = () => ({
 });
 
 const getAccountDisplayName = (account) =>
-  account?.platform_username || account?.page_name || account?.name || account?.platform || 'Account';
+  account?.display_name || account?.platform_username || account?.page_name || account?.name || account?.platform || 'Account';
 
 // ── Scroll Time Picker ────────────────────────────────────────────────────────
 /** One drum-wheel column with ▲ / ▼ arrows and low-sensitivity scroll. */
@@ -691,7 +691,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setAccountOverrides((prev) => ({
       ...prev,
       [accountId]: {
-        ...createDefaultAccountOverrides(),
         ...(prev[accountId] || {}),
         ...partial,
       },
@@ -708,6 +707,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   const hasAccountFieldOverride = useCallback((accountId, field) => (
     Object.prototype.hasOwnProperty.call(accountOverrides[accountId] || {}, field)
+      && accountOverrides[accountId]?.[field] !== undefined
   ), [accountOverrides]);
 
   const getEffectiveCaptionForAccount = useCallback((accountId) => {
@@ -725,7 +725,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   }, [getAccountOverride, hasAccountFieldOverride, uploadedMedia]);
 
   const getEffectiveValueForAccount = useCallback((accountId, field, fallbackValue) => (
-    hasAccountFieldOverride(accountId, field)
+    hasAccountFieldOverride(accountId, field) && getAccountOverride(accountId)[field] !== undefined
       ? getAccountOverride(accountId)[field]
       : fallbackValue
   ), [getAccountOverride, hasAccountFieldOverride]);
@@ -1623,6 +1623,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                 accountTabs={platformAccounts.map((account) => ({
                   id: account.id,
                   label: getAccountDisplayName(account),
+                  pictureUrl: account.picture_url,
                   errorCount: (accountValidation[account.id]?.errors || []).length,
                 }))}
                 activeAccountId={activePlatformAccountId}
