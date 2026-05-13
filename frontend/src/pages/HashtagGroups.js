@@ -244,7 +244,9 @@ const HashtagGenerator = ({ onSaveAsGroup }) => {
       const data = await generateHashtags(topic.trim(), platform || null, DEFAULT_COUNT);
       if (!data.hashtags?.length) { toast.error('No hashtags returned — try a different topic'); }
       else { setHashtags(data.hashtags); setStep(3); }
-    } catch { toast.error('Failed to generate hashtags'); }
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to generate hashtags');
+    }
     finally { setLoading(false); }
   };
 

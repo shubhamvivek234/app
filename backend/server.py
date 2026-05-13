@@ -40,6 +40,7 @@ import time
 import base64
 import json as _json
 import asyncio as _asyncio
+import inspect
 from cryptography.fernet import Fernet
 from app.media_validator import validate_file_size, validate_mime_type
 from utils.storage import (
@@ -1533,11 +1534,11 @@ def _build_system_message(platform: Optional[str], tone: Optional[str]) -> str:
 
 async def _ai_waterfall(system_message: str, prompt: str) -> str:
     """
-    Try each AI provider in order. On rate-limit / quota errors move to the next.
-    Non-rate-limit errors propagate immediately (don't try other providers).
-    Order: Gemini 2.0 Flash Lite → Groq LLaMA 3.3 → Cohere Command R → OpenRouter Gemma → EMERGENT fallback
+    Try each AI provider in order until one returns usable text.
+    Prefer free / free-tier models first, then fall back to other configured providers.
+    Order: Gemini 2.0 Flash Lite → Groq LLaMA 3.3 → OpenRouter free models → Cohere Command R → real EMERGENT fallback
     """
-    rate_limit_errors: list[str] = []
+    provider_errors: list[str] = []
 
     def _is_rate_limit(exc: Exception) -> bool:
         msg = str(exc).lower()
@@ -1546,6 +1547,48 @@ async def _ai_waterfall(system_message: str, prompt: str) -> str:
             or "too many requests" in msg or "resource_exhausted" in msg.lower()
             or type(exc).__name__ in ("ResourceExhausted", "RateLimitError")
         )
+
+    def _record_provider_error(provider: str, exc: Exception) -> None:
+        detail = str(exc).replace("\n", " ").strip()
+        if len(detail) > 220:
+            detail = detail[:217] + "..."
+        provider_errors.append(f"{provider}: {type(exc).__name__}: {detail}")
+
+    def _ensure_text(provider: str, text: Optional[str]) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            raise RuntimeError(f"{provider} returned an empty response")
+        return cleaned
+
+    def _has_real_emergent_fallback() -> bool:
+        if not _emergent_available:
+            return False
+        source_path = inspect.getsourcefile(LlmChat) or ""
+        normalized = source_path.replace("\\", "/").lower()
+        return "/backend/emergentintegrations/" not in normalized
+
+    async def _call_openrouter_model(openrouter_key: str, model_name: str) -> str:
+        async with httpx.AsyncClient(timeout=30) as http:
+            response = await http.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://www.unravler.com",
+                    "X-Title": "Unravler AI",
+                },
+                json={
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            text = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return _ensure_text(f"OpenRouter ({model_name})", text)
 
     # ── 1. Google Gemini 2.0 Flash Lite ───────────────────────────────────
     google_key = os.environ.get("GOOGLE_AI_KEY")
@@ -1558,13 +1601,10 @@ async def _ai_waterfall(system_message: str, prompt: str) -> str:
                 system_instruction=system_message,
             )
             result = model.generate_content(prompt)
-            return result.text
+            return _ensure_text("Gemini", getattr(result, "text", ""))
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logging.warning(f"[AI waterfall] Gemini rate-limited: {exc} — trying Groq")
-                rate_limit_errors.append(f"Gemini: {exc}")
-            else:
-                raise
+            logging.warning(f"[AI waterfall] Gemini failed: {exc} — trying Groq")
+            _record_provider_error("Gemini", exc)
 
     # ── 2. Groq — llama-3.3-70b-versatile ────────────────────────────────
     groq_key = os.environ.get("GROQ_API_KEY")
@@ -1580,15 +1620,29 @@ async def _ai_waterfall(system_message: str, prompt: str) -> str:
                 ],
                 max_tokens=1024,
             )
-            return resp.choices[0].message.content
+            return _ensure_text("Groq", resp.choices[0].message.content)
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logging.warning(f"[AI waterfall] Groq rate-limited: {exc} — trying Cohere")
-                rate_limit_errors.append(f"Groq: {exc}")
-            else:
-                raise
+            logging.warning(f"[AI waterfall] Groq failed: {exc} — trying OpenRouter")
+            _record_provider_error("Groq", exc)
 
-    # ── 3. Cohere Command R ───────────────────────────────────────────────
+    # ── 3. OpenRouter free models ─────────────────────────────────────────
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
+        openrouter_models = [
+            "openai/gpt-oss-120b:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemma-4-31b-it:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "google/gemma-3-12b:free",
+        ]
+        for model_name in openrouter_models:
+            try:
+                return await _call_openrouter_model(openrouter_key, model_name)
+            except Exception as exc:
+                logging.warning(f"[AI waterfall] OpenRouter model {model_name} failed: {exc}")
+                _record_provider_error(f"OpenRouter/{model_name}", exc)
+
+    # ── 4. Cohere Command R ───────────────────────────────────────────────
     cohere_key = os.environ.get("COHERE_API_KEY")
     if cohere_key:
         try:
@@ -1601,70 +1655,39 @@ async def _ai_waterfall(system_message: str, prompt: str) -> str:
                     {"role": "user",   "content": prompt},
                 ],
             )
-            return resp.message.content[0].text
+            text = ""
+            if getattr(resp, "message", None) and getattr(resp.message, "content", None):
+                first_item = resp.message.content[0]
+                text = getattr(first_item, "text", "") or ""
+            return _ensure_text("Cohere", text)
         except Exception as exc:
-            if _is_rate_limit(exc):
-                logging.warning(f"[AI waterfall] Cohere rate-limited: {exc} — trying OpenRouter")
-                rate_limit_errors.append(f"Cohere: {exc}")
-            else:
-                raise
+            logging.warning(f"[AI waterfall] Cohere failed: {exc} — trying final fallback")
+            _record_provider_error("Cohere", exc)
 
-    # ── 4. OpenRouter — google/gemma-3-12b:free ───────────────────────────
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    if openrouter_key:
-        try:
-            async with httpx.AsyncClient(timeout=30) as http:
-                r = await http.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {openrouter_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://socialentangler.com",
-                        "X-Title": "SocialEntangler AI",
-                    },
-                    json={
-                        "model": "google/gemma-3-12b:free",
-                        "messages": [
-                            {"role": "system", "content": system_message},
-                            {"role": "user",   "content": prompt},
-                        ],
-                    },
-                )
-                if r.status_code == 429:
-                    logging.warning(f"[AI waterfall] OpenRouter rate-limited — trying EMERGENT")
-                    rate_limit_errors.append("OpenRouter: 429")
-                else:
-                    r.raise_for_status()
-                    return r.json()["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
-                rate_limit_errors.append(f"OpenRouter: {exc}")
-            else:
-                raise
-        except Exception as exc:
-            if _is_rate_limit(exc):
-                rate_limit_errors.append(f"OpenRouter: {exc}")
-            else:
-                raise
-
-    # ── 5. EMERGENT_LLM_KEY — existing paid fallback ──────────────────────
+    # ── 5. EMERGENT_LLM_KEY — only if real package is installed ───────────
     emergent_key = os.environ.get("EMERGENT_LLM_KEY")
-    if emergent_key:
+    if emergent_key and _has_real_emergent_fallback():
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"content-gen-{uuid.uuid4()}",
             system_message=system_message,
         ).with_model("openai", "gpt-4o-mini")
         response = await chat.send_message(UserMessage(text=prompt))
-        return response
+        return _ensure_text("Emergent", response)
 
     # All providers exhausted
-    if rate_limit_errors:
+    if provider_errors:
+        detail = "; ".join(provider_errors)
+        if any("429" in err or "quota" in err.lower() or "rate" in err.lower() for err in provider_errors):
+            raise HTTPException(
+                status_code=429,
+                detail=f"All configured AI providers failed or were rate-limited. Details: {detail}",
+            )
         raise HTTPException(
-            status_code=429,
-            detail=f"All AI providers are rate-limited. Try again in a moment. Details: {'; '.join(rate_limit_errors)}",
+            status_code=503,
+            detail=f"All configured AI providers failed. Details: {detail}",
         )
-    raise HTTPException(status_code=503, detail="No AI provider configured. Add GOOGLE_AI_KEY, GROQ_API_KEY, COHERE_API_KEY, or OPENROUTER_API_KEY to your .env file.")
+    raise HTTPException(status_code=503, detail="No AI provider configured. Add GOOGLE_AI_KEY, GROQ_API_KEY, COHERE_API_KEY, OPENROUTER_API_KEY, or a real EMERGENT_LLM_KEY integration to your .env file.")
 
 
 @api_router.post("/ai/generate-content")
