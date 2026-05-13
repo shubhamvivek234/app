@@ -344,32 +344,35 @@ export function validateCommonPostPlatform(platformId, {
   const hasMedia = normalizedMedia.length > 0;
   const hasCaption = Boolean((caption || '').trim());
 
-  if (!rule.allowTextOnly && !hasMedia) {
-    errors.push(`${limit.label} requires media in Common Post.`);
+  if (!hasMedia) {
+    if (!rule.allowTextOnly) {
+      notes.push(`Add media in Common Post or upload it directly in ${limit.label} before publishing there.`);
+    }
+    if (!hasCaption) {
+      notes.push(`Add a caption, media, or both when you're ready to publish to ${limit.label}.`);
+    }
   }
 
-  if (!hasCaption && !hasMedia) {
-    errors.push(`Add a caption or media to continue with ${limit.label}.`);
-  }
-
-  if (rule.exactVideoCount && videos.length !== rule.exactVideoCount) {
+  if (hasMedia && rule.exactVideoCount && videos.length !== rule.exactVideoCount) {
     errors.push(`${limit.label} requires exactly ${rule.exactVideoCount} video in Common Post.`);
   }
 
-  if (rule.maxImages === 0 && images.length > 0) {
-    errors.push(`${limit.label} does not support image uploads in Common Post.`);
-  } else if (typeof rule.maxImages === 'number' && images.length > rule.maxImages) {
-    errors.push(`${limit.label} supports up to ${rule.maxImages} image${rule.maxImages !== 1 ? 's' : ''}. You uploaded ${images.length}.`);
-  }
+  if (hasMedia) {
+    if (rule.maxImages === 0 && images.length > 0) {
+      errors.push(`${limit.label} does not support image uploads in Common Post.`);
+    } else if (typeof rule.maxImages === 'number' && images.length > rule.maxImages) {
+      errors.push(`${limit.label} supports up to ${rule.maxImages} image${rule.maxImages !== 1 ? 's' : ''}. You uploaded ${images.length}.`);
+    }
 
-  if (rule.maxVideos === 0 && videos.length > 0) {
-    errors.push(`${limit.label} does not support video uploads in Common Post.`);
-  } else if (typeof rule.maxVideos === 'number' && videos.length > rule.maxVideos) {
-    errors.push(`${limit.label} supports up to ${rule.maxVideos} video${rule.maxVideos !== 1 ? 's' : ''}. You uploaded ${videos.length}.`);
-  }
+    if (rule.maxVideos === 0 && videos.length > 0) {
+      errors.push(`${limit.label} does not support video uploads in Common Post.`);
+    } else if (typeof rule.maxVideos === 'number' && videos.length > rule.maxVideos) {
+      errors.push(`${limit.label} supports up to ${rule.maxVideos} video${rule.maxVideos !== 1 ? 's' : ''}. You uploaded ${videos.length}.`);
+    }
 
-  if (!rule.allowMixed && images.length > 0 && videos.length > 0) {
-    errors.push(`${limit.label} does not support mixed image and video media in Common Post.`);
+    if (!rule.allowMixed && images.length > 0 && videos.length > 0) {
+      errors.push(`${limit.label} does not support mixed image and video media in Common Post.`);
+    }
   }
 
   if (rule.unsupportedMediaMessage && hasMedia) {

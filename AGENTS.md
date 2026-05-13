@@ -19,6 +19,9 @@ Completed tasks:
 - Added platform-specific reset-to-common and per-platform crop override flow on top of shared media
 - Persisted `platform_overrides`, `media_types`, `youtube_privacy`, and TikTok options through `/api/posts`
 - Updated Celery publish path to honor per-platform content/media overrides and clean up override media URLs
+- Fixed Common Post empty-state validation so media-required platforms now show guidance, not blocking errors, until media is actually added
+- Re-enabled direct media upload/removal/reorder inside each selected platform panel
+- Fixed submit gating so platform-only media overrides count as real post content
 
 Files modified:
 - `backend/server.py`
@@ -29,8 +32,8 @@ Files modified:
 
 ## Active Work
 
-Currently implementing: Common Post shipped in Create Post UI + backend payload path
-Next concrete step: Live browser verification for multi-platform Common Post, especially crop/error flows and real publish behavior per platform
+Currently implementing: Common Post UX follow-up after initial rollout
+Next concrete step: Live browser verification for Common Post vs platform-specific media flows, especially crop/error behavior after upload
 Blocked on: some platform publishers are still not fully configured (`threads`, `bluesky`, `pinterest`) and Common Post marks them unsupported
 
 ## Architecture Notes
@@ -39,6 +42,8 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Per-platform edits create overrides instead of mutating shared content; `Reset to Common` clears those overrides
 - `platform_overrides` now persists through `backend/server.py` and is read by `backend/celery_tasks.py` during publish
 - Current Common Post validation is aligned to what this workspace can actually publish today, not to theoretical platform limits
+- Empty Common Post media is no longer treated as an immediate error for Instagram/YouTube/TikTok; only actual uploaded-media incompatibilities block submit
+- Selected platform panels can upload their own media overrides even when Common Post media is empty
 
 ## Decisions Made This Session
 
@@ -46,6 +51,7 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Keep Common Post as the single shared caption/media source; per-platform panels are derived views with optional overrides
 - Block `Post Now` and `Schedule` whenever any selected platform has a Common Post validation error
 - Keep unsupported or unconfigured platforms visibly blocked in Common Post instead of silently posting partial payloads
+- Show media-required platforms as advisory when they have no media yet; only block once actual uploaded media violates platform rules
 
 ## Test Status
 
@@ -53,6 +59,10 @@ Last run:
 - `python3 -m compileall backend/server.py backend/celery_tasks.py`
 - `CI=true npm run build`
 Result: backend compile passed; frontend production build passed with existing warnings only
+
+Latest run:
+- `CI=true npm run build --prefix frontend`
+Result: passed with existing Tailwind/PostHog warnings only
 
 ## Notes for Next Session
 
@@ -67,5 +77,6 @@ python3 -m compileall backend/server.py backend/celery_tasks.py
 
 Important:
 - Do not touch unrelated `.claude/worktrees/*` changes
+- Do not touch unrelated `frontend/.gitignore`, `.vercelignore`, or `.playwright-mcp/` changes unless explicitly asked
 - `threads`, `bluesky`, and `pinterest` are intentionally blocked in Common Post because publish adapters are not ready
 - Secrets previously shown in chat should be treated as compromised until rotated

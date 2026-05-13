@@ -1151,10 +1151,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const handleSubmit = async (mode) => {
     const primaryPlatform = orderedPlatforms[0] || selectedPlatforms[0];
     const primaryContent = commonCaption || (primaryPlatform ? getEffectiveCaptionForPlatform(primaryPlatform) : '') || '';
-    const hasContent = Boolean(primaryContent.trim()) || selectedPlatforms.some((platform) => {
-      const caption = getEffectiveCaptionForPlatform(platform);
-      return Boolean(caption.trim());
-    }) || uploadedMedia.length > 0;
+    const hasContent = Boolean(primaryContent.trim())
+      || selectedPlatforms.some((platform) => {
+        const caption = getEffectiveCaptionForPlatform(platform);
+        const media = getEffectiveMediaForPlatform(platform);
+        return Boolean(caption.trim()) || media.length > 0;
+      })
+      || uploadedMedia.length > 0;
 
     if (!hasContent) {
       toast.error('Please enter some content or upload media before posting');
@@ -1438,9 +1441,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               media={getEffectiveMediaForPlatform(platform)}
               uploading={uploading}
               uploadProgress={uploadProgress}
-              onFilesSelect={undefined}
-              onRemoveMedia={undefined}
-              onReorderMedia={undefined}
+              onFilesSelect={(files) => handleFilesSelectForPlatform(platform, files)}
+              onRemoveMedia={(idx) => handleRemoveMediaForPlatform(platform, idx)}
+              onReorderMedia={(from, to) => handleReorderMediaForPlatform(platform, from, to)}
               fileInputRef={undefined}
               // Platform-specific
               postFormat={postFormat}             onPostFormatChange={setPostFormat}
