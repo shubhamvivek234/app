@@ -107,6 +107,20 @@ const getPublishedSixMonthCutoff = () => {
   return cutoff;
 };
 
+const deriveCardMediaKind = (post) => {
+  const explicit = post.published_media_kind;
+  if (explicit && PUBLISHED_MEDIA_KIND_META[explicit]) return explicit;
+
+  const normalizedType = (post.post_type || '').toLowerCase();
+  const mediaCount = (post.media_urls || []).length;
+
+  if (normalizedType.includes('mixed')) return 'mixed';
+  if (['video', 'reel', 'story'].includes(normalizedType) || normalizedType.includes('video')) return 'video';
+  if (normalizedType === 'text' && mediaCount === 0) return 'text';
+  if (mediaCount > 0) return 'image';
+  return 'text';
+};
+
 const ContentLibrary = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -133,10 +147,24 @@ const ContentLibrary = () => {
       const postParams = initialStatus === 'published'
         ? { published_window: 'past_6_months' }
         : {};
-      const [postsData, accountsData] = await Promise.all([
-        getPosts(statusParam, postParams),
-        getSocialAccounts(),
-      ]);
+      const PAGE_SIZE = 100;
+
+      const loadAllPosts = async () => {
+        let page = 1;
+        let allPosts = [];
+
+        while (true) {
+          const batch = await getPosts(statusParam, { ...postParams, page, limit: PAGE_SIZE });
+          allPosts = allPosts.concat(batch || []);
+          if (!Array.isArray(batch) || batch.length < PAGE_SIZE) break;
+          page += 1;
+          if (page > 20) break;
+        }
+
+        return allPosts;
+      };
+
+      const [postsData, accountsData] = await Promise.all([loadAllPosts(), getSocialAccounts()]);
       setPosts(postsData);
       setAccounts(accountsData);
     } catch (error) {
@@ -149,6 +177,14 @@ const ContentLibrary = () => {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  useEffect(() => {
+    if (!['scheduled', 'published'].includes(initialStatus)) return undefined;
+    const intervalId = setInterval(() => {
+      fetchAll();
+    }, 30000);
+    return () => clearInterval(intervalId);
+  }, [fetchAll, initialStatus]);
 
   const accountMap = accounts.reduce((acc, a) => {
     acc[a.id] = a;
@@ -419,12 +455,11 @@ const ContentLibrary = () => {
               
               // Only taking the first associated platform to represent the pill if we want, or map them all
               const primaryPlatform = post.platforms?.[0] || 'unknown';
-              const mediaKind = post.published_media_kind || (
-                post.media_urls?.length ? 'image' : 'text'
-              );
+              const mediaKind = deriveCardMediaKind(post);
               const mediaKindMeta = PUBLISHED_MEDIA_KIND_META[mediaKind] || PUBLISHED_MEDIA_KIND_META.text;
               const MediaKindIcon = mediaKindMeta.icon;
-              const publishedCardThumbnail = post.published_card_thumbnail_url || post.thumbnail_urls?.[0] || post.cover_image || post.media_urls?.[0] || null;
+              const cardThumbnail = post.published_card_thumbnail_url || post.thumbnail_urls?.[0] || post.cover_image || post.media_urls?.[0] || null;
+              const showCardMediaMeta = initialStatus === 'published' || initialStatus === 'scheduled';
 
               return (
                 <div
@@ -476,7 +511,7 @@ const ContentLibrary = () => {
                       <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-offwhite border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
                         {platformIcons[primaryPlatform]} {primaryPlatform}
                       </div>
-                      {initialStatus === 'published' && (
+                      {showCardMediaMeta && (
                         <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${mediaKindMeta.className}`}>
                           <MediaKindIcon className="text-[10px]" />
                           {mediaKindMeta.label}
@@ -497,9 +532,9 @@ const ContentLibrary = () => {
                     </div>
 
                     {/* Media Preview Thumbnail (If Image/Video provided) */}
-                    {publishedCardThumbnail && (
+                    {cardThumbnail && (
                       <div className="mb-4 h-32 bg-offwhite rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
-                         <img src={publishedCardThumbnail} alt="Media Thumbnail" className="w-full h-full object-cover" />
+                         <img src={cardThumbnail} alt="Media Thumbnail" className="w-full h-full object-cover" />
                       </div>
                     )}
                   </div>

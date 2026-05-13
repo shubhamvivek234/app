@@ -6,7 +6,7 @@
 
 Stage: v2.9 complete
 Branch: main + version-6
-Focus: Published Posts retention/thumbnail follow-up + Cloudflare R2 migration follow-up
+Focus: Content Library scheduled/published card UX follow-up + Cloudflare R2 migration follow-up
 Arch refs: Architecture v2.9 / Implementation Plan v3.0
 
 ## Last Session Completed
@@ -37,6 +37,8 @@ Completed tasks:
 - Removed the old production-side published-post pruning path that deleted post data beyond the newest 25 items
 - Updated `ContentLibrary` published view to use the new card thumbnail/type metadata and replace `All Time` with `Past 6 Months`
 - Added focused retention tests in `tests/test_published_post_retention.py`
+- Fixed published-post 6-month filtering fallback so published records without `published_at` still appear using `updated_at` / `created_at`
+- Extended `ContentLibrary` scheduled view to show thumbnail + post-type badge, fetch all pages, and auto-refresh so published posts leave Scheduled and appear in Published automatically
 
 Files modified:
 - `backend/server.py`
@@ -48,7 +50,7 @@ Files modified:
 ## Active Work
 
 Currently implementing: None
-Next concrete step: Commit/push/deploy the Published Posts thumbnail + 6-month filtering changes if approved after local review
+Next concrete step: Commit/push/deploy the scheduled-post Content Library card changes if approved after local review
 Blocked on: some platform publishers are still not fully configured (`threads`, `bluesky`, `pinterest`) and Common Post marks them unsupported
 
 ## Architecture Notes
@@ -68,6 +70,7 @@ Blocked on: some platform publishers are still not fully configured (`threads`, 
 - Published Posts now use dedicated 160x160 WebP card thumbnails (`published-card-thumbnails/{user_id}/{post_id}.webp`) stored separately from the general media thumbnails
 - The new 6-month retention policy applies only to Published Posts card thumbnails and page filtering; post data and analytics history are preserved
 - Old production logic in `celery_workers/tasks/publish.py` used to prune published posts beyond 25 items; that call has been removed locally
+- `ContentLibrary` now fetches paginated scheduled/published posts in batches of 100 and polls every 30s for status transitions on those views
 
 ## Decisions Made This Session
 
@@ -112,6 +115,10 @@ Latest run:
 - `backend/venv/bin/pytest tests/test_published_post_retention.py -q`
 - `CI=true npm run build --prefix frontend`
 Result: Python compile passed; 3 retention/media-kind tests passed; frontend production build passed with existing Tailwind/PostHog warnings only
+
+Latest run:
+- `CI=true npm run build --prefix frontend`
+Result: frontend production build passed after the scheduled-post card updates; only existing Tailwind/PostHog warnings remain
 
 ## Notes for Next Session
 
