@@ -603,6 +603,7 @@ async def get_oauth_url(
         or _default_frontend_base()
     )
     code_verifier: str | None = None
+    twitter_code_challenge: str | None = None
     state = redis_state
 
     if platform == "tiktok":
@@ -610,6 +611,15 @@ async def get_oauth_url(
         auth_payload = TikTokAuth().get_auth_url(redis_state)
         auth_url = auth_payload["url"]
         code_verifier = auth_payload.get("verifier")
+    elif platform == "twitter":
+        # Twitter/X OAuth 2.0 requires PKCE (code_challenge + verifier).
+        from backend.app.social.twitter import TwitterAuth
+
+        auth = TwitterAuth()
+        verifier, challenge = auth.generate_pkce()
+        code_verifier = verifier
+        twitter_code_challenge = challenge
+        auth_url = auth.get_auth_url(redis_state, challenge)
     elif platform == "linkedin":
         from backend.app.social.linkedin import LinkedInAuth
         auth_url = LinkedInAuth().get_auth_url(redis_state)
@@ -640,6 +650,12 @@ async def get_oauth_url(
             state = _create_stateless_oauth_state(state_context)
             auth_payload = TikTokAuth().get_auth_url(state, verifier=code_verifier)
             auth_url = auth_payload["url"]
+        elif platform == "twitter":
+            from backend.app.social.twitter import TwitterAuth
+
+            state = _create_stateless_oauth_state(state_context)
+            auth = TwitterAuth()
+            auth_url = auth.get_auth_url(state, twitter_code_challenge or "")
         elif platform == "linkedin":
             state = _create_stateless_oauth_state(state_context)
             from backend.app.social.linkedin import LinkedInAuth
@@ -1279,6 +1295,8 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
     if not client_id:
         logger.error("Twitter OAuth: TWITTER_CLIENT_ID not set")
         return None
+    if not code_verifier:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Twitter requires code_verifier")
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -1286,7 +1304,7 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
                 "https://api.twitter.com/2/oauth2/token",
                 data={"code": code, "grant_type": "authorization_code",
                       "client_id": client_id, "redirect_uri": redirect_uri,
-                      "code_verifier": code_verifier or "challenge"},
+                      "code_verifier": code_verifier},
                 auth=(client_id, client_secret) if client_secret else None,
             )
             r.raise_for_status()

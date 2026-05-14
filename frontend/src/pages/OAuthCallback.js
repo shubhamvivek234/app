@@ -78,12 +78,13 @@ const OAuthCallback = () => {
         // Prepare callback data
         const callbackData = { code };
 
-        // For YouTube and others, include state if available
-        if (platform === 'youtube' && state) {
+        // Send state back to backend for CSRF validation + state-context lookup.
+        // (Twitter also needs it if Redis/state fallback is used.)
+        if (state) {
           callbackData.state = state;
         }
 
-        // For Twitter, include code_verifier
+        // For Twitter, include code_verifier (PKCE)
         if (platform === 'twitter') {
           const codeVerifier = sessionStorage.getItem('twitter_code_verifier');
           if (codeVerifier) {
