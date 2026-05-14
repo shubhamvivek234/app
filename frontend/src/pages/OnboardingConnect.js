@@ -119,11 +119,8 @@ const OnboardingConnect = () => {
     if (!selectedPlatform) return;
 
     setLoading(true);
-    // Open a popup synchronously so browsers don't block it (window.open after an await
-    // is treated as a non-user gesture and is frequently blocked).
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
-    if (popup) popup.opener = null;
-    markOAuthPopupExpected(Boolean(popup));
+    // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
+    markOAuthPopupExpected(false);
     try {
       const token = localStorage.getItem('token');
       const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id, token);
@@ -137,17 +134,12 @@ const OnboardingConnect = () => {
       sessionStorage.setItem('oauth_platform', selectedPlatform.id);
       sessionStorage.setItem('oauth_return_to', 'onboarding');
 
-      // Navigate the pre-opened popup (or fall back to same-tab redirect).
-      if (popup) {
-        popup.location.href = authorization_url;
-      } else {
-        window.location.assign(authorization_url);
-      }
+      // Same-tab redirect.
+      window.location.assign(authorization_url);
 
     } catch (error) {
       console.error('Error initiating OAuth:', error);
       clearOAuthPopupExpected();
-      if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error(`${selectedPlatform.name} API credentials not configured. Please contact administrator.`);
       } else {

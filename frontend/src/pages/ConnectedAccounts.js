@@ -353,10 +353,8 @@ const ConnectedAccounts = () => {
     if (platformId === 'mastodon') { setMastodonModal(true); return; }
 
     setConnecting(platformId);
-    // Open a popup synchronously so browsers don't block it.
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
-    if (popup) popup.opener = null;
-    markOAuthPopupExpected(Boolean(popup));
+    // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
+    markOAuthPopupExpected(false);
     try {
       const token = localStorage.getItem('token');
       const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
@@ -366,16 +364,11 @@ const ConnectedAccounts = () => {
         if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
         sessionStorage.setItem('oauth_platform', platformId);
         sessionStorage.setItem('oauth_return_to', 'accounts');
-        if (popup) {
-          popup.location.href = authorization_url;
-        } else {
-          window.location.assign(authorization_url);
-        }
+        window.location.assign(authorization_url);
         return;
       }
     } catch (error) {
       clearOAuthPopupExpected();
-      if (popup) popup.close();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error('API credentials not configured for this platform.');
       } else {
