@@ -34,6 +34,16 @@ class SignupRequest(BaseModel):
     cf_turnstile_token: str | None = None
 
 
+class UpdateMeRequest(BaseModel):
+    """
+    Patchable user fields used by onboarding and billing flows.
+    Keep this narrow: it's not a general profile editor.
+    """
+    user_type: str | None = None
+    timezone: str | None = None
+    onboarding_completed: bool | None = None
+
+
 # ── Turnstile helper ──────────────────────────────────────────────────────────
 
 async def _verify_turnstile_if_enabled(token: str | None, ip: str) -> None:
@@ -143,6 +153,48 @@ async def get_me(
         user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
 
     # Coerce legacy DB null values so Pydantic validation doesn't crash on log-in
+    if user.get("plan") is None:
+        user["plan"] = "starter"
+    if user.get("subscription_status") is None:
+        user["subscription_status"] = "free"
+
+    return UserResponse(**user)
+
+
+@router.patch("/auth/me", response_model=UserResponse)
+@limiter.limit("20/minute")
+async def patch_me(
+    request: Request,
+    body: UpdateMeRequest,
+    current_user: CurrentUser,
+    db: DB,
+) -> UserResponse:
+    """
+    Update a small set of profile fields.
+    Required for onboarding (user_type/timezone) and payment completion
+    (onboarding_completed=true).
+    """
+    set_fields: dict = {}
+    if body.user_type is not None:
+        # Keep in Mongo for segmentation/analytics; FE can choose to use or ignore.
+        set_fields["user_type"] = body.user_type
+    if body.timezone is not None:
+        set_fields["timezone"] = body.timezone
+    if body.onboarding_completed is not None:
+        set_fields["onboarding_completed"] = body.onboarding_completed
+
+    if set_fields:
+        set_fields["updated_at"] = datetime.now(timezone.utc)
+        await db.users.update_one(
+            {"user_id": current_user["user_id"]},
+            {"$set": set_fields},
+        )
+
+    user = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Coerce legacy DB null values so Pydantic validation doesn't crash.
     if user.get("plan") is None:
         user["plan"] = "starter"
     if user.get("subscription_status") is None:
