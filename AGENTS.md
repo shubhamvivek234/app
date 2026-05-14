@@ -17,6 +17,8 @@ Completed:
   File: `frontend/src/components/composer/PlatformEditor.js`
 - Backend (modular app): added missing `PATCH /api/auth/me` so onboarding “Next” + payment completion can update profile fields.
   File: `api/routes/auth.py`
+- Backend/Frontend: fixed Twitter/X OAuth flow by adding required PKCE params (code_challenge/S256) and sending `state` on callback.
+  Files: `api/routes/accounts.py`, `frontend/src/pages/OAuthCallback.js`
 
 ## Active Work
 Currently implementing: None
@@ -33,4 +35,3 @@ git status --short
 CI=true npm run build --prefix frontend
 python3 -m compileall api/routes/auth.py
 ```
-
