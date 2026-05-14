@@ -19,6 +19,8 @@ Completed:
   File: `api/routes/auth.py`
 - Backend/Frontend: fixed Twitter/X OAuth flow by adding required PKCE params (code_challenge/S256) and sending `state` on callback.
   Files: `api/routes/accounts.py`, `frontend/src/pages/OAuthCallback.js`
+- Frontend: changed OAuth connect UX to use same-tab redirects (no popup/new-tab).
+  Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
 
 ## Active Work
 Currently implementing: None
