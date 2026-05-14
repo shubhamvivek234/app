@@ -300,6 +300,11 @@ const ConnectedAccounts = () => {
 
   useEffect(() => { fetchAccounts(); }, []);
 
+  // Ensure any stale popup state from older deployments can't influence UX.
+  useEffect(() => {
+    clearOAuthPopupExpected();
+  }, []);
+
   useEffect(() => {
     return listenForOAuthResult((message) => {
       if (!message || message.returnTo !== 'accounts') return;

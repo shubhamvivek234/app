@@ -61,6 +61,11 @@ const OnboardingConnect = () => {
     fetchConnectedAccounts();
   }, []);
 
+  // Ensure any stale popup state from older deployments can't influence UX.
+  useEffect(() => {
+    clearOAuthPopupExpected();
+  }, []);
+
   useEffect(() => {
     return listenForOAuthResult((message) => {
       if (!message || message.returnTo !== 'onboarding') return;
