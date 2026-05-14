@@ -21,6 +21,8 @@ Completed:
   Files: `api/routes/accounts.py`, `frontend/src/pages/OAuthCallback.js`
 - Frontend: changed OAuth connect UX to use same-tab redirects (no popup/new-tab).
   Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
+- Frontend: clear any stale `oauth_popup_expected` state on connections pages to avoid old popup behavior lingering.
+  Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
 
 ## Active Work
 Currently implementing: None
