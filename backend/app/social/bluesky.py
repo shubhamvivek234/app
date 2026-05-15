@@ -48,27 +48,43 @@ class BlueskyAuth:
                 )
             return response.json()
 
-    async def get_user_profile(self, access_token: str, did: str) -> dict:
-        """Fetch Bluesky profile by DID."""
+    async def get_user_profile(self, access_token: str, actor: str, fallback_actor: str | None = None) -> dict:
+        """Fetch Bluesky profile by DID or handle."""
+        candidates: list[str] = []
+        for candidate in (actor, fallback_actor):
+            value = str(candidate or "").strip()
+            if value and value not in candidates:
+                candidates.append(value)
+
+        if not candidates:
+            raise HTTPException(status_code=400, detail="Failed to fetch Bluesky profile")
+
+        last_error: str | None = None
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.BASE_URL}/app.bsky.actor.getProfile",
-                headers={"Authorization": f"Bearer {access_token}"},
-                params={"actor": did},
-            )
-            if response.status_code != 200:
-                logging.error(f"[Bluesky] getProfile error: {response.text}")
-                raise HTTPException(status_code=400, detail="Failed to fetch Bluesky profile")
-            data = response.json()
-            return {
-                "id":          data.get("did", did),
-                "name":        data.get("displayName") or data.get("handle", ""),
-                "username":    data.get("handle", ""),
-                "picture_url": data.get("avatar"),
-                "followers_count": data.get("followersCount"),
-                "following_count": data.get("followsCount"),
-                "posts_count": data.get("postsCount"),
-            }
+            for candidate in candidates:
+                response = await client.get(
+                    f"{self.BASE_URL}/app.bsky.actor.getProfile",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"actor": candidate},
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "id":          data.get("did", candidate),
+                        "name":        data.get("displayName") or data.get("handle", ""),
+                        "username":    data.get("handle", ""),
+                        "picture_url": data.get("avatar"),
+                        "followers_count": data.get("followersCount"),
+                        "following_count": data.get("followsCount"),
+                        "posts_count": data.get("postsCount"),
+                    }
+
+                last_error = response.text
+                logging.warning("[Bluesky] getProfile failed for actor=%s: %s", candidate, response.text)
+
+        if last_error:
+            logging.error("[Bluesky] getProfile error after %d attempt(s): %s", len(candidates), last_error)
+        raise HTTPException(status_code=400, detail="Failed to fetch Bluesky profile")
 
     async def publish_post(
         self,

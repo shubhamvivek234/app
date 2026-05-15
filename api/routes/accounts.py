@@ -300,7 +300,11 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
 
             from backend.app.social.bluesky import BlueskyAuth
 
-            profile = await BlueskyAuth().get_user_profile(access_token, platform_user_id)
+            profile = await BlueskyAuth().get_user_profile(
+                access_token,
+                platform_user_id,
+                fallback_actor=doc.get("platform_username"),
+            )
             updates = {
                 "platform_username": profile.get("username") or doc.get("platform_username"),
                 "display_name": profile.get("name") or doc.get("display_name") or doc.get("platform_username"),
@@ -388,7 +392,19 @@ async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = Fal
     refresh_token_encrypted = doc.get("refresh_token")
 
     expires_at = doc.get("expires_at") or doc.get("token_expiry")
-    is_expired = isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+    expires_dt: datetime | None = None
+    if isinstance(expires_at, str) and expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except Exception:
+            expires_dt = None
+    elif isinstance(expires_at, datetime):
+        expires_dt = expires_at
+
+    if isinstance(expires_dt, datetime) and expires_dt.tzinfo is None:
+        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+    is_expired = isinstance(expires_dt, datetime) and expires_dt <= datetime.now(timezone.utc)
     if not (force_refresh or is_expired):
         return access_token
 

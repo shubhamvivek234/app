@@ -257,6 +257,40 @@ def _platform_supports(platform: str | None) -> dict[str, bool]:
     return ((_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("supports") or {}).copy()
 
 
+def _account_error_label(account: dict[str, Any]) -> str:
+    return (
+        account.get("platform_username")
+        or account.get("display_name")
+        or account.get("account_id")
+        or account.get("id")
+        or account.get("platform")
+        or "unknown"
+    )
+
+
+def _analytics_error_message(platform: str | None, exc: Exception) -> str:
+    message = str(exc).strip() or "Unable to fetch recent analytics from the platform API."
+    if platform == "twitter" and "CreditsDepleted" in message:
+        return "X API credits are depleted for this connected developer account. Live X analytics are temporarily unavailable."
+    if platform == "bluesky" and "Failed to fetch Bluesky profile" in message:
+        return "Unable to load this Bluesky profile from the platform API. Reconnect the account if the handle or DID changed."
+    return message
+
+
+def _append_account_error(errors: list[dict[str, str]], account: dict[str, Any], message: str) -> bool:
+    label = _account_error_label(account)
+    entry = {"account": label, "error": message}
+    if entry in errors:
+        return False
+    errors.append(entry)
+    return True
+
+
+def _has_account_error(errors: list[dict[str, str]], account: dict[str, Any]) -> bool:
+    label = _account_error_label(account)
+    return any(item.get("account") == label for item in errors)
+
+
 def _merge_named_counts(items: list[dict[str, Any]], key_name: str) -> list[dict[str, Any]]:
     merged: dict[str, int] = {}
     for item in items:
@@ -383,7 +417,11 @@ async def _fetch_account_feed_and_stats(
         from backend.app.social.bluesky import BlueskyAuth
 
         auth = BlueskyAuth()
-        profile = await auth.get_user_profile(access_token, platform_user_id)
+        profile = await auth.get_user_profile(
+            access_token,
+            platform_user_id,
+            fallback_actor=account.get("platform_username"),
+        )
         handle = profile.get("username") or account.get("platform_username") or platform_user_id
         feed = await auth.fetch_posts(access_token, handle, limit=50)
         return [
@@ -754,13 +792,7 @@ async def analytics_overview(
                 try:
                     _, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
                 except Exception as exc:
-                    account_identifier = account.get("account_id") or account.get("id")
-                    overview_errors.append(
-                        {
-                            "account": account.get("platform_username") or account_identifier or plat or "unknown",
-                            "error": str(exc),
-                        }
-                    )
+                    _append_account_error(overview_errors, account, _analytics_error_message(plat, exc))
             return _normalize_connected_account(account, engagement)
 
         connected_accounts = await asyncio.gather(*[_build_account_summary(account) for account in accounts])
@@ -839,13 +871,7 @@ async def analytics_engagement(
             try:
                 feed, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
             except Exception as exc:
-                account_identifier = account.get("account_id") or account.get("id")
-                errors.append(
-                    {
-                        "account": account.get("platform_username") or account_identifier or plat,
-                        "error": str(exc),
-                    }
-                )
+                _append_account_error(errors, account, _analytics_error_message(plat, exc))
                 feed, engagement = [], {}
 
         connected_accounts.append(_normalize_connected_account(account, engagement))
@@ -854,14 +880,8 @@ async def analytics_engagement(
             feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=50)
 
         if not feed and not engagement:
-            account_identifier = account.get("account_id") or account.get("id")
-            if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-                errors.append(
-                    {
-                        "account": account.get("platform_username") or account_identifier or plat,
-                        "error": "Unable to fetch recent analytics from the platform API.",
-                    }
-                )
+            if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS and not _has_account_error(errors, account):
+                _append_account_error(errors, account, "Unable to fetch recent analytics from the platform API.")
             continue
 
         filtered_feed: list[dict[str, Any]] = []
