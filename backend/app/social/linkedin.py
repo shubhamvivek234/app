@@ -252,12 +252,14 @@ class LinkedInAuth:
 
     async def fetch_audience_analytics(self, access_token: str, account: dict, days: int | None = None) -> dict:
         """Fetch LinkedIn audience metrics for member and organization analytics."""
+        scopes = set(account.get("scopes") or [])
         result: dict[str, int | str | None] = {
             "platform": "linkedin",
             "followers": None,
             "followers_growth": None,
             "impressions": None,
             "reach": None,
+            "error": None,
         }
 
         member_total = await self.get_member_follower_total(access_token)
@@ -302,6 +304,12 @@ class LinkedInAuth:
             if saw_org_share_stats:
                 result["impressions"] = org_impressions
                 result["reach"] = org_reach
+
+        if all(result.get(metric) is None for metric in ("followers", "followers_growth", "impressions", "reach")):
+            if "r_member_profileAnalytics" not in scopes and "rw_organization_admin" not in scopes:
+                result["error"] = "Reconnect this LinkedIn account to grant analytics permissions."
+            else:
+                result["error"] = "LinkedIn denied analytics access for this connection. This app/account does not currently have permission to read LinkedIn analytics."
 
         return result
 

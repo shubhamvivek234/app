@@ -143,6 +143,17 @@ const aggregateAudienceSupport = (accounts) => ({
   impressions: accounts.some((account) => account?.supports?.impressions && account?.impressions != null),
 });
 
+const selectedPlatformAudienceSupport = (platform, computedSupport) => {
+  if (platform !== 'linkedin') return computedSupport;
+  return {
+    ...computedSupport,
+    followers_total: true,
+    followers_growth: true,
+    reach: true,
+    impressions: true,
+  };
+};
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 // Engagement summary card
@@ -646,9 +657,10 @@ const Analytics = () => {
     ) ||
     platformAccounts.find((a) => a.id === selectedAccount);
   const overviewAccounts = overview?.connected_accounts || [];
-  const audienceSupport = selectedAccount
+  const computedAudienceSupport = selectedAccount
     ? (selectedConnectedAccount?.supports || {})
     : aggregateAudienceSupport(overviewAccounts);
+  const audienceSupport = selectedPlatformAudienceSupport(selectedPlatform, computedAudienceSupport);
   const audienceSource = selectedAccount
     ? selectedConnectedAccount
     : (overview?.audience_totals || {});

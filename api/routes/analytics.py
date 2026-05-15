@@ -606,12 +606,6 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
     if impressions is None and platform == "youtube":
         impressions = engagement.get("total_views")
 
-    if platform == "linkedin":
-        supports["followers_total"] = followers_count is not None
-        supports["followers_growth"] = engagement.get("followers_growth") is not None
-        supports["reach"] = engagement.get("reach") is not None
-        supports["impressions"] = impressions is not None
-
     return {
         "id": account.get("account_id") or account.get("id"),
         "account_id": account.get("account_id") or account.get("id"),
@@ -828,6 +822,8 @@ async def analytics_overview(
             if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
                 try:
                     _, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
+                    if engagement.get("error"):
+                        _append_account_error(overview_errors, account, str(engagement["error"]))
                 except Exception as exc:
                     _append_account_error(overview_errors, account, _analytics_error_message(plat, exc))
             return _normalize_connected_account(account, engagement)
@@ -907,6 +903,8 @@ async def analytics_engagement(
         if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
             try:
                 feed, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
+                if engagement.get("error"):
+                    _append_account_error(errors, account, str(engagement["error"]))
             except Exception as exc:
                 _append_account_error(errors, account, _analytics_error_message(plat, exc))
                 feed, engagement = [], {}
