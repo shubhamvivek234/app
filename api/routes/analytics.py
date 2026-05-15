@@ -626,7 +626,17 @@ async def analytics_engagement(
         feed: list[dict[str, Any]] = []
         engagement: dict[str, Any] = {}
         if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-            feed, engagement = await _fetch_account_feed_and_stats(db, account)
+            try:
+                feed, engagement = await _fetch_account_feed_and_stats(db, account)
+            except Exception as exc:
+                account_identifier = account.get("account_id") or account.get("id")
+                errors.append(
+                    {
+                        "account": account.get("platform_username") or account_identifier or plat,
+                        "error": str(exc),
+                    }
+                )
+                feed, engagement = [], {}
 
         connected_accounts.append(_normalize_connected_account(account, engagement))
 
@@ -844,7 +854,16 @@ async def publish_feed(
         if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
             feed = []
         else:
-            feed, _ = await _fetch_account_feed_and_stats(db, account)
+            try:
+                feed, _ = await _fetch_account_feed_and_stats(db, account)
+            except Exception as exc:
+                errors.append(
+                    {
+                        "account": account.get("platform_username") or account_identifier or plat or "unknown",
+                        "error": str(exc),
+                    }
+                )
+                feed = []
 
         if not feed:
             feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=limit)

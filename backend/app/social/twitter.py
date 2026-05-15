@@ -153,8 +153,9 @@ class TwitterAuth:
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if response.status_code != 200:
-                logging.warning(f"[Twitter] Feed fetch failed: {response.text}")
-                return []
+                # Expose the reason upstream so analytics can show a helpful error.
+                logging.warning(f"[Twitter] Feed fetch failed (status={response.status_code}): {response.text}")
+                raise Exception(f"Twitter feed fetch failed (status={response.status_code}): {response.text}")
 
             media_map = {}
             media_types = {}
