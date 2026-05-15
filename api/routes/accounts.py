@@ -300,11 +300,20 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
 
             from backend.app.social.bluesky import BlueskyAuth
 
-            profile = await BlueskyAuth().get_user_profile(
-                access_token,
-                platform_user_id,
-                fallback_actor=doc.get("platform_username"),
-            )
+            auth = BlueskyAuth()
+            try:
+                profile = await auth.get_user_profile(
+                    access_token,
+                    platform_user_id,
+                    fallback_actor=doc.get("platform_username"),
+                )
+            except Exception:
+                access_token = await _get_bluesky_access_token(db, doc, force_refresh=True)
+                profile = await auth.get_user_profile(
+                    access_token,
+                    platform_user_id,
+                    fallback_actor=doc.get("platform_username"),
+                )
             updates = {
                 "platform_username": profile.get("username") or doc.get("platform_username"),
                 "display_name": profile.get("name") or doc.get("display_name") or doc.get("platform_username"),
@@ -436,6 +445,51 @@ async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = Fal
         {
             "user_id": doc.get("user_id"),
             "platform": "youtube",
+            "platform_user_id": doc.get("platform_user_id"),
+            "is_active": True,
+        },
+        {"$set": updates},
+    )
+    doc.update(updates)
+    return new_access_token
+
+
+async def _get_bluesky_access_token(db: DB, doc: dict, force_refresh: bool = False) -> str:
+    """Return a usable Bluesky access token, refreshing the session when needed."""
+    encrypted_access_token = doc.get("access_token")
+    if not encrypted_access_token:
+        raise ValueError("Missing Bluesky access token")
+
+    access_token = decrypt(encrypted_access_token)
+    if not force_refresh:
+        return access_token
+
+    refresh_token_encrypted = doc.get("refresh_token")
+    if not refresh_token_encrypted:
+        raise HTTPException(status_code=401, detail="Bluesky session expired. Reconnect the account.")
+
+    refresh_token = decrypt(refresh_token_encrypted)
+
+    from backend.app.social.bluesky import BlueskyAuth
+
+    refreshed = await BlueskyAuth().refresh_session(refresh_token)
+    new_access_token = refreshed.get("accessJwt")
+    if not new_access_token:
+        raise HTTPException(status_code=401, detail="Bluesky session expired. Reconnect the account.")
+
+    updates: dict[str, object] = {
+        "access_token": encrypt(new_access_token),
+        "token_error": None,
+        "updated_at": datetime.now(timezone.utc),
+    }
+    new_refresh_token = refreshed.get("refreshJwt")
+    if new_refresh_token:
+        updates["refresh_token"] = encrypt(new_refresh_token)
+
+    await db.social_accounts.update_one(
+        {
+            "user_id": doc.get("user_id"),
+            "platform": "bluesky",
             "platform_user_id": doc.get("platform_user_id"),
             "is_active": True,
         },

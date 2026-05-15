@@ -15,6 +15,7 @@ class BlueskyAuth:
 
     BASE_URL    = "https://bsky.social/xrpc"
     SESSION_URL = "https://bsky.social/xrpc/com.atproto.server.createSession"
+    REFRESH_URL = "https://bsky.social/xrpc/com.atproto.server.refreshSession"
     POST_URL    = "https://bsky.social/xrpc/com.atproto.repo.createRecord"
 
     def __init__(self):
@@ -46,6 +47,18 @@ class BlueskyAuth:
                     status_code=400,
                     detail=f"Bluesky authentication failed: {response.json().get('message', 'Invalid credentials')}"
                 )
+            return response.json()
+
+    async def refresh_session(self, refresh_token: str) -> dict:
+        """Refresh an expired Bluesky session using refreshJwt."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self.REFRESH_URL,
+                headers={"Authorization": f"Bearer {refresh_token}"},
+            )
+            if response.status_code != 200:
+                logging.error("[Bluesky] refreshSession error: %s", response.text)
+                raise HTTPException(status_code=401, detail="Bluesky session expired. Reconnect the account.")
             return response.json()
 
     async def get_user_profile(self, access_token: str, actor: str, fallback_actor: str | None = None) -> dict:
@@ -83,7 +96,7 @@ class BlueskyAuth:
                 logging.warning("[Bluesky] getProfile failed for actor=%s: %s", candidate, response.text)
 
         if last_error:
-            logging.error("[Bluesky] getProfile error after %d attempt(s): %s", len(candidates), last_error)
+            logging.error("[Bluesky] getProfile error after %s attempt(s): %s", len(candidates), last_error)
         raise HTTPException(status_code=400, detail="Failed to fetch Bluesky profile")
 
     async def publish_post(

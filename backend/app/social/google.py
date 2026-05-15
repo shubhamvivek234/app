@@ -97,7 +97,15 @@ class GoogleAuth:
             )
             
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to refresh token")
+                logging.error("Google refresh token error: %s", response.text)
+                detail = "Failed to refresh token"
+                try:
+                    payload = response.json()
+                    if payload.get("error") == "invalid_grant":
+                        detail = "YouTube access was revoked or expired. Reconnect the account."
+                except Exception:
+                    pass
+                raise HTTPException(status_code=400, detail=detail)
                 
             return response.json()
 

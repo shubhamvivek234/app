@@ -272,8 +272,10 @@ def _analytics_error_message(platform: str | None, exc: Exception) -> str:
     message = str(exc).strip() or "Unable to fetch recent analytics from the platform API."
     if platform == "twitter" and "CreditsDepleted" in message:
         return "X API credits are depleted for this connected developer account. Live X analytics are temporarily unavailable."
-    if platform == "bluesky" and "Failed to fetch Bluesky profile" in message:
-        return "Unable to load this Bluesky profile from the platform API. Reconnect the account if the handle or DID changed."
+    if platform == "bluesky" and ("Failed to fetch Bluesky profile" in message or "Bluesky session expired" in message):
+        return "Bluesky session expired. Reconnect the account if automatic refresh could not restore access."
+    if platform == "youtube" and ("Failed to refresh token" in message or "YouTube access was revoked or expired" in message):
+        return "YouTube access was revoked or expired. Reconnect the account to restore analytics."
     return message
 
 
@@ -414,14 +416,23 @@ async def _fetch_account_feed_and_stats(
         }
 
     if platform == "bluesky":
+        from api.routes.accounts import _get_bluesky_access_token
         from backend.app.social.bluesky import BlueskyAuth
 
         auth = BlueskyAuth()
-        profile = await auth.get_user_profile(
-            access_token,
-            platform_user_id,
-            fallback_actor=account.get("platform_username"),
-        )
+        try:
+            profile = await auth.get_user_profile(
+                access_token,
+                platform_user_id,
+                fallback_actor=account.get("platform_username"),
+            )
+        except Exception:
+            access_token = await _get_bluesky_access_token(db, account, force_refresh=True)
+            profile = await auth.get_user_profile(
+                access_token,
+                platform_user_id,
+                fallback_actor=account.get("platform_username"),
+            )
         handle = profile.get("username") or account.get("platform_username") or platform_user_id
         feed = await auth.fetch_posts(access_token, handle, limit=50)
         return [
