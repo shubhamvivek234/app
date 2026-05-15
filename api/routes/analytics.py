@@ -138,13 +138,13 @@ _PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
         },
     },
     "linkedin": {
-        "live_feed": False,
-        "message": "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
+        "live_feed": True,
+        "message": "LinkedIn can show follower totals, follower growth, and organization impressions when the connected account has analytics scopes and page admin access. Post engagement metrics remain limited.",
         "supports": {
-            "followers_total": False,
-            "followers_growth": False,
-            "reach": False,
-            "impressions": False,
+            "followers_total": True,
+            "followers_growth": True,
+            "reach": True,
+            "impressions": True,
             "likes": False,
             "comments": False,
             "shares": False,
@@ -388,6 +388,26 @@ async def _fetch_account_feed_and_stats(
         engagement = await auth.fetch_youtube_engagement(access_token, channel_id, days=days)
         return [_standardize_feed_post(post) for post in feed], engagement
 
+    if platform == "linkedin":
+        from api.routes.accounts import _get_linkedin_access_token
+        from backend.app.social.linkedin import LinkedInAuth
+
+        auth = LinkedInAuth()
+        try:
+            profile = await auth.get_user_profile(access_token)
+        except Exception:
+            access_token = await _get_linkedin_access_token(db, account, force_refresh=True)
+            profile = await auth.get_user_profile(access_token)
+
+        engagement = await auth.fetch_audience_analytics(access_token, account, days=days)
+        engagement["display_name"] = (
+            profile.get("name")
+            or profile.get("email")
+            or account.get("display_name")
+            or account.get("platform_username")
+        )
+        return [], engagement
+
     if platform == "twitter":
         from api.routes.accounts import _get_twitter_access_token
         from backend.app.social.twitter import TwitterAuth
@@ -585,6 +605,12 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
     impressions = engagement.get("impressions")
     if impressions is None and platform == "youtube":
         impressions = engagement.get("total_views")
+
+    if platform == "linkedin":
+        supports["followers_total"] = followers_count is not None
+        supports["followers_growth"] = engagement.get("followers_growth") is not None
+        supports["reach"] = engagement.get("reach") is not None
+        supports["impressions"] = impressions is not None
 
     return {
         "id": account.get("account_id") or account.get("id"),

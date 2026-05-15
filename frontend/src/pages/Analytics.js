@@ -85,7 +85,7 @@ const ALL_PLATFORMS = [
 ];
 
 const PLATFORM_NOTICES = {
-  linkedin: "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
+  linkedin: 'LinkedIn can show followers, follower growth, and organization impressions when the connected account has the required analytics scopes and page admin access. Post engagement metrics remain limited.',
   snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
   twitter: 'X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.',
   threads: 'Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.',
