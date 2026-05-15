@@ -17,7 +17,7 @@ class TikTokAuth:
     VIDEO_INIT = "https://open.tiktokapis.com/v2/post/publish/video/init/"
     VIDEO_STATUS = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
-    SCOPES = "user.info.basic,video.publish,video.upload"
+    SCOPES = "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload"
 
     def __init__(self):
         self.client_id     = os.environ.get("TIKTOK_CLIENT_ID")
@@ -80,7 +80,19 @@ class TikTokAuth:
             response = await client.get(
                 self.USER_URL,
                 headers={"Authorization": f"Bearer {access_token}"},
-                params={"fields": "open_id,union_id,avatar_url,display_name"},
+                params={
+                    "fields": ",".join([
+                        "open_id",
+                        "union_id",
+                        "avatar_url",
+                        "display_name",
+                        "username",
+                        "follower_count",
+                        "following_count",
+                        "likes_count",
+                        "video_count",
+                    ])
+                },
             )
             if response.status_code != 200:
                 logging.error(f"[TikTok] User info error: {response.text}")
@@ -90,7 +102,11 @@ class TikTokAuth:
                 "id":          data.get("open_id") or data.get("union_id", ""),
                 "name":        data.get("display_name", ""),
                 "picture_url": data.get("avatar_url"),
-                "username":    data.get("display_name", ""),
+                "username":    data.get("username") or data.get("display_name", ""),
+                "followers_count": data.get("follower_count"),
+                "following_count": data.get("following_count"),
+                "likes_count": data.get("likes_count"),
+                "video_count": data.get("video_count"),
             }
 
     async def publish_video(

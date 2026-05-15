@@ -35,7 +35,7 @@ class GoogleAuth:
             raise HTTPException(status_code=500, detail="Google/YouTube credentials not configured")
             
         # Scopes for YouTube upload and channel management
-        scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+        scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly"
         
         return (
             f"{self.AUTH_URL}"
@@ -361,7 +361,7 @@ class GoogleAuth:
                 })
             return posts
 
-    async def fetch_youtube_engagement(self, access_token: str, channel_id: str) -> dict:
+    async def fetch_youtube_engagement(self, access_token: str, channel_id: str, days: int | None = None) -> dict:
         """Fetch YouTube channel engagement metrics"""
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -375,10 +375,50 @@ class GoogleAuth:
             if not items:
                 return {}
             stats = items[0].get("statistics", {})
+            range_days = max(int(days or 30), 1)
+            end_date = datetime.now(timezone.utc).date()
+            start_date = end_date - timedelta(days=range_days - 1)
+            growth_metrics = {}
+            try:
+                analytics_response = await client.get(
+                    "https://youtubeanalytics.googleapis.com/v2/reports",
+                    params={
+                        "ids": "channel==MINE",
+                        "startDate": start_date.isoformat(),
+                        "endDate": end_date.isoformat(),
+                        "metrics": "views,likes,comments,shares,subscribersGained,subscribersLost",
+                    },
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if analytics_response.status_code == 200:
+                    payload = analytics_response.json()
+                    rows = payload.get("rows", [])
+                    columns = [column.get("name") for column in payload.get("columnHeaders", [])]
+                    if rows and columns:
+                        for row in rows:
+                            for idx, column in enumerate(columns):
+                                if column in {"views", "likes", "comments", "shares", "subscribersGained", "subscribersLost"}:
+                                    growth_metrics[column] = growth_metrics.get(column, 0) + int(row[idx] or 0)
+                else:
+                    logging.warning(f"[YouTube] Analytics metrics unavailable: {analytics_response.text}")
+            except Exception as exc:
+                logging.warning(f"[YouTube] Analytics metrics fetch failed: {exc}")
+
+            subscribers_gained = growth_metrics.get("subscribersGained")
+            subscribers_lost = growth_metrics.get("subscribersLost")
             return {
                 "subscribers": int(stats.get("subscriberCount", 0)),
                 "total_views": int(stats.get("viewCount", 0)),
                 "video_count": int(stats.get("videoCount", 0)),
+                "followers_growth": (
+                    int(subscribers_gained or 0) - int(subscribers_lost or 0)
+                    if subscribers_gained is not None or subscribers_lost is not None
+                    else None
+                ),
+                "period_views": growth_metrics.get("views"),
+                "period_likes": growth_metrics.get("likes"),
+                "period_comments": growth_metrics.get("comments"),
+                "period_shares": growth_metrics.get("shares"),
                 "platform": "youtube",
             }
 

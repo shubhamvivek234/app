@@ -277,7 +277,7 @@ class InstagramAuth:
                 })
             return result
 
-    async def fetch_engagement(self, access_token: str, user_id: str) -> dict:
+    async def fetch_engagement(self, access_token: str, user_id: str, days: int | None = None) -> dict:
         """Fetch Instagram account engagement metrics"""
         async with httpx.AsyncClient() as client:
             # Get user profile stats
@@ -294,13 +294,19 @@ class InstagramAuth:
 
             # Get insights
             insights = {}
+            followers_growth = None
             try:
+                range_days = max(int(days or 30), 1)
+                until_dt = datetime.now(timezone.utc)
+                since_dt = until_dt - timedelta(days=range_days)
                 insights_resp = await client.get(
                     f"{self.GRAPH_URL}/{user_id}/insights",
                     params={
                         "metric": "impressions,reach,profile_views",
                         "period": "day",
                         "metric_type": "total_value",
+                        "since": since_dt.date().isoformat(),
+                        "until": until_dt.date().isoformat(),
                         "access_token": access_token,
                     },
                 )
@@ -309,6 +315,25 @@ class InstagramAuth:
                         name = item.get("name")
                         val = item.get("total_value", {}).get("value", 0)
                         insights[name] = val
+                growth_resp = await client.get(
+                    f"{self.GRAPH_URL}/{user_id}/insights",
+                    params={
+                        "metric": "follower_count",
+                        "period": "day",
+                        "since": since_dt.date().isoformat(),
+                        "until": until_dt.date().isoformat(),
+                        "access_token": access_token,
+                    },
+                )
+                if growth_resp.status_code == 200:
+                    values = [
+                        int(point.get("value", 0))
+                        for item in growth_resp.json().get("data", [])
+                        for point in item.get("values", [])
+                        if point.get("value") is not None
+                    ]
+                    if len(values) >= 2:
+                        followers_growth = values[-1] - values[0]
             except Exception as e:
                 logging.warning(f"[Instagram] Insights fetch failed: {e}")
 
@@ -316,6 +341,7 @@ class InstagramAuth:
                 "followers": profile.get("followers_count", 0),
                 "following": profile.get("follows_count", 0),
                 "posts_count": profile.get("media_count", 0),
+                "followers_growth": followers_growth,
                 "impressions": insights.get("impressions", 0),
                 "reach": insights.get("reach", 0),
                 "profile_views": insights.get("profile_views", 0),

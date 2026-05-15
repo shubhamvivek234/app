@@ -255,7 +255,7 @@ class FacebookAuth:
                 })
             return posts
 
-    async def fetch_page_engagement(self, access_token: str, page_id: str) -> dict:
+    async def fetch_page_engagement(self, access_token: str, page_id: str, days: int | None = None) -> dict:
         """Fetch Facebook Page engagement metrics"""
         async with httpx.AsyncClient() as client:
             # Page fans (total likes)
@@ -272,12 +272,18 @@ class FacebookAuth:
 
             # Page insights
             insights = {}
+            followers_growth = None
             try:
+                range_days = max(int(days or 30), 1)
+                until_dt = datetime.now(timezone.utc)
+                since_dt = until_dt - timedelta(days=range_days)
                 ins_resp = await client.get(
                     f"{self.BASE_URL}/{page_id}/insights",
                     params={
-                        "metric": "page_impressions,page_engaged_users,page_post_engagements",
+                        "metric": "page_impressions,page_engaged_users,page_post_engagements,page_follows,page_follows_unique,page_impressions_unique",
                         "period": "day",
+                        "since": since_dt.date().isoformat(),
+                        "until": until_dt.date().isoformat(),
                         "access_token": access_token,
                     },
                 )
@@ -285,14 +291,30 @@ class FacebookAuth:
                     for item in ins_resp.json().get("data", []):
                         values = item.get("values", [])
                         if values:
-                            insights[item["name"]] = values[-1].get("value", 0)
+                            metric_name = item["name"]
+                            if metric_name == "page_follows_unique":
+                                followers_growth = sum(
+                                    int(value.get("value", 0) or 0)
+                                    for value in values
+                                    if value.get("value") is not None
+                                )
+                            if metric_name in {"page_impressions", "page_post_engagements"}:
+                                insights[metric_name] = sum(
+                                    int(value.get("value", 0) or 0)
+                                    for value in values
+                                    if value.get("value") is not None
+                                )
+                            else:
+                                insights[metric_name] = values[-1].get("value", 0)
             except Exception as e:
                 logging.warning(f"[Facebook] Insights failed: {e}")
 
             return {
                 "fans": page.get("fan_count", 0),
                 "followers": page.get("followers_count", 0),
+                "followers_growth": followers_growth,
                 "impressions": insights.get("page_impressions", 0),
+                "reach": insights.get("page_impressions_unique", 0),
                 "engaged_users": insights.get("page_engaged_users", 0),
                 "post_engagements": insights.get("page_post_engagements", 0),
                 "platform": "facebook",

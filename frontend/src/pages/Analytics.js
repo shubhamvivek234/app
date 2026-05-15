@@ -16,7 +16,7 @@ import {
 import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
-  FaDiscord,
+  FaDiscord, FaUsers, FaChartLine, FaBullseye,
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
@@ -135,6 +135,13 @@ const parseDate = (val) => {
     return isValid(dt) ? dt : null;
   } catch { return null; }
 };
+
+const aggregateAudienceSupport = (accounts) => ({
+  followers_total: accounts.some((account) => account?.supports?.followers_total && account?.followers_count != null),
+  followers_growth: accounts.some((account) => account?.supports?.followers_growth && account?.followers_growth != null),
+  reach: accounts.some((account) => account?.supports?.reach && account?.reach != null),
+  impressions: accounts.some((account) => account?.supports?.impressions && account?.impressions != null),
+});
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -631,10 +638,23 @@ const Analytics = () => {
     (a) => !selectedPlatform || a.platform === selectedPlatform
   );
   const selectedConnectedAccount =
+    (overview?.connected_accounts || []).find(
+      (a) => (a.account_id || a.id) === selectedAccount
+    ) ||
     (engagement?.connected_accounts || []).find(
       (a) => (a.account_id || a.id) === selectedAccount
     ) ||
     platformAccounts.find((a) => a.id === selectedAccount);
+  const overviewAccounts = overview?.connected_accounts || [];
+  const audienceSupport = selectedAccount
+    ? (selectedConnectedAccount?.supports || {})
+    : aggregateAudienceSupport(overviewAccounts);
+  const audienceSource = selectedAccount
+    ? selectedConnectedAccount
+    : (overview?.audience_totals || {});
+  const reachCardLabel = audienceSupport.reach
+    ? 'Reach'
+    : (audienceSupport.impressions ? 'Impressions' : null);
   const hasContentOutsideWindow =
     !!selectedPlatform &&
     !!selectedAccount &&
@@ -656,6 +676,32 @@ const Analytics = () => {
     { key: 'shares', label: 'Shares', icon: FaShare, value: engagement?.totals?.total_shares, color: 'bg-emerald-500' },
     { key: 'views', label: 'Views', icon: FaEye, value: engagement?.totals?.total_views, color: 'bg-purple-500' },
   ].filter((metric) => !selectedPlatform || selectedPlatformMetrics[metric.key]);
+  const audienceMetricCards = [
+    {
+      key: 'followers_total',
+      label: 'Total Followers',
+      icon: FaUsers,
+      value: audienceSource?.followers_count ?? audienceSource?.followers_total,
+      color: 'bg-sky-600',
+      visible: audienceSupport.followers_total,
+    },
+    {
+      key: 'followers_growth',
+      label: `New Followers (${days}d)`,
+      icon: FaChartLine,
+      value: audienceSource?.followers_growth,
+      color: 'bg-emerald-600',
+      visible: audienceSupport.followers_growth,
+    },
+    {
+      key: 'reach',
+      label: reachCardLabel,
+      icon: FaBullseye,
+      value: audienceSupport.reach ? audienceSource?.reach : audienceSource?.impressions,
+      color: 'bg-amber-500',
+      visible: !!reachCardLabel,
+    },
+  ].filter((metric) => metric.visible);
   const visibleSortOptions = SORT_OPTIONS.filter((opt) => opt.value === 'date' || !selectedPlatform || selectedPlatformMetrics[opt.value]);
   const topPostMetricLabel = selectedPlatformNotice || (!showEngagementInsights ? 'This platform does not expose post engagement metrics through the current integration.' : null);
   const summaryMetricColumns = [
@@ -826,8 +872,28 @@ const Analytics = () => {
               </div>
             )}
 
+            {!!overview?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {overview.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Engagement stat cards */}
-            <div className={`grid gap-4 ${visibleMetricCards.length >= 4 ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
+            <div className={`grid gap-4 ${(audienceMetricCards.length + visibleMetricCards.length + 1) >= 5 ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
+              {audienceMetricCards.map(({ key, label, icon, value, color }) => (
+                <EngagementCard
+                  key={key}
+                  icon={icon}
+                  label={label}
+                  value={value}
+                  color={color}
+                  loading={loadingOverview}
+                />
+              ))}
               <EngagementCard
                 icon={FaFileAlt}
                 label="Posts Published"
@@ -846,6 +912,14 @@ const Analytics = () => {
                 />
               ))}
             </div>
+
+            {(audienceMetricCards.length > 0 || selectedPlatform) && (
+              <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-600">
+                Audience metrics come directly from the connected platform API when that platform exposes them. Unsupported metrics stay hidden instead of showing synthetic values.
+                {selectedPlatform === 'youtube' && ' YouTube follower growth uses subscriber gained/lost analytics; reach is not exposed as a channel-level metric.'}
+                {selectedPlatform === 'tiktok' && ' TikTok follower totals require the account to be connected with stats scopes.'}
+              </div>
+            )}
 
             {/* Engagement insights row */}
             {!loadingEngagement && engagement?.totals?.total_posts > 0 && showEngagementInsights && (
@@ -1079,6 +1153,9 @@ const Analytics = () => {
                     <thead>
                       <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
                         <th className="text-left py-2 pr-4">Platform</th>
+                        <th className="text-right py-2 pr-4">Followers</th>
+                        <th className="text-right py-2 pr-4">Growth</th>
+                        <th className="text-right py-2 pr-4">Reach / Impr.</th>
                         <th className="text-right py-2 pr-4">Posts</th>
                         {summaryMetricColumns.map(({ key, label }) => (
                           <th key={key} className="text-right py-2 pr-4">{label}</th>
@@ -1093,6 +1170,19 @@ const Analytics = () => {
                           const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                           const color = PLATFORM_COLORS[plat] || '#6b7280';
                           const pd = engagement?.platform_breakdown?.[plat] || {};
+                          const accountRows = overviewAccounts.filter((account) => account.platform === plat);
+                          const support = aggregateAudienceSupport(accountRows);
+                          const followerTotal = support.followers_total
+                            ? accountRows.reduce((sum, account) => sum + (account.followers_count || 0), 0)
+                            : null;
+                          const followerGrowth = support.followers_growth
+                            ? accountRows.reduce((sum, account) => sum + (account.followers_growth || 0), 0)
+                            : null;
+                          const reachOrImpressions = support.reach
+                            ? accountRows.reduce((sum, account) => sum + (account.reach || 0), 0)
+                            : (support.impressions
+                              ? accountRows.reduce((sum, account) => sum + (account.impressions || 0), 0)
+                              : null);
                           const sup = PLATFORM_METRICS[plat] || {};
                           return (
                             <tr key={plat} className="border-b border-gray-50 hover:bg-gray-50">
@@ -1102,6 +1192,9 @@ const Analytics = () => {
                                   <span className="font-medium text-gray-700">{PLATFORM_LABELS[plat] || plat}</span>
                                 </div>
                               </td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerTotal)}</td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerGrowth)}</td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(reachOrImpressions)}</td>
                               <td className="text-right py-2.5 pr-4 font-semibold text-gray-900">{count}</td>
                               {summaryMetricColumns.map(({ key }) => (
                                 <td key={key} className="text-right py-2.5 pr-4 text-gray-600">

@@ -1074,10 +1074,10 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
-        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
         "twitter": "tweet.read tweet.write users.read offline.access",
         "linkedin": "openid profile email w_member_social",
-        "tiktok": "video.upload,user.info.basic",
+        "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
     }
     # Some providers use APP_ID naming instead of CLIENT_ID.
@@ -1288,7 +1288,7 @@ async def _exchange_youtube_code(code: str, state_context: dict | None = None) -
             or snippet.get("thumbnails", {}).get("default", {}).get("url"),
             "followers_count": engagement.get("subscribers"),
             "posts_count": engagement.get("video_count"),
-            "scopes": ["youtube.upload", "youtube.readonly"],
+            "scopes": ["youtube.upload", "youtube.readonly", "yt-analytics.readonly"],
             "expires_at": expires_at,
         }
     except Exception as exc:
@@ -1447,7 +1447,7 @@ async def _exchange_tiktok_code(code: str, code_verifier: str) -> dict | None:
             "username": profile.get("username") or profile.get("name") or profile.get("id", ""),
             "display_name": profile.get("name") or profile.get("username") or profile.get("id", ""),
             "picture_url": profile.get("picture_url"),
-            "scopes": ["user.info.basic", "video.publish", "video.upload"],
+            "scopes": ["user.info.basic", "user.info.profile", "user.info.stats", "video.list", "video.publish", "video.upload"],
             "expires_at": expires_at,
         }
     except Exception as exc:

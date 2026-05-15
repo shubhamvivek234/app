@@ -1,4 +1,5 @@
 """Analytics endpoints for overview, engagement, and demographics."""
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -12,44 +13,171 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
 
 _PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
-    "instagram": {"live_feed": True},
-    "facebook": {"live_feed": True},
-    "youtube": {"live_feed": True},
+    "instagram": {
+        "live_feed": True,
+        "supports": {
+            "followers_total": True,
+            "followers_growth": True,
+            "reach": True,
+            "impressions": True,
+            "likes": True,
+            "comments": True,
+            "shares": False,
+            "views": False,
+        },
+    },
+    "facebook": {
+        "live_feed": True,
+        "supports": {
+            "followers_total": True,
+            "followers_growth": True,
+            "reach": True,
+            "impressions": True,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": False,
+        },
+    },
+    "youtube": {
+        "live_feed": True,
+        "supports": {
+            "followers_total": True,
+            "followers_growth": True,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": True,
+        },
+        "message": "YouTube can show subscribers plus organic video metrics. Reach is not exposed like Meta-style account reach.",
+    },
     "twitter": {
         "live_feed": True,
         "message": "X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.",
+        "supports": {
+            "followers_total": True,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": False,
+        },
     },
     "threads": {
         "live_feed": True,
         "message": "Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": True,
+        },
     },
     "bluesky": {
         "live_feed": True,
         "message": "Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.",
+        "supports": {
+            "followers_total": True,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": False,
+        },
     },
     "tiktok": {
         "live_feed": True,
         "message": "TikTok analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.",
+        "supports": {
+            "followers_total": True,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": True,
+        },
     },
     "pinterest": {
         "live_feed": True,
         "message": "Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": True,
+            "likes": True,
+            "comments": True,
+            "shares": False,
+            "views": True,
+        },
     },
     "mastodon": {
         "live_feed": True,
         "message": "Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.",
+        "supports": {
+            "followers_total": True,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": True,
+            "views": False,
+        },
     },
     "linkedin": {
         "live_feed": False,
         "message": "LinkedIn's current integration can show publishing history, but not organic post engagement metrics.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": False,
+            "comments": False,
+            "shares": False,
+            "views": False,
+        },
     },
     "discord": {
         "live_feed": False,
         "message": "Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": False,
+            "comments": False,
+            "shares": False,
+            "views": False,
+        },
     },
     "snapchat": {
         "live_feed": False,
         "message": "Snapchat's current integration does not expose organic post analytics through the connected account APIs.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": False,
+            "comments": False,
+            "shares": False,
+            "views": False,
+        },
     },
 }
 _SUPPORTED_ENGAGEMENT_PLATFORMS = {
@@ -123,6 +251,12 @@ def _platform_message(platform: str | None) -> str | None:
     return (_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("message")
 
 
+def _platform_supports(platform: str | None) -> dict[str, bool]:
+    if not platform:
+        return {}
+    return ((_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("supports") or {}).copy()
+
+
 def _merge_named_counts(items: list[dict[str, Any]], key_name: str) -> list[dict[str, Any]]:
     merged: dict[str, int] = {}
     for item in items:
@@ -158,7 +292,11 @@ def _pick_facebook_page(account: dict[str, Any], pages: list[dict[str, Any]]) ->
     return next((page for page in pages if str(page.get("id")) == platform_user_id), None) or pages[0]
 
 
-async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _fetch_account_feed_and_stats(
+    db,
+    account: dict[str, Any],
+    days: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     platform = account.get("platform")
     platform_user_id = account.get("platform_user_id")
     encrypted_token = account.get("access_token")
@@ -176,7 +314,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
 
         auth = InstagramAuth()
         feed = await auth.fetch_feed(access_token, platform_user_id, limit=50)
-        engagement = await auth.fetch_engagement(access_token, platform_user_id)
+        engagement = await auth.fetch_engagement(access_token, platform_user_id, days=days)
         return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "facebook":
@@ -184,7 +322,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
 
         auth = FacebookAuth()
         feed = await auth.fetch_page_feed(access_token, platform_user_id, limit=50)
-        engagement = await auth.fetch_page_engagement(access_token, platform_user_id)
+        engagement = await auth.fetch_page_engagement(access_token, platform_user_id, days=days)
         if not feed and not engagement:
             try:
                 pages = await auth.get_accounts(access_token)
@@ -193,7 +331,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
                     page_id = str(selected_page.get("id", "")) or platform_user_id
                     page_token = selected_page.get("access_token") or access_token
                     feed = await auth.fetch_page_feed(page_token, page_id, limit=50)
-                    engagement = await auth.fetch_page_engagement(page_token, page_id)
+                    engagement = await auth.fetch_page_engagement(page_token, page_id, days=days)
             except Exception as exc:
                 logger.warning("Failed to resolve Facebook page analytics for %s: %s", platform_user_id, exc)
         return [_standardize_feed_post(post) for post in feed], engagement
@@ -211,7 +349,7 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
 
         channel_id = str(channel.get("id") or platform_user_id)
         feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=50)
-        engagement = await auth.fetch_youtube_engagement(access_token, channel_id)
+        engagement = await auth.fetch_youtube_engagement(access_token, channel_id, days=days)
         return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "twitter":
@@ -265,6 +403,9 @@ async def _fetch_account_feed_and_stats(db, account: dict[str, Any]) -> tuple[li
         return [_standardize_feed_post(post) for post in feed], {
             "profile_views": None,
             "display_name": profile.get("name"),
+            "followers": profile.get("followers_count"),
+            "following": profile.get("following_count"),
+            "posts_count": profile.get("video_count"),
         }
 
     if platform == "pinterest":
@@ -370,6 +511,7 @@ async def _fetch_db_published_posts(
 
 def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, Any]) -> dict[str, Any]:
     platform = account.get("platform")
+    supports = _platform_supports(platform)
     followers_count = next(
         (
             value
@@ -403,11 +545,54 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
         "picture_url": account.get("picture_url"),
         "display_name": account.get("display_name"),
         "followers_count": followers_count,
+        "followers_growth": engagement.get("followers_growth"),
         "following_count": following_count,
         "posts_count": posts_count,
         "impressions": impressions,
         "reach": engagement.get("reach"),
         "profile_views": engagement.get("profile_views"),
+        "supports": supports,
+        "message": _platform_message(platform),
+    }
+
+
+def _maybe_add_metric(target: dict[str, int], key: str, value: Any) -> bool:
+    if value is None:
+        return False
+    target[key] = target.get(key, 0) + _metric_int(value)
+    return True
+
+
+def _aggregate_account_overview(accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    totals = {
+        "followers_total": 0,
+        "followers_growth": 0,
+        "reach": 0,
+        "impressions": 0,
+        "profile_views": 0,
+    }
+    supported_by_metric = {key: 0 for key in totals}
+
+    for account in accounts:
+        supports = account.get("supports") or {}
+        if supports.get("followers_total") and _maybe_add_metric(totals, "followers_total", account.get("followers_count")):
+            supported_by_metric["followers_total"] += 1
+        if supports.get("followers_growth") and _maybe_add_metric(totals, "followers_growth", account.get("followers_growth")):
+            supported_by_metric["followers_growth"] += 1
+        if supports.get("reach") and _maybe_add_metric(totals, "reach", account.get("reach")):
+            supported_by_metric["reach"] += 1
+        if supports.get("impressions") and _maybe_add_metric(totals, "impressions", account.get("impressions")):
+            supported_by_metric["impressions"] += 1
+        if _maybe_add_metric(totals, "profile_views", account.get("profile_views")):
+            supported_by_metric["profile_views"] += 1
+
+    return {
+        "followers_total": totals["followers_total"] if supported_by_metric["followers_total"] else None,
+        "followers_growth": totals["followers_growth"] if supported_by_metric["followers_growth"] else None,
+        "reach": totals["reach"] if supported_by_metric["reach"] else None,
+        "impressions": totals["impressions"] if supported_by_metric["impressions"] else None,
+        "profile_views": totals["profile_views"] if supported_by_metric["profile_views"] else None,
+        "supported_accounts": supported_by_metric,
     }
 
 
@@ -475,8 +660,6 @@ async def analytics_overview(
         **_published_match(workspace_id, since_iso, platform, account_id),
         "status": "failed",
     }
-
-    import asyncio
 
     async def _count(q: dict[str, Any]) -> int:
         return await db.posts.count_documents(q)
@@ -560,6 +743,30 @@ async def analytics_overview(
             platform_counts = fallback_platform_counts
             type_counts = fallback_type_counts
 
+    accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
+    connected_accounts: list[dict[str, Any]] = []
+    overview_errors: list[dict[str, str]] = []
+    if accounts:
+        async def _build_account_summary(account: dict[str, Any]) -> dict[str, Any]:
+            plat = account.get("platform")
+            engagement: dict[str, Any] = {}
+            if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+                try:
+                    _, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
+                except Exception as exc:
+                    account_identifier = account.get("account_id") or account.get("id")
+                    overview_errors.append(
+                        {
+                            "account": account.get("platform_username") or account_identifier or plat or "unknown",
+                            "error": str(exc),
+                        }
+                    )
+            return _normalize_connected_account(account, engagement)
+
+        connected_accounts = await asyncio.gather(*[_build_account_summary(account) for account in accounts])
+
+    audience_totals = _aggregate_account_overview(connected_accounts)
+
     return {
         "published_in_period": published_in_period,
         "scheduled_count": scheduled_count,
@@ -572,6 +779,9 @@ async def analytics_overview(
         "total_failed": failed_count,
         "platform_breakdown": platform_counts,
         "days": days,
+        "connected_accounts": connected_accounts,
+        "audience_totals": audience_totals,
+        "errors": overview_errors,
     }
 
 
@@ -627,7 +837,7 @@ async def analytics_engagement(
         engagement: dict[str, Any] = {}
         if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:
             try:
-                feed, engagement = await _fetch_account_feed_and_stats(db, account)
+                feed, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
             except Exception as exc:
                 account_identifier = account.get("account_id") or account.get("id")
                 errors.append(
