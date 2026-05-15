@@ -1225,7 +1225,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
         "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
         "twitter": "tweet.read tweet.write users.read offline.access",
-        "linkedin": "openid profile email w_member_social r_member_profileAnalytics rw_organization_admin",
+        "linkedin": "openid profile email w_member_social",
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
     }
@@ -1564,7 +1564,7 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
             "platform_user_id": str(profile.get("sub", "")),
             "username": profile.get("name", profile.get("email", "")),
             "display_name": profile.get("name", profile.get("email", "")),
-            "scopes": ["openid", "profile", "email", "w_member_social", "r_member_profileAnalytics", "rw_organization_admin"],
+            "scopes": ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
         }
     except Exception as exc:

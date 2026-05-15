@@ -44,7 +44,7 @@ class LinkedInAuth:
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="LinkedIn credentials not configured")
         
-        scopes = "openid profile email w_member_social r_member_profileAnalytics rw_organization_admin"
+        scopes = "openid profile email w_member_social"
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -252,7 +252,6 @@ class LinkedInAuth:
 
     async def fetch_audience_analytics(self, access_token: str, account: dict, days: int | None = None) -> dict:
         """Fetch LinkedIn audience metrics for member and organization analytics."""
-        scopes = set(account.get("scopes") or [])
         result: dict[str, int | str | None] = {
             "platform": "linkedin",
             "followers": None,
@@ -306,10 +305,7 @@ class LinkedInAuth:
                 result["reach"] = org_reach
 
         if all(result.get(metric) is None for metric in ("followers", "followers_growth", "impressions", "reach")):
-            if "r_member_profileAnalytics" not in scopes and "rw_organization_admin" not in scopes:
-                result["error"] = "Reconnect this LinkedIn account to grant analytics permissions."
-            else:
-                result["error"] = "LinkedIn denied analytics access for this connection. This app/account does not currently have permission to read LinkedIn analytics."
+            result["error"] = "LinkedIn analytics are not enabled for this application or this LinkedIn connection does not have the required analytics access."
 
         return result
 
