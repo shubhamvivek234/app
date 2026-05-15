@@ -439,7 +439,20 @@ async def _get_twitter_access_token(db: DB, doc: dict, force_refresh: bool = Fal
     refresh_token_encrypted = doc.get("refresh_token")
 
     expires_at = doc.get("expires_at") or doc.get("token_expiry")
-    is_expired = isinstance(expires_at, datetime) and expires_at <= datetime.now(timezone.utc)
+    expires_dt: datetime | None = None
+    if isinstance(expires_at, str) and expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except Exception:
+            expires_dt = None
+    elif isinstance(expires_at, datetime):
+        expires_dt = expires_at
+
+    # Mongo can contain naive datetimes depending on how the record was written.
+    if isinstance(expires_dt, datetime) and expires_dt.tzinfo is None:
+        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+    is_expired = isinstance(expires_dt, datetime) and expires_dt <= datetime.now(timezone.utc)
     if not (force_refresh or is_expired):
         return access_token
 
