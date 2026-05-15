@@ -25,6 +25,8 @@ Completed:
   Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
 - Backend: Twitter analytics feed can fail due to X API credits; we now surface the exact feed failure in analytics `errors` instead of silently returning empty posts.
   Files: `api/routes/analytics.py`, `backend/app/social/twitter.py`
+- Frontend: Analytics Posts tab now displays `/publish/feed` errors and a clear Twitter credits-depleted notice; still lists Unravler-published DB posts when available.
+  File: `frontend/src/pages/Analytics.js`
 
 ## Active Work
 Currently implementing: None
