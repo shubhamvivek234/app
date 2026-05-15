@@ -457,6 +457,8 @@ const Analytics = () => {
   const [engagement, setEngagement]   = useState(null);
   const [posts, setPosts]             = useState([]);
   const [postsSort, setPostsSort]     = useState('date');
+  const [postsErrors, setPostsErrors] = useState([]);
+  const [postsMessage, setPostsMessage] = useState(null);
 
   const [loadingOverview, setLoadingOverview]       = useState(true);
   const [loadingEngagement, setLoadingEngagement]   = useState(false);
@@ -526,8 +528,13 @@ const Analytics = () => {
         limit: 50,
       });
       setPosts(data.posts || []);
+      setPostsErrors(Array.isArray(data.errors) ? data.errors : []);
+      setPostsMessage(data.message || null);
     } catch {
       toast.error('Failed to load posts');
+      setPosts([]);
+      setPostsErrors([]);
+      setPostsMessage(null);
     } finally {
       setLoadingPosts(false);
     }
@@ -1149,6 +1156,30 @@ const Analytics = () => {
               )}
             </div>
 
+            {/* Feed errors / notices */}
+            {!loadingPosts && (postsMessage || (postsErrors && postsErrors.length > 0)) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900">
+                {postsMessage && (
+                  <p className="font-semibold">{postsMessage}</p>
+                )}
+                {postsErrors?.length > 0 && (
+                  <div className={postsMessage ? 'mt-2 space-y-1' : 'space-y-1'}>
+                    {postsErrors.slice(0, 3).map((item, idx) => (
+                      <p key={idx}>
+                        <strong>{item.account || 'Account'}:</strong>{' '}
+                        {String(item.error || 'Unable to fetch posts').includes('CreditsDepleted')
+                          ? 'X API credits are depleted. Showing only posts published from Unravler (if any).'
+                          : (item.error || 'Unable to fetch posts')}
+                      </p>
+                    ))}
+                    {postsErrors.length > 3 && (
+                      <p className="text-xs text-amber-800">+{postsErrors.length - 3} more…</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Post summary stats */}
             {!loadingPosts && sortedPosts.length > 0 && (
               <div className={`grid gap-3 ${visibleMetricCards.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
@@ -1190,7 +1221,11 @@ const Analytics = () => {
                 <FaFileAlt className="text-4xl text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 font-medium">No published posts found</p>
                 <p className="text-sm text-gray-400 mt-1">
-                  {selectedPlatform ? `No posts from ${PLATFORM_LABELS[selectedPlatform]} yet.` : 'Connect social accounts and publish posts to see analytics here.'}
+                  {selectedPlatform
+                    ? (selectedPlatform === 'twitter' && postsErrors?.some(e => String(e?.error || '').includes('CreditsDepleted'))
+                      ? 'X is blocking feed reads due to depleted API credits. Without X credits we can only show posts published from Unravler. None found for this account.'
+                      : `No posts from ${PLATFORM_LABELS[selectedPlatform]} yet.`)
+                    : 'Connect social accounts and publish posts to see analytics here.'}
                 </p>
               </div>
             ) : (
