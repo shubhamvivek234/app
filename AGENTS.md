@@ -23,6 +23,8 @@ Completed:
   Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
 - Frontend: clear any stale `oauth_popup_expected` state on connections pages to avoid old popup behavior lingering.
   Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
+- Backend: Twitter analytics feed can fail due to X API credits; we now surface the exact feed failure in analytics `errors` instead of silently returning empty posts.
+  Files: `api/routes/analytics.py`, `backend/app/social/twitter.py`
 
 ## Active Work
 Currently implementing: None
