@@ -78,7 +78,7 @@ const AccountChip = ({ account, onDisconnect }) => {
   return (
     <div
       ref={ref}
-      className="relative flex-shrink-0 cursor-default"
+      className="group relative flex-shrink-0 cursor-default"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShowTip(false)}
     >
@@ -102,6 +102,16 @@ const AccountChip = ({ account, onDisconnect }) => {
             <FaClock className="text-white text-[8px]" />
           </div>
         )}
+        <button
+          onClick={onDisconnect}
+          className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+          title="Disconnect"
+          aria-label={`Disconnect ${displayName}`}
+        >
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+            <FaTimes className="text-[11px]" />
+          </span>
+        </button>
       </div>
 
       {/* Fixed-position tooltip — never clipped by card overflow */}
@@ -114,13 +124,6 @@ const AccountChip = ({ account, onDisconnect }) => {
             <span className="text-xs font-medium">@{displayName}</span>
             {status === 'expired'  && <span className="text-[9px] font-bold text-red-400 uppercase">Expired</span>}
             {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-400 uppercase">Expiring</span>}
-            <button
-              onClick={onDisconnect}
-              className="ml-1 text-gray-400 hover:text-red-400 transition-colors"
-              title="Disconnect"
-            >
-              <FaTimes className="text-[10px]" />
-            </button>
           </div>
           <div className="flex justify-center">
             <div className="border-4 border-transparent border-t-gray-900" />
