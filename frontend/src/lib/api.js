@@ -837,3 +837,8 @@ export const getAnalyticsDemographics = async (params) => {
   const response = await axios.get(`${API}/analytics/demographics`, { headers: getAuthHeaders(), params });
   return response.data;
 };
+
+export const getInstagramAnalyticsReport = async (params) => {
+  const response = await axios.get(`${API}/analytics/instagram-report`, { headers: getAuthHeaders(), params });
+  return response.data;
+};

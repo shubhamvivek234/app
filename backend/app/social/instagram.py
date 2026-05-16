@@ -388,6 +388,60 @@ class InstagramAuth:
 
             return result
 
+    async def fetch_follower_growth(self, access_token: str, user_id: str, days: int | None = None) -> dict:
+        """Fetch daily follower counts for the selected period."""
+        async with httpx.AsyncClient() as client:
+            range_days = max(int(days or 30), 1)
+            until_dt = datetime.now(timezone.utc)
+            since_dt = until_dt - timedelta(days=range_days)
+            response = await client.get(
+                f"{self.GRAPH_URL}/{user_id}/insights",
+                params={
+                    "metric": "follower_count",
+                    "period": "day",
+                    "since": since_dt.date().isoformat(),
+                    "until": until_dt.date().isoformat(),
+                    "access_token": access_token,
+                },
+            )
+            if response.status_code != 200:
+                logging.warning(f"[Instagram] Follower growth fetch failed: {response.text}")
+                return {"supported": False, "series": [], "error": "Could not fetch follower growth"}
+
+            series = []
+            for item in response.json().get("data", []):
+                for point in item.get("values", []):
+                    value = point.get("value")
+                    end_time = point.get("end_time")
+                    if value is None or not end_time:
+                        continue
+                    series.append({
+                        "date": end_time[:10],
+                        "count": int(value),
+                    })
+
+            series.sort(key=lambda point: point["date"])
+            growth = 0
+            if len(series) >= 2:
+                growth = int(series[-1]["count"]) - int(series[0]["count"])
+
+            growth_series = []
+            previous_count = None
+            for point in series:
+                count = int(point["count"])
+                growth_series.append({
+                    "date": point["date"],
+                    "count": 0 if previous_count is None else count - previous_count,
+                })
+                previous_count = count
+
+            return {
+                "supported": True,
+                "series": series,
+                "growth_series": growth_series,
+                "growth": growth,
+            }
+
     async def fetch_comments(self, access_token: str, media_id: str, limit: int = 50) -> list:
         """Fetch comments on a media post"""
         async with httpx.AsyncClient() as client:

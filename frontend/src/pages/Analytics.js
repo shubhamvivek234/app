@@ -5,6 +5,7 @@ import {
   getAnalyticsTimeline,
   getAnalyticsEngagement,
   getAnalyticsDemographics,
+  getInstagramAnalyticsReport,
   getSocialAccounts,
   getPublishFeed,
 } from '@/lib/api';
@@ -136,6 +137,18 @@ const parseDate = (val) => {
   } catch { return null; }
 };
 
+const pctLabel = (value) => {
+  if (value == null || Number.isNaN(value)) return null;
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? '+' : ''}${rounded}%`;
+};
+
+const chartEmptyState = (label = 'No data available currently for this report.') => (
+  <div className="h-40 flex items-center justify-center text-sm text-gray-400 text-center px-6">
+    {label}
+  </div>
+);
+
 const aggregateAudienceSupport = (accounts) => ({
   followers_total: accounts.some((account) => account?.supports?.followers_total && account?.followers_count != null),
   followers_growth: accounts.some((account) => account?.supports?.followers_growth && account?.followers_growth != null),
@@ -214,6 +227,41 @@ const EngagementTooltip = ({ active, payload, label }) => {
     </div>
   );
 };
+
+const AudienceGrowthTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
+      <p className="font-semibold text-gray-700">{label}</p>
+      <p className="text-indigo-600">{fmt(payload[0]?.value)} new followers</p>
+    </div>
+  );
+};
+
+const InstagramMetricTile = ({ title, value, subtitle, deltaPct }) => (
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+    <div className="mt-3 flex items-end gap-3">
+      <p className="text-5xl font-bold tracking-tight text-sky-600">{fmt(value)}</p>
+      {deltaPct != null && (
+        <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+          {pctLabel(deltaPct)}
+        </span>
+      )}
+    </div>
+    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+  </div>
+);
+
+const InstagramDetailCard = ({ title, children, action }) => (
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+    <div className="flex items-center justify-between gap-3 mb-4">
+      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+      {action || null}
+    </div>
+    {children}
+  </div>
+);
 
 // Post card for the Posts tab
 const PostCard = ({ post }) => {
@@ -465,6 +513,7 @@ const PlatformSidebar = ({ accounts, selectedPlatform, onSelect }) => {
 // ── Main Analytics component ───────────────────────────────────────────────────
 const Analytics = () => {
   const [activeTab, setActiveTab]           = useState('overview');
+  const [instagramReportTab, setInstagramReportTab] = useState('summary');
   const [days, setDays]                     = useState(30);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [selectedAccount, setSelectedAccount]   = useState(null);
@@ -483,6 +532,8 @@ const Analytics = () => {
   const [loadingPosts, setLoadingPosts]             = useState(false);
   const [demographics, setDemographics]             = useState(null);
   const [loadingDemos, setLoadingDemos]             = useState(false);
+  const [instagramReport, setInstagramReport]       = useState(null);
+  const [loadingInstagramReport, setLoadingInstagramReport] = useState(false);
 
   // Fetch accounts once
   useEffect(() => {
@@ -586,6 +637,44 @@ const Analytics = () => {
     }
   }, [activeTab, fetchDemographics]);
 
+  const fetchInstagramReport = useCallback(async () => {
+    if (selectedPlatform !== 'instagram') {
+      setInstagramReport(null);
+      return;
+    }
+    setLoadingInstagramReport(true);
+    try {
+      const data = await getInstagramAnalyticsReport({
+        days,
+        accountId: selectedAccount,
+      });
+      setInstagramReport(data);
+    } catch {
+      toast.error('Failed to load Instagram report');
+      setInstagramReport(null);
+    } finally {
+      setLoadingInstagramReport(false);
+    }
+  }, [days, selectedPlatform, selectedAccount]);
+
+  useEffect(() => {
+    if (activeTab === 'summary' && selectedPlatform === 'instagram') {
+      fetchInstagramReport();
+    }
+  }, [activeTab, selectedPlatform, fetchInstagramReport]);
+
+  useEffect(() => {
+    if (selectedPlatform !== 'instagram' && activeTab === 'summary') {
+      setActiveTab('overview');
+    }
+  }, [selectedPlatform, activeTab]);
+
+  useEffect(() => {
+    if (selectedPlatform === 'instagram' && activeTab === 'demographics') {
+      setActiveTab('summary');
+    }
+  }, [selectedPlatform, activeTab]);
+
   // Platform sidebar selection — auto-select account if only one exists
   const handlePlatformSelect = (plat) => {
     setSelectedPlatform(plat);
@@ -637,11 +726,13 @@ const Analytics = () => {
   const hasDemographics = !selectedPlatform
     ? accounts.some((a) => DEMOGRAPHICS_PLATFORMS.includes(a.platform))
     : DEMOGRAPHICS_PLATFORMS.includes(selectedPlatform);
+  const showInstagramReportTab = selectedPlatform === 'instagram';
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'posts',    label: 'Posts'    },
-    ...(hasDemographics ? [{ id: 'demographics', label: 'Demographics' }] : []),
+    ...(showInstagramReportTab ? [{ id: 'summary', label: 'Summary' }] : []),
+    ...(hasDemographics && selectedPlatform !== 'instagram' ? [{ id: 'demographics', label: 'Demographics' }] : []),
   ];
 
   // Accounts for the currently selected platform
@@ -734,6 +825,17 @@ const Analytics = () => {
       setPostsSort('date');
     }
   }, [postsSort, visibleSortOptions]);
+
+  const instagramSummary = instagramReport?.summary || {};
+  const instagramAudience = instagramReport?.audience || {};
+  const instagramFollowerTimeline = (instagramAudience.follower_growth || []).map((point) => ({
+    ...point,
+    label: (() => {
+      try { return format(parseISO(point.date), days <= 7 ? 'EEE' : 'MMM d'); }
+      catch { return point.date; }
+    })(),
+  }));
+  const instagramDemographics = instagramAudience.demographics || {};
 
   return (
     <DashboardLayout hideSidebar>
@@ -1230,6 +1332,389 @@ const Analytics = () => {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* ━━━━━━━━━━━━━━━━━ INSTAGRAM SUMMARY TAB ━━━━━━━━━━━━━━━━━━━━ */}
+        {activeTab === 'summary' && selectedPlatform === 'instagram' && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-3">
+              {[
+                { id: 'summary', label: 'Summary' },
+                { id: 'audience', label: 'Audience' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setInstagramReportTab(tab.id)}
+                  className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
+                    instagramReportTab === tab.id
+                      ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-300 text-gray-600 bg-offwhite hover:border-gray-400'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {!!instagramReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {instagramReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingInstagramReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !instagramReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">Instagram report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
+                </p>
+              </div>
+            ) : instagramReportTab === 'summary' ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <InstagramMetricTile
+                    title="Total Followers"
+                    value={instagramSummary.followers_total}
+                    subtitle="Current Instagram followers"
+                  />
+                  <InstagramMetricTile
+                    title="New Followers"
+                    value={instagramSummary.new_followers}
+                    subtitle={`Avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
+                  />
+                </div>
+
+                <InstagramDetailCard title="Performance Summary">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Profile Views</p>
+                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.profile_views)}</p>
+                      <p className="mt-2 text-sm text-gray-500">Total profile views in the selected period.</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Posts Published</p>
+                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_posts)}</p>
+                      <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_posts_per_day ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagement</p>
+                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_engagement)}</p>
+                      <p className="mt-2 text-sm text-gray-500">Avg. per post: {instagramSummary.post_summary?.avg_engagement_per_post ?? 0}</p>
+                    </div>
+                  </div>
+                </InstagramDetailCard>
+
+                <InstagramDetailCard title="Reach Summary">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <InstagramMetricTile
+                      title="Reach"
+                      value={instagramSummary.reach}
+                      subtitle="Accounts reached in the selected period"
+                    />
+                    <InstagramMetricTile
+                      title="Impressions"
+                      value={instagramSummary.impressions}
+                      subtitle="Total content impressions in the selected period"
+                    />
+                  </div>
+                </InstagramDetailCard>
+
+                <InstagramDetailCard title="Post & Engagement Summary">
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Posts</p>
+                        <div className="mt-2 flex items-end gap-2">
+                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.post_summary?.total_posts)}</p>
+                          {instagramSummary.post_summary?.total_posts_change_pct != null && (
+                            <span className={`text-sm font-semibold ${instagramSummary.post_summary.total_posts_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {pctLabel(instagramSummary.post_summary.total_posts_change_pct)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_posts_per_day ?? 0}</p>
+                      </div>
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagement</p>
+                        <div className="mt-2 flex items-end gap-2">
+                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.post_summary?.total_engagement)}</p>
+                          {instagramSummary.post_summary?.total_engagement_change_pct != null && (
+                            <span className={`text-sm font-semibold ${instagramSummary.post_summary.total_engagement_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {pctLabel(instagramSummary.post_summary.total_engagement_change_pct)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_engagement_per_day ?? 0}</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Post</p>
+                      {instagramSummary.post_summary?.top_post ? (
+                        <div className="space-y-3">
+                          {instagramSummary.post_summary.top_post.media_url ? (
+                            <img
+                              src={instagramSummary.post_summary.top_post.media_url}
+                              alt=""
+                              className="w-full h-44 rounded-xl object-cover"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div className="w-full h-44 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
+                              No media preview
+                            </div>
+                          )}
+                          <p className="text-sm text-gray-700 line-clamp-4">
+                            {instagramSummary.post_summary.top_post.content || '(no caption)'}
+                          </p>
+                          <div className="flex items-center gap-4 text-xs text-gray-500">
+                            <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(instagramSummary.post_summary.top_post.likes)}</span>
+                            <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(instagramSummary.post_summary.top_post.comments)}</span>
+                            <span className="font-semibold text-gray-700">{fmt(instagramSummary.post_summary.top_post.engagement)} total engagement</span>
+                          </div>
+                          {instagramSummary.post_summary.top_post.permalink && (
+                            <a
+                              href={instagramSummary.post_summary.top_post.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                            >
+                              View on Instagram <FaExternalLinkAlt className="text-xs" />
+                            </a>
+                          )}
+                        </div>
+                      ) : (
+                        chartEmptyState('No Instagram post engagement data is available for this period.')
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagement by Post Type</p>
+                      {instagramSummary.post_summary?.engagement_by_type?.length > 0 ? (
+                        <div className="space-y-4">
+                          {instagramSummary.post_summary.engagement_by_type.map((item) => {
+                            const total = instagramSummary.post_summary.total_engagement || 1;
+                            const pct = Math.round(((item.engagement || 0) / total) * 100);
+                            return (
+                              <div key={item.type}>
+                                <div className="flex items-center justify-between text-sm mb-1">
+                                  <span className="font-medium text-gray-700">{item.label}</span>
+                                  <span className="text-gray-500">{fmt(item.engagement)} engagement • {fmt(item.posts)} posts</span>
+                                </div>
+                                <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        chartEmptyState('No Instagram posts were returned for this period.')
+                      )}
+                    </div>
+                  </div>
+                </InstagramDetailCard>
+
+                <InstagramDetailCard title="Reels & Engagement Summary">
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Reels</p>
+                        <div className="mt-2 flex items-end gap-2">
+                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.reels_summary?.total_reels)}</p>
+                          {instagramSummary.reels_summary?.total_reels_change_pct != null && (
+                            <span className={`text-sm font-semibold ${instagramSummary.reels_summary.total_reels_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {pctLabel(instagramSummary.reels_summary.total_reels_change_pct)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Reel Engagement</p>
+                        <div className="mt-2 flex items-end gap-2">
+                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.reels_summary?.total_engagement)}</p>
+                          {instagramSummary.reels_summary?.total_engagement_change_pct != null && (
+                            <span className={`text-sm font-semibold ${instagramSummary.reels_summary.total_engagement_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {pctLabel(instagramSummary.reels_summary.total_engagement_change_pct)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 xl:col-span-2">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Reel</p>
+                      {instagramSummary.reels_summary?.top_reel ? (
+                        <div className="flex flex-col md:flex-row gap-4">
+                          {instagramSummary.reels_summary.top_reel.media_url ? (
+                            <img
+                              src={instagramSummary.reels_summary.top_reel.media_url}
+                              alt=""
+                              className="w-full md:w-56 h-56 rounded-xl object-cover"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          ) : null}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-700 line-clamp-6">
+                              {instagramSummary.reels_summary.top_reel.content || '(no caption)'}
+                            </p>
+                            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-gray-500">
+                              <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(instagramSummary.reels_summary.top_reel.likes)}</span>
+                              <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(instagramSummary.reels_summary.top_reel.comments)}</span>
+                              <span className="font-semibold text-gray-700">{fmt(instagramSummary.reels_summary.top_reel.engagement)} total engagement</span>
+                            </div>
+                            {instagramSummary.reels_summary.top_reel.permalink && (
+                              <a
+                                href={instagramSummary.reels_summary.top_reel.permalink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                              >
+                                View reel on Instagram <FaExternalLinkAlt className="text-xs" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        chartEmptyState('No reels were returned for this period.')
+                      )}
+                    </div>
+                  </div>
+                </InstagramDetailCard>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+                  <strong>Note:</strong> Instagram audience charts reflect follower demographics returned by Instagram, not likes. Audience demographics are typically available for Business/Creator accounts once enough audience data exists.
+                  {instagramAudience?.accounts_used?.length > 0 && (
+                    <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
+                  )}
+                </div>
+
+                {!!instagramReport?.demographics_errors?.length && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    {instagramReport.demographics_errors.map((item, idx) => (
+                      <div key={`${item.account}-${idx}`}>
+                        <span className="font-semibold">{item.account}:</span> {item.error}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <InstagramDetailCard title="Follower Growth">
+                  {instagramFollowerTimeline.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <AreaChart data={instagramFollowerTimeline} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
+                        <defs>
+                          <linearGradient id="colorFollowers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} />
+                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
+                        <Tooltip content={<AudienceGrowthTooltip />} />
+                        <Area type="monotone" dataKey="count" name="Followers" stroke="#2563eb" strokeWidth={2} fill="url(#colorFollowers)" dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    chartEmptyState('Follower growth data is not available for this Instagram account right now.')
+                  )}
+                </InstagramDetailCard>
+
+                {!instagramAudience.demographics_supported && (
+                  <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-500">
+                    {instagramAudience.demographics_message || 'Audience demographics are not available for this Instagram account yet.'}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <InstagramDetailCard title="Followers by Country">
+                    {instagramDemographics.countries?.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={240}>
+                        <BarChart data={instagramDemographics.countries} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 50 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
+                          <Tooltip />
+                          <Bar dataKey="count" name="Followers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </InstagramDetailCard>
+
+                  <InstagramDetailCard title="Followers by Gender">
+                    {instagramDemographics.gender?.length > 0 ? (
+                      <div className="space-y-4">
+                        {instagramDemographics.gender.map((item) => {
+                          const total = instagramDemographics.gender.reduce((sum, current) => sum + current.count, 0) || 1;
+                          const pct = Math.round((item.count / total) * 100);
+                          return (
+                            <div key={item.label}>
+                              <div className="flex items-center justify-between text-sm mb-1">
+                                <span className="font-medium text-gray-700">{item.label}</span>
+                                <span className="text-gray-500">{fmt(item.count)} ({pct}%)</span>
+                              </div>
+                              <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                                <div className="h-full rounded-full bg-pink-500" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </InstagramDetailCard>
+
+                  <InstagramDetailCard title="Followers by Age Group">
+                    {instagramDemographics.age?.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={240}>
+                        <BarChart data={instagramDemographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
+                          <Tooltip />
+                          <Bar dataKey="count" name="Followers" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </InstagramDetailCard>
+
+                  <InstagramDetailCard title="Followers by City">
+                    {instagramDemographics.cities?.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={240}>
+                        <BarChart data={instagramDemographics.cities} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 90 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={90} />
+                          <Tooltip />
+                          <Bar dataKey="count" name="Followers" fill="#22c55e" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </InstagramDetailCard>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

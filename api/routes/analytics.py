@@ -713,6 +713,284 @@ def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[
     }
 
 
+def _instagram_post_type(post: dict[str, Any]) -> str:
+    media_type = str(post.get("media_type") or "").upper()
+    if media_type == "CAROUSEL_ALBUM":
+        return "carousel"
+    if media_type == "REELS":
+        return "reel"
+    if media_type == "VIDEO":
+        return "video"
+    if media_type == "IMAGE":
+        return "image"
+    return "text"
+
+
+def _percentage_change(current: int | None, previous: int | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    if previous == 0:
+        if current == 0:
+            return 0.0
+        return 100.0
+    return round(((current - previous) / abs(previous)) * 100, 1)
+
+
+def _merge_date_counts(series_list: list[list[dict[str, Any]]]) -> list[dict[str, int]]:
+    merged: dict[str, int] = {}
+    for series in series_list:
+        for point in series:
+            date = point.get("date")
+            if not date:
+                continue
+            merged[date] = merged.get(date, 0) + _metric_int(point.get("count"))
+    return [{"date": date, "count": merged[date]} for date in sorted(merged.keys())]
+
+
+def _summarize_instagram_period(
+    feed: list[dict[str, Any]],
+    current_since: datetime,
+    previous_since: datetime,
+) -> dict[str, Any]:
+    current_posts: list[dict[str, Any]] = []
+    previous_posts: list[dict[str, Any]] = []
+
+    for post in feed:
+        ts = _parse_platform_timestamp(post.get("timestamp"))
+        if not ts:
+            current_posts.append(post)
+            continue
+        if ts >= current_since:
+            current_posts.append(post)
+        elif ts >= previous_since:
+            previous_posts.append(post)
+
+    def _post_engagement(post: dict[str, Any]) -> int:
+        return _metric_int(post.get("likes")) + _metric_int(post.get("comments_count"))
+
+    current_total_engagement = sum(_post_engagement(post) for post in current_posts)
+    previous_total_engagement = sum(_post_engagement(post) for post in previous_posts)
+
+    type_summary: dict[str, dict[str, int]] = {}
+    reels: list[dict[str, Any]] = []
+
+    for post in current_posts:
+        post_type = _instagram_post_type(post)
+        engagement = _post_engagement(post)
+        bucket = type_summary.setdefault(post_type, {"posts": 0, "engagement": 0})
+        bucket["posts"] += 1
+        bucket["engagement"] += engagement
+        if post_type == "reel":
+            reels.append(post)
+
+    type_order = ["image", "carousel", "video", "reel", "text"]
+    type_labels = {
+        "image": "Images",
+        "carousel": "Carousels",
+        "video": "Videos",
+        "reel": "Reels",
+        "text": "Text",
+    }
+    engagement_by_type = [
+        {
+            "type": key,
+            "label": type_labels[key],
+            "posts": type_summary.get(key, {}).get("posts", 0),
+            "engagement": type_summary.get(key, {}).get("engagement", 0),
+        }
+        for key in type_order
+        if type_summary.get(key)
+    ]
+
+    top_post = max(current_posts, key=_post_engagement, default=None)
+    top_reel = max(reels, key=_post_engagement, default=None)
+    reel_engagement = sum(_post_engagement(post) for post in reels)
+    previous_reels = [post for post in previous_posts if _instagram_post_type(post) == "reel"]
+    previous_reel_engagement = sum(_post_engagement(post) for post in previous_reels)
+
+    return {
+        "total_posts": len(current_posts),
+        "avg_posts_per_day": round(len(current_posts) / max((current_since - previous_since).days, 1), 2),
+        "total_engagement": current_total_engagement,
+        "avg_engagement_per_post": round(current_total_engagement / len(current_posts), 2) if current_posts else 0,
+        "avg_engagement_per_day": round(current_total_engagement / max((current_since - previous_since).days, 1), 2),
+        "total_posts_change_pct": _percentage_change(len(current_posts), len(previous_posts)),
+        "total_engagement_change_pct": _percentage_change(current_total_engagement, previous_total_engagement),
+        "engagement_by_type": engagement_by_type,
+        "top_post": top_post,
+        "reels": {
+            "total_reels": len(reels),
+            "total_engagement": reel_engagement,
+            "total_reels_change_pct": _percentage_change(len(reels), len(previous_reels)),
+            "total_engagement_change_pct": _percentage_change(reel_engagement, previous_reel_engagement),
+            "top_reel": top_reel,
+        },
+    }
+
+
+@router.get("/analytics/instagram-report")
+async def analytics_instagram_report(
+    current_user: CurrentUser,
+    db: DB,
+    days: int = Query(30, ge=1, le=365),
+    account_id: str | None = Query(None, alias="accountId"),
+):
+    accounts = await _load_social_accounts(db, current_user["user_id"], "instagram", account_id)
+    if not accounts:
+        return {
+            "supported": False,
+            "message": "Connect an Instagram Business or Creator account to view this report.",
+        }
+
+    current_since = datetime.now(timezone.utc) - timedelta(days=days)
+    previous_since = current_since - timedelta(days=days)
+    all_current_feed: list[dict[str, Any]] = []
+    follower_series: list[list[dict[str, Any]]] = []
+    summary_totals = {
+        "followers_total": 0,
+        "new_followers": 0,
+        "reach": 0,
+        "impressions": 0,
+        "profile_views": 0,
+    }
+    demographics_bucket = {"age": [], "gender": [], "cities": [], "countries": []}
+    accounts_used: list[str] = []
+    errors: list[dict[str, str]] = []
+    demographics_errors: list[dict[str, str]] = []
+
+    from backend.app.social.instagram import InstagramAuth
+
+    auth = InstagramAuth()
+
+    for account in accounts:
+        label = _account_error_label(account)
+        platform_user_id = account.get("platform_user_id")
+        encrypted_token = account.get("access_token")
+        if not platform_user_id or not encrypted_token:
+            _append_account_error(errors, account, "Account is missing platform credentials.")
+            continue
+
+        try:
+            access_token = decrypt(encrypted_token)
+        except Exception:
+            _append_account_error(errors, account, "Stored token could not be decrypted.")
+            continue
+
+        try:
+            feed = await auth.fetch_feed(access_token, platform_user_id, limit=100)
+            engagement = await auth.fetch_engagement(access_token, platform_user_id, days=days)
+            growth = await auth.fetch_follower_growth(access_token, platform_user_id, days=days)
+        except Exception as exc:
+            _append_account_error(errors, account, _analytics_error_message("instagram", exc))
+            continue
+
+        if not feed:
+            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
+
+        all_current_feed.extend(feed)
+        summary_totals["followers_total"] += _metric_int(engagement.get("followers"))
+        summary_totals["new_followers"] += _metric_int(
+            growth.get("growth") if growth.get("supported") else engagement.get("followers_growth")
+        )
+        summary_totals["reach"] += _metric_int(engagement.get("reach"))
+        summary_totals["impressions"] += _metric_int(engagement.get("impressions"))
+        summary_totals["profile_views"] += _metric_int(engagement.get("profile_views"))
+        if growth.get("growth_series"):
+            follower_series.append(growth["growth_series"])
+
+        demographics = await auth.fetch_demographics(access_token, platform_user_id)
+        if demographics.get("supported"):
+            accounts_used.append(label)
+            demographics_bucket["age"].extend(demographics.get("age", []))
+            demographics_bucket["gender"].extend(demographics.get("gender", []))
+            demographics_bucket["cities"].extend(demographics.get("cities", []))
+            demographics_bucket["countries"].extend(demographics.get("countries", []))
+        else:
+            demographics_errors.append(
+                {
+                    "account": label,
+                    "error": demographics.get("error")
+                    or "Demographics are not available for this Instagram account yet.",
+                }
+            )
+
+    if not any(summary_totals.values()) and not all_current_feed and errors:
+        return {
+            "supported": False,
+            "message": "Unable to load Instagram analytics for the selected account.",
+            "errors": errors,
+        }
+
+    period_summary = _summarize_instagram_period(all_current_feed, current_since, previous_since)
+    merged_demographics = {
+        "age": _merge_named_counts(demographics_bucket["age"], "range"),
+        "gender": _merge_named_counts(demographics_bucket["gender"], "label"),
+        "cities": _merge_named_counts(demographics_bucket["cities"], "name")[:10],
+        "countries": _merge_named_counts(demographics_bucket["countries"], "name")[:10],
+    }
+
+    def _normalize_top_entry(post: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not post:
+            return None
+        return {
+            "id": post.get("id"),
+            "content": post.get("content", ""),
+            "media_url": post.get("media_url"),
+            "video_url": post.get("video_url"),
+            "media_type": post.get("media_type"),
+            "timestamp": post.get("timestamp"),
+            "permalink": post.get("permalink"),
+            "engagement": _metric_int(post.get("likes")) + _metric_int(post.get("comments_count")),
+            "likes": _metric_int(post.get("likes")),
+            "comments": _metric_int(post.get("comments_count")),
+        }
+
+    report = {
+        "supported": True,
+        "days": days,
+        "summary": {
+            "followers_total": summary_totals["followers_total"],
+            "new_followers": summary_totals["new_followers"],
+            "avg_new_followers_per_day": round(summary_totals["new_followers"] / max(days, 1), 2),
+            "reach": summary_totals["reach"],
+            "impressions": summary_totals["impressions"],
+            "profile_views": summary_totals["profile_views"],
+            "post_summary": {
+                "total_posts": period_summary["total_posts"],
+                "avg_posts_per_day": round(period_summary["total_posts"] / max(days, 1), 2),
+                "total_engagement": period_summary["total_engagement"],
+                "avg_engagement_per_post": period_summary["avg_engagement_per_post"],
+                "avg_engagement_per_day": round(period_summary["total_engagement"] / max(days, 1), 2),
+                "total_posts_change_pct": period_summary["total_posts_change_pct"],
+                "total_engagement_change_pct": period_summary["total_engagement_change_pct"],
+                "top_post": _normalize_top_entry(period_summary["top_post"]),
+                "engagement_by_type": period_summary["engagement_by_type"],
+            },
+            "reels_summary": {
+                "total_reels": period_summary["reels"]["total_reels"],
+                "total_engagement": period_summary["reels"]["total_engagement"],
+                "total_reels_change_pct": period_summary["reels"]["total_reels_change_pct"],
+                "total_engagement_change_pct": period_summary["reels"]["total_engagement_change_pct"],
+                "top_reel": _normalize_top_entry(period_summary["reels"]["top_reel"]),
+            },
+        },
+        "audience": {
+            "follower_growth": _merge_date_counts(follower_series),
+            "demographics_supported": bool(any(merged_demographics.values())),
+            "demographics_message": (
+                None
+                if any(merged_demographics.values())
+                else "Follower demographics are only available when Instagram returns insights for this Business/Creator account, typically after the account has enough audience data."
+            ),
+            "accounts_used": accounts_used,
+            "demographics": merged_demographics,
+        },
+        "errors": errors,
+        "demographics_errors": demographics_errors,
+    }
+    return report
+
+
 @router.get("/analytics/overview")
 async def analytics_overview(
     current_user: CurrentUser,
