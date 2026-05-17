@@ -83,8 +83,17 @@ export const clearAuthData = () => {
  * - Both flows handled by onAuthStateChanged listener
  */
 export const googleSignIn = async () => {
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const useRedirectOnly = Boolean(hostname && !['localhost', '127.0.0.1'].includes(hostname));
+
   try {
     assertFirebaseAuthConfig();
+    if (useRedirectOnly) {
+      console.log('[AuthService] Starting Google sign-in with redirect...');
+      await signInWithRedirect(auth, googleProvider);
+      return true;
+    }
+
     console.log('[AuthService] Starting Google sign-in with popup...');
     await signInWithPopup(auth, googleProvider);
     return true;
@@ -92,7 +101,12 @@ export const googleSignIn = async () => {
     console.error('[AuthService] Google popup error:', error.code, error.message);
 
     // Popup was blocked - fall back to redirect flow
-    if (error.code === 'auth/popup-blocked' || error.code === 'auth/operation-not-supported-in-this-environment') {
+    if (
+      error.code === 'auth/popup-blocked'
+      || error.code === 'auth/operation-not-supported-in-this-environment'
+      || error.code === 'auth/popup-closed-by-user'
+      || error.code === 'auth/cancelled-popup-request'
+    ) {
       console.log('[AuthService] Popup blocked, falling back to redirect flow...');
       try {
         await signInWithRedirect(auth, googleProvider);
