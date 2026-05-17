@@ -21,10 +21,18 @@ class ThreadsAuth:
 
     SCOPES = "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies"
 
-    def __init__(self):
-        self.app_id     = os.environ.get("THREADS_APP_ID") or os.environ.get("FACEBOOK_APP_ID")
-        self.app_secret = os.environ.get("THREADS_APP_SECRET") or os.environ.get("FACEBOOK_APP_SECRET")
-        raw_uri         = os.environ.get("THREADS_REDIRECT_URI", "http://localhost:8001/api/oauth/threads/callback")
+    def __init__(self, redirect_uri: str | None = None):
+        self.app_id     = (
+            os.environ.get("THREADS_APP_ID")
+            or os.environ.get("THREADS_CLIENT_ID")
+            or os.environ.get("FACEBOOK_APP_ID")
+        )
+        self.app_secret = (
+            os.environ.get("THREADS_APP_SECRET")
+            or os.environ.get("THREADS_CLIENT_SECRET")
+            or os.environ.get("FACEBOOK_APP_SECRET")
+        )
+        raw_uri         = redirect_uri or os.environ.get("THREADS_REDIRECT_URI", "http://localhost:8001/api/oauth/threads/callback")
 
         # Wrap local HTTP redirect with Meta-compatible HTTPS proxy
         if raw_uri.startswith("http://"):

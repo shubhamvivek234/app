@@ -766,6 +766,7 @@ async def get_oauth_url(
     )
     code_verifier: str | None = None
     twitter_code_challenge: str | None = None
+    redirect_uri: str | None = None
     state = redis_state
 
     if platform == "tiktok":
@@ -785,6 +786,8 @@ async def get_oauth_url(
     elif platform == "linkedin":
         from backend.app.social.linkedin import LinkedInAuth
         auth_url = LinkedInAuth().get_auth_url(redis_state)
+    elif platform == "threads":
+        auth_url, redirect_uri = _build_threads_auth_url(request, redis_state)
     else:
         try:
             auth_url = _build_oauth_url(platform, redis_state, frontend_base)
@@ -796,6 +799,7 @@ async def get_oauth_url(
         "user_id": user_id,
         "frontend_base": frontend_base,
         "code_verifier": code_verifier,
+        "redirect_uri": redirect_uri,
     }
     stored = await safe_setex(
         cache_redis,
@@ -822,6 +826,10 @@ async def get_oauth_url(
             state = _create_stateless_oauth_state(state_context)
             from backend.app.social.linkedin import LinkedInAuth
             auth_url = LinkedInAuth().get_auth_url(state)
+        elif platform == "threads":
+            state = _create_stateless_oauth_state(state_context)
+            auth_url, redirect_uri = _build_threads_auth_url(request, state)
+            state_context["redirect_uri"] = redirect_uri
         else:
             state = _create_stateless_oauth_state(state_context)
             auth_url = _build_oauth_url(platform, state, frontend_base)
@@ -1117,6 +1125,29 @@ def _build_frontend_oauth_callback(frontend_base: str | None) -> str | None:
     return f"{normalized}/oauth/callback"
 
 
+def _external_request_base(request: Request) -> str:
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    proto = forwarded_proto or request.url.scheme or "https"
+    host = forwarded_host or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}"
+
+
+def _build_backend_oauth_callback(request: Request, platform: str) -> str:
+    callback_uri = f"{_external_request_base(request)}/api/oauth/{platform}/callback"
+    if callback_uri.startswith("http://"):
+        return f"https://redirectmeto.com/{callback_uri}"
+    return callback_uri
+
+
+def _build_threads_auth_url(request: Request, state: str) -> tuple[str, str]:
+    from backend.app.social.threads import ThreadsAuth
+
+    redirect_uri = os.environ.get("THREADS_REDIRECT_URI", "").strip() or _build_backend_oauth_callback(request, "threads")
+    auth = ThreadsAuth(redirect_uri=redirect_uri)
+    return auth.get_auth_url(state), auth.redirect_uri
+
+
 async def _consume_oauth_state(cache_redis: CacheRedis, state: str) -> dict | None:
     stored_value = await safe_get(
         cache_redis,
@@ -1148,6 +1179,7 @@ def _create_stateless_oauth_state(context: dict) -> str:
         "user_id": context.get("user_id"),
         "frontend_base": _normalize_frontend_base(context.get("frontend_base")) or _default_frontend_base(),
         "code_verifier": context.get("code_verifier"),
+        "redirect_uri": context.get("redirect_uri"),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
     }
     return jwt.encode(payload, _OAUTH_STATE_JWT_SECRET, algorithm=_OAUTH_STATE_JWT_ALGORITHM)
@@ -1166,6 +1198,7 @@ def _decode_stateless_oauth_state(state: str) -> dict | None:
         "user_id": payload["user_id"],
         "frontend_base": _normalize_frontend_base(payload.get("frontend_base")) or _default_frontend_base(),
         "code_verifier": payload.get("code_verifier"),
+        "redirect_uri": payload.get("redirect_uri"),
     }
 
 
@@ -1240,7 +1273,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         client_id_env = f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
     if platform == "threads" and not client_id:
-        client_id = os.environ.get("FACEBOOK_APP_ID", "")
+        client_id = os.environ.get("THREADS_CLIENT_ID", "") or os.environ.get("FACEBOOK_APP_ID", "")
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
     if not client_id:
         raise ValueError(f"OAuth not configured for platform '{platform}': {client_id_env} env var is missing")
@@ -1293,7 +1326,7 @@ async def _exchange_code_for_tokens(
     if platform == "tiktok":
         return await _exchange_tiktok_code(code, code_verifier or "")
     if platform == "threads":
-        return await _exchange_threads_code(code)
+        return await _exchange_threads_code(code, state_context)
     logger.warning("Token exchange not implemented for platform=%s", platform)
     return None
 
@@ -1504,12 +1537,12 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
         return None
 
 
-async def _exchange_threads_code(code: str) -> dict | None:
+async def _exchange_threads_code(code: str, state_context: dict | None = None) -> dict | None:
     """Threads OAuth: exchange code for access token and fetch profile metadata."""
     from backend.app.social.threads import ThreadsAuth
 
     try:
-        auth = ThreadsAuth()
+        auth = ThreadsAuth(redirect_uri=(state_context or {}).get("redirect_uri"))
         short_lived = await auth.exchange_code_for_token(code)
         short_token = short_lived.get("access_token")
         if not short_token:
