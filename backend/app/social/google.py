@@ -387,6 +387,7 @@ class GoogleAuth:
             end_date = datetime.now(timezone.utc).date()
             start_date = end_date - timedelta(days=range_days - 1)
             growth_metrics = {}
+            analytics_error = None
             try:
                 analytics_response = await client.get(
                     "https://youtubeanalytics.googleapis.com/v2/reports",
@@ -409,8 +410,17 @@ class GoogleAuth:
                                     growth_metrics[column] = growth_metrics.get(column, 0) + int(row[idx] or 0)
                 else:
                     logging.warning(f"[YouTube] Analytics metrics unavailable: {analytics_response.text}")
+                    body = analytics_response.text or ""
+                    if analytics_response.status_code == 403 and (
+                        "youtubeanalytics.googleapis.com" in body or "SERVICE_DISABLED" in body or "accessNotConfigured" in body
+                    ):
+                        analytics_error = (
+                            "YouTube Analytics API is disabled for this Google project. "
+                            "Subscriber growth and period engagement are unavailable until it is enabled."
+                        )
             except Exception as exc:
                 logging.warning(f"[YouTube] Analytics metrics fetch failed: {exc}")
+                analytics_error = "Unable to fetch YouTube Analytics API metrics for this account right now."
 
             subscribers_gained = growth_metrics.get("subscribersGained")
             subscribers_lost = growth_metrics.get("subscribersLost")
@@ -427,6 +437,7 @@ class GoogleAuth:
                 "period_likes": growth_metrics.get("likes"),
                 "period_comments": growth_metrics.get("comments"),
                 "period_shares": growth_metrics.get("shares"),
+                "error": analytics_error,
                 "platform": "youtube",
             }
 

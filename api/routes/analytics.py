@@ -1078,9 +1078,9 @@ async def analytics_overview(
             )
             for post in in_period_posts:
                 media_type = str(post.get("media_type") or "").upper()
-                if media_type == "VIDEO":
+                if media_type in {"VIDEO", "REELS"}:
                     fallback_type_counts["video"] += 1
-                elif media_type == "IMAGE":
+                elif media_type in {"IMAGE", "CAROUSEL_ALBUM"}:
                     fallback_type_counts["image"] += 1
                 else:
                     fallback_type_counts["text"] += 1
@@ -1146,7 +1146,35 @@ async def analytics_timeline(
         {"$sort": {"_id": 1}},
     ]
     docs = await db.posts.aggregate(pipeline).to_list(None)
-    return {"timeline": [{"date": d["_id"], "count": d["count"]} for d in docs if d.get("_id")]}
+    timeline = [{"date": d["_id"], "count": d["count"]} for d in docs if d.get("_id")]
+
+    if not timeline and account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+        accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
+        if accounts:
+            counts_by_date: dict[str, int] = {}
+            since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+            for account in accounts:
+                try:
+                    feed, _ = await _fetch_account_feed_and_stats(db, account, days=days)
+                except Exception as exc:
+                    logger.warning("Failed timeline feed fallback for %s account %s: %s", platform, account_id, exc)
+                    continue
+
+                for post in feed:
+                    ts = _parse_platform_timestamp(post.get("timestamp"))
+                    if ts and ts < since_dt:
+                        continue
+                    if ts:
+                        date_key = ts.date().isoformat()
+                    else:
+                        date_key = str(post.get("timestamp") or "")[:10]
+                    if not date_key:
+                        continue
+                    counts_by_date[date_key] = counts_by_date.get(date_key, 0) + 1
+
+            timeline = [{"date": date_key, "count": counts_by_date[date_key]} for date_key in sorted(counts_by_date.keys())]
+
+    return {"timeline": timeline}
 
 
 @router.get("/analytics/engagement")

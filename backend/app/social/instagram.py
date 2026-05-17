@@ -300,22 +300,35 @@ class InstagramAuth:
                 range_days = max(int(days or 30), 1)
                 until_dt = datetime.now(timezone.utc)
                 since_dt = until_dt - timedelta(days=range_days)
-                insights_resp = await client.get(
-                    f"{self.GRAPH_URL}/{user_id}/insights",
-                    params={
-                        "metric": "impressions,reach,profile_views",
-                        "period": "day",
-                        "metric_type": "total_value",
-                        "since": since_dt.date().isoformat(),
-                        "until": until_dt.date().isoformat(),
-                        "access_token": access_token,
-                    },
-                )
-                if insights_resp.status_code == 200:
-                    for item in insights_resp.json().get("data", []):
+                for metric_name in ("impressions", "reach", "profile_views"):
+                    metric_resp = await client.get(
+                        f"{self.GRAPH_URL}/{user_id}/insights",
+                        params={
+                            "metric": metric_name,
+                            "period": "day",
+                            "since": since_dt.date().isoformat(),
+                            "until": until_dt.date().isoformat(),
+                            "access_token": access_token,
+                        },
+                    )
+                    if metric_resp.status_code != 200:
+                        logging.warning(f"[Instagram] Insight {metric_name} fetch failed: {metric_resp.text}")
+                        continue
+
+                    for item in metric_resp.json().get("data", []):
                         name = item.get("name")
-                        val = item.get("total_value", {}).get("value", 0)
-                        insights[name] = val
+                        if not name:
+                            continue
+                        if item.get("total_value", {}).get("value") is not None:
+                            insights[name] = int(item.get("total_value", {}).get("value", 0) or 0)
+                            continue
+                        values = item.get("values", [])
+                        if values:
+                            insights[name] = sum(
+                                int(point.get("value", 0) or 0)
+                                for point in values
+                                if point.get("value") is not None
+                            )
                 growth_resp = await client.get(
                     f"{self.GRAPH_URL}/{user_id}/insights",
                     params={
