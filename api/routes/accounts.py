@@ -1273,7 +1273,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         client_id_env = f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
     if platform == "threads" and not client_id:
-        client_id = os.environ.get("THREADS_CLIENT_ID", "") or os.environ.get("FACEBOOK_APP_ID", "")
+        client_id = os.environ.get("THREADS_CLIENT_ID", "")
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
     if not client_id:
         raise ValueError(f"OAuth not configured for platform '{platform}': {client_id_env} env var is missing")

@@ -25,12 +25,10 @@ class ThreadsAuth:
         self.app_id     = (
             os.environ.get("THREADS_APP_ID")
             or os.environ.get("THREADS_CLIENT_ID")
-            or os.environ.get("FACEBOOK_APP_ID")
         )
         self.app_secret = (
             os.environ.get("THREADS_APP_SECRET")
             or os.environ.get("THREADS_CLIENT_SECRET")
-            or os.environ.get("FACEBOOK_APP_SECRET")
         )
         raw_uri         = redirect_uri or os.environ.get("THREADS_REDIRECT_URI", "http://localhost:8001/api/oauth/threads/callback")
 
