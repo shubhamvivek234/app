@@ -1855,18 +1855,21 @@ const Analytics = () => {
                           )}
                         </div>
 
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 min-w-0 overflow-hidden">
                           <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagements by Post Type</p>
                           {(blueskySummary.post_summary?.engagement_by_type || []).some((item) => item.engagement > 0) ? (
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-                              <ResponsiveContainer width="100%" height={220}>
+                            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,220px)_minmax(0,1fr)] items-center">
+                              <div className="min-w-0 flex items-center justify-center">
+                              <ResponsiveContainer width="100%" height={200}>
                                 <PieChart>
                                   <Pie
                                     data={(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0)}
                                     dataKey="engagement"
                                     nameKey="label"
-                                    innerRadius={55}
-                                    outerRadius={85}
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={44}
+                                    outerRadius={68}
                                     paddingAngle={2}
                                   >
                                     {(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0).map((entry, index) => (
@@ -1876,7 +1879,8 @@ const Analytics = () => {
                                   <Tooltip />
                                 </PieChart>
                               </ResponsiveContainer>
-                              <div className="space-y-3">
+                              </div>
+                              <div className="space-y-3 min-w-0">
                                 {(blueskySummary.post_summary?.engagement_by_type || []).map((item) => {
                                   const total = blueskySummary.post_summary?.total_engagement || 1;
                                   const pct = Math.round(((item.engagement || 0) / total) * 100);
