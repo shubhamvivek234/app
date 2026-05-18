@@ -31,6 +31,11 @@ class LinkedInAuth:
         }
 
     @staticmethod
+    def _oauth_scopes() -> str:
+        raw = os.environ.get("LINKEDIN_OAUTH_SCOPES", "openid profile email w_member_social")
+        return " ".join(str(raw).replace(",", " ").split())
+
+    @staticmethod
     def _organization_urn(value: str | None) -> str | None:
         raw = str(value or "").strip()
         if not raw:
@@ -43,8 +48,8 @@ class LinkedInAuth:
         """Generate LinkedIn OAuth URL"""
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="LinkedIn credentials not configured")
-        
-        scopes = "openid profile email w_member_social"
+
+        scopes = self._oauth_scopes()
         params = {
             "response_type": "code",
             "client_id": self.client_id,

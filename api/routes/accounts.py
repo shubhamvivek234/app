@@ -1254,11 +1254,15 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "threads": "https://threads.net/oauth/authorize",
     }
     
+    linkedin_scopes = " ".join(
+        os.environ.get("LINKEDIN_OAUTH_SCOPES", "openid profile email w_member_social").replace(",", " ").split()
+    )
+
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
         "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
         "twitter": "tweet.read tweet.write users.read offline.access",
-        "linkedin": "openid profile email w_member_social",
+        "linkedin": linkedin_scopes,
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
     }
