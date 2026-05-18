@@ -18,7 +18,7 @@ import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
-  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown,
+  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import { format, parseISO, isValid } from 'date-fns';
@@ -481,6 +481,7 @@ const PlatformSidebar = ({
   return (
     <nav className="py-2 select-none">
       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 px-4 py-2">Channels</p>
+      <p className="px-4 pb-2 text-[11px] text-gray-400">Drag platforms to arrange this list.</p>
 
       {/* All Platforms */}
       <button
@@ -490,7 +491,9 @@ const PlatformSidebar = ({
             ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
             : 'text-gray-600 hover:bg-gray-50 border-transparent'}`}
       >
-        <span className="w-[18px] text-center">📊</span>
+        <span className="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+          📊
+        </span>
         <span className="flex-1 text-left text-[13px]">All Platforms</span>
       </button>
 
@@ -514,14 +517,20 @@ const PlatformSidebar = ({
             }}
             onDragEnd={onDragEnd}
             onClick={() => onSelect(plat)}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
+            className={`group w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
               ${isActive
                 ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
                 : 'text-gray-600 hover:bg-gray-50 border-transparent'}
               ${!isConnected ? 'opacity-40' : ''}
-              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50' : ''}`}
+              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50 scale-[0.995]' : ''}`}
           >
-            <span className="text-gray-300 text-xs leading-none cursor-grab select-none" aria-hidden="true">⋮⋮</span>
+            <span
+              className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors
+                ${isActive ? 'bg-indigo-100 text-indigo-500' : 'bg-gray-100 text-gray-400 group-hover:text-gray-600'}`}
+              aria-hidden="true"
+            >
+              <FaGripLines className="text-[10px]" />
+            </span>
             {Icon && <Icon size={17} style={{ color, flexShrink: 0 }} />}
             <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
             {isConnected && (
