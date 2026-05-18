@@ -46,6 +46,7 @@ class AIContentRequest(BaseModel):
     prompt: str
     platform: str | None = None
     tone: str | None = None
+    language: str | None = None
 
 
 class AIContentResponse(BaseModel):
@@ -79,10 +80,17 @@ def _is_rate_limit(exc: Exception) -> bool:
     )
 
 
-def _build_system_message(platform: str | None, tone: str | None) -> str:
+def _build_system_message(platform: str | None, tone: str | None, language: str | None) -> str:
     platform_hint = _PLATFORM_HINTS.get((platform or "").lower(), "")
     tone_hint = f" Use a {tone} tone." if tone else ""
-    return f"{_CONTENT_BASE}{platform_hint}{tone_hint}"
+    language_hint = ""
+    if language and language.strip():
+        language_hint = (
+            f" Write the final post in {language.strip()}. "
+            "Use natural, fluent phrasing for that language and script. "
+            "Do not mention translation or provide alternatives."
+        )
+    return f"{_CONTENT_BASE}{platform_hint}{tone_hint}{language_hint}"
 
 
 async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str]:
@@ -232,16 +240,17 @@ async def generate_content(
 
     try:
         content, provider, model = await _ai_waterfall(
-            _build_system_message(body.platform, body.tone),
+            _build_system_message(body.platform, body.tone, body.language),
             body.prompt.strip(),
         )
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(
-            "AI content generation failed user=%s platform=%s error=%s",
+            "AI content generation failed user=%s platform=%s language=%s error=%s",
             current_user["user_id"],
             body.platform,
+            body.language,
             exc,
         )
         raise HTTPException(
@@ -250,9 +259,10 @@ async def generate_content(
         ) from exc
 
     logger.info(
-        "AI content generated user=%s platform=%s provider=%s model=%s",
+        "AI content generated user=%s platform=%s language=%s provider=%s model=%s",
         current_user["user_id"],
         body.platform,
+        body.language,
         provider,
         model,
     )

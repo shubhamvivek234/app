@@ -559,6 +559,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   // ── AI Assistant state ─────────────────────────────────────────────────────
   const [aiCaptionPrompt,       setAiCaptionPrompt]       = useState('');
   const [aiCaptionTone,         setAiCaptionTone]         = useState('casual');
+  const [aiCaptionLanguage,     setAiCaptionLanguage]     = useState('English');
   const [aiCaptionPlatform,     setAiCaptionPlatform]     = useState('all');
   const [aiCaptionLoading,      setAiCaptionLoading]      = useState(false);
   const [aiGeneratedText,       setAiGeneratedText]       = useState('');
@@ -1723,7 +1724,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     setAiGeneratedText('');
     try {
       const platform = aiCaptionPlatform === 'all' ? null : aiCaptionPlatform;
-      const data = await generateContent(aiCaptionPrompt.trim(), platform, aiCaptionTone);
+      const data = await generateContent(
+        aiCaptionPrompt.trim(),
+        platform,
+        aiCaptionTone,
+        aiCaptionLanguage,
+      );
       setAiGeneratedText(data.content);
       if (aiCaptionPlatform === 'all') {
         setCommonCaption(data.content);
@@ -1759,6 +1765,27 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     { id: 'professional', label: 'Professional' },
     { id: 'fun',          label: 'Fun' },
     { id: 'promotional',  label: 'Promotional' },
+  ];
+  const AI_LANGUAGES = [
+    'English',
+    'Hindi',
+    'Spanish',
+    'Portuguese',
+    'Hebrew',
+    'Italian',
+    'Japanese',
+    'Arabic',
+    'Thai',
+    'French',
+    'Danish',
+    'Dutch',
+    'Korean',
+    'Kannada',
+    'Telugu',
+    'Tamil',
+    'Malayalam',
+    'Bengali',
+    'Marathi',
   ];
 
   const aiPanel = (
@@ -1815,6 +1842,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               </button>
             ))}
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-gray-700 mb-2">Language</label>
+          <select
+            value={aiCaptionLanguage}
+            onChange={(e) => setAiCaptionLanguage(e.target.value)}
+            className="w-full border-2 border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 bg-white hover:border-gray-300 transition-colors"
+          >
+            {AI_LANGUAGES.map((language) => (
+              <option key={language} value={language}>{language}</option>
+            ))}
+          </select>
         </div>
 
         {/* Generate button */}

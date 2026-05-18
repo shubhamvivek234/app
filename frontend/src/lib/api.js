@@ -214,10 +214,10 @@ export const deletePost = async (postId) => {
 };
 
 // AI Content Generation
-export const generateContent = async (prompt, platform = null, tone = null) => {
+export const generateContent = async (prompt, platform = null, tone = null, language = null) => {
   const response = await axios.post(
     `${API}/ai/generate-content`,
-    { prompt, platform, tone },
+    { prompt, platform, tone, language },
     {
       headers: getAuthHeaders(),
     }
