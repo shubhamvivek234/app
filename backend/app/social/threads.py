@@ -18,6 +18,8 @@ class ThreadsAuth:
     AUTH_URL  = "https://threads.net/oauth/authorize"
     TOKEN_URL = "https://graph.threads.net/oauth/access_token"
     BASE_URL  = "https://graph.threads.net/v1.0"
+    BASIC_POST_FIELDS = "id,text,media_type,media_url,thumbnail_url,timestamp,permalink"
+    METRIC_POST_FIELDS = f"{BASIC_POST_FIELDS},views,likes,replies,reposts,quotes"
 
     SCOPES = "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies"
 
@@ -143,21 +145,47 @@ class ThreadsAuth:
 
     async def fetch_posts(self, access_token: str, user_id: str = "me", limit: int = 20) -> list:
         """Fetch user's Threads posts with metrics"""
+        posts: list[dict] = []
+        used_metric_fields = True
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.BASE_URL}/{user_id}/threads",
                 params={
-                    "fields":       "id,text,media_type,media_url,thumbnail_url,timestamp,permalink,views,likes,replies,reposts,quotes",
+                    "fields":       self.METRIC_POST_FIELDS,
                     "limit":        limit,
                     "access_token": access_token,
                 },
             )
             logging.info(f"[Threads] fetch_posts status: {response.status_code}")
-            if response.status_code != 200:
-                logging.error(f"[Threads] fetch_posts failed: {response.text}")
-                return []
+            if response.status_code == 200:
+                posts = response.json().get("data", [])
+            else:
+                response_json = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+                error = response_json.get("error") or {}
+                permission_denied = (
+                    response.status_code in {400, 403, 500}
+                    and str(error.get("code")) == "10"
+                )
+                if permission_denied:
+                    used_metric_fields = False
+                    logging.warning("[Threads] metric field fetch denied, retrying with basic fields: %s", response.text)
+                    basic_response = await client.get(
+                        f"{self.BASE_URL}/{user_id}/threads",
+                        params={
+                            "fields": self.BASIC_POST_FIELDS,
+                            "limit": limit,
+                            "access_token": access_token,
+                        },
+                    )
+                    logging.info(f"[Threads] basic fetch_posts status: {basic_response.status_code}")
+                    if basic_response.status_code != 200:
+                        logging.error(f"[Threads] basic fetch_posts failed: {basic_response.text}")
+                        return []
+                    posts = basic_response.json().get("data", [])
+                else:
+                    logging.error(f"[Threads] fetch_posts failed: {response.text}")
+                    return []
 
-            posts = response.json().get("data", [])
             normalized = []
             for post in posts:
                 media_type = post.get("media_type", "TEXT")
@@ -176,10 +204,10 @@ class ThreadsAuth:
                     "media_type":       media_type,
                     "post_url":         post.get("permalink"),
                     "metrics": {
-                        "views":    post.get("views", 0),
-                        "likes":    post.get("likes", 0),
-                        "comments": post.get("replies", 0),
-                        "shares":   post.get("reposts", 0),
+                        "views":    post.get("views", 0) if used_metric_fields else 0,
+                        "likes":    post.get("likes", 0) if used_metric_fields else 0,
+                        "comments": post.get("replies", 0) if used_metric_fields else 0,
+                        "shares":   post.get("reposts", 0) if used_metric_fields else 0,
                     },
                     "published_at": post.get("timestamp"),
                 })
