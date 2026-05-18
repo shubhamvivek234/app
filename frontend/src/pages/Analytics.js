@@ -22,7 +22,24 @@ import {
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
-import { format, parseISO, isValid } from 'date-fns';
+import {
+  eachDayOfInterval,
+  eachMonthOfInterval,
+  eachQuarterOfInterval,
+  eachWeekOfInterval,
+  endOfDay,
+  endOfMonth,
+  endOfQuarter,
+  endOfWeek,
+  format,
+  isValid,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+  startOfQuarter,
+  startOfWeek,
+  subDays,
+} from 'date-fns';
 
 // ── Platform config ────────────────────────────────────────────────────────────
 const PLATFORM_COLORS = {
@@ -114,6 +131,13 @@ const SORT_OPTIONS = [
   { label: 'Views',    value: 'views'    },
 ];
 
+const BLUESKY_GRANULARITY_OPTIONS = [
+  { label: 'Day', value: 'day' },
+  { label: 'Week', value: 'week' },
+  { label: 'Month', value: 'month' },
+  { label: 'Quarter', value: 'quarter' },
+];
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const fmt = (n) => {
   if (n == null) return '—';
@@ -178,6 +202,98 @@ const mergeSeriesByDate = (seriesMap) => {
       return row;
     });
 };
+
+const formatBucketLabel = (date, granularity) => {
+  if (!date) return '';
+  if (granularity === 'quarter') return format(date, "QQQ ''yy");
+  if (granularity === 'month') return format(date, "MMM ''yy");
+  if (granularity === 'week') return format(date, 'd MMM');
+  return format(date, 'd MMM');
+};
+
+const buildTimeBuckets = (days, granularity) => {
+  const end = endOfDay(new Date());
+  const start = startOfDay(subDays(end, Math.max(days - 1, 0)));
+
+  if (granularity === 'week') {
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).map((bucketStart) => ({
+      key: format(startOfWeek(bucketStart, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+      start: startOfWeek(bucketStart, { weekStartsOn: 1 }),
+      end: endOfWeek(bucketStart, { weekStartsOn: 1 }),
+      label: formatBucketLabel(startOfWeek(bucketStart, { weekStartsOn: 1 }), 'week'),
+    }));
+  }
+
+  if (granularity === 'month') {
+    return eachMonthOfInterval({ start, end }).map((bucketStart) => ({
+      key: format(startOfMonth(bucketStart), 'yyyy-MM-dd'),
+      start: startOfMonth(bucketStart),
+      end: endOfMonth(bucketStart),
+      label: formatBucketLabel(startOfMonth(bucketStart), 'month'),
+    }));
+  }
+
+  if (granularity === 'quarter') {
+    return eachQuarterOfInterval({ start, end }).map((bucketStart) => ({
+      key: format(startOfQuarter(bucketStart), 'yyyy-MM-dd'),
+      start: startOfQuarter(bucketStart),
+      end: endOfQuarter(bucketStart),
+      label: formatBucketLabel(startOfQuarter(bucketStart), 'quarter'),
+    }));
+  }
+
+  return eachDayOfInterval({ start, end }).map((bucketStart) => ({
+    key: format(startOfDay(bucketStart), 'yyyy-MM-dd'),
+    start: startOfDay(bucketStart),
+    end: endOfDay(bucketStart),
+    label: formatBucketLabel(startOfDay(bucketStart), 'day'),
+  }));
+};
+
+const bucketSeriesByGranularity = (series, days, granularity) => {
+  const buckets = buildTimeBuckets(days, granularity);
+  const normalized = (series || [])
+    .map((point) => {
+      const parsed = parseDate(point?.date);
+      return parsed ? { when: parsed, count: Number(point?.count) || 0 } : null;
+    })
+    .filter(Boolean);
+
+  return buckets.map((bucket) => ({
+    date: bucket.key,
+    label: bucket.label,
+    count: normalized.reduce((sum, point) => (
+      point.when >= bucket.start && point.when <= bucket.end ? sum + point.count : sum
+    ), 0),
+  }));
+};
+
+const mergeBucketedSeries = (seriesMap, days, granularity) => {
+  const buckets = buildTimeBuckets(days, granularity);
+  const normalizedSeries = Object.fromEntries(
+    Object.entries(seriesMap || {}).map(([key, series]) => ([
+      key,
+      (series || [])
+        .map((point) => {
+          const parsed = parseDate(point?.date);
+          return parsed ? { when: parsed, count: Number(point?.count) || 0 } : null;
+        })
+        .filter(Boolean),
+    ])),
+  );
+
+  return buckets.map((bucket) => {
+    const row = { date: bucket.key, label: bucket.label };
+    Object.entries(normalizedSeries).forEach(([key, series]) => {
+      row[key] = series.reduce((sum, point) => (
+        point.when >= bucket.start && point.when <= bucket.end ? sum + point.count : sum
+      ), 0);
+    });
+    return row;
+  });
+};
+
+const chartHasData = (rows, keys) => (rows || []).some((row) => keys.some((key) => (Number(row?.[key]) || 0) > 0));
 
 const formatReportDate = (date, days) => {
   try { return format(parseISO(date), days <= 7 ? 'EEE' : 'MMM d'); }
@@ -630,6 +746,7 @@ const Analytics = () => {
   const [blueskyReport, setBlueskyReport]           = useState(null);
   const [loadingBlueskyReport, setLoadingBlueskyReport] = useState(false);
   const [blueskyTopMetric, setBlueskyTopMetric]     = useState('engagement');
+  const [blueskyChartGranularity, setBlueskyChartGranularity] = useState('day');
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
@@ -1038,37 +1155,35 @@ const Analytics = () => {
   const blueskySummary = blueskyReport?.summary || {};
   const blueskyAudience = blueskyReport?.audience || {};
   const blueskyPostsEngagement = blueskyReport?.posts_engagement || {};
-  const blueskyFollowerTimeline = (blueskyAudience.follower_growth || []).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
-  const blueskyMessagesMentionsTimeline = mergeSeriesByDate({
-    mentions: (blueskyAudience.mentions_received || []).map((point) => ({ ...point, label: formatReportDate(point.date, days) })),
-    messages: (blueskyAudience.messages_received || []).map((point) => ({ ...point, label: formatReportDate(point.date, days) })),
-  }).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
-  const blueskyPostsVsEngagementTimeline = mergeSeriesByDate({
-    posts: (blueskyPostsEngagement.posts_vs_engagement?.posts || []),
-    engagement: (blueskyPostsEngagement.posts_vs_engagement?.engagement || []),
-  }).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
-  const blueskyEngagementActionsTimeline = mergeSeriesByDate({
+  const blueskyFollowerTimeline = bucketSeriesByGranularity(
+    blueskyAudience.follower_growth || [],
+    days,
+    blueskyChartGranularity,
+  );
+  const blueskyMessagesMentionsTimeline = mergeBucketedSeries({
+    mentions: blueskyAudience.mentions_received || [],
+    messages: blueskyAudience.messages_received || [],
+  }, days, blueskyChartGranularity);
+  const blueskyPostsVsEngagementTimeline = mergeBucketedSeries({
+    posts: blueskyPostsEngagement.posts_vs_engagement?.posts || [],
+    engagement: blueskyPostsEngagement.posts_vs_engagement?.engagement || [],
+  }, days, blueskyChartGranularity);
+  const blueskyEngagementActionsTimeline = mergeBucketedSeries({
     likes: blueskyPostsEngagement.engagement_actions?.likes || [],
     replies: blueskyPostsEngagement.engagement_actions?.replies || [],
     reposts: blueskyPostsEngagement.engagement_actions?.reposts || [],
     quotes: blueskyPostsEngagement.engagement_actions?.quotes || [],
-  }).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
-  const blueskyPostEngagementTimeline = (blueskyPostsEngagement.post_engagement || []).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
+  }, days, blueskyChartGranularity);
+  const blueskyPostEngagementTimeline = bucketSeriesByGranularity(
+    blueskyPostsEngagement.post_engagement || [],
+    days,
+    blueskyChartGranularity,
+  );
+  const blueskyFollowerGrowthHasData = chartHasData(blueskyFollowerTimeline, ['count']);
+  const blueskyPostsVsEngagementHasData = chartHasData(blueskyPostsVsEngagementTimeline, ['posts', 'engagement']);
+  const blueskyPostEngagementHasData = chartHasData(blueskyPostEngagementTimeline, ['count']);
+  const blueskyEngagementActionsHasData = chartHasData(blueskyEngagementActionsTimeline, ['likes', 'replies', 'reposts', 'quotes']);
+  const blueskyMessagesMentionsHasData = chartHasData(blueskyMessagesMentionsTimeline, ['mentions', 'messages']);
   const blueskyTopPosts = [...(blueskyPostsEngagement.top_posts || [])].sort((a, b) => {
     const metricValue = (post, metric) => {
       if (metric === 'likes') return post.likes || 0;
@@ -1080,6 +1195,17 @@ const Analytics = () => {
     };
     return metricValue(b, blueskyTopMetric) - metricValue(a, blueskyTopMetric);
   });
+  const blueskyViewSelector = (
+    <select
+      value={blueskyChartGranularity}
+      onChange={(event) => setBlueskyChartGranularity(event.target.value)}
+      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+    >
+      {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  );
 
   return (
     <DashboardLayout hideSidebar>
@@ -1624,20 +1750,6 @@ const Analytics = () => {
               <>
                 {activeTab === 'bluesky-summary' && (
                   <div className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <ReportMetricTile
-                        title="Total Followers"
-                        value={blueskySummary.followers_total}
-                        subtitle="Current Bluesky followers"
-                      />
-                      <ReportMetricTile
-                        title="New Followers"
-                        value={blueskySummary.new_followers}
-                        subtitle={`Avg. per day: ${blueskySummary.avg_new_followers_per_day ?? 0}`}
-                        deltaPct={blueskySummary.new_followers_change_pct}
-                      />
-                    </div>
-
                     <ReportCard title="Audience Summary">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -1788,12 +1900,28 @@ const Analytics = () => {
 
                 {activeTab === 'bluesky-audience' && (
                   <div className="space-y-6">
-                    <ReportCard title="Follower Growth">
-                      {blueskyFollowerTimeline.length > 0 ? (
+                    <ReportCard title="Follower Growth" action={blueskyViewSelector}>
+                      {blueskyFollowerGrowthHasData ? (
                         <>
-                          <div className="flex items-center justify-between gap-3 mb-3 text-sm text-gray-600">
-                            <p>Total followers: <span className="font-semibold text-indigo-700">{fmt(blueskySummary.followers_total)}</span></p>
-                            <p className="text-rose-500 font-semibold">Avg. New Follower per day: {blueskySummary.avg_new_followers_per_day ?? 0}</p>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Followers</p>
+                              <p className="mt-2 text-3xl font-bold text-sky-600">{fmt(blueskySummary.followers_total)}</p>
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">New Followers</p>
+                              <p className="mt-2 text-3xl font-bold text-sky-600">{fmt(blueskySummary.new_followers)}</p>
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Follower Change</p>
+                              <p className={`mt-2 text-3xl font-bold ${pctPillColor(blueskySummary.new_followers_change_pct ?? 0)}`}>
+                                {pctLabel(blueskySummary.new_followers_change_pct) || '0%'}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Avg. New Followers / Day</p>
+                              <p className="mt-2 text-3xl font-bold text-sky-600">{blueskySummary.avg_new_followers_per_day ?? 0}</p>
+                            </div>
                           </div>
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyFollowerTimeline}>
@@ -1802,7 +1930,7 @@ const Analytics = () => {
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip content={<AudienceGrowthTooltip />} />
                               <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="count" name="New Followers" fill="#2f6690" radius={[6, 6, 0, 0]} />
+                              <Bar dataKey="count" name="New Followers" fill="#2f6690" radius={[6, 6, 0, 0]} barSize={32} minPointSize={2} />
                             </BarChart>
                           </ResponsiveContainer>
                         </>
@@ -1816,8 +1944,8 @@ const Analytics = () => {
                 {activeTab === 'bluesky-posts-engagement' && (
                   <div className="space-y-6">
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Number of Posts vs Engagement">
-                        {blueskyPostsVsEngagementTimeline.length > 0 ? (
+                      <ReportCard title="Number of Posts vs Engagement" action={blueskyViewSelector}>
+                        {blueskyPostsVsEngagementHasData ? (
                           <ResponsiveContainer width="100%" height={240}>
                             <ComposedChart data={blueskyPostsVsEngagementTimeline}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -1826,8 +1954,8 @@ const Analytics = () => {
                               <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
                               <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar yAxisId="left" dataKey="posts" name="Posts" fill="#2f6690" radius={[4, 4, 0, 0]} />
-                              <Line yAxisId="right" type="monotone" dataKey="engagement" name="Engagement" stroke="#22c55e" strokeWidth={2} dot={false} />
+                              <Bar yAxisId="left" dataKey="posts" name="Posts" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={28} minPointSize={2} />
+                              <Line yAxisId="right" type="monotone" dataKey="engagement" name="Engagement" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
                             </ComposedChart>
                           </ResponsiveContainer>
                         ) : (
@@ -1962,8 +2090,8 @@ const Analytics = () => {
                     </ReportCard>
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Post Engagement">
-                        {blueskyPostEngagementTimeline.length > 0 ? (
+                      <ReportCard title="Post Engagement" action={blueskyViewSelector}>
+                        {blueskyPostEngagementHasData ? (
                           <ResponsiveContainer width="100%" height={240}>
                             <BarChart data={blueskyPostEngagementTimeline}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -1971,7 +2099,7 @@ const Analytics = () => {
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
                               <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="count" name="Engagement" fill="#2f6690" radius={[6, 6, 0, 0]} />
+                              <Bar dataKey="count" name="Engagement" fill="#2f6690" radius={[6, 6, 0, 0]} barSize={32} minPointSize={2} />
                             </BarChart>
                           </ResponsiveContainer>
                         ) : (
@@ -2019,8 +2147,8 @@ const Analytics = () => {
                     </div>
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Engagement Actions">
-                        {blueskyEngagementActionsTimeline.length > 0 ? (
+                      <ReportCard title="Engagement Actions" action={blueskyViewSelector}>
+                        {blueskyEngagementActionsHasData ? (
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyEngagementActionsTimeline}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -2028,10 +2156,10 @@ const Analytics = () => {
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
                               <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="likes" name="Likes" fill="#2f6690" radius={[4, 4, 0, 0]} />
-                              <Bar dataKey="replies" name="Replies" fill="#d1d5db" radius={[4, 4, 0, 0]} />
-                              <Bar dataKey="reposts" name="Reposts" fill="#9ca3af" radius={[4, 4, 0, 0]} />
-                              <Bar dataKey="quotes" name="Quotes" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="likes" name="Likes" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
+                              <Bar dataKey="replies" name="Replies" fill="#d1d5db" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
+                              <Bar dataKey="reposts" name="Reposts" fill="#9ca3af" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
+                              <Bar dataKey="quotes" name="Quotes" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
                             </BarChart>
                           </ResponsiveContainer>
                         ) : (
@@ -2039,8 +2167,8 @@ const Analytics = () => {
                         )}
                       </ReportCard>
 
-                      <ReportCard title="Messages & Mentions Received">
-                        {blueskyMessagesMentionsTimeline.length > 0 ? (
+                      <ReportCard title="Messages & Mentions Received" action={blueskyViewSelector}>
+                        {blueskyMessagesMentionsHasData ? (
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyMessagesMentionsTimeline}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -2048,8 +2176,8 @@ const Analytics = () => {
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
                               <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="mentions" name="Mentions" fill="#2f6690" radius={[4, 4, 0, 0]} />
-                              <Bar dataKey="messages" name="Messages" fill="#d1d5db" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="mentions" name="Mentions" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
+                              <Bar dataKey="messages" name="Messages" fill="#d1d5db" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
                             </BarChart>
                           </ResponsiveContainer>
                         ) : (

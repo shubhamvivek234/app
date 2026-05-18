@@ -1148,6 +1148,7 @@ async def analytics_bluesky_report(
         except Exception as exc:
             _append_account_error(summary_errors, account, f"Failed to fetch Bluesky feed: {exc}")
             feed = []
+        feed = [_standardize_feed_post(post) for post in (feed or [])]
 
         if not feed:
             fallback_posts = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
