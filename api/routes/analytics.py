@@ -673,6 +673,7 @@ def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
         "media_url": post.get("media_url"),
         "video_url": post.get("video_url"),
         "media_type": post.get("media_type"),
+        "post_type": post.get("post_type") or post.get("media_type"),
         "timestamp": post.get("timestamp") or post.get("published_at") or post.get("created_at"),
         "permalink": post.get("permalink") or post.get("post_url") or post.get("url"),
         "likes": post.get("likes", metrics.get("likes")),
@@ -685,6 +686,7 @@ def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
             post.get("retweets", metrics.get("shares", metrics.get("reblogs", metrics.get("reposts", metrics.get("retweet_count"))))),
         ),
         "views": post.get("views", metrics.get("views", metrics.get("impressions"))),
+        "quotes": post.get("quotes", metrics.get("quotes", metrics.get("quoteCount"))),
     }
 
 
@@ -693,6 +695,7 @@ def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[
     comments = _metric_int(post.get("comments_count"))
     shares = _metric_int(post.get("shares"))
     views = _metric_int(post.get("views"))
+    quotes = _metric_int(post.get("quotes"))
     return {
         "id": post.get("id"),
         "platform": account.get("platform"),
@@ -709,6 +712,7 @@ def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[
             "comments": comments,
             "shares": shares,
             "views": views,
+            "quotes": quotes,
         },
     }
 
@@ -724,6 +728,84 @@ def _instagram_post_type(post: dict[str, Any]) -> str:
     if media_type == "IMAGE":
         return "image"
     return "text"
+
+
+def _bluesky_post_type(post: dict[str, Any]) -> str:
+    media_type = str(post.get("post_type") or post.get("media_type") or "").upper()
+    if media_type == "IMAGE":
+        return "image"
+    if media_type == "VIDEO":
+        return "video"
+    if media_type == "LINK":
+        return "link"
+    if media_type == "QUOTED":
+        return "quoted"
+    return "text"
+
+
+def _bluesky_post_engagement(post: dict[str, Any]) -> int:
+    return (
+        _metric_int(post.get("likes"))
+        + _metric_int(post.get("comments_count"))
+        + _metric_int(post.get("shares"))
+        + _metric_int(post.get("quotes"))
+    )
+
+
+def _bluesky_post_engagement_rate(post: dict[str, Any], followers_total: int) -> float:
+    if followers_total <= 0:
+        return 0.0
+    return round((_bluesky_post_engagement(post) / followers_total) * 100, 1)
+
+
+def _series_from_dates(points: list[datetime]) -> list[dict[str, int]]:
+    counts: dict[str, int] = {}
+    for point in points:
+        date_key = point.date().isoformat()
+        counts[date_key] = counts.get(date_key, 0) + 1
+    return [{"date": date_key, "count": counts[date_key]} for date_key in sorted(counts.keys())]
+
+
+def _bluesky_metric_series(
+    posts: list[dict[str, Any]],
+    current_since: datetime,
+    metric: str,
+) -> list[dict[str, int]]:
+    counts: dict[str, int] = {}
+    for post in posts:
+        ts = _parse_platform_timestamp(post.get("timestamp"))
+        if ts and ts < current_since:
+            continue
+        if not ts:
+            continue
+        date_key = ts.date().isoformat()
+        if metric == "posts":
+            value = 1
+        elif metric == "engagement":
+            value = _bluesky_post_engagement(post)
+        elif metric == "likes":
+            value = _metric_int(post.get("likes"))
+        elif metric == "replies":
+            value = _metric_int(post.get("comments_count"))
+        elif metric == "reposts":
+            value = _metric_int(post.get("shares"))
+        elif metric == "quotes":
+            value = _metric_int(post.get("quotes"))
+        else:
+            value = 0
+        counts[date_key] = counts.get(date_key, 0) + value
+    return [{"date": date_key, "count": counts[date_key]} for date_key in sorted(counts.keys())]
+
+
+def _merge_bluesky_metric_series(items: list[list[dict[str, int]]]) -> list[dict[str, int]]:
+    merged: dict[str, int] = {}
+    for series in items:
+        for point in series:
+            date_key = point.get("date")
+            if not date_key:
+                continue
+            merged[date_key] = merged.get(date_key, 0) + _metric_int(point.get("count"))
+    return [{"date": date_key, "count": merged[date_key]} for date_key in sorted(merged.keys())]
 
 
 def _percentage_change(current: int | None, previous: int | None) -> float | None:
@@ -989,6 +1071,324 @@ async def analytics_instagram_report(
         "demographics_errors": demographics_errors,
     }
     return report
+
+
+@router.get("/analytics/bluesky-report")
+async def analytics_bluesky_report(
+    current_user: CurrentUser,
+    db: DB,
+    days: int = Query(30, ge=1, le=365),
+    account_id: str | None = Query(None, alias="accountId"),
+):
+    accounts = await _load_social_accounts(db, current_user["user_id"], "bluesky", account_id)
+    if not accounts:
+        return {
+            "supported": False,
+            "message": "Connect a Bluesky account to view this report.",
+        }
+
+    from api.routes.accounts import _get_bluesky_access_token
+    from backend.app.social.bluesky import BlueskyAuth
+
+    auth = BlueskyAuth()
+    current_since = datetime.now(timezone.utc) - timedelta(days=days)
+    previous_since = current_since - timedelta(days=days)
+    all_posts: list[dict[str, Any]] = []
+    all_notifications: list[dict[str, Any]] = []
+    summary_errors: list[dict[str, str]] = []
+    message_errors: list[dict[str, str]] = []
+    follower_series: list[list[dict[str, int]]] = []
+    mention_series: list[list[dict[str, int]]] = []
+    message_series: list[list[dict[str, int]]] = []
+    total_followers = 0
+    total_following = 0
+    total_posts_count = 0
+    current_new_followers = 0
+    previous_new_followers = 0
+    current_mentions = 0
+    current_messages = 0
+
+    for account in accounts:
+        label = _account_error_label(account)
+        platform_user_id = account.get("platform_user_id")
+        encrypted_token = account.get("access_token")
+        if not platform_user_id or not encrypted_token:
+            _append_account_error(summary_errors, account, "Account is missing platform credentials.")
+            continue
+
+        try:
+            access_token = decrypt(encrypted_token)
+        except Exception:
+            _append_account_error(summary_errors, account, "Stored token could not be decrypted.")
+            continue
+
+        try:
+            profile = await auth.get_user_profile(
+                access_token,
+                platform_user_id,
+                fallback_actor=account.get("platform_username"),
+            )
+        except Exception:
+            try:
+                access_token = await _get_bluesky_access_token(db, account, force_refresh=True)
+                profile = await auth.get_user_profile(
+                    access_token,
+                    platform_user_id,
+                    fallback_actor=account.get("platform_username"),
+                )
+            except Exception as exc:
+                _append_account_error(summary_errors, account, _analytics_error_message("bluesky", exc))
+                continue
+
+        handle = profile.get("username") or account.get("platform_username") or platform_user_id
+        own_did = str(profile.get("id") or platform_user_id or "")
+
+        try:
+            feed = await auth.fetch_posts(access_token, handle, limit=100)
+        except Exception as exc:
+            _append_account_error(summary_errors, account, f"Failed to fetch Bluesky feed: {exc}")
+            feed = []
+
+        if not feed:
+            fallback_posts = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
+            feed = [_standardize_feed_post(post) for post in fallback_posts]
+
+        all_posts.extend(feed)
+        total_followers += _metric_int(profile.get("followers_count"))
+        total_following += _metric_int(profile.get("following_count"))
+        total_posts_count += _metric_int(profile.get("posts_count"))
+
+        notifications: list[dict[str, Any]] = []
+        cursor: str | None = None
+        oldest_seen: datetime | None = None
+        for _ in range(5):
+            page = await auth.list_notifications(access_token, limit=100, cursor=cursor)
+            batch = page.get("notifications") or []
+            if not batch:
+                break
+            notifications.extend(batch)
+            parsed_batch = [
+                _parse_platform_timestamp(item.get("indexedAt") or item.get("record", {}).get("createdAt"))
+                for item in batch
+            ]
+            parsed_batch = [dt for dt in parsed_batch if dt]
+            if parsed_batch:
+                batch_oldest = min(parsed_batch)
+                oldest_seen = batch_oldest if oldest_seen is None else min(oldest_seen, batch_oldest)
+            cursor = page.get("cursor")
+            if not cursor or (oldest_seen and oldest_seen < previous_since):
+                break
+
+        all_notifications.extend(notifications)
+
+        follow_dates_current: list[datetime] = []
+        mention_dates_current: list[datetime] = []
+        for notification in notifications:
+            reason = str(notification.get("reason") or "").lower()
+            ts = _parse_platform_timestamp(notification.get("indexedAt") or notification.get("record", {}).get("createdAt"))
+            if not ts:
+                continue
+            if current_since <= ts:
+                if reason == "follow":
+                    follow_dates_current.append(ts)
+                if reason == "mention":
+                    mention_dates_current.append(ts)
+            elif previous_since <= ts < current_since:
+                if reason == "follow":
+                    previous_new_followers += 1
+
+        current_new_followers += len(follow_dates_current)
+        current_mentions += len(mention_dates_current)
+        follower_series.append(_series_from_dates(follow_dates_current))
+        mention_series.append(_series_from_dates(mention_dates_current))
+
+        try:
+            convo_page = await auth.list_conversations(access_token, limit=15)
+            convos = convo_page.get("convos") or convo_page.get("conversations") or []
+            received_current: list[datetime] = []
+            for convo in convos[:10]:
+                convo_id = convo.get("id") or convo.get("convoId")
+                if not convo_id:
+                    continue
+                message_cursor: str | None = None
+                for _ in range(2):
+                    message_page = await auth.get_conversation_messages(access_token, convo_id, limit=50, cursor=message_cursor)
+                    messages = message_page.get("messages") or message_page.get("items") or []
+                    if not messages:
+                        break
+                    for message in messages:
+                        sender = (message.get("sender") or {}).get("did")
+                        if sender and own_did and sender == own_did:
+                            continue
+                        sent_at = _parse_platform_timestamp(message.get("sentAt") or message.get("createdAt"))
+                        if not sent_at or sent_at < current_since:
+                            continue
+                        received_current.append(sent_at)
+                    message_cursor = message_page.get("cursor")
+                    if not message_cursor:
+                        break
+            current_messages += len(received_current)
+            message_series.append(_series_from_dates(received_current))
+        except Exception as exc:
+            _append_account_error(message_errors, account, f"Messages are currently unavailable from Bluesky chat: {exc}")
+
+    if not total_followers and not all_posts and summary_errors:
+        return {
+            "supported": False,
+            "message": "Unable to load Bluesky analytics for the selected account.",
+            "errors": summary_errors,
+        }
+
+    current_posts = []
+    previous_posts = []
+    for post in all_posts:
+        ts = _parse_platform_timestamp(post.get("timestamp"))
+        if not ts:
+            current_posts.append(post)
+            continue
+        if ts >= current_since:
+            current_posts.append(post)
+        elif ts >= previous_since:
+            previous_posts.append(post)
+
+    current_total_engagement = sum(_bluesky_post_engagement(post) for post in current_posts)
+    previous_total_engagement = sum(_bluesky_post_engagement(post) for post in previous_posts)
+
+    type_order = ["image", "text", "video", "link", "quoted"]
+    type_labels = {
+        "image": "Image",
+        "text": "Text",
+        "video": "Video",
+        "link": "Link",
+        "quoted": "Quoted",
+    }
+    post_type_counts = {key: 0 for key in type_order}
+    engagement_by_type_bucket = {key: 0 for key in type_order}
+    posts_by_app: dict[str, dict[str, int]] = {}
+
+    for post in current_posts:
+        post_type = _bluesky_post_type(post)
+        post_type_counts[post_type] += 1
+        engagement_by_type_bucket[post_type] += _bluesky_post_engagement(post)
+        app_bucket = posts_by_app.setdefault("Bluesky", {"posts": 0, "likes": 0, "replies": 0, "reposts": 0, "quotes": 0})
+        app_bucket["posts"] += 1
+        app_bucket["likes"] += _metric_int(post.get("likes"))
+        app_bucket["replies"] += _metric_int(post.get("comments_count"))
+        app_bucket["reposts"] += _metric_int(post.get("shares"))
+        app_bucket["quotes"] += _metric_int(post.get("quotes"))
+
+    def _normalize_top_post(post: dict[str, Any]) -> dict[str, Any]:
+        likes = _metric_int(post.get("likes"))
+        replies = _metric_int(post.get("comments_count"))
+        reposts = _metric_int(post.get("shares"))
+        quotes = _metric_int(post.get("quotes"))
+        engagement = likes + replies + reposts + quotes
+        return {
+            "id": post.get("id"),
+            "content": post.get("content", ""),
+            "media_url": post.get("media_url"),
+            "media_type": _bluesky_post_type(post),
+            "timestamp": post.get("timestamp"),
+            "permalink": post.get("permalink"),
+            "likes": likes,
+            "replies": replies,
+            "reposts": reposts,
+            "quotes": quotes,
+            "engagement": engagement,
+            "engagement_rate": _bluesky_post_engagement_rate(post, total_followers),
+            "source_app": "Bluesky",
+        }
+
+    top_post = max(current_posts, key=_bluesky_post_engagement, default=None)
+    top_posts = [_normalize_top_post(post) for post in current_posts]
+
+    summary = {
+        "followers_total": total_followers,
+        "following_total": total_following,
+        "posts_total": total_posts_count,
+        "new_followers": current_new_followers,
+        "new_followers_change_pct": _percentage_change(current_new_followers, previous_new_followers),
+        "avg_new_followers_per_day": round(current_new_followers / max(days, 1), 2),
+        "post_summary": {
+            "total_posts": len(current_posts),
+            "avg_posts_per_day": round(len(current_posts) / max(days, 1), 2),
+            "total_engagement": current_total_engagement,
+            "avg_engagement_per_day": round(current_total_engagement / max(days, 1), 2),
+            "total_posts_change_pct": _percentage_change(len(current_posts), len(previous_posts)),
+            "total_engagement_change_pct": _percentage_change(current_total_engagement, previous_total_engagement),
+            "top_post": _normalize_top_post(top_post) if top_post else None,
+            "engagement_by_type": [
+                {
+                    "type": key,
+                    "label": type_labels[key],
+                    "engagement": engagement_by_type_bucket[key],
+                    "posts": post_type_counts[key],
+                }
+                for key in type_order
+            ],
+        },
+    }
+
+    audience = {
+        "follower_growth": _merge_date_counts(follower_series),
+        "mentions_received": _merge_date_counts(mention_series),
+        "messages_received": _merge_date_counts(message_series),
+        "mentions_total": current_mentions,
+        "messages_total": current_messages,
+        "messages_supported": not bool(message_errors),
+        "messages_message": (
+            None if not message_errors else "Bluesky mentions are shown, but direct-message analytics are currently unavailable for this account."
+        ),
+    }
+
+    posts_and_engagement = {
+        "posts_vs_engagement": {
+            "posts": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "posts")]),
+            "engagement": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "engagement")]),
+        },
+        "posts_by_type": [
+            {
+                "type": key,
+                "label": type_labels[key],
+                "posts": post_type_counts[key],
+            }
+            for key in type_order
+        ],
+        "top_posts": sorted(
+            top_posts,
+            key=lambda post: (post["engagement"], post["likes"], post["replies"], post["reposts"], post["quotes"]),
+            reverse=True,
+        )[:20],
+        "posts_by_publishing_apps": [
+            {"app": app_name, **metrics}
+            for app_name, metrics in posts_by_app.items()
+        ],
+        "post_engagement": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "engagement")]),
+        "engagement_by_type": [
+            {
+                "type": key,
+                "label": type_labels[key],
+                "engagement": engagement_by_type_bucket[key],
+            }
+            for key in type_order
+        ],
+        "engagement_actions": {
+            "likes": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "likes")]),
+            "replies": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "replies")]),
+            "reposts": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "reposts")]),
+            "quotes": _merge_bluesky_metric_series([_bluesky_metric_series(current_posts, current_since, "quotes")]),
+        },
+    }
+
+    return {
+        "supported": True,
+        "days": days,
+        "summary": summary,
+        "audience": audience,
+        "posts_engagement": posts_and_engagement,
+        "errors": summary_errors,
+        "message_errors": message_errors,
+    }
 
 
 @router.get("/analytics/overview")

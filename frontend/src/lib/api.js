@@ -842,3 +842,8 @@ export const getInstagramAnalyticsReport = async (params) => {
   const response = await axios.get(`${API}/analytics/instagram-report`, { headers: getAuthHeaders(), params });
   return response.data;
 };
+
+export const getBlueskyAnalyticsReport = async (params) => {
+  const response = await axios.get(`${API}/analytics/bluesky-report`, { headers: getAuthHeaders(), params });
+  return response.data;
+};

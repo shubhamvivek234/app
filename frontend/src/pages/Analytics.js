@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getAnalyticsOverview,
@@ -6,19 +6,20 @@ import {
   getAnalyticsEngagement,
   getAnalyticsDemographics,
   getInstagramAnalyticsReport,
+  getBlueskyAnalyticsReport,
   getSocialAccounts,
   getPublishFeed,
 } from '@/lib/api';
 import { toast } from 'sonner';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, Legend,
+  Tooltip, ResponsiveContainer, Cell, Legend, PieChart, Pie, Line, ComposedChart,
 } from 'recharts';
 import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
-  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines,
+  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import { format, parseISO, isValid } from 'date-fns';
@@ -158,6 +159,35 @@ const normalizePlatformOrder = (order) => {
   return [...valid, ...missing];
 };
 
+const mergeSeriesByDate = (seriesMap) => {
+  const dates = new Set();
+  Object.values(seriesMap || {}).forEach((series) => {
+    (series || []).forEach((point) => {
+      if (point?.date) dates.add(point.date);
+    });
+  });
+
+  return [...dates]
+    .sort()
+    .map((date) => {
+      const row = { date };
+      Object.entries(seriesMap || {}).forEach(([key, series]) => {
+        const point = (series || []).find((item) => item.date === date);
+        row[key] = point?.count || 0;
+      });
+      return row;
+    });
+};
+
+const formatReportDate = (date, days) => {
+  try { return format(parseISO(date), days <= 7 ? 'EEE' : 'MMM d'); }
+  catch { return date; }
+};
+
+const pctPillColor = (value) => (
+  value >= 0 ? 'text-emerald-600' : 'text-rose-600'
+);
+
 const aggregateAudienceSupport = (accounts) => ({
   followers_total: accounts.some((account) => account?.supports?.followers_total && account?.followers_count != null),
   followers_growth: accounts.some((account) => account?.supports?.followers_growth && account?.followers_growth != null),
@@ -263,6 +293,31 @@ const InstagramMetricTile = ({ title, value, subtitle, deltaPct }) => (
 );
 
 const InstagramDetailCard = ({ title, children, action }) => (
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+    <div className="flex items-center justify-between gap-3 mb-4">
+      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+      {action || null}
+    </div>
+    {children}
+  </div>
+);
+
+const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600' }) => (
+  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+    <div className="mt-3 flex items-end gap-3">
+      <p className={`text-5xl font-bold tracking-tight ${accent}`}>{fmt(value)}</p>
+      {deltaPct != null && (
+        <span className={`text-sm font-semibold ${pctPillColor(deltaPct)}`}>
+          {pctLabel(deltaPct)}
+        </span>
+      )}
+    </div>
+    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+  </div>
+);
+
+const ReportCard = ({ title, children, action }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
     <div className="flex items-center justify-between gap-3 mb-4">
       <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
@@ -572,6 +627,9 @@ const Analytics = () => {
   const [loadingDemos, setLoadingDemos]             = useState(false);
   const [instagramReport, setInstagramReport]       = useState(null);
   const [loadingInstagramReport, setLoadingInstagramReport] = useState(false);
+  const [blueskyReport, setBlueskyReport]           = useState(null);
+  const [loadingBlueskyReport, setLoadingBlueskyReport] = useState(false);
+  const [blueskyTopMetric, setBlueskyTopMetric]     = useState('engagement');
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
@@ -727,6 +785,35 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchInstagramReport]);
 
+  const fetchBlueskyReport = useCallback(async () => {
+    if (selectedPlatform !== 'bluesky') {
+      setBlueskyReport(null);
+      return;
+    }
+    setLoadingBlueskyReport(true);
+    try {
+      const data = await getBlueskyAnalyticsReport({
+        days,
+        accountId: selectedAccount,
+      });
+      setBlueskyReport(data);
+    } catch {
+      toast.error('Failed to load Bluesky report');
+      setBlueskyReport(null);
+    } finally {
+      setLoadingBlueskyReport(false);
+    }
+  }, [days, selectedPlatform, selectedAccount]);
+
+  useEffect(() => {
+    if (
+      selectedPlatform === 'bluesky'
+      && ['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)
+    ) {
+      fetchBlueskyReport();
+    }
+  }, [activeTab, selectedPlatform, fetchBlueskyReport]);
+
   useEffect(() => {
     if (selectedPlatform !== 'instagram' && activeTab === 'summary') {
       setActiveTab('overview');
@@ -736,6 +823,12 @@ const Analytics = () => {
   useEffect(() => {
     if (selectedPlatform === 'instagram' && activeTab === 'demographics') {
       setActiveTab('summary');
+    }
+  }, [selectedPlatform, activeTab]);
+
+  useEffect(() => {
+    if (selectedPlatform !== 'bluesky' && ['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)) {
+      setActiveTab('overview');
     }
   }, [selectedPlatform, activeTab]);
 
@@ -824,13 +917,25 @@ const Analytics = () => {
     ? accounts.some((a) => DEMOGRAPHICS_PLATFORMS.includes(a.platform))
     : DEMOGRAPHICS_PLATFORMS.includes(selectedPlatform);
   const showInstagramReportTab = selectedPlatform === 'instagram';
+  const showBlueskyReportTabs = selectedPlatform === 'bluesky';
 
-  const tabs = [
+  const tabs = useMemo(() => ([
     { id: 'overview', label: 'Overview' },
     { id: 'posts',    label: 'Posts'    },
     ...(showInstagramReportTab ? [{ id: 'summary', label: 'Summary' }] : []),
+    ...(showBlueskyReportTabs ? [
+      { id: 'bluesky-summary', label: 'Summary' },
+      { id: 'bluesky-audience', label: 'Audience' },
+      { id: 'bluesky-posts-engagement', label: 'Posts & Engagement' },
+    ] : []),
     ...(hasDemographics && selectedPlatform !== 'instagram' ? [{ id: 'demographics', label: 'Demographics' }] : []),
-  ];
+  ]), [showInstagramReportTab, showBlueskyReportTabs, hasDemographics, selectedPlatform]);
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab('overview');
+    }
+  }, [activeTab, tabs]);
 
   // Accounts for the currently selected platform
   const platformAccounts = accounts.filter(
@@ -927,12 +1032,54 @@ const Analytics = () => {
   const instagramAudience = instagramReport?.audience || {};
   const instagramFollowerTimeline = (instagramAudience.follower_growth || []).map((point) => ({
     ...point,
-    label: (() => {
-      try { return format(parseISO(point.date), days <= 7 ? 'EEE' : 'MMM d'); }
-      catch { return point.date; }
-    })(),
+    label: formatReportDate(point.date, days),
   }));
   const instagramDemographics = instagramAudience.demographics || {};
+  const blueskySummary = blueskyReport?.summary || {};
+  const blueskyAudience = blueskyReport?.audience || {};
+  const blueskyPostsEngagement = blueskyReport?.posts_engagement || {};
+  const blueskyFollowerTimeline = (blueskyAudience.follower_growth || []).map((point) => ({
+    ...point,
+    label: formatReportDate(point.date, days),
+  }));
+  const blueskyMessagesMentionsTimeline = mergeSeriesByDate({
+    mentions: (blueskyAudience.mentions_received || []).map((point) => ({ ...point, label: formatReportDate(point.date, days) })),
+    messages: (blueskyAudience.messages_received || []).map((point) => ({ ...point, label: formatReportDate(point.date, days) })),
+  }).map((point) => ({
+    ...point,
+    label: formatReportDate(point.date, days),
+  }));
+  const blueskyPostsVsEngagementTimeline = mergeSeriesByDate({
+    posts: (blueskyPostsEngagement.posts_vs_engagement?.posts || []),
+    engagement: (blueskyPostsEngagement.posts_vs_engagement?.engagement || []),
+  }).map((point) => ({
+    ...point,
+    label: formatReportDate(point.date, days),
+  }));
+  const blueskyEngagementActionsTimeline = mergeSeriesByDate({
+    likes: blueskyPostsEngagement.engagement_actions?.likes || [],
+    replies: blueskyPostsEngagement.engagement_actions?.replies || [],
+    reposts: blueskyPostsEngagement.engagement_actions?.reposts || [],
+    quotes: blueskyPostsEngagement.engagement_actions?.quotes || [],
+  }).map((point) => ({
+    ...point,
+    label: formatReportDate(point.date, days),
+  }));
+  const blueskyPostEngagementTimeline = (blueskyPostsEngagement.post_engagement || []).map((point) => ({
+    ...point,
+    label: formatReportDate(point.date, days),
+  }));
+  const blueskyTopPosts = [...(blueskyPostsEngagement.top_posts || [])].sort((a, b) => {
+    const metricValue = (post, metric) => {
+      if (metric === 'likes') return post.likes || 0;
+      if (metric === 'replies') return post.replies || 0;
+      if (metric === 'reposts') return post.reposts || 0;
+      if (metric === 'quotes') return post.quotes || 0;
+      if (metric === 'engagement_rate') return post.engagement_rate || 0;
+      return post.engagement || 0;
+    };
+    return metricValue(b, blueskyTopMetric) - metricValue(a, blueskyTopMetric);
+  });
 
   return (
     <DashboardLayout hideSidebar>
@@ -1434,6 +1581,486 @@ const Analytics = () => {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* ━━━━━━━━━━━━━━━━━ BLUESKY REPORT TABS ━━━━━━━━━━━━━━━━━━━━━ */}
+        {['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab) && selectedPlatform === 'bluesky' && (
+          <div className="space-y-6">
+            {!!blueskyReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {blueskyReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!!blueskyReport?.message_errors?.length && activeTab !== 'bluesky-summary' && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                {blueskyReport.message_errors.map((item, idx) => (
+                  <div key={`${item.account}-msg-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingBlueskyReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !blueskyReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">Bluesky report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {blueskyReport?.message || 'Connect a Bluesky account to see this report.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                {activeTab === 'bluesky-summary' && (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <ReportMetricTile
+                        title="Total Followers"
+                        value={blueskySummary.followers_total}
+                        subtitle="Current Bluesky followers"
+                      />
+                      <ReportMetricTile
+                        title="New Followers"
+                        value={blueskySummary.new_followers}
+                        subtitle={`Avg. per day: ${blueskySummary.avg_new_followers_per_day ?? 0}`}
+                        deltaPct={blueskySummary.new_followers_change_pct}
+                      />
+                    </div>
+
+                    <ReportCard title="Audience Summary">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Followers</p>
+                          <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(blueskySummary.followers_total)}</p>
+                          <p className="mt-2 text-sm text-gray-500">Total followers for the selected Bluesky account.</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">New Followers</p>
+                          <div className="mt-2 flex items-end gap-2">
+                            <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.new_followers)}</p>
+                            {blueskySummary.new_followers_change_pct != null && (
+                              <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.new_followers_change_pct)}`}>
+                                {pctLabel(blueskySummary.new_followers_change_pct)}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.avg_new_followers_per_day ?? 0}</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Following</p>
+                          <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(blueskySummary.following_total)}</p>
+                          <p className="mt-2 text-sm text-gray-500">Accounts followed by this Bluesky profile.</p>
+                        </div>
+                      </div>
+                    </ReportCard>
+
+                    <ReportCard title="Posts and Engagement Summary">
+                      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Posts</p>
+                            <div className="mt-2 flex items-end gap-2">
+                              <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.post_summary?.total_posts)}</p>
+                              {blueskySummary.post_summary?.total_posts_change_pct != null && (
+                                <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.post_summary.total_posts_change_pct)}`}>
+                                  {pctLabel(blueskySummary.post_summary.total_posts_change_pct)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.post_summary?.avg_posts_per_day ?? 0}</p>
+                          </div>
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagements</p>
+                            <div className="mt-2 flex items-end gap-2">
+                              <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.post_summary?.total_engagement)}</p>
+                              {blueskySummary.post_summary?.total_engagement_change_pct != null && (
+                                <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.post_summary.total_engagement_change_pct)}`}>
+                                  {pctLabel(blueskySummary.post_summary.total_engagement_change_pct)}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.post_summary?.avg_engagement_per_day ?? 0}</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Post</p>
+                          {blueskySummary.post_summary?.top_post ? (
+                            <div className="space-y-3">
+                              {blueskySummary.post_summary.top_post.media_url ? (
+                                <img
+                                  src={blueskySummary.post_summary.top_post.media_url}
+                                  alt=""
+                                  className="w-full h-44 rounded-xl object-cover"
+                                  onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <div className="w-full h-44 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
+                                  No media preview
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span className="font-semibold">{blueskySummary.post_summary.top_post.source_app}</span>
+                                {blueskySummary.post_summary.top_post.timestamp && (
+                                  <span>{formatReportDate(blueskySummary.post_summary.top_post.timestamp, days)}</span>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-700 line-clamp-4">
+                                {blueskySummary.post_summary.top_post.content || '(no caption)'}
+                              </p>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
+                                <span>Likes</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.likes)}</span>
+                                <span>Replies</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.replies)}</span>
+                                <span>Reposts</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.reposts)}</span>
+                                <span>Quotes</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.quotes)}</span>
+                                <span>Engagements</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.engagement)}</span>
+                                <span>Engagement Rate</span><span className="text-right font-semibold">{blueskySummary.post_summary.top_post.engagement_rate}%</span>
+                              </div>
+                              {blueskySummary.post_summary.top_post.permalink && (
+                                <a
+                                  href={blueskySummary.post_summary.top_post.permalink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                                >
+                                  View on Bluesky <FaExternalLinkAlt className="text-xs" />
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            chartEmptyState('No Bluesky post engagement data is available for this period.')
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagements by Post Type</p>
+                          {(blueskySummary.post_summary?.engagement_by_type || []).some((item) => item.engagement > 0) ? (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
+                              <ResponsiveContainer width="100%" height={220}>
+                                <PieChart>
+                                  <Pie
+                                    data={(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0)}
+                                    dataKey="engagement"
+                                    nameKey="label"
+                                    innerRadius={55}
+                                    outerRadius={85}
+                                    paddingAngle={2}
+                                  >
+                                    {(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0).map((entry, index) => (
+                                      <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
+                                    ))}
+                                  </Pie>
+                                  <Tooltip />
+                                </PieChart>
+                              </ResponsiveContainer>
+                              <div className="space-y-3">
+                                {(blueskySummary.post_summary?.engagement_by_type || []).map((item) => {
+                                  const total = blueskySummary.post_summary?.total_engagement || 1;
+                                  const pct = Math.round(((item.engagement || 0) / total) * 100);
+                                  return (
+                                    <div key={item.type} className="flex items-center justify-between text-sm gap-3">
+                                      <span className="font-medium text-gray-700">{item.label}</span>
+                                      <span className="text-gray-500">{fmt(item.engagement)} • {pct}%</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            chartEmptyState('No Bluesky posts were returned for this period.')
+                          )}
+                        </div>
+                      </div>
+                    </ReportCard>
+                  </div>
+                )}
+
+                {activeTab === 'bluesky-audience' && (
+                  <div className="space-y-6">
+                    <ReportCard title="Follower Growth">
+                      {blueskyFollowerTimeline.length > 0 ? (
+                        <>
+                          <div className="flex items-center justify-between gap-3 mb-3 text-sm text-gray-600">
+                            <p>Total followers: <span className="font-semibold text-indigo-700">{fmt(blueskySummary.followers_total)}</span></p>
+                            <p className="text-rose-500 font-semibold">Avg. New Follower per day: {blueskySummary.avg_new_followers_per_day ?? 0}</p>
+                          </div>
+                          <ResponsiveContainer width="100%" height={260}>
+                            <BarChart data={blueskyFollowerTimeline}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <Tooltip content={<AudienceGrowthTooltip />} />
+                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                              <Bar dataKey="count" name="New Followers" fill="#2f6690" radius={[6, 6, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </>
+                      ) : (
+                        chartEmptyState('Follower growth data is not available for this Bluesky account right now.')
+                      )}
+                    </ReportCard>
+                  </div>
+                )}
+
+                {activeTab === 'bluesky-posts-engagement' && (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <ReportCard title="Number of Posts vs Engagement">
+                        {blueskyPostsVsEngagementTimeline.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={240}>
+                            <ComposedChart data={blueskyPostsVsEngagementTimeline}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                              <Bar yAxisId="left" dataKey="posts" name="Posts" fill="#2f6690" radius={[4, 4, 0, 0]} />
+                              <Line yAxisId="right" type="monotone" dataKey="engagement" name="Engagement" stroke="#22c55e" strokeWidth={2} dot={false} />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          chartEmptyState()
+                        )}
+                      </ReportCard>
+
+                      <ReportCard title="Posts by Type">
+                        {(blueskyPostsEngagement.posts_by_type || []).some((item) => item.posts > 0) ? (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
+                            <ResponsiveContainer width="100%" height={220}>
+                              <PieChart>
+                                <Pie
+                                  data={(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0)}
+                                  dataKey="posts"
+                                  nameKey="label"
+                                  innerRadius={55}
+                                  outerRadius={85}
+                                  paddingAngle={2}
+                                >
+                                  {(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0).map((entry, index) => (
+                                    <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip />
+                              </PieChart>
+                            </ResponsiveContainer>
+                            <div className="space-y-3">
+                              {(blueskyPostsEngagement.posts_by_type || []).map((item) => {
+                                const total = (blueskySummary.post_summary?.total_posts || 1);
+                                const pct = Math.round(((item.posts || 0) / total) * 100);
+                                return (
+                                  <div key={item.type} className="flex items-center justify-between text-sm gap-3">
+                                    <span className="font-medium text-gray-700">{item.label}</span>
+                                    <span className="text-gray-500">{fmt(item.posts)} • {pct}%</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          chartEmptyState()
+                        )}
+                      </ReportCard>
+                    </div>
+
+                    <ReportCard
+                      title="Top Posts By"
+                      action={(
+                        <select
+                          value={blueskyTopMetric}
+                          onChange={(event) => setBlueskyTopMetric(event.target.value)}
+                          className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+                        >
+                          <option value="likes">Likes</option>
+                          <option value="replies">Replies</option>
+                          <option value="reposts">Reposts</option>
+                          <option value="quotes">Quotes</option>
+                          <option value="engagement">Engagement</option>
+                          <option value="engagement_rate">Engagement Rate</option>
+                        </select>
+                      )}
+                    >
+                      {blueskyTopPosts.length > 0 ? (
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                          {blueskyTopPosts.slice(0, 6).map((post) => (
+                            <div key={post.id} className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                <span className="font-semibold">{post.source_app}</span>
+                                {post.timestamp && <span>{formatReportDate(post.timestamp, days)}</span>}
+                              </div>
+                              {post.media_url ? (
+                                <img
+                                  src={post.media_url}
+                                  alt=""
+                                  className="w-full h-28 rounded-xl object-cover"
+                                  onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <div className="w-full h-28 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
+                                  No media preview
+                                </div>
+                              )}
+                              <p className="text-sm text-gray-700 line-clamp-3">{post.content || '(no caption)'}</p>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
+                                <span>Likes</span><span className="text-right font-semibold">{fmt(post.likes)}</span>
+                                <span>Replies</span><span className="text-right font-semibold">{fmt(post.replies)}</span>
+                                <span>Reposts</span><span className="text-right font-semibold">{fmt(post.reposts)}</span>
+                                <span>Quotes</span><span className="text-right font-semibold">{fmt(post.quotes)}</span>
+                                <span>Engagement</span><span className="text-right font-semibold">{fmt(post.engagement)}</span>
+                                <span>Engagement Rate</span><span className="text-right font-semibold">{post.engagement_rate}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        chartEmptyState()
+                      )}
+                    </ReportCard>
+
+                    <ReportCard title="Posts by Publishing Apps">
+                      {(blueskyPostsEngagement.posts_by_publishing_apps || []).length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                                <th className="text-left py-2 pr-4">Apps</th>
+                                <th className="text-right py-2 pr-4">Posts</th>
+                                <th className="text-right py-2 pr-4">Likes</th>
+                                <th className="text-right py-2 pr-4">Replies</th>
+                                <th className="text-right py-2 pr-4">Reposts</th>
+                                <th className="text-right py-2">Quotes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(blueskyPostsEngagement.posts_by_publishing_apps || []).map((item) => (
+                                <tr key={item.app} className="border-b border-gray-50">
+                                  <td className="py-2.5 pr-4 font-medium text-gray-700">{item.app}</td>
+                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.posts)}</td>
+                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.likes)}</td>
+                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.replies)}</td>
+                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.reposts)}</td>
+                                  <td className="text-right py-2.5 text-gray-600">{fmt(item.quotes)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        chartEmptyState()
+                      )}
+                    </ReportCard>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <ReportCard title="Post Engagement">
+                        {blueskyPostEngagementTimeline.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={240}>
+                            <BarChart data={blueskyPostEngagementTimeline}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                              <Bar dataKey="count" name="Engagement" fill="#2f6690" radius={[6, 6, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          chartEmptyState()
+                        )}
+                      </ReportCard>
+
+                      <ReportCard title="Engagement by Post Type">
+                        {(blueskyPostsEngagement.engagement_by_type || []).some((item) => item.engagement > 0) ? (
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
+                            <ResponsiveContainer width="100%" height={220}>
+                              <PieChart>
+                                <Pie
+                                  data={(blueskyPostsEngagement.engagement_by_type || []).filter((item) => item.engagement > 0)}
+                                  dataKey="engagement"
+                                  nameKey="label"
+                                  innerRadius={55}
+                                  outerRadius={85}
+                                  paddingAngle={2}
+                                >
+                                  {(blueskyPostsEngagement.engagement_by_type || []).filter((item) => item.engagement > 0).map((entry, index) => (
+                                    <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip />
+                              </PieChart>
+                            </ResponsiveContainer>
+                            <div className="space-y-3">
+                              {(blueskyPostsEngagement.engagement_by_type || []).map((item) => {
+                                const total = blueskySummary.post_summary?.total_engagement || 1;
+                                const pct = Math.round(((item.engagement || 0) / total) * 100);
+                                return (
+                                  <div key={item.type} className="flex items-center justify-between text-sm gap-3">
+                                    <span className="font-medium text-gray-700">{item.label}</span>
+                                    <span className="text-gray-500">{fmt(item.engagement)} • {pct}%</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          chartEmptyState()
+                        )}
+                      </ReportCard>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <ReportCard title="Engagement Actions">
+                        {blueskyEngagementActionsTimeline.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={260}>
+                            <BarChart data={blueskyEngagementActionsTimeline}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                              <Bar dataKey="likes" name="Likes" fill="#2f6690" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="replies" name="Replies" fill="#d1d5db" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="reposts" name="Reposts" fill="#9ca3af" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="quotes" name="Quotes" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          chartEmptyState()
+                        )}
+                      </ReportCard>
+
+                      <ReportCard title="Messages & Mentions Received">
+                        {blueskyMessagesMentionsTimeline.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={260}>
+                            <BarChart data={blueskyMessagesMentionsTimeline}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                              <Bar dataKey="mentions" name="Mentions" fill="#2f6690" radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="messages" name="Messages" fill="#d1d5db" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          chartEmptyState(blueskyAudience.messages_message || 'There is no data available currently for this report.')
+                        )}
+                      </ReportCard>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
