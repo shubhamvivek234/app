@@ -136,6 +136,14 @@ export const AuthProvider = ({ children }) => {
         })
         .catch(err => {
           console.warn('[AuthContext] Failed to fetch profile with existing token:', err?.message);
+          const status = err?.response?.status;
+          if (status === 401 || status === 403) {
+            clearAuthData();
+            setToken(null);
+            setUser(null);
+            setAuthIssue(null);
+            return;
+          }
           if (err?.code === 'ERR_NETWORK' || err?.code === 'ECONNREFUSED') {
             toast.error('Cannot reach server. Please make sure the backend is running.');
           } else {

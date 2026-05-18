@@ -88,6 +88,8 @@ export const googleSignIn = async () => {
 
   try {
     assertFirebaseAuthConfig();
+    // Prevent stale backend-only sessions from interfering with a fresh Firebase login.
+    clearAuthData();
     if (useRedirectOnly) {
       console.log('[AuthService] Starting Google sign-in with redirect...');
       await signInWithRedirect(auth, googleProvider);
