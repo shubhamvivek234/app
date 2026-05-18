@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getAnalyticsOverview,
@@ -85,6 +85,8 @@ const ALL_PLATFORMS = [
   'tiktok', 'pinterest', 'threads', 'bluesky', 'snapchat', 'reddit', 'discord', 'mastodon',
 ];
 
+const PLATFORM_ORDER_STORAGE_KEY_PREFIX = 'analytics_platform_order_v1';
+
 const PLATFORM_NOTICES = {
   linkedin: 'LinkedIn can show followers, follower growth, and organization impressions when the connected account has the required analytics scopes and page admin access. Post engagement metrics remain limited.',
   snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
@@ -148,6 +150,13 @@ const chartEmptyState = (label = 'No data available currently for this report.')
     {label}
   </div>
 );
+
+const normalizePlatformOrder = (order) => {
+  const incoming = Array.isArray(order) ? order : [];
+  const valid = incoming.filter((platform, index) => ALL_PLATFORMS.includes(platform) && incoming.indexOf(platform) === index);
+  const missing = ALL_PLATFORMS.filter((platform) => !valid.includes(platform));
+  return [...valid, ...missing];
+};
 
 const aggregateAudienceSupport = (accounts) => ({
   followers_total: accounts.some((account) => account?.supports?.followers_total && account?.followers_count != null),
@@ -453,7 +462,16 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
 };
 
 // Platform sidebar listing ALL platforms
-const PlatformSidebar = ({ accounts, selectedPlatform, onSelect }) => {
+const PlatformSidebar = ({
+  accounts,
+  selectedPlatform,
+  onSelect,
+  platformOrder,
+  draggingPlatform,
+  onDragStart,
+  onDragEnter,
+  onDragEnd,
+}) => {
   const accountsByPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
     acc[a.platform].push(a);
@@ -477,7 +495,7 @@ const PlatformSidebar = ({ accounts, selectedPlatform, onSelect }) => {
       </button>
 
       {/* Each platform row */}
-      {ALL_PLATFORMS.map((plat) => {
+      {platformOrder.map((plat, index) => {
         const platAccounts = accountsByPlatform[plat] || [];
         const isConnected  = platAccounts.length > 0;
         const isActive     = selectedPlatform === plat;
@@ -486,13 +504,24 @@ const PlatformSidebar = ({ accounts, selectedPlatform, onSelect }) => {
         return (
           <button
             key={plat}
+            draggable
+            onDragStart={() => onDragStart(index)}
+            onDragEnter={() => onDragEnter(index)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              onDragEnd();
+            }}
+            onDragEnd={onDragEnd}
             onClick={() => onSelect(plat)}
             className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
               ${isActive
                 ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
                 : 'text-gray-600 hover:bg-gray-50 border-transparent'}
-              ${!isConnected ? 'opacity-40' : ''}`}
+              ${!isConnected ? 'opacity-40' : ''}
+              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50' : ''}`}
           >
+            <span className="text-gray-300 text-xs leading-none cursor-grab select-none" aria-hidden="true">⋮⋮</span>
             {Icon && <Icon size={17} style={{ color, flexShrink: 0 }} />}
             <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
             {isConnected && (
@@ -534,6 +563,13 @@ const Analytics = () => {
   const [loadingDemos, setLoadingDemos]             = useState(false);
   const [instagramReport, setInstagramReport]       = useState(null);
   const [loadingInstagramReport, setLoadingInstagramReport] = useState(false);
+  const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
+  const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
+  const [draggingPlatform, setDraggingPlatform] = useState(null);
+  const dragPlatformIdx = useRef(null);
+  const dragOverPlatformIdx = useRef(null);
+
+  const platformOrderStorageKey = `${PLATFORM_ORDER_STORAGE_KEY_PREFIX}_${accounts.find((account) => account?.user_id)?.user_id || 'default'}`;
 
   // Fetch accounts once
   useEffect(() => {
@@ -541,6 +577,25 @@ const Analytics = () => {
       .then(setAccounts)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(platformOrderStorageKey);
+      const saved = raw ? JSON.parse(raw) : null;
+      setPlatformOrder(normalizePlatformOrder(saved));
+    } catch {
+      setPlatformOrder(ALL_PLATFORMS);
+    } finally {
+      setLoadedPlatformOrder(true);
+    }
+  }, [platformOrderStorageKey]);
+
+  useEffect(() => {
+    if (!loadedPlatformOrder) return;
+    try {
+      window.localStorage.setItem(platformOrderStorageKey, JSON.stringify(normalizePlatformOrder(platformOrder)));
+    } catch {}
+  }, [loadedPlatformOrder, platformOrderStorageKey, platformOrder]);
 
   // Fetch overview + timeline whenever filters change
   const fetchOverview = useCallback(async () => {
@@ -689,6 +744,39 @@ const Analytics = () => {
   // Account dropdown selection
   const handleAccountChange = (accountId) => {
     setSelectedAccount(accountId || null);
+  };
+
+  const handlePlatformDragStart = (index) => {
+    dragPlatformIdx.current = index;
+    setDraggingPlatform(platformOrder[index] || null);
+  };
+
+  const handlePlatformDragEnter = (index) => {
+    dragOverPlatformIdx.current = index;
+  };
+
+  const handlePlatformDragEnd = () => {
+    if (dragPlatformIdx.current == null || dragOverPlatformIdx.current == null) {
+      dragPlatformIdx.current = null;
+      dragOverPlatformIdx.current = null;
+      setDraggingPlatform(null);
+      return;
+    }
+    if (dragPlatformIdx.current === dragOverPlatformIdx.current) {
+      dragPlatformIdx.current = null;
+      dragOverPlatformIdx.current = null;
+      setDraggingPlatform(null);
+      return;
+    }
+    setPlatformOrder((current) => {
+      const next = [...current];
+      const [moved] = next.splice(dragPlatformIdx.current, 1);
+      next.splice(dragOverPlatformIdx.current, 0, moved);
+      return normalizePlatformOrder(next);
+    });
+    dragPlatformIdx.current = null;
+    dragOverPlatformIdx.current = null;
+    setDraggingPlatform(null);
   };
 
   // Sort posts
@@ -848,6 +936,11 @@ const Analytics = () => {
             accounts={accounts}
             selectedPlatform={selectedPlatform}
             onSelect={handlePlatformSelect}
+            platformOrder={platformOrder}
+            draggingPlatform={draggingPlatform}
+            onDragStart={handlePlatformDragStart}
+            onDragEnter={handlePlatformDragEnter}
+            onDragEnd={handlePlatformDragEnd}
           />
         </aside>
 
@@ -905,7 +998,7 @@ const Analytics = () => {
           >
             All
           </button>
-          {accounts.length > 0 && [...new Set(accounts.map((a) => a.platform))].map((plat) => (
+          {platformOrder.filter((plat) => accounts.some((account) => account.platform === plat)).map((plat) => (
             <PlatformPill
               key={plat}
               platform={plat}
