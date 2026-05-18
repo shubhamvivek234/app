@@ -443,6 +443,72 @@ const ReportCard = ({ title, children, action }) => (
   </div>
 );
 
+const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, emptyLabel = 'No data available currently for this report.' }) => {
+  const palette = ['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'];
+  const positiveItems = (items || []).filter((item) => Number(item?.[valueKey]) > 0);
+  const computedTotal = totalValue ?? positiveItems.reduce((sum, item) => sum + (Number(item?.[valueKey]) || 0), 0);
+
+  if (!positiveItems.length) return chartEmptyState(emptyLabel);
+
+  return (
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)] xl:items-center">
+      <div className="flex items-center justify-center">
+        <div className="relative h-[240px] w-[240px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={positiveItems}
+                dataKey={valueKey}
+                nameKey="label"
+                cx="50%"
+                cy="50%"
+                innerRadius={66}
+                outerRadius={96}
+                paddingAngle={2}
+              >
+                {positiveItems.map((entry, index) => (
+                  <Cell key={entry.type || entry.label} fill={palette[index % palette.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span className="text-4xl font-semibold leading-none text-gray-700">{fmt(computedTotal)}</span>
+            <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] gap-x-4 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+          <span>Type</span>
+          <span className="text-right">Engagement</span>
+          <span className="text-right">%</span>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {(items || []).map((item, index) => {
+            const value = Number(item?.[valueKey]) || 0;
+            const pct = computedTotal > 0 ? Math.round((value / computedTotal) * 100) : 0;
+            const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
+            const color = positiveIndex >= 0 ? palette[positiveIndex % palette.length] : '#d1d5db';
+            return (
+              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] items-center gap-x-4 py-4 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                  <span className={`truncate font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
+                </div>
+                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{fmt(value)}</span>
+                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{pct}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Post card for the Posts tab
 const PostCard = ({ post }) => {
   const plat = post.platform || 'unknown';
@@ -1857,45 +1923,12 @@ const Analytics = () => {
 
                         <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 min-w-0 overflow-hidden">
                           <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagements by Post Type</p>
-                          {(blueskySummary.post_summary?.engagement_by_type || []).some((item) => item.engagement > 0) ? (
-                            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,220px)_minmax(0,1fr)] items-center">
-                              <div className="min-w-0 flex items-center justify-center">
-                              <ResponsiveContainer width="100%" height={200}>
-                                <PieChart>
-                                  <Pie
-                                    data={(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0)}
-                                    dataKey="engagement"
-                                    nameKey="label"
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={44}
-                                    outerRadius={68}
-                                    paddingAngle={2}
-                                  >
-                                    {(blueskySummary.post_summary?.engagement_by_type || []).filter((item) => item.engagement > 0).map((entry, index) => (
-                                      <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
-                                    ))}
-                                  </Pie>
-                                  <Tooltip />
-                                </PieChart>
-                              </ResponsiveContainer>
-                              </div>
-                              <div className="space-y-3 min-w-0">
-                                {(blueskySummary.post_summary?.engagement_by_type || []).map((item) => {
-                                  const total = blueskySummary.post_summary?.total_engagement || 1;
-                                  const pct = Math.round(((item.engagement || 0) / total) * 100);
-                                  return (
-                                    <div key={item.type} className="flex items-center justify-between text-sm gap-3">
-                                      <span className="font-medium text-gray-700">{item.label}</span>
-                                      <span className="text-gray-500">{fmt(item.engagement)} • {pct}%</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : (
-                            chartEmptyState('No Bluesky posts were returned for this period.')
-                          )}
+                          <ReportDonutBreakdown
+                            items={blueskySummary.post_summary?.engagement_by_type || []}
+                            valueKey="engagement"
+                            totalValue={blueskySummary.post_summary?.total_engagement || 0}
+                            emptyLabel="No Bluesky posts were returned for this period."
+                          />
                         </div>
                       </div>
                     </ReportCard>
@@ -2112,41 +2145,11 @@ const Analytics = () => {
                       </ReportCard>
 
                       <ReportCard title="Engagement by Post Type">
-                        {(blueskyPostsEngagement.engagement_by_type || []).some((item) => item.engagement > 0) ? (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-                            <ResponsiveContainer width="100%" height={220}>
-                              <PieChart>
-                                <Pie
-                                  data={(blueskyPostsEngagement.engagement_by_type || []).filter((item) => item.engagement > 0)}
-                                  dataKey="engagement"
-                                  nameKey="label"
-                                  innerRadius={55}
-                                  outerRadius={85}
-                                  paddingAngle={2}
-                                >
-                                  {(blueskyPostsEngagement.engagement_by_type || []).filter((item) => item.engagement > 0).map((entry, index) => (
-                                    <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip />
-                              </PieChart>
-                            </ResponsiveContainer>
-                            <div className="space-y-3">
-                              {(blueskyPostsEngagement.engagement_by_type || []).map((item) => {
-                                const total = blueskySummary.post_summary?.total_engagement || 1;
-                                const pct = Math.round(((item.engagement || 0) / total) * 100);
-                                return (
-                                  <div key={item.type} className="flex items-center justify-between text-sm gap-3">
-                                    <span className="font-medium text-gray-700">{item.label}</span>
-                                    <span className="text-gray-500">{fmt(item.engagement)} • {pct}%</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          chartEmptyState()
-                        )}
+                        <ReportDonutBreakdown
+                          items={blueskyPostsEngagement.engagement_by_type || []}
+                          valueKey="engagement"
+                          totalValue={blueskySummary.post_summary?.total_engagement || 0}
+                        />
                       </ReportCard>
                     </div>
 
