@@ -484,9 +484,7 @@ const ConnectedAccounts = () => {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <BrandMarkLoader />
-        </div>
+        <BrandMarkLoader overlay />
       </DashboardLayout>
     );
   }

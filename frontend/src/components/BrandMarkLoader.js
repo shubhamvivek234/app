@@ -1,8 +1,13 @@
 import React from 'react';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
-const BrandMarkLoader = ({ className = '', size = 'xl' }) => (
-  <div className={`flex items-center justify-center ${className}`} aria-label="Loading">
+const BrandMarkLoader = ({ className = '', size = 'xl', overlay = false }) => (
+  <div
+    className={`${overlay
+      ? 'fixed inset-0 z-[120] flex items-center justify-center bg-offwhite/95 dark:bg-gray-950/95 backdrop-blur-sm'
+      : 'flex items-center justify-center'} ${className}`}
+    aria-label="Loading"
+  >
     <style>{`
       @keyframes unravlerMarkFloat {
         0%, 100% {
