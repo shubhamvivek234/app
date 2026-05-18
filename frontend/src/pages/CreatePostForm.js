@@ -375,6 +375,7 @@ const createDefaultAccountOverrides = () => ({
   tiktokAllowStitch: undefined,
   tiktokAllowComments: undefined,
   altTexts: undefined,
+  poll: undefined,
 });
 
 const getAccountDisplayName = (account) =>
@@ -709,6 +710,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     }));
   }, []);
 
+  const setAccountOverrideField = useCallback((accountId, field, value) => {
+    setAccountOverrides((prev) => {
+      const next = { ...prev };
+      const current = { ...(next[accountId] || {}) };
+      if (value === undefined) {
+        delete current[field];
+      } else {
+        current[field] = value;
+      }
+      if (Object.keys(current).length === 0) {
+        delete next[accountId];
+      } else {
+        next[accountId] = current;
+      }
+      return next;
+    });
+  }, []);
+
   const resetAccountOverride = useCallback((accountId) => {
     setAccountOverrides((prev) => {
       const next = { ...prev };
@@ -742,6 +761,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       : fallbackValue
   ), [getAccountOverride, hasAccountFieldOverride]);
 
+  const getEffectivePollForAccount = useCallback((accountId) => (
+    getEffectiveValueForAccount(accountId, 'poll', null) || null
+  ), [getEffectiveValueForAccount]);
+
   const clearDerivedPlatformMediaOverrides = useCallback(() => {
     setAccountOverrides((prev) => {
       const next = {};
@@ -771,10 +794,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           caption: getEffectiveCaptionForAccount(account.id),
           media: getEffectiveMediaForAccount(account.id),
           postFormat,
+          poll: getEffectivePollForAccount(account.id),
+          hasLinkedinDocument: Boolean(getEffectiveValueForAccount(account.id, 'linkedinDocumentUrl', linkedinDocumentUrl)),
         });
         return acc;
       }, {})
-  ), [availableAccounts, getEffectiveCaptionForAccount, getEffectiveMediaForAccount, postFormat, selectedAccounts]);
+  ), [availableAccounts, getEffectiveCaptionForAccount, getEffectiveMediaForAccount, getEffectivePollForAccount, getEffectiveValueForAccount, linkedinDocumentUrl, postFormat, selectedAccounts]);
 
   const blockingAccounts = selectedAccounts.filter(
     (accountId) => (accountValidation[accountId]?.errors || []).length > 0
@@ -1256,13 +1281,17 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       .map((accountId) => getEffectiveCaptionForAccount(accountId))
       .find((content) => Boolean(content?.trim())) || '';
     const primaryContent = commonCaption || firstAccountContent || (primaryAccountId ? getEffectiveCaptionForAccount(primaryAccountId) : '') || '';
+    const hasPoll = selectedAccounts.some((accountId) => Boolean(getEffectivePollForAccount(accountId)?.question));
+    const hasAnyMedia = uploadedMedia.length > 0 || selectedAccounts.some((accountId) => getEffectiveMediaForAccount(accountId).length > 0);
     const hasContent = Boolean(primaryContent.trim())
       || selectedAccounts.some((accountId) => {
         const caption = getEffectiveCaptionForAccount(accountId);
         const media = getEffectiveMediaForAccount(accountId);
-        return Boolean(caption.trim()) || media.length > 0;
+        const poll = getEffectivePollForAccount(accountId);
+        return Boolean(caption.trim()) || media.length > 0 || Boolean(poll?.question);
       })
-      || uploadedMedia.length > 0;
+      || uploadedMedia.length > 0
+      || hasPoll;
 
     if (!hasContent) {
       toast.error('Please enter some content or upload media before posting');
@@ -1341,6 +1370,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             override.tiktok_allow_stitch = getEffectiveValueForAccount(accountId, 'tiktokAllowStitch', tiktokAllowStitch);
             override.tiktok_allow_comment = getEffectiveValueForAccount(accountId, 'tiktokAllowComments', tiktokAllowComments);
           }
+          const effectivePoll = getEffectivePollForAccount(accountId);
+          if (effectivePoll?.question) {
+            override.poll = {
+              question: effectivePoll.question,
+              options: effectivePoll.options || [],
+              duration: effectivePoll.duration || 'ONE_DAY',
+            };
+          }
           return [accountId, override];
         })
       );
@@ -1348,7 +1385,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       await axios.post(`${apiUrl}/api/posts`, {
         content: primaryContent,
         platforms: selectedPlatforms,
-        post_type: type,
+        post_type: !hasAnyMedia && hasPoll ? 'text' : type,
         media_ids: mediaIds,
         media_urls: mediaUrls,
         media_types: mediaTypes,
@@ -1627,6 +1664,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                 }}
                 altTexts={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'altTexts', altTexts) : altTexts}
                 onAltTextsChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { altTexts: value })}
+                poll={activePlatformAccount ? getEffectivePollForAccount(activePlatformAccount.id) : null}
+                onPollChange={(value) => activePlatformAccount && setAccountOverrideField(activePlatformAccount.id, 'poll', value || undefined)}
                 onCropMedia={(idx, ratio) => activePlatformAccount && handleCropMedia(activePlatformAccount.id, idx, ratio)}
                 hashtagGroups={hashtagGroups}
                 errorMessages={activeAccountErrors}
@@ -1845,6 +1884,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
               account={activeAccount}
               content={activeAccountId ? getEffectiveCaptionForAccount(activeAccountId) : commonCaption}
               media={activeAccountId ? getEffectiveMediaForAccount(activeAccountId) : uploadedMedia}
+              poll={activeAccountId ? getEffectivePollForAccount(activeAccountId) : null}
               videoTitle={activeAccountId ? getEffectiveValueForAccount(activeAccountId, 'videoTitle', videoTitle) : videoTitle}
               postFormat={postFormat}
             />

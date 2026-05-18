@@ -62,6 +62,11 @@ _PERMANENT_ERROR_CODES: dict[str, set] = {
         "account_suspended",   # EC16: platform ban/suspension
         "access_revoked",      # EC16: user revoked access
     },
+    "threads": {
+        190, 10, 200,
+        "account_suspended",
+        "access_revoked",
+    },
 }
 
 _REVOCATION_SUBCODES = {458, 460}    # Instagram: permanent — do NOT refresh token (EC24)

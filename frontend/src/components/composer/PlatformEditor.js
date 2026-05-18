@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,7 +14,7 @@ import {
   FaSmile, FaHashtag, FaCloudUploadAlt, FaTimes,
   FaChevronDown, FaChevronUp, FaGripVertical,
   FaFileAlt, FaFilePdf, FaFilePowerpoint, FaFileWord,
-  FaCrop, FaSearch, FaExternalLinkAlt, FaImages, FaSpinner,
+  FaCrop, FaSearch, FaExternalLinkAlt, FaImages, FaSpinner, FaChartBar,
 } from 'react-icons/fa';
 import {
   SiBluesky, SiThreads, SiGiphy,
@@ -67,6 +68,37 @@ const getIdealAspectInfo = (platform, postFormat) => {
 };
 
 const getAccountInitial = (label = '') => (label.trim().charAt(0) || '?').toUpperCase();
+
+const POLL_SUPPORTED_PLATFORMS = ['linkedin', 'twitter', 'threads'];
+
+const POLL_DURATION_OPTIONS = {
+  twitter: [
+    { value: 'ONE_DAY', label: '1 day' },
+    { value: 'THREE_DAYS', label: '3 days' },
+    { value: 'SEVEN_DAYS', label: '7 days' },
+  ],
+  linkedin: [
+    { value: 'ONE_DAY', label: '1 day' },
+    { value: 'THREE_DAYS', label: '3 days' },
+    { value: 'SEVEN_DAYS', label: '7 days' },
+    { value: 'FOURTEEN_DAYS', label: '14 days' },
+  ],
+  threads: [
+    { value: 'ONE_DAY', label: '1 day' },
+  ],
+};
+
+const createPollDraft = (poll = null, platform = 'twitter') => {
+  const options = Array.isArray(poll?.options) ? poll.options.slice(0, 4) : [];
+  while (options.length < 2) {
+    options.push('');
+  }
+  return {
+    question: poll?.question || '',
+    options,
+    duration: poll?.duration || (POLL_DURATION_OPTIONS[platform]?.[0]?.value || 'ONE_DAY'),
+  };
+};
 
 // Extended emoji list for social media
 const EMOJI_LIST = [
@@ -152,6 +184,8 @@ const PlatformEditor = ({
   // Alt Text (parallel array to media)
   altTexts = [],
   onAltTextsChange,
+  poll = null,
+  onPollChange,
   // Crop callback: (mediaIndex, targetRatio) => void
   onCropMedia,
   // Hashtag groups array: [{id, name, hashtags:[]}]
@@ -171,6 +205,7 @@ const PlatformEditor = ({
   const [gifSearch, setGifSearch] = useState('');
   const [gifResults, setGifResults] = useState([]);
   const [gifLoading, setGifLoading] = useState(false);
+  const [pollDialogOpen, setPollDialogOpen] = useState(false);
   // Image source dropdown
   const [sourceOpen, setSourceOpen] = useState(false);
   // Unsplash panel
@@ -180,6 +215,7 @@ const PlatformEditor = ({
   const [unsplashLoading, setUnsplashLoading] = useState(false);
   const [unsplashPage, setUnsplashPage] = useState(1);
   const [unsplashHasMore, setUnsplashHasMore] = useState(false);
+  const [pollDraft, setPollDraft] = useState(() => createPollDraft(poll, platform));
   const textareaRef = useRef(null);
   const localFileRef = useRef(null);
   const gifFileRef = useRef(null);
@@ -221,6 +257,21 @@ const PlatformEditor = ({
     pct >= 0.9  ? 'text-orange-500' :
     pct >= 0.7  ? 'text-amber-500' :
     'text-gray-400';
+  const supportsPoll = POLL_SUPPORTED_PLATFORMS.includes(platform);
+  const pollDurationOptions = POLL_DURATION_OPTIONS[platform] || POLL_DURATION_OPTIONS.twitter;
+  const normalizedPoll = poll?.question ? {
+    question: poll.question,
+    options: Array.isArray(poll.options) ? poll.options.filter(Boolean).slice(0, 4) : [],
+    duration: poll.duration || pollDurationOptions[0]?.value || 'ONE_DAY',
+  } : null;
+  const hasPoll = Boolean(normalizedPoll?.question);
+  const pollOptionCount = normalizedPoll?.options?.length || 0;
+
+  useEffect(() => {
+    if (!pollDialogOpen) {
+      setPollDraft(createPollDraft(poll, platform));
+    }
+  }, [platform, poll, pollDialogOpen]);
 
   const insertEmoji = (emoji) => {
     const el = textareaRef.current;
@@ -233,6 +284,56 @@ const PlatformEditor = ({
       el.focus();
       el.setSelectionRange(start + emoji.length, start + emoji.length);
     }, 0);
+  };
+
+  const openPollDialog = () => {
+    setPollDraft(createPollDraft(poll, platform));
+    setPollDialogOpen(true);
+  };
+
+  const updatePollOption = (index, value) => {
+    setPollDraft((prev) => {
+      const nextOptions = [...prev.options];
+      nextOptions[index] = value;
+      return { ...prev, options: nextOptions };
+    });
+  };
+
+  const addPollOption = () => {
+    setPollDraft((prev) => (
+      prev.options.length >= 4
+        ? prev
+        : { ...prev, options: [...prev.options, ''] }
+    ));
+  };
+
+  const removePollOption = (index) => {
+    setPollDraft((prev) => {
+      if (prev.options.length <= 2) return prev;
+      return {
+        ...prev,
+        options: prev.options.filter((_, optionIndex) => optionIndex !== index),
+      };
+    });
+  };
+
+  const canSavePoll = Boolean(pollDraft.question.trim())
+    && pollDraft.options.filter((option) => option.trim()).length >= 2;
+
+  const savePoll = () => {
+    if (!canSavePoll) return;
+    onPollChange?.({
+      question: pollDraft.question.trim(),
+      options: pollDraft.options.map((option) => option.trim()).filter(Boolean).slice(0, 4),
+      duration: pollDraft.duration,
+    });
+    setPollDialogOpen(false);
+  };
+
+  const clearPoll = () => {
+    onPollChange?.(null);
+    setPollDraft(createPollDraft(null, platform));
+    setPollDialogOpen(false);
   };
 
   // Insert a hashtag group's tags at cursor position
@@ -1113,6 +1214,22 @@ const PlatformEditor = ({
                 </PopoverContent>
               </Popover>
 
+              {supportsPoll && (
+                <button
+                  type="button"
+                  onClick={openPollDialog}
+                  className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-semibold transition-colors ${
+                    hasPoll
+                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                      : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600'
+                  }`}
+                  title="Create poll"
+                >
+                  <FaChartBar className="text-sm" />
+                  <span>Poll</span>
+                </button>
+              )}
+
               {/* GIF picker — 4th icon (only for image posts) */}
               {postType !== 'text' && !isVideo && (
                 <Popover open={gifOpen} onOpenChange={setGifOpen}>
@@ -1203,6 +1320,29 @@ const PlatformEditor = ({
               {remaining >= 0 ? remaining : `−${Math.abs(remaining)}`}
             </span>
           </div>
+
+          {hasPoll && (
+            <div className="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Poll ready
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">{normalizedPoll.question}</p>
+                  <p className="mt-1 text-xs text-amber-800">
+                    {pollOptionCount} option{pollOptionCount === 1 ? '' : 's'} • {pollDurationOptions.find((item) => item.value === normalizedPoll.duration)?.label || 'Poll'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openPollDialog}
+                  className="text-xs font-semibold text-amber-700 hover:text-amber-800"
+                >
+                  Edit
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── Instagram-specific fields ─────────────────────────────────────── */}
           {showPlatformSpecificFields && platform === 'instagram' && (
@@ -1538,6 +1678,121 @@ const PlatformEditor = ({
         </div>
       </div>
     )}
+
+    <Dialog open={pollDialogOpen} onOpenChange={setPollDialogOpen}>
+      <DialogContent className="max-w-xl gap-0 overflow-hidden rounded-2xl p-0">
+        <DialogHeader className="border-b border-gray-100 px-5 py-4">
+          <DialogTitle className="flex items-center gap-3 text-xl font-bold text-gray-900">
+            <span>Add a new poll</span>
+            <div className="flex items-center gap-2">
+              {POLL_SUPPORTED_PLATFORMS.map((platformId) => {
+                const platformMeta = PLATFORM_ICONS[platformId];
+                const PollIcon = platformMeta?.icon || FaChartBar;
+                const isCurrent = platformId === platform;
+                return (
+                  <span
+                    key={platformId}
+                    className={`flex h-8 w-8 items-center justify-center rounded-full border ${
+                      isCurrent ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-white text-gray-400'
+                    }`}
+                  >
+                    <PollIcon className="text-sm" />
+                  </span>
+                );
+              })}
+            </div>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5 px-5 py-5">
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold text-gray-900">Question</Label>
+            <Input
+              value={pollDraft.question}
+              onChange={(event) => setPollDraft((prev) => ({ ...prev, question: event.target.value }))}
+              placeholder="What would you like to ask?"
+              className="h-14 text-lg"
+            />
+          </div>
+
+          {pollDraft.options.map((option, index) => (
+            <div key={`poll-option-${index}`} className="space-y-2">
+              <Label className="text-sm font-semibold text-gray-900">
+                Option {index + 1}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={option}
+                  onChange={(event) => updatePollOption(index, event.target.value)}
+                  placeholder={`Option ${index + 1}`}
+                  className="h-14 text-lg"
+                />
+                {pollDraft.options.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => removePollOption(index)}
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 text-gray-400 hover:border-red-200 hover:text-red-500"
+                    aria-label={`Remove option ${index + 1}`}
+                  >
+                    <FaTimes />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {pollDraft.options.length < 4 && (
+            <button
+              type="button"
+              onClick={addPollOption}
+              className="text-left text-sm font-semibold text-blue-600 hover:text-blue-700"
+            >
+              + Add option
+            </button>
+          )}
+
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold text-gray-900">Poll duration</Label>
+            <Select
+              value={pollDraft.duration}
+              onValueChange={(value) => setPollDraft((prev) => ({ ...prev, duration: value }))}
+            >
+              <SelectTrigger className="h-14 text-lg">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {pollDurationOptions.map((duration) => (
+                  <SelectItem key={duration.value} value={duration.value}>
+                    {duration.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-amber-700">
+              Poll posts for {label} are text-only. Remove any media from this account before publishing.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter className="border-t border-gray-100 px-5 py-4 sm:justify-between">
+          <button
+            type="button"
+            onClick={clearPoll}
+            className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={savePoll}
+            disabled={!canSavePoll}
+            className="rounded-full bg-blue-600 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200"
+          >
+            Save poll
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </>
   );
 };

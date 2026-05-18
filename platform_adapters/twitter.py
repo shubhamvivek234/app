@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 TWITTER_V2_BASE = "https://api.twitter.com/2"
 TWITTER_V1_MEDIA = "https://upload.twitter.com/1.1/media/upload.json"
 TWITTER_MEDIA_STATUS_POLL_LIMIT = 12
+TWITTER_POLL_DURATION_MINUTES = {
+    "ONE_DAY": 24 * 60,
+    "THREE_DAYS": 3 * 24 * 60,
+    "SEVEN_DAYS": 7 * 24 * 60,
+}
 
 DUPLICATE_TWEET_CODE = 187   # permanent — do not retry
 
@@ -110,12 +115,29 @@ class TwitterAdapter(PlatformAdapter):
         auth_headers = {"Authorization": f"Bearer {access_token}"}
         media_url = post.get("media_url", "")
         media_ids: list[str] = []
+        poll = post.get("effective_poll") or None
 
         async with httpx.AsyncClient(timeout=60) as client:
             if media_url:
                 media_ids = await self._upload_media(client, auth_headers, media_url)
 
-            tweet_body: dict = {"text": post.get("effective_content", post.get("content", ""))}
+            tweet_text = post.get("effective_content", post.get("content", "")) or ""
+            if poll and not tweet_text.strip():
+                tweet_text = str(poll.get("question") or "").strip()
+            tweet_body: dict = {"text": tweet_text}
+            if poll:
+                if media_ids:
+                    raise PlatformAPIError("Twitter/X poll posts cannot include media")
+                poll_options = [str(option).strip() for option in (poll.get("options") or []) if str(option).strip()]
+                if len(poll_options) < 2:
+                    raise PlatformAPIError("Twitter/X poll requires at least two options")
+                duration_minutes = TWITTER_POLL_DURATION_MINUTES.get(str(poll.get("duration") or "ONE_DAY").upper())
+                if not duration_minutes:
+                    raise PlatformAPIError("Twitter/X poll duration is invalid")
+                tweet_body["poll"] = {
+                    "options": poll_options,
+                    "duration_minutes": duration_minutes,
+                }
             if media_ids:
                 tweet_body["media"] = {"media_ids": media_ids}
 

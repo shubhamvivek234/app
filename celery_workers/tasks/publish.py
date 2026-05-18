@@ -53,6 +53,7 @@ _PLATFORM_CONCURRENCY: dict[str, int] = {
     "facebook":  15,
     "linkedin":  10,
     "pinterest": 10,
+    "threads":   10,
 }
 _PLATFORM_SLOT_TTL = 60  # safety TTL in seconds — clears leaked slots on worker crash
 
@@ -1101,6 +1102,7 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
                 "effective_content": _override.get("content") or post.get("content", ""),
                 "effective_title": _override.get("title") or post.get("title", ""),
                 "effective_first_comment": _override.get("first_comment"),
+                "effective_poll": _override.get("poll"),
                 "effective_youtube_privacy": _override.get("youtube_privacy") or post.get("youtube_privacy"),
                 "effective_tiktok_privacy": _override.get("tiktok_privacy") or post.get("tiktok_privacy"),
                 "effective_tiktok_allow_duet": _override.get("tiktok_allow_duet", post.get("tiktok_allow_duet")),
@@ -1447,6 +1449,7 @@ async def _async_pre_upload(task, post_id: str, platform: str, account_id: str |
             **post,
             "effective_content": _override.get("content") or post.get("content", ""),
             "effective_title": _override.get("title") or post.get("title", ""),
+            "effective_poll": _override.get("poll"),
             "publish_target_key": target_key,
             "media_ids": _override_media_ids,
             "media_urls": _override_media_urls,

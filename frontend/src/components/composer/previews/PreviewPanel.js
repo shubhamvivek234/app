@@ -22,6 +22,7 @@ const PreviewPanel = ({
   account,
   content,
   media,
+  poll,
   videoTitle,
   postFormat,
 }) => {
@@ -57,6 +58,7 @@ const PreviewPanel = ({
     <Preview
       content={content}
       media={media}
+      poll={poll}
       account={account}
       platform={activePlatform}
       videoTitle={videoTitle}

@@ -54,6 +54,24 @@ class PlatformResult(BaseModel):
     published_at: datetime | None = None
 
 
+class PollPayload(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    question: str = Field(..., min_length=1, max_length=500)
+    options: list[str] = Field(..., min_length=2, max_length=4)
+    duration: str = Field(default="ONE_DAY", max_length=32)
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, v: list[str]) -> list[str]:
+        cleaned = [option.strip() for option in (v or []) if option and option.strip()]
+        if len(cleaned) < 2:
+            raise ValueError("Poll must have at least two options")
+        if len(cleaned) > 4:
+            raise ValueError("Poll can have at most four options")
+        return cleaned
+
+
 class PlatformOverride(BaseModel):
     """Per-platform override. All fields optional — falls back to post-level values."""
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -71,6 +89,7 @@ class PlatformOverride(BaseModel):
     tiktok_allow_comment: bool | None = None
     linkedin_document_url: str | None = Field(None, max_length=4000)
     linkedin_document_title: str | None = Field(None, max_length=500)
+    poll: PollPayload | None = None
 
 
 class CreatePostRequest(BaseModel):
@@ -97,7 +116,7 @@ class CreatePostRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, v: list[str]) -> list[str]:
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok"}
+        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")
@@ -140,7 +159,7 @@ class BulkCreateRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, v: list[str]) -> list[str]:
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok"}
+        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")
@@ -168,7 +187,7 @@ class UpdatePostRequest(BaseModel):
     def validate_platforms(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok"}
+        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")

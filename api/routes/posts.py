@@ -39,6 +39,23 @@ router = APIRouter(tags=["posts"])
 _BLOCKED_STATUSES = {PostStatus.QUEUED, PostStatus.PROCESSING}
 _SUBSCRIPTION_ALLOWED = {"active", "grace"}
 _READY_MEDIA_STATUSES = {"ready", "archived"}
+_POLL_RULES = {
+    "twitter": {
+        "question_max": 280,
+        "option_max": 25,
+        "durations": {"ONE_DAY", "THREE_DAYS", "SEVEN_DAYS"},
+    },
+    "linkedin": {
+        "question_max": 140,
+        "option_max": 30,
+        "durations": {"ONE_DAY", "THREE_DAYS", "SEVEN_DAYS", "FOURTEEN_DAYS"},
+    },
+    "threads": {
+        "question_max": 500,
+        "option_max": 100,
+        "durations": {"ONE_DAY"},
+    },
+}
 
 
 def _subtract_months(reference: datetime, months: int) -> datetime:
@@ -302,6 +319,75 @@ def _override_explicitly_sets_media(override: PlatformOverride) -> bool:
     return "media_ids" in fields_set or "media_urls" in fields_set
 
 
+def _effective_media_count_for_account(body: CreatePostRequest, override: PlatformOverride) -> int:
+    if _override_explicitly_sets_media(override):
+        return len(override.media_ids or override.media_urls or [])
+    return len(body.media_ids or body.media_urls or [])
+
+
+def _validate_poll_for_account(
+    *,
+    platform: str,
+    account_id: str,
+    override: PlatformOverride,
+    body: CreatePostRequest,
+) -> None:
+    poll = override.poll
+    if poll is None:
+        return
+
+    rules = _POLL_RULES.get(platform)
+    if not rules:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll posts are not supported for account {account_id}",
+        )
+
+    question = (poll.question or "").strip()
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll question is required for account {account_id}",
+        )
+    if len(question) > rules["question_max"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll question max is {rules['question_max']} characters for account {account_id}",
+        )
+
+    options = [str(option).strip() for option in (poll.options or []) if str(option).strip()]
+    if len(options) < 2 or len(options) > 4:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll must have between 2 and 4 options for account {account_id}",
+        )
+
+    for index, option in enumerate(options, start=1):
+        if len(option) > rules["option_max"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{platform} poll option {index} max is {rules['option_max']} characters for account {account_id}",
+            )
+
+    if (poll.duration or "ONE_DAY").upper() not in rules["durations"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll duration is invalid for account {account_id}",
+        )
+
+    if _effective_media_count_for_account(body, override) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{platform} poll posts cannot include media for account {account_id}",
+        )
+
+    if platform == "linkedin" and override.linkedin_document_url:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"linkedin poll posts cannot include a document attachment for account {account_id}",
+        )
+
+
 # ── Create ───────────────────────────────────────────────────────────────────
 
 @router.post("/posts", response_model=PostResponse, status_code=status.HTTP_201_CREATED,
@@ -369,20 +455,27 @@ async def create_post(
             intelligence_warnings.append("Duplicate content detected — this post has been published before")
 
     # Platform/account character count enforcement (default content + overrides)
-    _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000}
+    _CHAR_LIMITS = {"twitter": 280, "linkedin": 3000, "instagram": 2200, "facebook": 63206, "tiktok": 2200, "youtube": 5000, "threads": 500}
     for account in selected_accounts:
         platform = account["platform"]
         limit = _CHAR_LIMITS.get(platform.lower())
-        override_content = _effective_override_for_account(body, account["account_id"], platform).content
+        effective_override = _effective_override_for_account(body, account["account_id"], platform)
+        override_content = effective_override.content
         effective = override_content if override_content is not None else body.content
         if limit and effective and len(effective) > limit:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{platform} character limit is {limit} (got {len(effective)}) for account {account['account_id']}",
             )
+        _validate_poll_for_account(
+            platform=platform,
+            account_id=account["account_id"],
+            override=effective_override,
+            body=body,
+        )
 
     # Hashtag limit warnings (platform best practices)
-    _HASHTAG_LIMITS = {"instagram": 30, "twitter": 2, "linkedin": 5, "tiktok": 10}
+    _HASHTAG_LIMITS = {"instagram": 30, "twitter": 2, "linkedin": 5, "tiktok": 10, "threads": 5}
     if body.content:
         import re as _re
         hashtag_count = len(_re.findall(r"#\w+", body.content))

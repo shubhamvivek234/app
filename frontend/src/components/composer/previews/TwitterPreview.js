@@ -1,6 +1,7 @@
 import React from 'react';
 import { FaRegComment, FaRetweet, FaRegHeart, FaRegBookmark } from 'react-icons/fa';
 import { RiUpload2Line, RiBarChartFill } from 'react-icons/ri';
+import PollPreviewCard from './PollPreviewCard';
 
 /* ── Twitter-style media grid ────────────────────────────────────────────── */
 const TwitterMediaGrid = ({ mediaArray }) => {
@@ -69,7 +70,7 @@ const TwitterMediaGrid = ({ mediaArray }) => {
 };
 
 /* ── TwitterPreview ──────────────────────────────────────────────────────── */
-const TwitterPreview = ({ content, media, account }) => {
+const TwitterPreview = ({ content, media, account, poll }) => {
   const name   = account?.platform_username || 'YourHandle';
   const avatar = account?.picture_url;
   const LIMIT  = 280;
@@ -122,15 +123,17 @@ const TwitterPreview = ({ content, media, account }) => {
               <p className="text-sm text-gray-900 leading-relaxed whitespace-pre-wrap mb-2 break-words">
                 {content}
               </p>
-            ) : (
+            ) : !poll ? (
               <p className="text-sm text-gray-300 italic mb-2">Start typing to preview…</p>
-            )}
+            ) : null}
 
             {over > 0 && (
               <p className="text-xs text-red-500 mb-2 font-medium">
                 {over} character{over !== 1 ? 's' : ''} over limit
               </p>
             )}
+
+            <PollPreviewCard poll={poll} platformLabel="X" />
 
             {mediaArray.length > 0 && <TwitterMediaGrid mediaArray={mediaArray} />}
 

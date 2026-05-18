@@ -20,6 +20,7 @@ _PLATFORM_CONTENT_TYPES: dict[str, set[str]] = {
     "twitter":   {"image", "video", "text"},
     "linkedin":  {"image", "video", "text", "article"},
     "tiktok":    {"video"},
+    "threads":   {"image", "video", "text"},
 }
 
 # Image-only platforms that cannot post text-only
@@ -74,6 +75,7 @@ _PLATFORM_LIMITS: dict[str, dict] = {
     "facebook": {"max_chars": 63206, "max_hashtags": 10},
     "tiktok":   {"max_chars": 2200, "max_hashtags": 20},
     "youtube":  {"max_chars": 5000, "max_hashtags": 15},  # description
+    "threads":  {"max_chars": 500, "max_hashtags": 5},
 }
 
 

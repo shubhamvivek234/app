@@ -94,7 +94,7 @@ export const PLATFORM_LIMITS = {
     maxWidth:      1920,
     allowedVideoTypes: ['video/mp4', 'video/quicktime'],
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/webp'],
-    notes: 'Publishing adapter not configured in this workspace yet.',
+    notes: 'Text, image, video, and poll posts are supported. Polls cannot include media or link attachments.',
   },
   bluesky: {
     label:        'Bluesky',
@@ -113,7 +113,6 @@ export const COMMON_POST_UNSUPPORTED = {
   discord: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
   mastodon: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
   snapchat: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
-  threads: 'Threads publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
   bluesky: 'Bluesky publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
   pinterest: 'Pinterest publishing is not configured in this workspace yet. Remove it or use platform-specific composition.',
 };
@@ -187,6 +186,12 @@ const COMMON_POST_RULES = {
     maxVideos: 1,
     allowMixed: false,
   },
+  threads: {
+    allowTextOnly: true,
+    maxImages: 1,
+    maxVideos: 1,
+    allowMixed: false,
+  },
   youtube: {
     allowTextOnly: false,
     maxImages: 0,
@@ -201,6 +206,38 @@ const COMMON_POST_RULES = {
     exactVideoCount: 1,
     allowMixed: false,
   },
+};
+
+const POLL_RULES = {
+  twitter: {
+    label: 'Twitter / X',
+    questionMaxLength: 280,
+    optionMaxLength: 25,
+    durations: ['ONE_DAY', 'THREE_DAYS', 'SEVEN_DAYS'],
+  },
+  linkedin: {
+    label: 'LinkedIn',
+    questionMaxLength: 140,
+    optionMaxLength: 30,
+    durations: ['ONE_DAY', 'THREE_DAYS', 'SEVEN_DAYS', 'FOURTEEN_DAYS'],
+  },
+  threads: {
+    label: 'Threads',
+    questionMaxLength: 500,
+    optionMaxLength: 100,
+    durations: ['ONE_DAY'],
+  },
+};
+
+const normalizePoll = (poll) => {
+  if (!poll || typeof poll !== 'object') return null;
+  const question = String(poll.question || '').trim();
+  const options = Array.isArray(poll.options)
+    ? poll.options.map((option) => String(option || '').trim()).filter(Boolean)
+    : [];
+  const duration = String(poll.duration || 'ONE_DAY').trim().toUpperCase();
+  if (!question && options.length === 0) return null;
+  return { question, options, duration };
 };
 
 const getAspectRule = (platformId, mediaType, postFormat) => {
@@ -322,6 +359,8 @@ export function validateCommonPostPlatform(platformId, {
   caption = '',
   media = [],
   postFormat = 'Post',
+  poll = null,
+  hasLinkedinDocument = false,
 } = {}) {
   const errors = [];
   const notes = [];
@@ -343,8 +382,45 @@ export function validateCommonPostPlatform(platformId, {
   const videos = normalizedMedia.filter((item) => item?.type === 'video');
   const hasMedia = normalizedMedia.length > 0;
   const hasCaption = Boolean((caption || '').trim());
+  const normalizedPoll = normalizePoll(poll);
+  const pollRule = POLL_RULES[platformId];
 
-  if (!hasMedia) {
+  if (normalizedPoll) {
+    if (!pollRule) {
+      errors.push(`${limit.label} does not support poll posts in Unravler yet.`);
+    } else {
+      if (!normalizedPoll.question) {
+        errors.push(`${pollRule.label} poll question is required.`);
+      } else if (normalizedPoll.question.length > pollRule.questionMaxLength) {
+        errors.push(`${pollRule.label} poll question is ${normalizedPoll.question.length} characters. Maximum is ${pollRule.questionMaxLength}.`);
+      }
+
+      if (normalizedPoll.options.length < 2) {
+        errors.push(`${pollRule.label} poll requires at least two options.`);
+      } else if (normalizedPoll.options.length > 4) {
+        errors.push(`${pollRule.label} poll supports up to four options.`);
+      }
+
+      normalizedPoll.options.forEach((option, index) => {
+        if (option.length > pollRule.optionMaxLength) {
+          errors.push(`${pollRule.label} poll option ${index + 1} is ${option.length} characters. Maximum is ${pollRule.optionMaxLength}.`);
+        }
+      });
+
+      if (!pollRule.durations.includes(normalizedPoll.duration)) {
+        errors.push(`${pollRule.label} poll duration must be ${pollRule.durations.join(', ')}.`);
+      }
+    }
+
+    if (hasMedia) {
+      errors.push(`${limit.label} poll posts cannot include media. Remove the attached media or clear the poll.`);
+    }
+    if (platformId === 'linkedin' && hasLinkedinDocument) {
+      errors.push('LinkedIn poll posts cannot include a document attachment.');
+    }
+  }
+
+  if (!hasMedia && !normalizedPoll) {
     if (!rule.allowTextOnly) {
       notes.push(`Add media in Common Post or upload it directly in ${limit.label} before publishing there.`);
     }
@@ -353,11 +429,11 @@ export function validateCommonPostPlatform(platformId, {
     }
   }
 
-  if (hasMedia && rule.exactVideoCount && videos.length !== rule.exactVideoCount) {
+  if (!normalizedPoll && hasMedia && rule.exactVideoCount && videos.length !== rule.exactVideoCount) {
     errors.push(`${limit.label} requires exactly ${rule.exactVideoCount} video in Common Post.`);
   }
 
-  if (hasMedia) {
+  if (!normalizedPoll && hasMedia) {
     if (rule.maxImages === 0 && images.length > 0) {
       errors.push(`${limit.label} does not support image uploads in Common Post.`);
     } else if (typeof rule.maxImages === 'number' && images.length > rule.maxImages) {
@@ -375,7 +451,7 @@ export function validateCommonPostPlatform(platformId, {
     }
   }
 
-  if (rule.unsupportedMediaMessage && hasMedia) {
+  if (!normalizedPoll && rule.unsupportedMediaMessage && hasMedia) {
     errors.push(rule.unsupportedMediaMessage);
   }
 

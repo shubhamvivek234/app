@@ -25,6 +25,7 @@ from utils.circuit_breaker import can_attempt, record_success, record_failure
 logger = logging.getLogger(__name__)
 
 LINKEDIN_API_BASE = "https://api.linkedin.com/v2"
+LINKEDIN_REST_BASE = "https://api.linkedin.com/rest"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 
 
@@ -46,6 +47,7 @@ class LinkedInAdapter(PlatformAdapter):
         post_type = str(post.get("post_type", "text") or "text").lower()
         media_urls = [url for url in (post.get("media_urls") or []) if url]
         media_url = post.get("media_url") or (media_urls[0] if media_urls else "")
+        poll = post.get("effective_poll") or None
 
         if redis:
             if not await check_rate_limit(redis, self.platform, str(social_account_id)):
@@ -53,12 +55,27 @@ class LinkedInAdapter(PlatformAdapter):
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)
 
-        author_urn = f"urn:li:person:{user_id}"
+        author_urn = self._resolve_author_urn(account, user_id)
         auth_headers = {
             "Authorization": f"Bearer {access_token}",
             "X-Restli-Protocol-Version": "2.0.0",
             "Content-Type": "application/json",
         }
+        if poll:
+            if media_url or media_urls or post.get("effective_linkedin_document_url"):
+                raise PlatformAPIError("LinkedIn poll posts cannot include media or document attachments")
+            platform_post_id = await self._publish_poll_post(
+                auth_headers=auth_headers,
+                author_urn=author_urn,
+                text=post.get("effective_content", post.get("content", "")) or str(poll.get("question") or "").strip(),
+                poll=poll,
+            )
+            if redis:
+                await record_success(redis, self.platform)
+            return {
+                "post_url": f"https://www.linkedin.com/feed/update/{platform_post_id}/",
+                "platform_post_id": platform_post_id,
+            }
 
         async with httpx.AsyncClient(timeout=120) as client:
             asset_urn: str | None = None
@@ -99,6 +116,70 @@ class LinkedInAdapter(PlatformAdapter):
             "post_url": f"https://www.linkedin.com/feed/update/{platform_post_id}/",
             "platform_post_id": platform_post_id,
         }
+
+    @staticmethod
+    def _resolve_author_urn(account: dict, fallback_user_id: str) -> str:
+        metadata = account.get("metadata") or {}
+        organization_urn = (
+            metadata.get("organization_urn")
+            or metadata.get("org_urn")
+        )
+        if organization_urn:
+            return organization_urn if str(organization_urn).startswith("urn:li:organization:") else f"urn:li:organization:{organization_urn}"
+        return f"urn:li:person:{fallback_user_id}"
+
+    async def _publish_poll_post(
+        self,
+        *,
+        auth_headers: dict,
+        author_urn: str,
+        text: str,
+        poll: dict,
+    ) -> str:
+        poll_options = [str(option).strip() for option in (poll.get("options") or []) if str(option).strip()]
+        if len(poll_options) < 2:
+            raise PlatformAPIError("LinkedIn poll requires at least two options")
+
+        duration = str(poll.get("duration") or "ONE_DAY").upper()
+        if duration not in {"ONE_DAY", "THREE_DAYS", "SEVEN_DAYS", "FOURTEEN_DAYS"}:
+            raise PlatformAPIError("LinkedIn poll duration is invalid")
+
+        payload = {
+            "author": author_urn,
+            "commentary": text,
+            "visibility": "PUBLIC",
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+            "content": {
+                "poll": {
+                    "question": str(poll.get("question") or "").strip(),
+                    "options": [{"text": option} for option in poll_options],
+                    "settings": {"duration": duration},
+                }
+            },
+        }
+
+        rest_headers = {
+            **auth_headers,
+            "Linkedin-Version": os.environ.get("LINKEDIN_API_VERSION", "202603"),
+        }
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(f"{LINKEDIN_REST_BASE}/posts", headers=rest_headers, json=payload)
+            if resp.status_code not in (200, 201):
+                raise PlatformHTTPError(resp.status_code, resp.text)
+            platform_post_id = resp.headers.get("x-restli-id", "")
+            if not platform_post_id:
+                body = resp.json() if resp.content else {}
+                platform_post_id = body.get("id", "")
+            if not platform_post_id:
+                raise PlatformResponseError("Missing LinkedIn poll post id")
+            return platform_post_id
 
     async def _register_and_upload_image(
         self,

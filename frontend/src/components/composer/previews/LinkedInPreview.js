@@ -3,6 +3,7 @@ import {
   FaThumbsUp, FaRegComment, FaRetweet, FaRegPaperPlane,
   FaEllipsisH, FaGlobeAmericas, FaLock,
 } from 'react-icons/fa';
+import PollPreviewCard from './PollPreviewCard';
 
 /* Highlight #hashtags and @mentions in text */
 const RichText = ({ text }) => {
@@ -88,7 +89,7 @@ const MediaGrid = ({ mediaArray }) => {
 };
 
 /* ── LinkedInPreview ─────────────────────────────────────────────────────── */
-const LinkedInPreview = ({ content, media, account }) => {
+const LinkedInPreview = ({ content, media, account, poll }) => {
   const [expanded, setExpanded] = useState(false);
   const name   = account?.platform_username || 'Your Name';
   const avatar = account?.picture_url;
@@ -148,9 +149,11 @@ const LinkedInPreview = ({ content, media, account }) => {
               </button>
             )}
           </div>
-        ) : (
+        ) : !poll ? (
           <p className="text-sm text-gray-300 italic">Start typing to preview…</p>
-        )}
+        ) : null}
+
+        <PollPreviewCard poll={poll} platformLabel="LinkedIn" />
       </div>
 
       {/* Media */}

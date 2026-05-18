@@ -9,6 +9,7 @@ def get_adapter(platform: str) -> PlatformAdapter:
     from platform_adapters.twitter import TwitterAdapter
     from platform_adapters.linkedin import LinkedInAdapter
     from platform_adapters.tiktok import TikTokAdapter
+    from platform_adapters.threads import ThreadsAdapter
 
     registry: dict[str, type[PlatformAdapter]] = {
         "instagram": InstagramAdapter,
@@ -17,6 +18,7 @@ def get_adapter(platform: str) -> PlatformAdapter:
         "twitter": TwitterAdapter,
         "linkedin": LinkedInAdapter,
         "tiktok": TikTokAdapter,
+        "threads": ThreadsAdapter,
     }
     adapter_class = registry.get(platform.lower())
     if adapter_class is None:

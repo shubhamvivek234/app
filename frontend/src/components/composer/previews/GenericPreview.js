@@ -1,10 +1,12 @@
 import React from 'react';
+import PollPreviewCard from './PollPreviewCard';
 
-const GenericPreview = ({ content, media, account, platform }) => {
+const GenericPreview = ({ content, media, account, platform, poll }) => {
   const name = account?.platform_username || 'Your Account';
   const avatar = account?.picture_url;
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
   const firstItem  = mediaArray[0] || null;
+  const platformLabel = platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Poll';
 
   return (
     <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -25,9 +27,11 @@ const GenericPreview = ({ content, media, account, platform }) => {
 
         {content ? (
           <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{content}</p>
-        ) : (
+        ) : !poll ? (
           <p className="text-sm text-gray-300 italic">Start typing to preview…</p>
-        )}
+        ) : null}
+
+        <PollPreviewCard poll={poll} platformLabel={platformLabel} />
 
         {firstItem && (
           <div className="mt-2 rounded-lg overflow-hidden border border-gray-100 relative">
