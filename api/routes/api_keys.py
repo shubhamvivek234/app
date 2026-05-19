@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["api-keys"])
@@ -28,7 +28,7 @@ class ApiKeyResponse(BaseModel):
     last_used_at: datetime | None = None
 
 
-@router.get("/api-keys")
+@router.get("/api-keys", dependencies=[require_permission("api_key:manage")])
 async def list_api_keys(current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     cursor = db.api_keys.find(
@@ -41,7 +41,8 @@ async def list_api_keys(current_user: CurrentUser, db: DB):
     return docs
 
 
-@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED,
+             dependencies=[require_permission("api_key:manage")])
 async def create_api_key(body: ApiKeyCreate, current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     now = datetime.now(timezone.utc)
@@ -75,7 +76,8 @@ async def create_api_key(body: ApiKeyCreate, current_user: CurrentUser, db: DB):
     }
 
 
-@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[require_permission("api_key:manage")])
 async def delete_api_key(key_id: str, current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     result = await db.api_keys.update_one(

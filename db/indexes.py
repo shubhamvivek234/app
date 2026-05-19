@@ -31,9 +31,12 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     db = client[os.environ["DB_NAME"]]
 
     # posts
+    await _safe_create_index(db.posts, [("id", 1)], unique=True)
     await _safe_create_index(db.posts, [("status", 1), ("scheduled_time", 1)])
     await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("created_at", -1)])
     await _safe_create_index(db.posts, [("workspace_id", 1), ("status", 1), ("scheduled_time", 1)])
+    await _safe_create_index(db.posts, [("workspace_id", 1), ("user_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.posts, [("workspace_id", 1), ("status", 1), ("updated_at", -1)])
     await _safe_create_index(db.posts, [("deleted_at", 1)], expireAfterSeconds=2592000)  # 30-day TTL
     # Subscription grace period: paused post queries (user_id + status + paused_reason)
     await _safe_create_index(db.posts, [("user_id", 1), ("status", 1), ("paused_reason", 1)])
@@ -54,7 +57,11 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.notifications, [("dedup_key", 1)], unique=True, sparse=True)
 
     # social_accounts
+    await _safe_create_index(db.social_accounts, [("account_id", 1)], unique=True, sparse=True)
+    await _safe_create_index(db.social_accounts, [("id", 1)], unique=True, sparse=True)
+    await _safe_create_index(db.social_accounts, [("user_id", 1), ("account_id", 1)], sparse=True)
     await _safe_create_index(db.social_accounts, [("user_id", 1), ("platform", 1), ("is_active", 1)])
+    await _safe_create_index(db.social_accounts, [("user_id", 1), ("platform_user_id", 1), ("platform", 1)])
 
     # payment_transactions
     await _safe_create_index(db.payment_transactions, [("user_id", 1), ("created_at", -1)])
@@ -67,8 +74,20 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     # indexes here — the authoritative field is created_at/expires_at, not timestamp.
 
     # media_assets
+    await _safe_create_index(db.media_assets, [("media_id", 1)], unique=True, sparse=True)
+    await _safe_create_index(db.media_assets, [("asset_id", 1)], unique=True, sparse=True)
     await _safe_create_index(db.media_assets, [("user_id", 1), ("status", 1)])
+    await _safe_create_index(db.media_assets, [("workspace_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.media_assets, [("user_id", 1), ("media_id", 1)])
     await _safe_create_index(db.media_assets, [("post_id", 1)])
+
+    # api_keys
+    await _safe_create_index(db.api_keys, [("key_hash", 1)], unique=True)
+    await _safe_create_index(db.api_keys, [("workspace_id", 1), ("revoked", 1), ("created_at", -1)])
+
+    # workspace_invites
+    await _safe_create_index(db.workspace_invites, [("token", 1)], unique=True)
+    await _safe_create_index(db.workspace_invites, [("workspace_id", 1), ("status", 1), ("created_at", -1)])
 
     # webhook_events (dedup) — compound index on (platform, event_id) because different
     # platforms can share the same event_id value. sparse=True skips docs with null event_id.

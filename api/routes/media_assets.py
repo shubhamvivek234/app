@@ -8,7 +8,7 @@ from pathlib import Path
 import magic
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, status
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["media-assets"])
@@ -18,7 +18,7 @@ _STREAM_CHUNK_SIZE = 8 * 1024 * 1024
 _ALLOWED_MIME_PREFIXES = ("image/", "video/")
 
 
-@router.get("/media-assets")
+@router.get("/media-assets", dependencies=[require_permission("media:read")])
 async def list_media_assets(current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     cursor = db.media_assets.find(
@@ -31,7 +31,8 @@ async def list_media_assets(current_user: CurrentUser, db: DB):
     return docs
 
 
-@router.post("/media-assets", status_code=status.HTTP_201_CREATED)
+@router.post("/media-assets", status_code=status.HTTP_201_CREATED,
+             dependencies=[require_permission("media:upload")])
 async def upload_media_asset(
     request: Request,
     current_user: CurrentUser,
@@ -98,7 +99,8 @@ async def upload_media_asset(
     return doc
 
 
-@router.delete("/media-assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/media-assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[require_permission("media:upload")])
 async def delete_media_asset(asset_id: str, current_user: CurrentUser, db: DB):
     from utils.storage import delete_file_async
 

@@ -53,17 +53,19 @@ async def check_schedule_density(
 
         # Count scheduled + queued posts in hour window
         hour_count = await db.posts.count_documents({
-            "user_id": workspace_id,
+            "workspace_id": workspace_id,
             "platforms": platform,
             "scheduled_time": {"$gte": hour_start, "$lte": proposed_time},
             "status": {"$in": ["scheduled", "queued", "processing", "published"]},
+            "deleted_at": {"$exists": False},
         })
 
         day_count = await db.posts.count_documents({
-            "user_id": workspace_id,
+            "workspace_id": workspace_id,
             "platforms": platform,
             "scheduled_time": {"$gte": day_start, "$lte": proposed_time},
             "status": {"$in": ["scheduled", "queued", "processing", "published"]},
+            "deleted_at": {"$exists": False},
         })
 
         if hour_count >= limits["max_per_hour"]:

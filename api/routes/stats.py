@@ -4,13 +4,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["stats"])
 
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[require_permission("analytics:read")])
 async def get_stats(current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     user_id = current_user["user_id"]

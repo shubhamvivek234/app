@@ -40,6 +40,7 @@ _MAX_FILE_BYTES: dict[str, int] = {
 _DEFAULT_MAX_BYTES = _MAX_FILE_BYTES["starter"]
 
 _CONCURRENT_LIMIT: dict[str, int] = {"starter": 2, "pro": 5, "agency": 10}
+_PENDING_UPLOAD_LIMIT: dict[str, int] = {"starter": 10, "pro": 30, "agency": 75}
 
 _ALLOWED_MIME_PREFIXES = ("image/", "video/")
 _QUEUE_DEPTH_LIMIT = 200
@@ -124,6 +125,23 @@ async def _reserve_concurrent_upload_slot(
         )
 
 
+async def _check_user_upload_backlog(db, user_id: str, plan: str) -> None:
+    """Prevent a single user from monopolizing the shared media queue."""
+    limit = _PENDING_UPLOAD_LIMIT.get(plan, _PENDING_UPLOAD_LIMIT["starter"])
+    pending_count = await db.media_assets.count_documents(
+        {
+            "user_id": user_id,
+            "status": {"$in": [MediaStatus.PENDING_UPLOAD, MediaStatus.PROCESSING, MediaStatus.QUARANTINE]},
+        }
+    )
+    if pending_count >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many in-flight uploads ({limit} for {plan} plan). Please wait for current uploads to finish.",
+            headers={"Retry-After": "120"},
+        )
+
+
 async def _release_concurrent_slot(cache_redis: CacheRedis, user_id: str) -> None:
     key = f"upload:concurrent:{user_id}"
     try:
@@ -202,6 +220,7 @@ async def create_upload_session(
         )
 
     _ensure_allowed_mime(payload.content_type)
+    await _check_user_upload_backlog(db, user_id, plan)
     await _reserve_concurrent_upload_slot(cache_redis, user_id, plan)
 
     media_job_id = str(uuid.uuid4())
@@ -498,6 +517,7 @@ async def upload_media(
             )
 
     # 3. Concurrent upload gate
+    await _check_user_upload_backlog(db, user_id, plan)
     await _reserve_concurrent_upload_slot(cache_redis, user_id, plan, ttl_seconds=300)
 
     try:

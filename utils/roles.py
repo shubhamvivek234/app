@@ -29,6 +29,7 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     "account:read": WorkspaceRole.VIEWER,
 
     # Workspace management
+    "workspace:read": WorkspaceRole.VIEWER,
     "workspace:invite": WorkspaceRole.ADMIN,
     "workspace:remove_member": WorkspaceRole.ADMIN,
     "workspace:update": WorkspaceRole.ADMIN,
@@ -47,6 +48,7 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     "webhook:manage": WorkspaceRole.ADMIN,
 
     # Media upload
+    "media:read": WorkspaceRole.VIEWER,
     "media:upload": WorkspaceRole.EDITOR,
 
     # Admin

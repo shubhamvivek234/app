@@ -1137,7 +1137,7 @@ async def delete_post(
 
 # ── Failed / DLQ ──────────────────────────────────────────────────────────────
 
-@router.get("/posts/failed")
+@router.get("/posts/failed", dependencies=[require_permission("post:read")])
 async def list_failed_posts(current_user: CurrentUser, db: DB):
     """Return posts with failed or partially failed publishing outcomes."""
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
@@ -1153,7 +1153,7 @@ async def list_failed_posts(current_user: CurrentUser, db: DB):
     return [_doc_to_response(d) for d in docs]
 
 
-@router.post("/posts/{post_id}/retry")
+@router.post("/posts/{post_id}/retry", dependencies=[require_permission("post:update")])
 async def retry_failed_post(
     post_id: str,
     current_user: CurrentUser,
@@ -1274,7 +1274,7 @@ async def retry_failed_post(
         set_updates["platform_results"] = _aggregate_platform_results(next_post)
 
     await db.posts.update_one(
-        {"id": post_id},
+        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
         {
             "$set": set_updates,
             "$unset": unset_updates,
@@ -1315,13 +1315,19 @@ async def retry_failed_post(
 
 # ── Approval workflow ─────────────────────────────────────────────────────────
 
-@router.post("/posts/{post_id}/approve")
+@router.post("/posts/{post_id}/approve", dependencies=[require_permission("post:update")])
 async def approve_post(post_id: str, current_user: CurrentUser, db: DB):
     """Approve a post in review status → scheduled."""
     user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
     now = datetime.now(timezone.utc)
     result = await db.posts.find_one_and_update(
-        {"id": post_id, "status": "pending_approval", "deleted_at": {"$exists": False}},
+        {
+            "id": post_id,
+            "workspace_id": workspace_id,
+            "status": "pending_approval",
+            "deleted_at": {"$exists": False},
+        },
         {"$set": {"status": PostStatus.SCHEDULED, "approved_by": user_id,
                   "approved_at": now, "updated_at": now},
          "$push": {"status_history": {"status": PostStatus.SCHEDULED,
@@ -1334,13 +1340,19 @@ async def approve_post(post_id: str, current_user: CurrentUser, db: DB):
     return {"approved": True, "post_id": post_id}
 
 
-@router.post("/posts/{post_id}/reject")
+@router.post("/posts/{post_id}/reject", dependencies=[require_permission("post:update")])
 async def reject_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
     """Reject a post in review — moves to draft with rejection note."""
     user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
     now = datetime.now(timezone.utc)
     result = await db.posts.find_one_and_update(
-        {"id": post_id, "status": "pending_approval", "deleted_at": {"$exists": False}},
+        {
+            "id": post_id,
+            "workspace_id": workspace_id,
+            "status": "pending_approval",
+            "deleted_at": {"$exists": False},
+        },
         {"$set": {"status": PostStatus.DRAFT, "rejected_by": user_id,
                   "rejected_at": now, "rejection_reason": body.get("reason", ""),
                   "updated_at": now},
@@ -1355,7 +1367,7 @@ async def reject_post(post_id: str, body: dict, current_user: CurrentUser, db: D
     return {"rejected": True, "post_id": post_id}
 
 
-@router.post("/posts/{post_id}/resubmit")
+@router.post("/posts/{post_id}/resubmit", dependencies=[require_permission("post:update")])
 async def resubmit_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
     """Resubmit a rejected post for approval."""
     user_id = current_user["user_id"]
@@ -1376,14 +1388,14 @@ async def resubmit_post(post_id: str, body: dict, current_user: CurrentUser, db:
     return {"resubmitted": True, "post_id": post_id}
 
 
-@router.post("/posts/{post_id}/submit-review")
+@router.post("/posts/{post_id}/submit-review", dependencies=[require_permission("post:update")])
 async def submit_post_for_review(post_id: str, body: dict, current_user: CurrentUser, db: DB):
     return await resubmit_post(post_id, body, current_user, db)
 
 
 # ── Duplicate ─────────────────────────────────────────────────────────────────
 
-@router.post("/posts/{post_id}/duplicate")
+@router.post("/posts/{post_id}/duplicate", dependencies=[require_permission("post:create")])
 async def duplicate_post(post_id: str, current_user: CurrentUser, db: DB):
     """Create a draft copy of an existing post."""
     user_id = current_user["user_id"]

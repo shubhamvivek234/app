@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["team"])
@@ -24,7 +24,7 @@ class RoleUpdate(BaseModel):
     role: str
 
 
-@router.get("/workspace/members")
+@router.get("/workspace/members", dependencies=[require_permission("workspace:read")])
 async def list_members(current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     cursor = db.workspace_members.find({"workspace_id": workspace_id}, {"_id": 0})
@@ -39,7 +39,8 @@ async def list_members(current_user: CurrentUser, db: DB):
     return members
 
 
-@router.post("/workspace/members/invite", status_code=status.HTTP_201_CREATED)
+@router.post("/workspace/members/invite", status_code=status.HTTP_201_CREATED,
+             dependencies=[require_permission("workspace:invite")])
 async def invite_member(body: InviteRequest, current_user: CurrentUser, db: DB):
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role. Must be one of {sorted(VALID_ROLES)}")
@@ -73,7 +74,8 @@ async def invite_member(body: InviteRequest, current_user: CurrentUser, db: DB):
     return {"invited": True, "email": body.email, "role": body.role, "token": token}
 
 
-@router.delete("/workspace/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/workspace/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[require_permission("workspace:remove_member")])
 async def remove_member(member_id: str, current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     # Prevent self-removal of owner
@@ -84,7 +86,8 @@ async def remove_member(member_id: str, current_user: CurrentUser, db: DB):
         raise HTTPException(status_code=404, detail="Member not found")
 
 
-@router.patch("/workspace/members/{member_id}/role")
+@router.patch("/workspace/members/{member_id}/role",
+              dependencies=[require_permission("workspace:update")])
 async def update_member_role(member_id: str, body: RoleUpdate, current_user: CurrentUser, db: DB):
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role")
