@@ -185,6 +185,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
           <Link
             to="/analytics"
+            reloadDocument
             className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               analyticsActive
                 ? 'text-green-700 bg-green-50 dark:bg-green-900/20'

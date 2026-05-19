@@ -745,6 +745,7 @@ const PlatformSidebar = ({
           <button
             key={plat}
             draggable
+            title={isConnected ? `${platAccounts.length} connected ${platAccounts.length === 1 ? 'account' : 'accounts'}` : 'No connected accounts'}
             onDragStart={() => onDragStart(index)}
             onDragEnter={() => onDragEnter(index)}
             onDragOver={(event) => event.preventDefault()}
@@ -754,7 +755,7 @@ const PlatformSidebar = ({
             }}
             onDragEnd={onDragEnd}
             onClick={() => onSelect(plat)}
-            className={`group w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
+            className={`group relative w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
               ${isActive
                 ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
                 : 'text-gray-600 hover:bg-gray-50 border-transparent'}
@@ -772,7 +773,7 @@ const PlatformSidebar = ({
             <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
             {isConnected && (
               <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
                 style={{ background: color + '22', color }}
               >
                 {platAccounts.length} {platAccounts.length === 1 ? 'Account' : 'Accounts'}
@@ -821,11 +822,25 @@ const Analytics = () => {
 
   const platformOrderStorageKey = `${PLATFORM_ORDER_STORAGE_KEY_PREFIX}_${accounts.find((account) => account?.user_id)?.user_id || 'default'}`;
 
-  // Fetch accounts once
+  // Fetch accounts on load with a quick retry so the platform list is less likely to appear empty.
   useEffect(() => {
-    getSocialAccounts()
-      .then(setAccounts)
-      .catch(() => {});
+    let cancelled = false;
+
+    const loadAccounts = async (retry = false) => {
+      try {
+        const data = await getSocialAccounts();
+        if (!cancelled) setAccounts(data);
+      } catch {
+        if (!retry && !cancelled) {
+          window.setTimeout(() => loadAccounts(true), 500);
+        }
+      }
+    };
+
+    loadAccounts();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
