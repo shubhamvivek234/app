@@ -773,7 +773,7 @@ const PlatformSidebar = ({
             <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
             {isConnected && (
               <span
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+                className="pointer-events-none absolute right-3 top-full z-20 mt-1 rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap opacity-0 shadow-sm transition-all duration-150 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 group-focus-visible:opacity-100 group-focus-visible:translate-y-0"
                 style={{ background: color + '22', color }}
               >
                 {platAccounts.length} {platAccounts.length === 1 ? 'Account' : 'Accounts'}
