@@ -1809,10 +1809,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       </div>
 
       {/* Body - scrollable */}
-      <div className="p-5 space-y-4.5 overflow-y-auto flex-1">
+      <div className="p-5 space-y-5 overflow-y-auto flex-1">
         {/* Prompt textarea */}
-        <div>
-          <label className="block text-xs font-bold text-gray-700 mb-2">
+        <div className="space-y-2">
+          <label className="block text-xs font-bold uppercase tracking-widest text-gray-700">
             What do you want to write about?
           </label>
           <textarea
@@ -1824,37 +1824,41 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           />
         </div>
 
-        {/* Tone pills */}
-        <div>
-          <label className="block text-xs font-bold text-gray-700 mb-2.5">Tone</label>
-          <div className="flex flex-wrap gap-2">
-            {AI_TONES.map(t => (
-              <button
-                key={t.id}
-                onClick={() => setAiCaptionTone(t.id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border-2 transition-all duration-200 ${
-                  aiCaptionTone === t.id
-                    ? 'bg-violet-600 text-white border-violet-600 shadow-md'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50/50'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+        <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 space-y-4">
+          <div className="space-y-2.5">
+            <label className="block text-xs font-bold uppercase tracking-widest text-gray-700">Tone</label>
+            <div className="flex flex-wrap gap-2">
+              {AI_TONES.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setAiCaptionTone(t.id)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border-2 transition-all duration-200 ${
+                    aiCaptionTone === t.id
+                      ? 'bg-violet-600 text-white border-violet-600 shadow-md'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50/50'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div>
-          <label className="block text-xs font-bold text-gray-700 mb-2">Language</label>
-          <select
-            value={aiCaptionLanguage}
-            onChange={(e) => setAiCaptionLanguage(e.target.value)}
-            className="w-full border-2 border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 bg-white hover:border-gray-300 transition-colors"
-          >
-            {AI_LANGUAGES.map((language) => (
-              <option key={language} value={language}>{language}</option>
-            ))}
-          </select>
+          <div className="space-y-2">
+            <label className="block text-xs font-bold uppercase tracking-widest text-gray-700">Language</label>
+            <select
+              value={aiCaptionLanguage}
+              onChange={(e) => setAiCaptionLanguage(e.target.value)}
+              className="w-full border-2 border-gray-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-300 bg-white hover:border-gray-300 transition-colors"
+            >
+              {AI_LANGUAGES.map((language) => (
+                <option key={language} value={language}>{language}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500">
+              Captions will be generated directly in the selected language.
+            </p>
+          </div>
         </div>
 
         {/* Generate button */}
