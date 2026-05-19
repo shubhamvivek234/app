@@ -157,6 +157,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
   const publishActive = isActive('/publish');
   const analyticsActive = isActive('/analytics');
   const [collapsed, setCollapsed] = useState(false);
+  const canNavigateHome = user?.subscription_status === 'active';
 
   return (
     <div className="min-h-screen bg-offwhite dark:bg-gray-950">
@@ -166,7 +167,18 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
         {/* Logo block — shrinks with sidebar */}
         <div className={`flex-shrink-0 flex items-center h-full transition-all duration-200 ${collapsed ? 'w-14 justify-center px-0' : 'w-64 px-4'}`}>
-          {collapsed ? null : <UnravlerLogo size="default" />}
+          {collapsed ? null : canNavigateHome ? (
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="flex items-center rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500/60"
+              title="Go to dashboard"
+            >
+              <UnravlerLogo size="default" />
+            </button>
+          ) : (
+            <UnravlerLogo size="default" />
+          )}
         </div>
 
         {/* Nav tabs */}
