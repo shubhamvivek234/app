@@ -21,6 +21,7 @@ from db.mongo import get_client
 from db.redis_client import get_queue_redis, get_cache_redis
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 from utils.feature_flags import is_enabled
+from utils.observability import capture_degraded_event, event_log, rate_limited_event_log, shorten_provider_error
 from utils.redis_resilience import (
     safe_delete,
     safe_expire,
@@ -881,7 +882,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
         from utils.feature_flags import is_enabled
         flag_name = f"{platform}_publishing"
         if not is_enabled(flag_name):
-            logger.warning("20.14: Feature flag %s is OFF — skipping publish for post %s", flag_name, post_id)
+            event_log(
+                logger,
+                "warning",
+                "publish.platform.paused",
+                task_name="publish_to_platform",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="feature_flag_disabled",
+                outcome="paused",
+            )
             await _update_platform_result(db, post_id, platform, {
                 "status": "paused",
                 "error": f"Platform {platform} is currently disabled via feature flag",
@@ -897,7 +908,18 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
     pp_count = await safe_incr(r_queue, pp_key, default=1, feature="Per-platform poison-pill counter")
     await safe_expire(r_queue, pp_key, 86400, default=True, feature="Per-platform poison-pill TTL")
     if int(pp_count) > MAX_DELIVERY_COUNT:
-        logger.error("20.5: Poison pill on %s/%s (delivered %d times) — moving to DLQ", post_id, platform, pp_count)
+        event_log(
+            logger,
+            "error",
+            "publish.platform.poison_pill",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            failure_type="poison_pill_exceeded",
+            delivery_count=int(pp_count),
+            outcome="dlq",
+        )
         await _move_to_dlq(post_id, "poison_pill_exceeded", platform=platform, account_id=account_id)
         return {"status": "dlq", "reason": "poison_pill", "platform": platform, "account_id": account_id}
 
@@ -905,7 +927,18 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
     try:
         from utils.circuit_breaker import can_attempt
         if not await can_attempt(r_cache, platform):
-            logger.warning("20.1: Circuit OPEN for %s — requeuing post %s (5-min backoff)", platform, post_id)
+            rate_limited_event_log(
+                logger,
+                "warning",
+                "publish.platform.circuit_open",
+                dedupe_key=f"publish:circuit-open:{platform}:{account_id or 'none'}",
+                task_name="publish_to_platform",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="circuit_open",
+                outcome="retrying",
+            )
             await _update_platform_result(db, post_id, platform, {
                 "status": "retrying",
                 "error": f"Platform {platform} circuit breaker OPEN — requeued",
@@ -919,7 +952,16 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
     confirm_key = f"confirmed:{post_id}:{target_key}"
     cached = await safe_get(r_cache, confirm_key, default=None, feature="Publish confirmation cache read")
     if cached:
-        logger.info("Platform %s/%s already confirmed in Redis — skipping API call", post_id, platform)
+        event_log(
+            logger,
+            "info",
+            "publish.platform.confirmed_cache_hit",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            outcome="already_confirmed",
+        )
         return {"status": "already_confirmed", "platform": platform, "account_id": account_id}
 
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
@@ -931,10 +973,15 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
     lock_owner = task.request.id or f"{post_id}:{target_key}:{attempt}"
     lock_acquired = await _acquire_publish_lock(r_cache, post_id, target_key, lock_owner)
     if not lock_acquired:
-        logger.info(
-            "Publish already in-flight for %s/%s — re-enqueuing after short backoff",
-            post_id,
-            platform,
+        event_log(
+            logger,
+            "info",
+            "publish.platform.lock_contention",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            outcome="requeued",
         )
         publish_to_platform.apply_async(
             kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
@@ -961,6 +1008,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
                     has_container,
                     pre_status,
                 )
+                event_log(
+                    logger,
+                    "info",
+                    "publish.pre_upload.bootstrap",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=account_id,
+                    post_type=post.get("post_type"),
+                    outcome="bootstrapped",
+                )
                 pre_result = await _async_pre_upload(task, post_id, platform, account_id)
                 if pre_result.get("status") == "polling":
                     await _update_platform_result(db, post_id, platform, {
@@ -985,7 +1043,19 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
             user_id = post.get("user_id", "")
             is_active, reason = await check_subscription_active(db, user_id)
             if not is_active:
-                logger.warning("EC15: subscription expired for user %s — pausing post %s", user_id, post_id)
+                event_log(
+                    logger,
+                    "warning",
+                    "publish.subscription_blocked",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=account_id,
+                    user_id=user_id,
+                    failure_type="subscription_expired",
+                    provider_error=reason,
+                    outcome="paused",
+                )
                 await _update_platform_result(db, post_id, platform, {
                     "status": "paused",
                     "error": f"Subscription expired: {reason}",
@@ -1068,12 +1138,35 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
                 resolved_account_id = account_doc.get("account_id") or account_doc.get("id")
                 post = {**post, "access_token": decrypt(account_doc["access_token"]), "account": account_doc}
         except Exception as _token_err:
-            logger.warning("Could not inject access token for %s/%s: %s", post_id, platform, _token_err)
+            event_log(
+                logger,
+                "warning",
+                "publish.token_injection.degraded",
+                exc_info=_token_err,
+                task_name="publish_to_platform",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="token_injection_failed",
+                provider_error=shorten_provider_error(_token_err),
+                outcome="degraded",
+            )
 
         try:
             cb_open = await can_attempt(r_cache, platform, resolved_account_id)
             if not cb_open:
-                logger.warning("Circuit OPEN for %s/%s — skipping platform call for post %s", platform, resolved_account_id, post_id)
+                rate_limited_event_log(
+                    logger,
+                    "warning",
+                    "publish.platform.account_circuit_open",
+                    dedupe_key=f"publish:acct-circuit-open:{platform}:{resolved_account_id or 'none'}",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    failure_type="circuit_open",
+                    outcome="retrying",
+                )
                 await _update_platform_result(db, post_id, platform, {
                     "status": "retrying",
                     "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
@@ -1194,6 +1287,17 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
             await _send_success_notification(db, post_id, platform, post_url or "", user_id or "")
             if agg_status == "published" and prev_agg_status == "partial":
                 await _send_recovery_notification(db, post_id, user_id or "")
+            event_log(
+                logger,
+                "info",
+                "publish.platform.succeeded",
+                task_name="publish_to_platform",
+                post_id=post_id,
+                platform=platform,
+                account_id=resolved_account_id,
+                platform_post_id=platform_post_id,
+                outcome="published",
+            )
 
             return {"status": "published", "platform": platform, "account_id": resolved_account_id}
 
@@ -1235,7 +1339,27 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
             error_class = classify_error(exc)
 
             if error_class == ErrorClass.PERMANENT:
-                logger.error("Permanent error publishing %s/%s: %s", post_id, platform, exc)
+                event_log(
+                    logger,
+                    "error",
+                    "publish.platform.failed",
+                    exc_info=exc,
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    failure_type="permanent",
+                    provider_error=shorten_provider_error(exc),
+                    outcome="failed",
+                )
+                capture_degraded_event(
+                    "Publish permanent failure",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    failure_type="permanent",
+                )
                 await _update_platform_result(db, post_id, platform, {
                     "status": "failed",
                     "error": str(exc),
@@ -1289,7 +1413,19 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
 
             if error_class == ErrorClass.RATE_LIMITED:
                 retry_after = getattr(exc, "retry_after", 3600)
-                logger.warning("Rate limited on %s/%s — re-queuing after %ds", post_id, platform, retry_after)
+                rate_limited_event_log(
+                    logger,
+                    "warning",
+                    "publish.platform.rate_limited",
+                    dedupe_key=f"publish:rate-limited:{platform}:{resolved_account_id or 'none'}",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    failure_type="rate_limited",
+                    retry_after=retry_after,
+                    outcome="retrying",
+                )
                 await _update_platform_result(db, post_id, platform, {
                     "status": "retrying",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
@@ -1301,13 +1437,39 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
             countdown = countdown_map.get(attempt, 900) + jitter
 
             if attempt >= MAX_RETRIES:
-                logger.error("Max retries exceeded for %s/%s — DLQ", post_id, platform)
+                event_log(
+                    logger,
+                    "error",
+                    "publish.platform.max_retries_exceeded",
+                    exc_info=exc,
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    failure_type="max_retries_exceeded",
+                    provider_error=shorten_provider_error(exc),
+                    outcome="dlq",
+                )
                 await record_failure(r_cache, platform, resolved_account_id)
                 await _move_to_dlq(post_id, str(exc), platform=platform, account_id=resolved_account_id)
                 await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
                 return {"status": "dlq"}
 
-            logger.warning("Retry %d for %s/%s in %ds: %s", attempt + 1, post_id, platform, countdown, exc)
+            event_log(
+                logger,
+                "warning",
+                "publish.platform.retry_scheduled",
+                exc_info=exc,
+                task_name="publish_to_platform",
+                post_id=post_id,
+                platform=platform,
+                account_id=resolved_account_id,
+                retry_count=attempt + 1,
+                retry_after=countdown,
+                failure_type="transient",
+                provider_error=shorten_provider_error(exc),
+                outcome="retrying",
+            )
             await _update_platform_result(db, post_id, platform, {
                 "status": "retrying",
                 "retry_count": attempt + 1,
@@ -1395,7 +1557,16 @@ async def _async_pre_upload(task, post_id: str, platform: str, account_id: str |
     lock_owner = task.request.id or f"{post_id}:{target_key}:preupload"
     lock_acquired = await _acquire_pre_upload_lock(r_cache, post_id, target_key, lock_owner)
     if not lock_acquired:
-        logger.info("Pre-upload already in-flight for %s/%s — skipping duplicate dispatch", post_id, platform)
+        event_log(
+            logger,
+            "info",
+            "publish.pre_upload.lock_contention",
+            task_name="pre_upload_task",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            outcome="already_inflight",
+        )
         return {"status": "already_inflight", "platform": platform, "account_id": account_id}
 
     await db.posts.update_one(
@@ -1426,7 +1597,16 @@ async def _async_pre_upload(task, post_id: str, platform: str, account_id: str |
             post = {**post, "account": account_doc}
         # EC-1: Post deleted or cancelled before pre_upload executed — abort cleanly
         if not post or post.get("status") in {"deleted", "cancelled"}:
-            logger.info("pre_upload EC-1: post %s deleted/cancelled before pre_upload — aborting", post_id)
+            event_log(
+                logger,
+                "info",
+                "publish.pre_upload.skipped",
+                task_name="pre_upload_task",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                outcome="post_deleted_or_cancelled",
+            )
             return {"status": "post_deleted"}
         # Inject per-platform text overrides for pre_upload (YouTube uses title/content in metadata)
         _override = (
@@ -1509,14 +1689,34 @@ async def _async_pre_upload(task, post_id: str, platform: str, account_id: str |
             }
         )
         await _sync_pre_upload_aggregate(db, post_id)
-        logger.info(
-            "17.3: pre_upload ready for %s/%s — actual_duration=%ds container=%s",
-            post_id, platform, actual_duration, container_id,
+        event_log(
+            logger,
+            "info",
+            "publish.pre_upload.ready",
+            task_name="pre_upload_task",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            actual_duration_secs=actual_duration,
+            container_id=container_id,
+            outcome="ready",
         )
         return {"status": "ready", "platform": platform, "account_id": account_id, "actual_duration_secs": actual_duration}
 
     except Exception as exc:
-        logger.error("pre_upload_task failed for %s/%s: %s", post_id, platform, exc)
+        event_log(
+            logger,
+            "error",
+            "publish.pre_upload.failed",
+            exc_info=exc,
+            task_name="pre_upload_task",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            failure_type="pre_upload_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
         await db.posts.update_one(
             {"id": post_id},
             {
@@ -1569,7 +1769,6 @@ async def _update_platform_result(
     # 20.4: Publish SSE update so browser is notified in real-time (non-blocking)
     try:
         import json as _json
-        import os as _os
         from db.redis_client import get_cache_redis
         r = get_cache_redis()
         if post_doc:
@@ -1623,13 +1822,37 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None, a
     try:
         await db.dead_letter_queue.insert_one(dlq_doc)
     except Exception as dlq_err:
-        logger.error("Failed to write DLQ record for post %s: %s", post_id, dlq_err)
+        event_log(
+            logger,
+            "error",
+            "publish.dlq.write_failed",
+            exc_info=dlq_err,
+            task_name="_move_to_dlq",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            failure_type="dlq_write_failed",
+            provider_error=shorten_provider_error(dlq_err),
+            outcome="failed",
+        )
 
     if platform:
         try:
             await _finalize_post_status(db, post_id)
         except Exception as finalize_err:
-            logger.warning("DLQ: failed to finalize aggregate status for %s: %s", post_id, finalize_err)
+            event_log(
+                logger,
+                "warning",
+                "publish.dlq.finalize_degraded",
+                exc_info=finalize_err,
+                task_name="_move_to_dlq",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="finalize_status_failed",
+                provider_error=shorten_provider_error(finalize_err),
+                outcome="degraded",
+            )
 
     # 18.8: DLQ notification — "permanently failed — [Reschedule]"
     if post and platform:
@@ -1650,7 +1873,19 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None, a
                 queue="default",
             )
         except Exception as notify_exc:
-            logger.warning("18.8: Failed to send DLQ notification for %s/%s: %s", post_id, platform, notify_exc)
+            event_log(
+                logger,
+                "warning",
+                "publish.dlq.notification_degraded",
+                exc_info=notify_exc,
+                task_name="_move_to_dlq",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="notification_failed",
+                provider_error=shorten_provider_error(notify_exc),
+                outcome="degraded",
+            )
 
 
 async def _send_failure_notification(db, post_id: str, platform: str, error: str, user_id: str = "") -> None:
@@ -1693,7 +1928,19 @@ async def _send_success_notification(db, post_id: str, platform: str, post_url: 
             queue="default",
         )
     except Exception as exc:
-        logger.warning("18.8: Failed to send success notification for %s/%s: %s", post_id, platform, exc)
+        event_log(
+            logger,
+            "warning",
+            "publish.success_notification.degraded",
+            exc_info=exc,
+            task_name="_send_success_notification",
+            post_id=post_id,
+            platform=platform,
+            user_id=user_id,
+            failure_type="notification_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
 
 
 # 18.8: Partial-recovery notification — all platforms now published
@@ -1716,4 +1963,15 @@ async def _send_recovery_notification(db, post_id: str, user_id: str = "") -> No
             queue="default",
         )
     except Exception as exc:
-        logger.warning("18.8: Failed to send recovery notification for %s: %s", post_id, exc)
+        event_log(
+            logger,
+            "warning",
+            "publish.recovery_notification.degraded",
+            exc_info=exc,
+            task_name="_send_recovery_notification",
+            post_id=post_id,
+            user_id=user_id,
+            failure_type="notification_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )

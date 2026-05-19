@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from utils.request_context import get_trace_id
 
 
 def _create_celery_client() -> Celery:
@@ -20,12 +21,15 @@ def enqueue_task(
     queue: str | None = None,
     countdown: int | None = None,
 ):
+    trace_id = get_trace_id()
+    headers = {"x-trace-id": trace_id} if trace_id else None
     return celery_client.send_task(
         task_name,
         args=args or [],
         kwargs=kwargs or {},
         queue=queue,
         countdown=countdown,
+        headers=headers,
     )
 
 

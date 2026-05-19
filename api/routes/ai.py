@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import CurrentUser
 from api.limiter import limiter
+from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ai"])
@@ -120,7 +121,18 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
             text = _ensure_text("Gemini", getattr(result, "text", None))
             return text, "google", model_name
         except Exception as exc:
-            logger.warning("[AI waterfall] Gemini failed: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "ai.provider.failed",
+                exc_info=exc,
+                route="/ai/*",
+                provider="google",
+                model=model_name,
+                failure_type="provider_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="fallback",
+            )
             _record_provider_error("Gemini", exc)
 
     groq_key = os.environ.get("GROQ_API_KEY")
@@ -141,7 +153,18 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
             text = _ensure_text("Groq", resp.choices[0].message.content)
             return text, "groq", model_name
         except Exception as exc:
-            logger.warning("[AI waterfall] Groq failed: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "ai.provider.failed",
+                exc_info=exc,
+                route="/ai/*",
+                provider="groq",
+                model=model_name,
+                failure_type="provider_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="fallback",
+            )
             _record_provider_error("Groq", exc)
 
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
@@ -181,7 +204,18 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
             try:
                 return await _call_openrouter(model_name)
             except Exception as exc:
-                logger.warning("[AI waterfall] OpenRouter %s failed: %s", model_name, exc)
+                event_log(
+                    logger,
+                    "warning",
+                    "ai.provider.failed",
+                    exc_info=exc,
+                    route="/ai/*",
+                    provider="openrouter",
+                    model=model_name,
+                    failure_type="provider_failed",
+                    provider_error=shorten_provider_error(exc),
+                    outcome="fallback",
+                )
                 _record_provider_error(f"OpenRouter/{model_name}", exc)
 
     cohere_key = os.environ.get("COHERE_API_KEY")
@@ -205,7 +239,18 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
             text = _ensure_text("Cohere", text)
             return text, "cohere", model_name
         except Exception as exc:
-            logger.warning("[AI waterfall] Cohere failed: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "ai.provider.failed",
+                exc_info=exc,
+                route="/ai/*",
+                provider="cohere",
+                model=model_name,
+                failure_type="provider_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="fallback",
+            )
             _record_provider_error("Cohere", exc)
 
     if provider_errors:
@@ -246,25 +291,43 @@ async def generate_content(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error(
-            "AI content generation failed user=%s platform=%s language=%s error=%s",
-            current_user["user_id"],
-            body.platform,
-            body.language,
-            exc,
+        event_log(
+            logger,
+            "error",
+            "ai.content.failed",
+            exc_info=exc,
+            route="/ai/generate-content",
+            user_id=current_user["user_id"],
+            platform=body.platform,
+            failure_type="generation_failed",
+            language=body.language,
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        capture_degraded_event(
+            "AI content generation failed",
+            route="/ai/generate-content",
+            user_id=current_user["user_id"],
+            platform=body.platform,
+            language=body.language,
+            failure_type="generation_failed",
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI content generation failed. Please try again.",
         ) from exc
 
-    logger.info(
-        "AI content generated user=%s platform=%s language=%s provider=%s model=%s",
-        current_user["user_id"],
-        body.platform,
-        body.language,
-        provider,
-        model,
+    event_log(
+        logger,
+        "info",
+        "ai.content.generated",
+        route="/ai/generate-content",
+        user_id=current_user["user_id"],
+        platform=body.platform,
+        language=body.language,
+        provider=provider,
+        model=model,
+        outcome="generated",
     )
     return AIContentResponse(
         content=content,
@@ -303,11 +366,24 @@ async def generate_hashtags(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error(
-            "AI hashtag generation failed user=%s platform=%s error=%s",
-            current_user["user_id"],
-            body.platform,
-            exc,
+        event_log(
+            logger,
+            "error",
+            "ai.hashtags.failed",
+            exc_info=exc,
+            route="/ai/generate-hashtags",
+            user_id=current_user["user_id"],
+            platform=body.platform,
+            failure_type="generation_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        capture_degraded_event(
+            "AI hashtag generation failed",
+            route="/ai/generate-hashtags",
+            user_id=current_user["user_id"],
+            platform=body.platform,
+            failure_type="generation_failed",
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -320,13 +396,17 @@ async def generate_hashtags(
             detail="AI hashtag generation returned no hashtags",
         )
 
-    logger.info(
-        "AI hashtags generated user=%s platform=%s provider=%s model=%s count=%s",
-        current_user["user_id"],
-        body.platform,
-        provider,
-        model,
-        len(hashtags),
+    event_log(
+        logger,
+        "info",
+        "ai.hashtags.generated",
+        route="/ai/generate-hashtags",
+        user_id=current_user["user_id"],
+        platform=body.platform,
+        provider=provider,
+        model=model,
+        hashtag_count=len(hashtags),
+        outcome="generated",
     )
     return HashtagGenerateResponse(
         hashtags=hashtags,

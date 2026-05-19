@@ -1,5 +1,7 @@
 import { initSentry } from './lib/sentry';
+import { initHttpInterceptors } from './lib/http';
 initSentry();
+initHttpInterceptors();
 
 import React from "react";
 import ReactDOM from "react-dom/client";

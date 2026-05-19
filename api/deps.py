@@ -17,6 +17,7 @@ import firebase_admin
 from firebase_admin import auth as firebase_auth, credentials
 from db.mongo import get_db
 from db.redis_client import get_cache_redis, get_queue_redis
+from utils.observability import event_log, shorten_provider_error
 from utils.roles import has_permission
 from utils.session import verify_session_cookie
 
@@ -42,7 +43,13 @@ def get_firebase_app() -> firebase_admin.App:
         cred_path = get_firebase_credential_path()
         cred = credentials.Certificate(cred_path)
         _firebase_app = firebase_admin.initialize_app(cred)
-        logger.info("Firebase Admin SDK initialized from %s", cred_path)
+        event_log(
+            logger,
+            "info",
+            "auth.firebase.initialized",
+            credential_path=cred_path,
+            outcome="initialized",
+        )
     return _firebase_app
 
 
@@ -76,7 +83,14 @@ async def _bootstrap_user_from_claims(
             if updates:
                 await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
                 user.update(updates)
-                logger.info("Backfilled Firebase identity for existing user %s", user["user_id"])
+                event_log(
+                    logger,
+                    "info",
+                    "auth.user.backfilled",
+                    user_id=user["user_id"],
+                    firebase_uid=uid,
+                    outcome="backfilled",
+                )
             return user
 
     now = datetime.now(timezone.utc)
@@ -100,12 +114,26 @@ async def _bootstrap_user_from_claims(
     }
     try:
         await db.users.insert_one(user_doc)
-        logger.info("Auto-created user from Firebase login: %s", user_doc["user_id"])
+        event_log(
+            logger,
+            "info",
+            "auth.user.auto_created",
+            user_id=user_doc["user_id"],
+            firebase_uid=uid,
+            outcome="created",
+        )
         return user_doc
     except DuplicateKeyError:
         # Another request likely created the user concurrently. Re-read to keep
         # sign-in stable instead of failing the request.
-        logger.info("User bootstrap raced with another request for email=%s uid=%s", email, uid)
+        event_log(
+            logger,
+            "info",
+            "auth.user.bootstrap_race",
+            firebase_uid=uid,
+            email=email,
+            outcome="race_recovered",
+        )
         if uid:
             user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
             if user is not None:
@@ -138,13 +166,30 @@ async def get_current_user(
         get_firebase_app()
         decoded = firebase_auth.verify_id_token(credentials.credentials)
     except Exception as exc:
-        logger.warning("Firebase token verification failed: %s", type(exc).__name__)
+        event_log(
+            logger,
+            "warning",
+            "auth.token.verification_failed",
+            route="/auth/me",
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="invalid_token",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     try:
         user = await _bootstrap_user_from_claims(db, decoded)
-    except DuplicateKeyError:
-        logger.exception("User bootstrap failed after duplicate-key recovery")
+    except DuplicateKeyError as exc:
+        event_log(
+            logger,
+            "error",
+            "auth.user.bootstrap_failed",
+            exc_info=exc,
+            route="/auth/me",
+            firebase_uid=decoded.get("uid"),
+            failure_type="duplicate_key_recovery_failed",
+            outcome="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="User profile is still being prepared. Please try again.",
@@ -169,8 +214,17 @@ async def get_current_user_from_cookie(
 
     try:
         user = await _bootstrap_user_from_claims(db, claims)
-    except DuplicateKeyError:
-        logger.exception("Cookie user bootstrap failed after duplicate-key recovery")
+    except DuplicateKeyError as exc:
+        event_log(
+            logger,
+            "error",
+            "auth.session.bootstrap_failed",
+            exc_info=exc,
+            route="/auth/me",
+            firebase_uid=claims.get("uid"),
+            failure_type="duplicate_key_recovery_failed",
+            outcome="error",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="User profile is still being prepared. Please try again.",

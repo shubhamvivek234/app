@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
+from utils.request_context import clear_trace_id, set_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,15 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         trace_id = request.headers.get(self._header_name) or str(uuid.uuid4())
         request.state.trace_id = trace_id
+        set_trace_id(trace_id)
 
         # Bind to structlog context for this request
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
-
-        response = await call_next(request)
-        response.headers[self._header_name] = trace_id
-        return response
+        try:
+            response = await call_next(request)
+            response.headers[self._header_name] = trace_id
+            return response
+        finally:
+            structlog.contextvars.clear_contextvars()
+            clear_trace_id()

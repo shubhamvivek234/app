@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from api.deps import CurrentUser, DB, CacheRedis, require_permission
 from api.task_queue import enqueue_task
 from utils.encryption import decrypt, encrypt
+from utils.observability import event_log, shorten_provider_error
 from utils.redis_resilience import safe_delete, safe_get, safe_setex
 
 logger = logging.getLogger(__name__)
@@ -705,9 +706,15 @@ async def disconnect_account(
             },
             {"$set": {"status": "cancelled", "updated_at": now}},
         )
-        logger.info(
-            "Cancelled %d future posts for account %s (force disconnect)",
-            future_count, account_id,
+        event_log(
+            logger,
+            "info",
+            "accounts.disconnect.cancelled_future_posts",
+            route="/accounts/{account_id}",
+            user_id=user_id,
+            account_id=account_id,
+            cancelled_posts=future_count,
+            outcome="cancelled",
         )
 
         # Schedule media cleanup for each cancelled post
@@ -719,7 +726,18 @@ async def disconnect_account(
                     countdown=300,
                 )
         except Exception as exc:
-            logger.warning("Failed to schedule media cleanup after disconnect for account %s: %s", account_id, exc)
+            event_log(
+                logger,
+                "warning",
+                "accounts.disconnect.cleanup_schedule_degraded",
+                exc_info=exc,
+                route="/accounts/{account_id}",
+                user_id=user_id,
+                account_id=account_id,
+                failure_type="cleanup_schedule_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="degraded",
+            )
 
         # Notify user about the disconnection directly (9.5: send_notification is post-only)
         try:
@@ -732,12 +750,32 @@ async def disconnect_account(
                 "created_at": now,
             })
         except Exception as exc:
-            logger.warning("Failed to insert disconnect notification: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "accounts.disconnect.notification_degraded",
+                exc_info=exc,
+                route="/accounts/{account_id}",
+                user_id=user_id,
+                account_id=account_id,
+                failure_type="notification_insert_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="degraded",
+            )
 
     # Soft-deactivate; hard-delete deferred 24h
     await db.social_accounts.update_one(
         {"account_id": account_id, "user_id": user_id},
         {"$set": {"is_active": False, "deactivated_at": now, "schedule_hard_delete_at": now}},
+    )
+    event_log(
+        logger,
+        "info",
+        "accounts.disconnect.succeeded",
+        route="/accounts/{account_id}",
+        user_id=user_id,
+        account_id=account_id,
+        outcome="disconnected",
     )
 
     return {"disconnected": True, "future_posts_cancelled": future_count}
@@ -868,7 +906,16 @@ async def oauth_callback(
     token_data = await _exchange_code_for_tokens(platform, payload.code, payload.code_verifier, state_context)
     account_id = await _persist_oauth_account(db, user_id, platform, token_data)
 
-    logger.info("OAuth connected: %s user=%s platform=%s", account_id, user_id, platform)
+    event_log(
+        logger,
+        "info",
+        "oauth.callback.connected",
+        route="/oauth/{platform}/callback",
+        user_id=user_id,
+        platform=platform,
+        account_id=account_id,
+        outcome="connected",
+    )
     return OAuthCallbackResponse(
         account_id=account_id,
         platform=platform,
@@ -970,7 +1017,18 @@ async def connect_bluesky(
             r.raise_for_status()
             session = r.json()
     except Exception as exc:
-        logger.error("Bluesky connect failed for handle=%s: %s", handle, exc)
+        event_log(
+            logger,
+            "error",
+            "accounts.bluesky.connect_failed",
+            exc_info=exc,
+            route="/social-accounts/bluesky/connect",
+            user_id=user_id,
+            platform="bluesky",
+            failure_type="credential_auth_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="Failed to authenticate with Bluesky")
 
@@ -995,7 +1053,16 @@ async def connect_bluesky(
         }},
         upsert=True,
     )
-    logger.info("Bluesky connected: user=%s handle=%s", user_id, handle)
+    event_log(
+        logger,
+        "info",
+        "accounts.bluesky.connected",
+        route="/social-accounts/bluesky/connect",
+        user_id=user_id,
+        platform="bluesky",
+        account_id=account_id,
+        outcome="connected",
+    )
     return {"connected": True, "platform": "bluesky", "handle": handle}
 
 
@@ -1018,7 +1085,18 @@ async def connect_discord(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
-        logger.error("Discord webhook validation failed: %s", exc)
+        event_log(
+            logger,
+            "error",
+            "accounts.discord.connect_failed",
+            exc_info=exc,
+            route="/social-accounts/discord/connect",
+            user_id=user_id,
+            platform="discord",
+            failure_type="webhook_validation_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="Failed to reach Discord. Please check the webhook URL.")
 
@@ -1048,7 +1126,16 @@ async def connect_discord(
         }},
         upsert=True,
     )
-    logger.info("Discord webhook connected: user=%s webhook_id=%s channel=%s", user_id, webhook_id, channel_label)
+    event_log(
+        logger,
+        "info",
+        "accounts.discord.connected",
+        route="/social-accounts/discord/connect",
+        user_id=user_id,
+        platform="discord",
+        account_id=account_id,
+        outcome="connected",
+    )
     return {"connected": True, "platform": "discord", "channel": channel_label}
 
 
@@ -1337,7 +1424,6 @@ async def _exchange_code_for_tokens(
 
 async def _exchange_facebook_code(code: str) -> dict | None:
     """Facebook OAuth: exchange code → short-lived → long-lived (60 days)."""
-    import urllib.parse
     import httpx
     from datetime import timedelta
 
@@ -1361,7 +1447,10 @@ async def _exchange_facebook_code(code: str) -> dict | None:
             short = r.json()
             short_token = short.get("access_token")
             if not short_token:
-                logger.error("Facebook short token missing: %s", short)
+                logger.error(
+                    "Facebook short token missing from OAuth exchange response (keys=%s)",
+                    list(short.keys()),
+                )
                 return None
 
             # Step 2 — long-lived token (60 days)
@@ -1450,7 +1539,10 @@ async def _exchange_youtube_code(code: str, state_context: dict | None = None) -
             tokens = r.json()
             access_token = tokens.get("access_token")
             if not access_token:
-                logger.error("YouTube token missing: %s", tokens)
+                logger.error(
+                    "YouTube token missing from OAuth exchange response (keys=%s)",
+                    list(tokens.keys()),
+                )
                 return None
 
             expires_in = tokens.get("expires_in")
@@ -1510,7 +1602,10 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
             tokens = r.json()
             access_token = tokens.get("access_token")
             if not access_token:
-                logger.error("Twitter token missing: %s", tokens)
+                logger.error(
+                    "Twitter token missing from OAuth exchange response (keys=%s)",
+                    list(tokens.keys()),
+                )
                 return None
 
             # Get user profile
@@ -1550,7 +1645,10 @@ async def _exchange_threads_code(code: str, state_context: dict | None = None) -
         short_lived = await auth.exchange_code_for_token(code)
         short_token = short_lived.get("access_token")
         if not short_token:
-            logger.error("Threads token missing: %s", short_lived)
+            logger.error(
+                "Threads token missing from OAuth exchange response (keys=%s)",
+                list(short_lived.keys()),
+            )
             return None
 
         long_lived = await auth.get_long_lived_token(short_token)
@@ -1587,7 +1685,10 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
         tokens = await auth.exchange_code_for_token(code)
         access_token = tokens.get("access_token")
         if not access_token:
-            logger.error("LinkedIn token missing: %s", tokens)
+            logger.error(
+                "LinkedIn token missing from OAuth exchange response (keys=%s)",
+                list(tokens.keys()),
+            )
             return None
 
         expires_in = tokens.get("expires_in")
@@ -1619,7 +1720,10 @@ async def _exchange_tiktok_code(code: str, code_verifier: str) -> dict | None:
         token_data = await auth.exchange_code_for_token(code, code_verifier)
         access_token = token_data.get("access_token")
         if not access_token:
-            logger.error("TikTok token missing: %s", token_data)
+            logger.error(
+                "TikTok token missing from OAuth exchange response (keys=%s)",
+                list(token_data.keys()),
+            )
             return None
 
         expires_in = token_data.get("expires_in")
@@ -1661,7 +1765,10 @@ async def _exchange_instagram_code(code: str) -> dict | None:
         short_data = await _ig_exchange(code)
         short_token = short_data.get("access_token")
         if not short_token:
-            logger.error("Instagram token exchange: no access_token in response %s", short_data)
+            logger.error(
+                "Instagram token exchange: no access_token in response (keys=%s)",
+                list(short_data.keys()),
+            )
             return None
 
         # Step 2 — long-lived token (60 days)

@@ -16,6 +16,7 @@ from redis.exceptions import RedisError
 from api.deps import CurrentUser, DB, CacheRedis
 from api.limiter import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
+from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
@@ -88,7 +89,22 @@ async def _check_login_attempts(cache_redis, email: str, ip: str) -> None:
     try:
         email_count, ip_count = await cache_redis.mget(email_key, ip_key)
     except RedisError as exc:
-        logger.warning("Skipping login-attempt check because cache Redis is unavailable: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "auth.login_attempts.degraded",
+            exc_info=exc,
+            route="/auth/login",
+            email=email,
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="skipped",
+        )
+        capture_degraded_event(
+            "Auth login-attempt check degraded",
+            route="/auth/login",
+            failure_type="redis_unavailable",
+        )
         return
     if email_count and int(email_count) >= _MAX_LOGIN_ATTEMPTS:
         raise HTTPException(
@@ -112,7 +128,17 @@ async def _record_failed_login(cache_redis, email: str, ip: str) -> None:
         pipe.expire(f"login_attempts:ip:{ip}", _LOGIN_LOCKOUT_SECONDS)
         await pipe.execute()
     except RedisError as exc:
-        logger.warning("Skipping failed-login tracking because cache Redis is unavailable: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "auth.failed_login_tracking.degraded",
+            exc_info=exc,
+            route="/auth/login",
+            email=email,
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="skipped",
+        )
 
 
 async def _clear_login_attempts(cache_redis, email: str) -> None:
@@ -120,7 +146,17 @@ async def _clear_login_attempts(cache_redis, email: str) -> None:
     try:
         await cache_redis.delete(f"login_attempts:{email}")
     except RedisError as exc:
-        logger.warning("Skipping login-attempt reset because cache Redis is unavailable: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "auth.login_attempts_reset.degraded",
+            exc_info=exc,
+            route="/auth/login",
+            email=email,
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="skipped",
+        )
 
 
 # ── /me ──────────────────────────────────────────────────────────────────────
@@ -189,6 +225,15 @@ async def patch_me(
             {"user_id": current_user["user_id"]},
             {"$set": set_fields},
         )
+        event_log(
+            logger,
+            "info",
+            "auth.profile.updated",
+            route="/auth/me",
+            user_id=current_user["user_id"],
+            updated_fields=sorted(k for k in set_fields.keys() if k != "updated_at"),
+            outcome="updated",
+        )
 
     user = await db.users.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
     if not user:
@@ -231,6 +276,14 @@ async def login(
     auth_header = request.headers.get("authorization", "")
     token = auth_header.removeprefix("Bearer ").strip()
     if not token:
+        event_log(
+            logger,
+            "warning",
+            "auth.login.rejected",
+            route="/auth/login",
+            failure_type="missing_token",
+            outcome="rejected",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing token",
@@ -240,9 +293,19 @@ async def login(
     try:
         get_firebase_app()
         decoded = fb_auth.verify_id_token(token)
-    except Exception:
+    except Exception as exc:
         # Record IP-level failure — email unknown at this point
         await _record_failed_login(cache_redis, "invalid_token", ip)
+        event_log(
+            logger,
+            "warning",
+            "auth.login.rejected",
+            exc_info=exc,
+            route="/auth/login",
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="invalid_token",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
@@ -279,7 +342,15 @@ async def login(
 
     # Successful login — clear attempt counters
     await _clear_login_attempts(cache_redis, email)
-    logger.info("Login successful: user=%s email=%s", user["user_id"], email)
+    event_log(
+        logger,
+        "info",
+        "auth.login.succeeded",
+        route="/auth/login",
+        user_id=user["user_id"],
+        email=email,
+        outcome="succeeded",
+    )
 
     # Phase 6.5 — Account takeover detection (fire-and-forget, non-blocking)
     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (
@@ -322,6 +393,14 @@ async def signup(
     auth_header = request.headers.get("authorization", "")
     token = auth_header.removeprefix("Bearer ").strip()
     if not token:
+        event_log(
+            logger,
+            "warning",
+            "auth.signup.rejected",
+            route="/auth/signup",
+            failure_type="missing_token",
+            outcome="rejected",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing token",
@@ -330,7 +409,17 @@ async def signup(
     try:
         get_firebase_app()
         decoded = fb_auth.verify_id_token(token)
-    except Exception:
+    except Exception as exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.signup.rejected",
+            exc_info=exc,
+            route="/auth/signup",
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="invalid_token",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
@@ -344,7 +433,15 @@ async def signup(
         display_name = decoded.get("name")
         user = await _auto_create_user(db, uid, email, display_name)
 
-    logger.info("Signup verified: user=%s email=%s", user["user_id"], email)
+    event_log(
+        logger,
+        "info",
+        "auth.signup.verified",
+        route="/auth/signup",
+        user_id=user["user_id"],
+        email=email,
+        outcome="verified",
+    )
     return UserResponse(**user)
 
 
@@ -383,9 +480,26 @@ async def logout(
         block_key = f"jti_blocklist:{jti}"
         try:
             await cache_redis.setex(block_key, 3600, "1")
-            logger.info("JTI blocklisted on logout: user=%s", current_user["user_id"])
+            event_log(
+                logger,
+                "info",
+                "auth.logout.succeeded",
+                route="/auth/logout",
+                user_id=current_user["user_id"],
+                outcome="succeeded",
+            )
         except RedisError as exc:
-            logger.warning("Failed to persist logout JTI blocklist entry: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "auth.logout.degraded",
+                exc_info=exc,
+                route="/auth/logout",
+                user_id=current_user["user_id"],
+                failure_type="blocklist_write_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="degraded",
+            )
 
 
 # ── /workspace ────────────────────────────────────────────────────────────────
@@ -451,7 +565,15 @@ async def _ensure_personal_workspace(db, user_id: str, display_name: str | None)
         "role": "owner",
         "joined_at": now,
     })
-    logger.info("Personal workspace created: %s user=%s", ws_id, user_id)
+    event_log(
+        logger,
+        "info",
+        "auth.workspace.created",
+        route="/auth/me",
+        user_id=user_id,
+        workspace_id=ws_id,
+        outcome="created",
+    )
     return ws_id
 
 
@@ -481,7 +603,16 @@ async def _check_account_takeover(db, user_id: str, client_ip: str) -> None:
         from utils.account_takeover import check_and_flag_takeover
         await check_and_flag_takeover(db, user_id, lat, lon, client_ip)
     except Exception as exc:
-        logger.warning("Account takeover check failed (non-fatal): %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "auth.account_takeover_check.degraded",
+            exc_info=exc,
+            user_id=user_id,
+            failure_type="check_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
 
 
 async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str | None) -> dict:
@@ -509,7 +640,14 @@ async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str
     }
     await db.users.insert_one(user_doc)
     user_doc.pop("_id", None)
-    logger.info("User auto-created: %s firebase_uid=%s", user_id, firebase_uid)
+    event_log(
+        logger,
+        "info",
+        "auth.user.created",
+        user_id=user_id,
+        firebase_uid=firebase_uid,
+        outcome="created",
+    )
     return user_doc
 
 
@@ -537,7 +675,7 @@ async def mfa_setup(
         {"user_id": current_user["user_id"]},
         {"$set": {"pending_mfa_secret": encrypted}},
     )
-    logger.info("MFA setup initiated: user=%s", current_user["user_id"])
+    event_log(logger, "info", "auth.mfa.setup_started", user_id=current_user["user_id"], outcome="started")
     # Return plain secret so the user can manually enter it in their authenticator app
     return {"totp_uri": uri, "secret": secret}
 
@@ -583,7 +721,7 @@ async def mfa_enable(
             "$unset": {"pending_mfa_secret": ""},
         },
     )
-    logger.info("MFA enabled: user=%s", current_user["user_id"])
+    event_log(logger, "info", "auth.mfa.enabled", user_id=current_user["user_id"], outcome="enabled")
     return {"mfa_enabled": True}
 
 
@@ -620,5 +758,5 @@ async def mfa_disable(
         {"user_id": current_user["user_id"]},
         {"$set": {"mfa_enabled": False}, "$unset": {"mfa_secret": "", "pending_mfa_secret": ""}},
     )
-    logger.info("MFA disabled: user=%s", current_user["user_id"])
+    event_log(logger, "info", "auth.mfa.disabled", user_id=current_user["user_id"], outcome="disabled")
     return {"mfa_enabled": False}

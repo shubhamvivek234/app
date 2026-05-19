@@ -6,6 +6,11 @@
 import * as Sentry from '@sentry/react';
 
 const SENTRY_DSN = process.env.REACT_APP_SENTRY_DSN;
+const SENTRY_ENVIRONMENT = process.env.REACT_APP_SENTRY_ENVIRONMENT || process.env.NODE_ENV;
+const SENTRY_RELEASE = process.env.REACT_APP_SENTRY_RELEASE;
+const SENTRY_TRACES_SAMPLE_RATE = Number(process.env.REACT_APP_SENTRY_TRACES_SAMPLE_RATE || 0.1);
+const SENTRY_REPLAYS_SESSION_SAMPLE_RATE = Number(process.env.REACT_APP_SENTRY_REPLAYS_SESSION_SAMPLE_RATE || 0.1);
+const SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = Number(process.env.REACT_APP_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE || 1.0);
 
 export function initSentry() {
   if (!SENTRY_DSN) {
@@ -14,10 +19,11 @@ export function initSentry() {
   }
   Sentry.init({
     dsn: SENTRY_DSN,
-    environment: process.env.NODE_ENV,
-    tracesSampleRate: 0.1,
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
+    environment: SENTRY_ENVIRONMENT,
+    release: SENTRY_RELEASE,
+    tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
+    replaysSessionSampleRate: SENTRY_REPLAYS_SESSION_SAMPLE_RATE,
+    replaysOnErrorSampleRate: SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE,
     beforeSend(event) {
       // Don't send events in development
       if (process.env.NODE_ENV !== 'production') return null;

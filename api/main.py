@@ -56,6 +56,7 @@ from db.redis_client import close_pools
 from db.indexes import create_all_indexes
 from db.audit_events import ensure_indexes as create_audit_indexes
 from utils.log_scrub import configure_scrubbing
+from utils.observability import JsonFormatter
 from utils.encryption import validate_encryption_key
 
 
@@ -88,28 +89,32 @@ def _configure_sentry() -> None:
 def _configure_logging() -> None:
     """JSON logs in production, human-readable in dev."""
     is_prod = os.getenv("ENV", "development") == "production"
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    if is_prod:
+        handler.setFormatter(JsonFormatter(service_name="api"))
+    else:
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+    root_logger.addHandler(handler)
     configure_scrubbing()
 
-    processors = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-    ]
-
-    if is_prod:
-        processors.append(structlog.processors.JSONRenderer())
-    else:
-        processors.append(structlog.dev.ConsoleRenderer())
-
     structlog.configure(
-        processors=processors,
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.JSONRenderer() if is_prod else structlog.dev.ConsoleRenderer(),
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager

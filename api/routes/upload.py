@@ -25,6 +25,7 @@ from api.models.media import (
     MediaUploadSessionResponse,
 )
 from api.task_queue import enqueue_task
+from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["upload"])
@@ -53,7 +54,16 @@ async def _check_queue_depth(queue_redis: QueueRedis) -> None:
     try:
         depth = await queue_redis.llen("media_processing")
     except RedisError as exc:
-        logger.warning("Skipping queue depth check because Redis is unavailable: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "upload.queue_depth.degraded",
+            exc_info=exc,
+            route="/upload/session",
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="skipped",
+        )
         return
 
     if depth > _QUEUE_DEPTH_LIMIT:
@@ -78,7 +88,17 @@ async def _reserve_concurrent_upload_slot(
         current = await cache_redis.incr(key)
         await cache_redis.expire(key, ttl_seconds)
     except RedisError as exc:
-        logger.warning("Skipping concurrent upload limit because Redis is unavailable: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "upload.concurrent_limit.degraded",
+            exc_info=exc,
+            route="/upload/session",
+            user_id=user_id,
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="skipped",
+        )
         return
 
     if current > limit:
@@ -86,7 +106,17 @@ async def _reserve_concurrent_upload_slot(
             # Roll back the increment before raising
             await cache_redis.decr(key)
         except RedisError as exc:
-            logger.warning("Failed to roll back concurrent upload counter: %s", exc)
+            event_log(
+                logger,
+                "warning",
+                "upload.concurrent_limit_rollback.degraded",
+                exc_info=exc,
+                route="/upload/session",
+                user_id=user_id,
+                failure_type="redis_unavailable",
+                provider_error=shorten_provider_error(exc),
+                outcome="degraded",
+            )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Concurrent upload limit reached ({limit} for {plan} plan)",
@@ -101,7 +131,16 @@ async def _release_concurrent_slot(cache_redis: CacheRedis, user_id: str) -> Non
         if val and int(val) > 0:
             await cache_redis.decr(key)
     except RedisError as exc:
-        logger.warning("Failed to release concurrent upload slot: %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "upload.concurrent_slot_release.degraded",
+            exc_info=exc,
+            user_id=user_id,
+            failure_type="redis_unavailable",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
 
 
 def _ensure_allowed_mime(content_type: str) -> None:
@@ -172,6 +211,17 @@ async def create_upload_session(
     now = datetime.now(timezone.utc)
 
     try:
+        event_log(
+            logger,
+            "info",
+            "upload.session.started",
+            route="/upload/session",
+            user_id=user_id,
+            mime_type=payload.content_type,
+            file_size_bytes=payload.file_size_bytes,
+            plan=plan,
+            outcome="started",
+        )
         upload = create_direct_upload_session(
             key=source_storage_key,
             content_type=payload.content_type,
@@ -180,12 +230,35 @@ async def create_upload_session(
         )
     except RuntimeError as exc:
         await _release_concurrent_slot(cache_redis, user_id)
+        event_log(
+            logger,
+            "warning",
+            "upload.session.rejected",
+            route="/upload/session",
+            user_id=user_id,
+            media_job_id=media_job_id,
+            failure_type="storage_not_configured",
+            provider_error=shorten_provider_error(exc),
+            outcome="rejected",
+        )
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=str(exc),
         ) from exc
-    except Exception:
+    except Exception as exc:
         await _release_concurrent_slot(cache_redis, user_id)
+        event_log(
+            logger,
+            "error",
+            "upload.session.failed",
+            exc_info=exc,
+            route="/upload/session",
+            user_id=user_id,
+            media_job_id=media_job_id,
+            failure_type="session_create_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
         raise
 
     asset_doc = {
@@ -204,13 +277,17 @@ async def create_upload_session(
         "error_message": None,
     }
     await db.media_assets.insert_one(asset_doc)
-    logger.info(
-        "Direct upload session created: media_id=%s user=%s mode=%s key=%s size=%d",
-        media_job_id,
-        user_id,
-        upload["mode"],
-        source_storage_key,
-        payload.file_size_bytes,
+    event_log(
+        logger,
+        "info",
+        "upload.session.created",
+        route="/upload/session",
+        user_id=user_id,
+        media_job_id=media_job_id,
+        mode=upload["mode"],
+        source_storage_key=source_storage_key,
+        file_size_bytes=payload.file_size_bytes,
+        outcome="created",
     )
     return MediaUploadSessionResponse(
         media_job_id=media_job_id,
@@ -274,7 +351,25 @@ async def complete_upload(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Upload completion failed for %s: %s", payload.media_job_id, exc)
+        event_log(
+            logger,
+            "error",
+            "upload.complete.failed",
+            exc_info=exc,
+            route="/upload/complete",
+            user_id=user_id,
+            media_job_id=payload.media_job_id,
+            failure_type="cloud_finalize_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        capture_degraded_event(
+            "Upload completion failed",
+            route="/upload/complete",
+            user_id=user_id,
+            media_job_id=payload.media_job_id,
+            failure_type="cloud_finalize_failed",
+        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to finalize cloud upload") from exc
 
     await db.media_assets.update_one(
@@ -294,6 +389,15 @@ async def complete_upload(
         queue="media_processing",
     )
     await _release_concurrent_slot(cache_redis, user_id)
+    event_log(
+        logger,
+        "info",
+        "upload.complete.queued",
+        route="/upload/complete",
+        user_id=user_id,
+        media_job_id=payload.media_job_id,
+        outcome="queued_for_processing",
+    )
     return MediaUploadResponse(
         media_job_id=payload.media_job_id,
         status=MediaStatus.PROCESSING,
@@ -330,7 +434,18 @@ async def abort_upload(
                 upload_id=asset["upload_session_id"],
             )
         except Exception as exc:
-            logger.warning("Failed to abort multipart upload for %s: %s", media_job_id, exc)
+            event_log(
+                logger,
+                "warning",
+                "upload.abort.degraded",
+                exc_info=exc,
+                route="/upload/{media_job_id}/abort",
+                user_id=user_id,
+                media_job_id=media_job_id,
+                failure_type="multipart_abort_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="degraded",
+            )
 
     await db.media_assets.update_one(
         {"media_id": media_job_id, "user_id": user_id},
@@ -451,7 +566,17 @@ async def upload_media(
         # 9. Purge any stale CDN cache entries for this media path (best-effort)
         await _purge_media_cdn_cache(user_id, safe_filename)
 
-        logger.info("Media upload queued: %s user=%s mime=%s size=%d", media_job_id, user_id, mime_type, total_bytes)
+        event_log(
+            logger,
+            "info",
+            "upload.legacy.queued",
+            route="/upload",
+            user_id=user_id,
+            media_job_id=media_job_id,
+            mime_type=mime_type,
+            file_size_bytes=total_bytes,
+            outcome="queued",
+        )
         return MediaUploadResponse(media_job_id=media_job_id, status=MediaStatus.QUARANTINE)
 
     finally:
@@ -490,9 +615,17 @@ async def _purge_media_cdn_cache(user_id: str, filename: str) -> None:
             return
         url = f"{cf_public_base}/uploads/{filename}"
         await purge_by_urls([url])
-        logger.info("CDN purge requested: url=%s", url)
+        event_log(logger, "info", "upload.cdn_purge.requested", url=url, outcome="requested")
     except Exception as exc:
-        logger.warning("CDN purge failed (non-fatal): %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "upload.cdn_purge.degraded",
+            exc_info=exc,
+            failure_type="cdn_purge_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
 
 
 async def purge_media_cache(urls: list[str]) -> None:
@@ -507,7 +640,15 @@ async def purge_media_cache(urls: list[str]) -> None:
         from config.cdn import purge_by_urls  # noqa: PLC0415
         await purge_by_urls(urls)
     except Exception as exc:
-        logger.warning("purge_media_cache failed (non-fatal): %s", exc)
+        event_log(
+            logger,
+            "warning",
+            "upload.cdn_purge_bulk.degraded",
+            exc_info=exc,
+            failure_type="cdn_purge_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────

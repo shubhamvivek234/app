@@ -30,6 +30,7 @@ from api.models.post import (
 from api.task_queue import enqueue_task, revoke_task
 from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
+from utils.observability import event_log, shorten_provider_error
 from utils.schedule_density import check_schedule_density
 from utils.ssrf_guard import assert_safe_url
 
@@ -488,7 +489,15 @@ async def create_post(
 
     all_warnings = policy_warnings + intelligence_warnings
     if all_warnings:
-        logger.info("Post pre-publish warnings user=%s: %s", user_id, all_warnings)
+        event_log(
+            logger,
+            "info",
+            "posts.pre_publish.warning",
+            route="/posts",
+            user_id=user_id,
+            warnings=all_warnings,
+            outcome="warning",
+        )
 
     if body.workspace_id and body.workspace_id != current_user.get("default_workspace_id"):
         member = await db.workspace_members.find_one(
@@ -580,7 +589,17 @@ async def create_post(
             db, density_ws, body.platforms, scheduled_time
         )
     for dw in density_warnings:
-        logger.warning("Schedule density warning: %s", dw.message)
+        event_log(
+            logger,
+            "warning",
+            "posts.schedule_density.warning",
+            route="/posts",
+            user_id=user_id,
+            workspace_id=workspace_id,
+            failure_type="schedule_density_warning",
+            provider_error=dw.message,
+            outcome="warning",
+        )
         all_warnings.append(dw.message)
 
     doc: dict = {
@@ -649,9 +668,31 @@ async def create_post(
                 {"id": doc["id"], "workspace_id": workspace_id, "user_id": user_id},
                 {"$set": {"queue_job_id": async_result.id, "updated_at": now}},
             )
-            logger.info("Enqueued immediate publish for post %s task=%s", doc["id"], async_result.id)
-        except Exception:
-            logger.exception("Failed to enqueue immediate publish for post %s", doc["id"])
+            event_log(
+                logger,
+                "info",
+                "posts.publish.enqueued",
+                route="/posts",
+                user_id=user_id,
+                workspace_id=workspace_id,
+                post_id=doc["id"],
+                queue_job_id=async_result.id,
+                outcome="enqueued",
+            )
+        except Exception as exc:
+            event_log(
+                logger,
+                "error",
+                "posts.publish.enqueue_failed",
+                exc_info=exc,
+                route="/posts",
+                user_id=user_id,
+                workspace_id=workspace_id,
+                post_id=doc["id"],
+                failure_type="enqueue_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="failed",
+            )
             failed_at = datetime.now(timezone.utc)
             await db.posts.update_one(
                 {"id": doc["id"], "workspace_id": workspace_id, "user_id": user_id},
@@ -692,7 +733,18 @@ async def create_post(
         },
     )
 
-    logger.info("Post created: %s user=%s workspace=%s", doc["id"], user_id, workspace_id)
+    event_log(
+        logger,
+        "info",
+        "posts.created",
+        route="/posts",
+        user_id=user_id,
+        workspace_id=workspace_id,
+        post_id=doc["id"],
+        status=post_status.value,
+        publish_now=body.publish_now,
+        outcome="created",
+    )
     return _doc_to_response(doc)
 
 

@@ -12,7 +12,11 @@ from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 from celery import Celery
+from celery.signals import task_postrun, task_prerun
 from kombu import Exchange, Queue
+from utils.log_scrub import configure_scrubbing
+from utils.observability import JsonFormatter
+from utils.request_context import clear_trace_id, set_trace_id
 
 
 def _configure_celery_sentry() -> None:
@@ -38,6 +42,36 @@ def _configure_celery_sentry() -> None:
 
 
 _configure_celery_sentry()
+
+
+def _configure_worker_logging() -> None:
+    is_prod = os.getenv("ENV", "development") == "production"
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    if is_prod:
+        handler.setFormatter(JsonFormatter(service_name="celery"))
+    else:
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+    root_logger.addHandler(handler)
+    configure_scrubbing()
+
+
+_configure_worker_logging()
+
+
+@task_prerun.connect
+def _bind_task_trace_id(task=None, **kwargs) -> None:
+    headers = getattr(getattr(task, "request", None), "headers", None) or {}
+    set_trace_id(headers.get("x-trace-id"))
+
+
+@task_postrun.connect
+def _clear_task_trace_id(task=None, **kwargs) -> None:
+    clear_trace_id()
 
 
 def _warn_if_serverless_broker(url: str) -> None:
@@ -112,6 +146,7 @@ def create_celery_app() -> Celery:
 
         # Memory leak prevention — configurable via WORKER_MAX_TASKS_PER_CHILD (default: 100)
         worker_max_tasks_per_child=int(os.environ.get("WORKER_MAX_TASKS_PER_CHILD", "100")),
+        worker_hijack_root_logger=False,
 
         # Timezone
         timezone="UTC",

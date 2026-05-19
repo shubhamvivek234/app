@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 
 from api.deps import CurrentUser, DB
 from utils.encryption import decrypt
+from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
@@ -342,7 +343,19 @@ async def _fetch_account_feed_and_stats(
     try:
         access_token = decrypt(encrypted_token)
     except Exception as exc:
-        logger.warning("Failed to decrypt %s token for analytics: %s", platform, exc)
+        event_log(
+            logger,
+            "warning",
+            "analytics.provider.fetch_failed",
+            exc_info=exc,
+            route="/analytics/*",
+            platform=platform,
+            account_id=account.get("account_id") or account.get("id"),
+            failure_type="token_decrypt_failed",
+            provider_error=shorten_provider_error(exc),
+            fetch_mode="api",
+            outcome="failed",
+        )
         return [], {}
 
     if platform == "instagram":
@@ -369,7 +382,19 @@ async def _fetch_account_feed_and_stats(
                     feed = await auth.fetch_page_feed(page_token, page_id, limit=50)
                     engagement = await auth.fetch_page_engagement(page_token, page_id, days=days)
             except Exception as exc:
-                logger.warning("Failed to resolve Facebook page analytics for %s: %s", platform_user_id, exc)
+                event_log(
+                    logger,
+                    "warning",
+                    "analytics.provider.fallback_failed",
+                    exc_info=exc,
+                    route="/analytics/*",
+                    platform=platform,
+                    account_id=account.get("account_id") or account.get("id"),
+                    failure_type="facebook_page_resolution_failed",
+                    provider_error=shorten_provider_error(exc),
+                    fetch_mode="api_fallback",
+                    outcome="failed",
+                )
         return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "youtube":
@@ -1460,7 +1485,26 @@ async def analytics_overview(
             try:
                 feed, _ = await _fetch_account_feed_and_stats(db, account)
             except Exception as exc:
-                logger.warning("Failed overview feed fallback for %s account %s: %s", platform, account_id, exc)
+                event_log(
+                    logger,
+                    "warning",
+                    "analytics.provider.fallback_failed",
+                    exc_info=exc,
+                    route="/analytics/overview",
+                    platform=platform,
+                    account_id=account_id,
+                    failure_type="feed_fallback_failed",
+                    provider_error=shorten_provider_error(exc),
+                    fetch_mode="db_to_api_fallback",
+                    outcome="failed",
+                )
+                capture_degraded_event(
+                    "Analytics overview feed fallback failed",
+                    route="/analytics/overview",
+                    platform=platform,
+                    account_id=account_id,
+                    failure_type="feed_fallback_failed",
+                )
                 continue
 
             in_period_posts = []
@@ -1558,7 +1602,19 @@ async def analytics_timeline(
                 try:
                     feed, _ = await _fetch_account_feed_and_stats(db, account, days=days)
                 except Exception as exc:
-                    logger.warning("Failed timeline feed fallback for %s account %s: %s", platform, account_id, exc)
+                    event_log(
+                        logger,
+                        "warning",
+                        "analytics.provider.fallback_failed",
+                        exc_info=exc,
+                        route="/analytics/timeline",
+                        platform=platform,
+                        account_id=account_id,
+                        failure_type="timeline_feed_fallback_failed",
+                        provider_error=shorten_provider_error(exc),
+                        fetch_mode="db_to_api_fallback",
+                        outcome="failed",
+                    )
                     continue
 
                 for post in feed:
