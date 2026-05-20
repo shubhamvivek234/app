@@ -7,6 +7,7 @@ import {
   getAnalyticsDemographics,
   getInstagramAnalyticsReport,
   getBlueskyAnalyticsReport,
+  getYoutubeAnalyticsReport,
   getSocialAccounts,
   getPublishFeed,
 } from '@/lib/api';
@@ -15,6 +16,7 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend, PieChart, Pie, Line, ComposedChart,
 } from 'recharts';
+import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
@@ -22,6 +24,7 @@ import {
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
+import worldGeo from 'world-atlas/countries-110m.json';
 import {
   eachDayOfInterval,
   eachMonthOfInterval,
@@ -137,6 +140,27 @@ const BLUESKY_GRANULARITY_OPTIONS = [
   { label: 'Month', value: 'month' },
   { label: 'Quarter', value: 'quarter' },
 ];
+
+const COUNTRY_NAME_OVERRIDES = {
+  US: 'United States of America',
+  GB: 'United Kingdom',
+  KR: 'South Korea',
+  RU: 'Russia',
+  SY: 'Syria',
+  LA: 'Laos',
+  KP: 'North Korea',
+  IR: 'Iran',
+  TZ: 'Tanzania',
+  VE: 'Venezuela',
+  VN: 'Vietnam',
+  BO: 'Bolivia',
+  MD: 'Moldova',
+  TW: 'Taiwan',
+};
+
+const regionNames = typeof Intl !== 'undefined' && Intl.DisplayNames
+  ? new Intl.DisplayNames(['en'], { type: 'region' })
+  : null;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -298,6 +322,38 @@ const chartHasData = (rows, keys) => (rows || []).some((row) => keys.some((key) 
 const formatReportDate = (date, days) => {
   try { return format(parseISO(date), days <= 7 ? 'EEE' : 'MMM d'); }
   catch { return date; }
+};
+
+const formatPreciseMetric = (value) => {
+  if (value == null) return '—';
+  const num = Number(value) || 0;
+  if (Number.isInteger(num)) return fmt(num);
+  return num.toFixed(num >= 10 ? 1 : 4).replace(/\.?0+$/, '');
+};
+
+const bucketMultiValueSeries = (rows, days, granularity, keys) => mergeBucketedSeries(
+  Object.fromEntries(
+    keys.map((key) => [
+      key,
+      (rows || []).map((row) => ({
+        date: row.date,
+        count: Number(row?.[key]) || 0,
+      })),
+    ]),
+  ),
+  days,
+  granularity,
+);
+
+const countryNameForCode = (code) => {
+  const normalized = String(code || '').toUpperCase();
+  if (!normalized) return '';
+  return COUNTRY_NAME_OVERRIDES[normalized] || regionNames?.of(normalized) || normalized;
+};
+
+const percentForBreakdown = (value, total) => {
+  if (!total) return 0;
+  return Math.round(((Number(value) || 0) / total) * 100);
 };
 
 const pctPillColor = (value) => (
@@ -508,6 +564,134 @@ const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, empt
     </div>
   );
 };
+
+const YoutubeCountryMapCard = ({
+  title,
+  rows,
+  metricLabel,
+  valueFormatter = formatPreciseMetric,
+  action,
+  emptyLabel = 'No data available currently for this report.',
+}) => {
+  const positiveRows = (rows || [])
+    .filter((row) => Number(row?.count) > 0)
+    .map((row) => ({
+      ...row,
+      countryName: countryNameForCode(row.country_code),
+    }))
+    .filter((row) => row.countryName);
+  const topRows = positiveRows.slice(0, 5);
+  const valueByCountry = Object.fromEntries(positiveRows.map((row) => [row.countryName, Number(row.count) || 0]));
+  const maxValue = Math.max(...Object.values(valueByCountry), 0);
+
+  return (
+    <ReportCard title={title} action={action}>
+      {topRows.length === 0 ? (
+        chartEmptyState(emptyLabel)
+      ) : (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.3fr)_360px] xl:items-center">
+          <div className="rounded-xl border border-gray-100 bg-white p-2">
+            <ComposableMap projectionConfig={{ scale: 145 }} width={800} height={420} style={{ width: '100%', height: 'auto' }}>
+              <Geographies geography={worldGeo}>
+                {({ geographies }) =>
+                  geographies.map((geo) => {
+                    const value = valueByCountry[geo.properties?.name] || 0;
+                    const intensity = maxValue > 0 ? value / maxValue : 0;
+                    const fill = value > 0
+                      ? `rgba(47, 102, 144, ${0.2 + (0.65 * intensity)})`
+                      : '#f8fafc';
+                    return (
+                      <Geography
+                        key={geo.rsmKey}
+                        geography={geo}
+                        fill={fill}
+                        stroke="#cbd5d1"
+                        strokeWidth={0.55}
+                        style={{
+                          default: { outline: 'none' },
+                          hover: { outline: 'none', fill },
+                          pressed: { outline: 'none', fill },
+                        }}
+                      />
+                    );
+                  })
+                }
+              </Geographies>
+            </ComposableMap>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <h4 className="text-2xl font-semibold text-gray-900">Top 5 Countries</h4>
+            <div className="mt-8 grid grid-cols-[minmax(0,1fr)_140px_100px] gap-x-4 border-b border-gray-200 pb-3 text-xs font-bold uppercase tracking-widest text-gray-400">
+              <span>Country</span>
+              <span className="text-right">{metricLabel}</span>
+              <span className="text-right">%</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {topRows.map((row) => (
+                <div key={row.country_code} className="grid grid-cols-[minmax(0,1fr)_140px_100px] items-center gap-x-4 py-4">
+                  <span className="truncate text-lg font-medium text-gray-800">{row.countryName}</span>
+                  <span className="text-right text-lg text-gray-700">{valueFormatter(row.count)}</span>
+                  <div className="flex items-center justify-end gap-3">
+                    <div className="h-2 w-20 rounded-full bg-gray-200 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-[#2f6690]"
+                        style={{ width: `${percentForBreakdown(row.count, topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0))}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right text-lg text-gray-700">
+                      {percentForBreakdown(row.count, topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0))}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </ReportCard>
+  );
+};
+
+const YoutubeTopVideoCard = ({ title, video, metricLabel, primaryMetric, action }) => (
+  <ReportCard title={title} action={action}>
+    {video ? (
+      <div className="max-w-sm rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-4 pt-4">
+          <p className="text-4xl font-semibold text-gray-900">via YouTube</p>
+          <p className="mt-2 text-lg text-gray-500">
+            {video.timestamp ? format(parseISO(video.timestamp), 'd MMM yyyy h:mm a') : '—'}
+          </p>
+        </div>
+        {video.thumbnail_url ? (
+          <img src={video.thumbnail_url} alt="" className="mt-4 h-48 w-full object-cover" />
+        ) : (
+          <div className="mt-4 h-48 w-full bg-gray-100 flex items-center justify-center text-sm text-gray-400">No thumbnail</div>
+        )}
+        <div className="px-4 py-4 text-2xl font-medium text-gray-900 line-clamp-3">{video.title || video.content || '(untitled)'}</div>
+        <div className="border-t border-dashed border-gray-200 px-4 py-4 space-y-3 text-xl">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-700">{metricLabel}</span>
+            <span className="font-semibold text-gray-900">
+              {primaryMetric === 'estimated_minutes_watched'
+                ? formatPreciseMetric(video.estimated_minutes_watched)
+                : fmt(video.views)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-gray-700">Views</span>
+            <span className="font-semibold text-gray-900">{fmt(video.views)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-gray-700">Minutes Watched</span>
+            <span className="font-semibold text-gray-900">{formatPreciseMetric(video.estimated_minutes_watched)}</span>
+          </div>
+        </div>
+      </div>
+    ) : (
+      chartEmptyState('No YouTube video data is available for this period.')
+    )}
+  </ReportCard>
+);
 
 // Post card for the Posts tab
 const PostCard = ({ post }) => {
@@ -814,6 +998,10 @@ const Analytics = () => {
   const [loadingBlueskyReport, setLoadingBlueskyReport] = useState(false);
   const [blueskyTopMetric, setBlueskyTopMetric]     = useState('engagement');
   const [blueskyChartGranularity, setBlueskyChartGranularity] = useState('day');
+  const [youtubeReport, setYoutubeReport]           = useState(null);
+  const [loadingYoutubeReport, setLoadingYoutubeReport] = useState(false);
+  const [youtubeChartGranularity, setYoutubeChartGranularity] = useState('day');
+  const [youtubeTopVideoMetric, setYoutubeTopVideoMetric] = useState('views');
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
@@ -1012,6 +1200,36 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchBlueskyReport]);
 
+  const fetchYoutubeReport = useCallback(async () => {
+    if (selectedPlatform !== 'youtube') {
+      setYoutubeReport(null);
+      return;
+    }
+    setLoadingYoutubeReport(true);
+    try {
+      const data = await getYoutubeAnalyticsReport({
+        days,
+        accountId: selectedAccount,
+        groupBy: youtubeChartGranularity,
+      });
+      setYoutubeReport(data);
+    } catch {
+      toast.error('Failed to load YouTube report');
+      setYoutubeReport(null);
+    } finally {
+      setLoadingYoutubeReport(false);
+    }
+  }, [days, selectedPlatform, selectedAccount, youtubeChartGranularity]);
+
+  useEffect(() => {
+    if (
+      selectedPlatform === 'youtube'
+      && ['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)
+    ) {
+      fetchYoutubeReport();
+    }
+  }, [activeTab, selectedPlatform, fetchYoutubeReport]);
+
   useEffect(() => {
     if (selectedPlatform !== 'instagram' && activeTab === 'summary') {
       setActiveTab('overview');
@@ -1026,6 +1244,12 @@ const Analytics = () => {
 
   useEffect(() => {
     if (selectedPlatform !== 'bluesky' && ['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)) {
+      setActiveTab('overview');
+    }
+  }, [selectedPlatform, activeTab]);
+
+  useEffect(() => {
+    if (selectedPlatform !== 'youtube' && ['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)) {
       setActiveTab('overview');
     }
   }, [selectedPlatform, activeTab]);
@@ -1116,6 +1340,7 @@ const Analytics = () => {
     : DEMOGRAPHICS_PLATFORMS.includes(selectedPlatform);
   const showInstagramReportTab = selectedPlatform === 'instagram';
   const showBlueskyReportTabs = selectedPlatform === 'bluesky';
+  const showYoutubeReportTabs = selectedPlatform === 'youtube';
 
   const tabs = useMemo(() => ([
     { id: 'overview', label: 'Overview' },
@@ -1126,8 +1351,13 @@ const Analytics = () => {
       { id: 'bluesky-audience', label: 'Audience' },
       { id: 'bluesky-posts-engagement', label: 'Posts & Engagement' },
     ] : []),
+    ...(showYoutubeReportTabs ? [
+      { id: 'youtube-summary', label: 'Summary' },
+      { id: 'youtube-audience', label: 'Audience' },
+      { id: 'youtube-video-performance', label: 'Video Performance' },
+    ] : []),
     ...(hasDemographics && selectedPlatform !== 'instagram' ? [{ id: 'demographics', label: 'Demographics' }] : []),
-  ]), [showInstagramReportTab, showBlueskyReportTabs, hasDemographics, selectedPlatform]);
+  ]), [showInstagramReportTab, showBlueskyReportTabs, showYoutubeReportTabs, hasDemographics, selectedPlatform]);
 
   useEffect(() => {
     if (!tabs.some((tab) => tab.id === activeTab)) {
@@ -1280,6 +1510,39 @@ const Analytics = () => {
     <select
       value={blueskyChartGranularity}
       onChange={(event) => setBlueskyChartGranularity(event.target.value)}
+      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+    >
+      {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  );
+  const youtubeSummary = youtubeReport?.summary || {};
+  const youtubeAudience = youtubeReport?.audience || {};
+  const youtubeVideoPerformance = youtubeReport?.video_performance || {};
+  const youtubeSubscriberGrowthTimeline = bucketMultiValueSeries(
+    youtubeAudience.subscriber_growth || [],
+    days,
+    youtubeChartGranularity,
+    ['gained', 'lost', 'net'],
+  );
+  const youtubeViewsMinutesTimeline = mergeBucketedSeries(
+    {
+      views: youtubeVideoPerformance.views_minutes_series?.views || [],
+      estimated_minutes_watched: youtubeVideoPerformance.views_minutes_series?.estimated_minutes_watched || [],
+    },
+    days,
+    youtubeChartGranularity,
+  );
+  const youtubeSubscriberGrowthHasData = chartHasData(youtubeSubscriberGrowthTimeline, ['gained', 'lost', 'net']);
+  const youtubeViewsMinutesHasData = chartHasData(youtubeViewsMinutesTimeline, ['views', 'estimated_minutes_watched']);
+  const youtubeTopVideo = youtubeTopVideoMetric === 'estimated_minutes_watched'
+    ? youtubeVideoPerformance.top_videos?.minutes_watched
+    : youtubeVideoPerformance.top_videos?.views;
+  const youtubeChartSelector = (
+    <select
+      value={youtubeChartGranularity}
+      onChange={(event) => setYoutubeChartGranularity(event.target.value)}
       className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
     >
       {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
@@ -2210,6 +2473,337 @@ const Analytics = () => {
                   </div>
                 )}
               </>
+            )}
+          </div>
+        )}
+
+        {/* ━━━━━━━━━━━━━━━━━ YOUTUBE REPORT TABS ━━━━━━━━━━━━━━━━━━━━━━━ */}
+        {selectedPlatform === 'youtube' && ['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab) && (
+          <div className="space-y-6">
+            {!!youtubeReport?.message && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {youtubeReport.message}
+              </div>
+            )}
+
+            {!!youtubeReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {youtubeReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingYoutubeReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !youtubeReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">YouTube report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {youtubeReport?.message || 'Connect a YouTube account to see this report.'}
+                </p>
+              </div>
+            ) : activeTab === 'youtube-summary' ? (
+              <div className="space-y-6">
+                <ReportCard title="Audience Summary">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <ReportMetricTile
+                      title="Subscribers Count"
+                      value={youtubeSummary.audience_summary?.subscribers_count}
+                      subtitle="Current channel subscribers"
+                    />
+                    <ReportMetricTile
+                      title="Subscribers Gained"
+                      value={youtubeSummary.audience_summary?.subscribers_gained}
+                      subtitle={`Avg. per day: ${youtubeSummary.audience_summary?.avg_gained_per_day ?? 0}`}
+                      deltaPct={youtubeSummary.audience_summary?.gained_change_pct}
+                    />
+                    <ReportMetricTile
+                      title="Subscribers Lost"
+                      value={youtubeSummary.audience_summary?.subscribers_lost}
+                      subtitle={`Avg. per day: ${youtubeSummary.audience_summary?.avg_lost_per_day ?? 0}`}
+                      deltaPct={youtubeSummary.audience_summary?.lost_change_pct}
+                    />
+                  </div>
+                </ReportCard>
+
+                <ReportCard title="Post & Engagement Summary">
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                    <div className="space-y-4">
+                      <ReportMetricTile
+                        title="Videos"
+                        value={youtubeSummary.post_summary?.videos}
+                        subtitle={`Avg. per day: ${youtubeSummary.post_summary?.avg_videos_per_day ?? 0}`}
+                        deltaPct={youtubeSummary.post_summary?.videos_change_pct}
+                      />
+                      <ReportMetricTile
+                        title="Engagement"
+                        value={youtubeSummary.post_summary?.engagement}
+                        subtitle={`Avg. per day: ${youtubeSummary.post_summary?.avg_engagement_per_day ?? 0}`}
+                        deltaPct={youtubeSummary.post_summary?.engagement_change_pct}
+                      />
+                    </div>
+                    <YoutubeTopVideoCard
+                      title="Top Video"
+                      video={youtubeSummary.post_summary?.top_video}
+                      metricLabel="Engagement"
+                      primaryMetric="engagement"
+                    />
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Geography by Views</p>
+                      {youtubeSummary.post_summary?.top_geography_by_views ? (
+                        <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                          <p className="text-4xl font-semibold text-gray-900">
+                            {countryNameForCode(youtubeSummary.post_summary.top_geography_by_views.country_code)}
+                          </p>
+                          <p className="mt-4 text-lg text-gray-500">
+                            {fmt(youtubeSummary.post_summary.top_geography_by_views.count)} views in the selected period
+                          </p>
+                        </div>
+                      ) : (
+                        chartEmptyState('No geography data is available for this period.')
+                      )}
+                    </div>
+                  </div>
+                </ReportCard>
+
+                <ReportCard title="Cards Summary">
+                  {youtubeReport?.supports?.cards ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                      <ReportMetricTile
+                        title="Card Impressions"
+                        value={youtubeSummary.cards_summary?.card_impressions}
+                        subtitle={`Avg. per day: ${youtubeSummary.cards_summary?.avg_card_impressions_per_day ?? 0}`}
+                        deltaPct={youtubeSummary.cards_summary?.card_impressions_change_pct}
+                      />
+                      <ReportMetricTile
+                        title="Card Teaser Impressions"
+                        value={youtubeSummary.cards_summary?.card_teaser_impressions}
+                        deltaPct={youtubeSummary.cards_summary?.card_teaser_impressions_change_pct}
+                      />
+                      <ReportMetricTile
+                        title="Card Clicks"
+                        value={youtubeSummary.cards_summary?.card_clicks}
+                        subtitle={`Avg. per day: ${youtubeSummary.cards_summary?.avg_card_clicks_per_day ?? 0}`}
+                        deltaPct={youtubeSummary.cards_summary?.card_clicks_change_pct}
+                      />
+                      <ReportMetricTile
+                        title="Card Teaser Clicks"
+                        value={youtubeSummary.cards_summary?.card_teaser_clicks}
+                        deltaPct={youtubeSummary.cards_summary?.card_teaser_clicks_change_pct}
+                      />
+                    </div>
+                  ) : (
+                    chartEmptyState('Card metrics are not available for this YouTube account right now.')
+                  )}
+                </ReportCard>
+              </div>
+            ) : activeTab === 'youtube-audience' ? (
+              <div className="space-y-6">
+                <ReportCard title="Subscriber Growth" action={youtubeChartSelector}>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Subscribers</p>
+                      <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(youtubeAudience.total_subscribers)}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Subscribers Gained</p>
+                      <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(youtubeAudience.subscribers_gained)}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Subscribers Lost</p>
+                      <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(youtubeAudience.subscribers_lost)}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Net Change</p>
+                      <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(youtubeAudience.net_change)}</p>
+                      <p className="mt-2 text-sm text-gray-500">Avg. new subscriber per day: {youtubeAudience.avg_new_subscribers_per_day ?? 0}</p>
+                    </div>
+                  </div>
+                  {youtubeSubscriberGrowthHasData ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <ComposedChart data={youtubeSubscriberGrowthTimeline}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                        <Bar dataKey="gained" name="Subscribers Gained" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={22} minPointSize={2} />
+                        <Bar dataKey="lost" name="Subscribers Lost" fill="#d1d5db" radius={[4, 4, 0, 0]} barSize={22} minPointSize={2} />
+                        <Line dataKey="net" name="Net Change" stroke="#ef4444" strokeWidth={2} dot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    chartEmptyState('Subscriber growth data is not available for this YouTube account right now.')
+                  )}
+                </ReportCard>
+
+                <YoutubeCountryMapCard
+                  title="Subscriber by Geography"
+                  rows={youtubeAudience.subscriber_by_geography || []}
+                  metricLabel="Subscribers"
+                  action={null}
+                />
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <ReportCard title="Views & Estimated Minutes Watched" action={youtubeChartSelector}>
+                  {youtubeViewsMinutesHasData ? (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap justify-end gap-6 text-sm text-gray-500">
+                        <span>Avg. Views per day: <strong className="text-emerald-600">{formatPreciseMetric(youtubeVideoPerformance.avg_views_per_day)}</strong></span>
+                        <span>Avg. Minutes per day: <strong className="text-rose-500">{formatPreciseMetric(youtubeVideoPerformance.avg_minutes_watched_per_day)}</strong></span>
+                      </div>
+                      <ResponsiveContainer width="100%" height={280}>
+                        <ComposedChart data={youtubeViewsMinutesTimeline}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                          <Bar yAxisId="left" dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
+                          <Line yAxisId="right" type="monotone" dataKey="estimated_minutes_watched" name="Estimated Minutes Watched" stroke="#d1d5db" strokeWidth={2.5} dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    chartEmptyState('Views and watch-time data are not available for this period.')
+                  )}
+                </ReportCard>
+
+                <YoutubeTopVideoCard
+                  title="Top Videos By"
+                  video={youtubeTopVideo}
+                  metricLabel={youtubeTopVideoMetric === 'estimated_minutes_watched' ? 'Minutes Watched' : 'Views'}
+                  primaryMetric={youtubeTopVideoMetric}
+                  action={(
+                    <select
+                      value={youtubeTopVideoMetric}
+                      onChange={(event) => setYoutubeTopVideoMetric(event.target.value)}
+                      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+                    >
+                      <option value="views">Views</option>
+                      <option value="estimated_minutes_watched">Minutes Watched</option>
+                    </select>
+                  )}
+                />
+
+                <YoutubeCountryMapCard
+                  title="Views by Geography"
+                  rows={youtubeVideoPerformance.views_by_geography || []}
+                  metricLabel="Views"
+                />
+                <YoutubeCountryMapCard
+                  title="Estimated Minutes Watched by Geography"
+                  rows={youtubeVideoPerformance.estimated_minutes_watched_by_geography || []}
+                  metricLabel="Minutes Watched"
+                  valueFormatter={formatPreciseMetric}
+                />
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Playback Location">
+                    {(youtubeVideoPerformance.playback_location || []).length > 0 ? (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={youtubeVideoPerformance.playback_location}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} interval={0} angle={-15} textAnchor="end" height={60} />
+                          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                          <Bar dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} minPointSize={2} />
+                          <Bar dataKey="estimatedMinutesWatched" name="Estimated Minutes Watched" fill="#d1d5db" radius={[4, 4, 0, 0]} minPointSize={2} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </ReportCard>
+
+                  <ReportCard title="Traffic Source">
+                    {(youtubeVideoPerformance.traffic_source || []).length > 0 ? (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={youtubeVideoPerformance.traffic_source}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} interval={0} angle={-15} textAnchor="end" height={60} />
+                          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                          <Bar dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} minPointSize={2} />
+                          <Bar dataKey="estimatedMinutesWatched" name="Estimated Minutes Watched" fill="#d1d5db" radius={[4, 4, 0, 0]} minPointSize={2} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </ReportCard>
+                </div>
+
+                <ReportCard title="YouTube Search Terms">
+                  {(youtubeVideoPerformance.youtube_search_terms || []).length > 0 ? (
+                    <div className="divide-y divide-gray-100">
+                      <div className="grid grid-cols-[minmax(0,1fr)_120px_180px] gap-x-4 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+                        <span>Search Term</span>
+                        <span className="text-right">Views</span>
+                        <span className="text-right">Estimated Minutes Watched</span>
+                      </div>
+                      {youtubeVideoPerformance.youtube_search_terms.map((item) => (
+                        <div key={item.term} className="grid grid-cols-[minmax(0,1fr)_120px_180px] gap-x-4 py-3 text-sm">
+                          <span className="truncate font-medium text-gray-700">{item.term}</span>
+                          <span className="text-right text-gray-700">{fmt(item.views)}</span>
+                          <span className="text-right text-gray-700">{formatPreciseMetric(item.estimated_minutes_watched)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    chartEmptyState()
+                  )}
+                </ReportCard>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Views by Device Type">
+                    <ReportDonutBreakdown
+                      items={(youtubeVideoPerformance.views_by_device_type || []).map((item) => ({
+                        label: item.label,
+                        engagement: item.views,
+                      }))}
+                      valueKey="engagement"
+                      totalValue={(youtubeVideoPerformance.views_by_device_type || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
+                    />
+                  </ReportCard>
+
+                  <ReportCard title="Views & Estimated Minutes Watched by Subscribed Status">
+                    {(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).length > 0 ? (
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <ReportDonutBreakdown
+                          items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
+                            label: item.label,
+                            engagement: item.views,
+                          }))}
+                          valueKey="engagement"
+                          totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
+                        />
+                        <ReportDonutBreakdown
+                          items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
+                            label: item.label,
+                            engagement: item.estimatedMinutesWatched,
+                          }))}
+                          valueKey="engagement"
+                          totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.estimatedMinutesWatched) || 0), 0)}
+                        />
+                      </div>
+                    ) : (
+                      chartEmptyState()
+                    )}
+                  </ReportCard>
+                </div>
+              </div>
             )}
           </div>
         )}

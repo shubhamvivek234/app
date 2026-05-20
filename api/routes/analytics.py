@@ -768,6 +768,210 @@ def _bluesky_post_type(post: dict[str, Any]) -> str:
     return "text"
 
 
+def _pct_change(current: int | float, previous: int | float) -> float | None:
+    if previous in (None, 0):
+        if current:
+            return 100.0
+        return 0.0
+    return round(((current - previous) / previous) * 100, 1)
+
+
+def _youtube_period_bounds(days: int) -> tuple[datetime.date, datetime.date, datetime.date, datetime.date]:
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=max(days - 1, 0))
+    previous_end = start_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=max(days - 1, 0))
+    return start_date, end_date, previous_start, previous_end
+
+
+def _youtube_posts_in_window(posts: list[dict[str, Any]], start_date, end_date) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for post in posts:
+        when = _parse_platform_timestamp(post.get("timestamp"))
+        if when and start_date <= when.date() <= end_date:
+            filtered.append(post)
+    return filtered
+
+
+def _youtube_total_engagement(post: dict[str, Any]) -> int:
+    return _metric_int(post.get("likes")) + _metric_int(post.get("comments_count")) + _metric_int(post.get("shares"))
+
+
+def _youtube_metric_label(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").title()
+
+
+_YOUTUBE_TRAFFIC_SOURCE_LABELS = {
+    "ADVERTISING": "Advertising",
+    "ANNOTATION": "Annotations",
+    "CAMPAIGN_CARD": "Campaign Card",
+    "END_SCREEN": "End Screen",
+    "EXT_URL": "External Sites",
+    "HASHTAGS": "Hashtags",
+    "LIVE_REDIRECT": "Live Redirect",
+    "NO_LINK_EMBEDDED": "Embedded",
+    "NO_LINK_OTHER": "Other",
+    "NOTIFICATION": "Notifications",
+    "PLAYLIST": "Playlist",
+    "PRODUCT_PAGE": "Product Page",
+    "PROMOTED": "Promoted",
+    "RELATED_VIDEO": "Related Video",
+    "SHORTS": "Shorts Feed",
+    "SOUND_PAGE": "Sound Page",
+    "SUBSCRIBER": "Subscribers",
+    "YT_CHANNEL": "Channel Page",
+    "YT_OTHER_PAGE": "Other YouTube Page",
+    "YT_SEARCH": "YouTube Search",
+}
+
+_YOUTUBE_PLAYBACK_LOCATION_LABELS = {
+    "ON_YOUTUBE": "On YouTube",
+    "EMBEDDED": "Embedded",
+    "EXTERNAL_APP": "External App",
+    "WATCH": "Watch Page",
+    "CHANNEL": "Channel Page",
+}
+
+_YOUTUBE_DEVICE_TYPE_LABELS = {
+    "DESKTOP": "Desktop",
+    "MOBILE": "Mobile",
+    "TABLET": "Tablet",
+    "TV": "TV",
+    "GAME_CONSOLE": "Game Console",
+    "UNKNOWN": "Unknown",
+}
+
+_YOUTUBE_SUBSCRIBED_STATUS_LABELS = {
+    "SUBSCRIBED": "Subscribed",
+    "UNSUBSCRIBED": "Non Subscribed",
+}
+
+
+def _youtube_named_breakdown(
+    rows: list[dict[str, Any]],
+    dimension_key: str,
+    value_keys: list[str],
+    label_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        raw_value = str(row.get(dimension_key) or "")
+        if not raw_value:
+            continue
+        label = (label_map or {}).get(raw_value.upper()) or _youtube_metric_label(raw_value)
+        item = {"value": raw_value, "label": label}
+        for key in value_keys:
+            item[key] = row.get(key) or 0
+        normalized.append(item)
+    normalized.sort(key=lambda item: sum(_metric_int(item.get(key)) for key in value_keys), reverse=True)
+    return normalized
+
+
+def _youtube_country_breakdown(rows: list[dict[str, Any]], metric_key: str) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        country_code = str(row.get("country") or "").upper()
+        if not country_code:
+            continue
+        normalized.append(
+            {
+                "country_code": country_code,
+                "count": row.get(metric_key) or 0,
+            }
+        )
+    normalized.sort(key=lambda item: _metric_int(item.get("count")), reverse=True)
+    return normalized
+
+
+def _merge_youtube_series(items: list[list[dict[str, Any]]]) -> list[dict[str, int | float]]:
+    merged: dict[str, float] = {}
+    for series in items:
+        for point in series or []:
+            date_key = point.get("date")
+            if not date_key:
+                continue
+            merged[date_key] = merged.get(date_key, 0) + float(point.get("count") or 0)
+    return [
+        {"date": date_key, "count": int(value) if float(value).is_integer() else round(value, 4)}
+        for date_key, value in sorted(merged.items())
+    ]
+
+
+def _merge_named_metrics(
+    items: list[dict[str, Any]],
+    key_name: str,
+    metric_keys: list[str],
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in items:
+        key = str(item.get(key_name) or "")
+        if not key:
+            continue
+        row = merged.setdefault(key, {key_name: key})
+        if "label" in item and item.get("label") and not row.get("label"):
+            row["label"] = item.get("label")
+        if "country_code" in item and item.get("country_code") and not row.get("country_code"):
+            row["country_code"] = item.get("country_code")
+        for metric_key in metric_keys:
+            row[metric_key] = row.get(metric_key, 0) + float(item.get(metric_key) or 0)
+    normalized: list[dict[str, Any]] = []
+    for row in merged.values():
+        for metric_key in metric_keys:
+            value = float(row.get(metric_key) or 0)
+            row[metric_key] = int(value) if value.is_integer() else round(value, 4)
+        normalized.append(row)
+    normalized.sort(
+        key=lambda row: sum(float(row.get(metric_key) or 0) for metric_key in metric_keys),
+        reverse=True,
+    )
+    return normalized
+
+
+def _youtube_series_from_rows(rows: list[dict[str, Any]], value_key: str) -> list[dict[str, int | float]]:
+    return [
+        {
+            "date": str(row.get("day")),
+            "count": int(row.get(value_key) or 0)
+            if float(row.get(value_key) or 0).is_integer()
+            else round(float(row.get(value_key) or 0), 4),
+        }
+        for row in rows
+        if row.get("day")
+    ]
+
+
+def _youtube_video_card(video: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not video:
+        return None
+    return {
+        "id": video.get("id"),
+        "title": video.get("title") or video.get("content") or "",
+        "content": video.get("content") or video.get("title") or "",
+        "thumbnail_url": video.get("thumbnail_url") or video.get("media_url"),
+        "timestamp": video.get("timestamp"),
+        "permalink": video.get("permalink"),
+        "views": _metric_int(video.get("views")),
+        "estimated_minutes_watched": round(float(video.get("estimated_minutes_watched") or 0), 4),
+        "likes": _metric_int(video.get("likes")),
+        "comments": _metric_int(video.get("comments_count")),
+        "shares": _metric_int(video.get("shares")),
+        "engagement": _metric_int(video.get("engagement")),
+    }
+
+
+def _youtube_grouped_breakdown(
+    rows: list[dict[str, Any]],
+    dimension_key: str,
+    value_keys: list[str],
+    label_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    named = _youtube_named_breakdown(rows, dimension_key, value_keys, label_map)
+    merged = _merge_named_metrics(named, "value", value_keys)
+    for row in merged:
+        row["label"] = row.get("label") or _youtube_metric_label(str(row.get("value") or ""))
+    return merged
+
+
 def _bluesky_post_engagement(post: dict[str, Any]) -> int:
     return (
         _metric_int(post.get("likes"))
@@ -1095,6 +1299,625 @@ async def analytics_instagram_report(
         "errors": errors,
         "demographics_errors": demographics_errors,
     }
+    return report
+
+
+@router.get("/analytics/youtube-report")
+async def analytics_youtube_report(
+    current_user: CurrentUser,
+    db: DB,
+    days: int = Query(30, ge=1, le=365),
+    account_id: str | None = Query(None, alias="accountId"),
+    group_by: str = Query("day", alias="groupBy", pattern="^(day|week|month|quarter)$"),
+):
+    accounts = await _load_social_accounts(db, current_user["user_id"], "youtube", account_id)
+    if not accounts:
+        return {
+            "supported": False,
+            "message": "Connect a YouTube account to view this report.",
+            "days": days,
+            "group_by": group_by,
+        }
+
+    from api.routes.accounts import _get_youtube_access_token
+    from backend.app.social.google import GoogleAuth
+
+    auth = GoogleAuth()
+    start_date, end_date, previous_start, previous_end = _youtube_period_bounds(days)
+    all_feed: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    message: str | None = None
+    analytics_enabled = False
+    card_metrics_supported = False
+
+    audience_summary = {
+        "subscribers_count": 0,
+        "subscribers_gained": 0,
+        "subscribers_lost": 0,
+    }
+    post_summary = {
+        "videos": 0,
+        "engagement": 0,
+    }
+    cards_summary = {
+        "card_impressions": 0,
+        "card_teaser_impressions": 0,
+        "card_clicks": 0,
+        "card_teaser_clicks": 0,
+    }
+    previous_totals = {
+        "subscribers_gained": 0,
+        "subscribers_lost": 0,
+        "videos": 0,
+        "engagement": 0,
+        "views": 0,
+        "estimated_minutes_watched": 0.0,
+        "card_impressions": 0,
+        "card_teaser_impressions": 0,
+        "card_clicks": 0,
+        "card_teaser_clicks": 0,
+    }
+
+    subscriber_growth_series: list[list[dict[str, Any]]] = []
+    views_series: list[list[dict[str, Any]]] = []
+    minutes_series: list[list[dict[str, Any]]] = []
+    subscriber_geo_items: list[dict[str, Any]] = []
+    views_geo_items: list[dict[str, Any]] = []
+    minutes_geo_items: list[dict[str, Any]] = []
+    traffic_source_items: list[dict[str, Any]] = []
+    playback_location_items: list[dict[str, Any]] = []
+    device_type_items: list[dict[str, Any]] = []
+    subscribed_status_items: list[dict[str, Any]] = []
+    search_term_items: list[dict[str, Any]] = []
+    top_videos_by_views: list[dict[str, Any]] = []
+    top_videos_by_minutes: list[dict[str, Any]] = []
+
+    async def safe_query(
+        access_token: str,
+        metrics: list[str],
+        *,
+        dimensions: list[str] | None = None,
+        filters: dict[str, str] | None = None,
+        sort: list[str] | None = None,
+        max_results: int | None = None,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        nonlocal analytics_enabled, message, card_metrics_supported
+        try:
+            rows = await auth.query_analytics_report(
+                access_token,
+                metrics=metrics,
+                start_date=start_date,
+                end_date=end_date,
+                dimensions=dimensions,
+                filters=filters,
+                sort=sort,
+                max_results=max_results,
+            )
+            analytics_enabled = True
+            if label == "cards":
+                card_metrics_supported = True
+            return rows
+        except Exception as exc:
+            if not message:
+                message = _analytics_error_message("youtube", exc)
+            event_log(
+                logger,
+                "warning",
+                "analytics.provider.fetch_failed",
+                exc_info=exc,
+                route="/analytics/youtube-report",
+                platform="youtube",
+                failure_type=f"youtube_{label}_failed",
+                provider_error=shorten_provider_error(exc),
+                fetch_mode="api",
+                outcome="degraded",
+            )
+            capture_degraded_event(
+                "analytics.provider.fetch_failed",
+                platform="youtube",
+                route="/analytics/youtube-report",
+                failure_type=f"youtube_{label}_failed",
+                provider_error=shorten_provider_error(exc),
+            )
+            return []
+
+    async def safe_previous_totals(
+        access_token: str,
+        metrics: list[str],
+    ) -> dict[str, int | float]:
+        nonlocal analytics_enabled, message
+        try:
+            rows = await auth.query_analytics_report(
+                access_token,
+                metrics=metrics,
+                start_date=previous_start,
+                end_date=previous_end,
+            )
+            analytics_enabled = True
+            totals: dict[str, int | float] = {}
+            for row in rows:
+                for key in metrics:
+                    totals[key] = totals.get(key, 0) + float(row.get(key) or 0)
+            return totals
+        except Exception as exc:
+            if not message:
+                message = _analytics_error_message("youtube", exc)
+            return {}
+
+    for account in accounts:
+        label = _account_error_label(account)
+        encrypted_token = account.get("access_token")
+        platform_user_id = account.get("platform_user_id")
+        if not encrypted_token:
+            _append_account_error(errors, account, "Account is missing platform credentials.")
+            continue
+
+        try:
+            access_token = decrypt(encrypted_token)
+        except Exception:
+            _append_account_error(errors, account, "Stored token could not be decrypted.")
+            continue
+
+        try:
+            channel = await auth.get_channel_info(access_token)
+        except Exception:
+            try:
+                access_token = await _get_youtube_access_token(db, account, force_refresh=True)
+                channel = await auth.get_channel_info(access_token)
+            except Exception as exc:
+                _append_account_error(errors, account, _analytics_error_message("youtube", exc))
+                continue
+
+        channel_id = str(channel.get("id") or platform_user_id or "")
+        audience_summary["subscribers_count"] += _metric_int(channel.get("subscribers"))
+
+        try:
+            feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=100)
+        except Exception as exc:
+            event_log(
+                logger,
+                "warning",
+                "analytics.provider.fetch_failed",
+                exc_info=exc,
+                route="/analytics/youtube-report",
+                platform="youtube",
+                account_id=account.get("account_id") or account.get("id"),
+                failure_type="youtube_feed_failed",
+                provider_error=shorten_provider_error(exc),
+                fetch_mode="api",
+                outcome="degraded",
+            )
+            feed = []
+
+        feed = [_standardize_feed_post(post) for post in (feed or [])]
+        if not feed:
+            fallback_posts = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
+            feed = [_standardize_feed_post(post) for post in fallback_posts]
+        all_feed.extend(feed)
+
+        current_feed = _youtube_posts_in_window(feed, start_date, end_date)
+        previous_feed = _youtube_posts_in_window(feed, previous_start, previous_end)
+        post_summary["videos"] += len(current_feed)
+        previous_totals["videos"] += len(previous_feed)
+
+        daily_subscriber_rows = await safe_query(
+            access_token,
+            ["subscribersGained", "subscribersLost"],
+            dimensions=["day"],
+            label="subscriber_growth",
+        )
+        if daily_subscriber_rows:
+            subscriber_growth_series.append(
+                [
+                    {
+                        "date": str(row.get("day")),
+                        "gained": _metric_int(row.get("subscribersGained")),
+                        "lost": _metric_int(row.get("subscribersLost")),
+                        "net": _metric_int(row.get("subscribersGained")) - _metric_int(row.get("subscribersLost")),
+                    }
+                    for row in daily_subscriber_rows
+                    if row.get("day")
+                ]
+            )
+            audience_summary["subscribers_gained"] += sum(_metric_int(row.get("subscribersGained")) for row in daily_subscriber_rows)
+            audience_summary["subscribers_lost"] += sum(_metric_int(row.get("subscribersLost")) for row in daily_subscriber_rows)
+
+        totals_rows = await safe_query(
+            access_token,
+            ["likes", "comments", "shares", "views", "estimatedMinutesWatched"],
+            label="totals",
+        )
+        if totals_rows:
+            post_summary["engagement"] += sum(
+                _metric_int(row.get("likes")) + _metric_int(row.get("comments")) + _metric_int(row.get("shares"))
+                for row in totals_rows
+            )
+            previous_period_totals = await safe_previous_totals(
+                access_token,
+                ["likes", "comments", "shares", "views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost"],
+            )
+            previous_totals["engagement"] += _metric_int(previous_period_totals.get("likes")) + _metric_int(previous_period_totals.get("comments")) + _metric_int(previous_period_totals.get("shares"))
+            previous_totals["views"] += float(previous_period_totals.get("views") or 0)
+            previous_totals["estimated_minutes_watched"] += float(previous_period_totals.get("estimatedMinutesWatched") or 0)
+            previous_totals["subscribers_gained"] += _metric_int(previous_period_totals.get("subscribersGained"))
+            previous_totals["subscribers_lost"] += _metric_int(previous_period_totals.get("subscribersLost"))
+
+        daily_views_rows = await safe_query(
+            access_token,
+            ["views", "estimatedMinutesWatched"],
+            dimensions=["day"],
+            label="views_minutes_series",
+        )
+        if daily_views_rows:
+            views_series.append(_youtube_series_from_rows(daily_views_rows, "views"))
+            minutes_series.append(_youtube_series_from_rows(daily_views_rows, "estimatedMinutesWatched"))
+
+        video_metric_rows = await safe_query(
+            access_token,
+            ["views", "estimatedMinutesWatched", "likes", "comments", "shares"],
+            dimensions=["video"],
+            sort=["-views"],
+            max_results=25,
+            label="top_videos",
+        )
+        if video_metric_rows:
+            details = await auth.fetch_video_details(access_token, [str(row.get("video")) for row in video_metric_rows if row.get("video")])
+            for row in video_metric_rows:
+                video_id = str(row.get("video") or "")
+                detail = details.get(video_id, {})
+                snippet = detail.get("snippet", {})
+                stats = detail.get("statistics", {})
+                item = {
+                    "id": video_id,
+                    "title": snippet.get("title") or "",
+                    "content": snippet.get("title") or "",
+                    "thumbnail_url": (snippet.get("thumbnails") or {}).get("high", {}).get("url"),
+                    "timestamp": snippet.get("publishedAt"),
+                    "permalink": f"https://youtube.com/watch?v={video_id}" if video_id else None,
+                    "views": _metric_int(row.get("views") or stats.get("viewCount")),
+                    "estimated_minutes_watched": round(float(row.get("estimatedMinutesWatched") or 0), 4),
+                    "likes": _metric_int(row.get("likes") or stats.get("likeCount")),
+                    "comments": _metric_int(row.get("comments") or stats.get("commentCount")),
+                    "comments_count": _metric_int(row.get("comments") or stats.get("commentCount")),
+                    "shares": _metric_int(row.get("shares")),
+                }
+                item["engagement"] = item["likes"] + item["comments"] + item["shares"]
+                top_videos_by_views.append(item)
+                top_videos_by_minutes.append(item)
+
+        subscriber_geo_rows = await safe_query(
+            access_token,
+            ["subscribersGained"],
+            dimensions=["country"],
+            sort=["-subscribersGained"],
+            max_results=25,
+            label="subscriber_geography",
+        )
+        subscriber_geo_items.extend(
+            [
+                {
+                    "country_code": str(row.get("country") or "").upper(),
+                    "count": _metric_int(row.get("subscribersGained")),
+                }
+                for row in subscriber_geo_rows
+                if row.get("country")
+            ]
+        )
+
+        views_geo_rows = await safe_query(
+            access_token,
+            ["views"],
+            dimensions=["country"],
+            sort=["-views"],
+            max_results=25,
+            label="views_geography",
+        )
+        views_geo_items.extend(
+            [
+                {
+                    "country_code": str(row.get("country") or "").upper(),
+                    "count": _metric_int(row.get("views")),
+                }
+                for row in views_geo_rows
+                if row.get("country")
+            ]
+        )
+
+        minutes_geo_rows = await safe_query(
+            access_token,
+            ["estimatedMinutesWatched"],
+            dimensions=["country"],
+            sort=["-estimatedMinutesWatched"],
+            max_results=25,
+            label="minutes_geography",
+        )
+        minutes_geo_items.extend(
+            [
+                {
+                    "country_code": str(row.get("country") or "").upper(),
+                    "count": round(float(row.get("estimatedMinutesWatched") or 0), 4),
+                }
+                for row in minutes_geo_rows
+                if row.get("country")
+            ]
+        )
+
+        traffic_source_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched"],
+                    dimensions=["insightTrafficSourceType"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="traffic_source",
+                ),
+                "insightTrafficSourceType",
+                ["views", "estimatedMinutesWatched"],
+                _YOUTUBE_TRAFFIC_SOURCE_LABELS,
+            )
+        )
+
+        playback_location_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched"],
+                    dimensions=["playbackLocationType"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="playback_location",
+                ),
+                "playbackLocationType",
+                ["views", "estimatedMinutesWatched"],
+                _YOUTUBE_PLAYBACK_LOCATION_LABELS,
+            )
+        )
+
+        device_type_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views"],
+                    dimensions=["deviceType"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="device_type",
+                ),
+                "deviceType",
+                ["views"],
+                _YOUTUBE_DEVICE_TYPE_LABELS,
+            )
+        )
+
+        subscribed_status_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched"],
+                    dimensions=["subscribedStatus"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="subscribed_status",
+                ),
+                "subscribedStatus",
+                ["views", "estimatedMinutesWatched"],
+                _YOUTUBE_SUBSCRIBED_STATUS_LABELS,
+            )
+        )
+
+        search_term_rows = await safe_query(
+            access_token,
+            ["views", "estimatedMinutesWatched"],
+            dimensions=["insightTrafficSourceDetail"],
+            filters={"insightTrafficSourceType": "YT_SEARCH"},
+            sort=["-views"],
+            max_results=20,
+            label="search_terms",
+        )
+        search_term_items.extend(
+            [
+                {
+                    "term": str(row.get("insightTrafficSourceDetail") or ""),
+                    "views": _metric_int(row.get("views")),
+                    "estimated_minutes_watched": round(float(row.get("estimatedMinutesWatched") or 0), 4),
+                }
+                for row in search_term_rows
+                if row.get("insightTrafficSourceDetail")
+            ]
+        )
+
+        card_rows = await safe_query(
+            access_token,
+            ["cardImpressions", "cardTeaserImpressions", "cardClicks", "cardTeaserClicks"],
+            label="cards",
+        )
+        if card_rows:
+            for row in card_rows:
+                cards_summary["card_impressions"] += _metric_int(row.get("cardImpressions"))
+                cards_summary["card_teaser_impressions"] += _metric_int(row.get("cardTeaserImpressions"))
+                cards_summary["card_clicks"] += _metric_int(row.get("cardClicks"))
+                cards_summary["card_teaser_clicks"] += _metric_int(row.get("cardTeaserClicks"))
+            previous_card_totals = await safe_previous_totals(
+                access_token,
+                ["cardImpressions", "cardTeaserImpressions", "cardClicks", "cardTeaserClicks"],
+            )
+            previous_totals["card_impressions"] += _metric_int(previous_card_totals.get("cardImpressions"))
+            previous_totals["card_teaser_impressions"] += _metric_int(previous_card_totals.get("cardTeaserImpressions"))
+            previous_totals["card_clicks"] += _metric_int(previous_card_totals.get("cardClicks"))
+            previous_totals["card_teaser_clicks"] += _metric_int(previous_card_totals.get("cardTeaserClicks"))
+
+    if not all_feed and not audience_summary["subscribers_count"] and errors:
+        return {
+            "supported": False,
+            "message": message or "Unable to load YouTube analytics for the selected account.",
+            "errors": errors,
+            "days": days,
+            "group_by": group_by,
+        }
+
+    if post_summary["engagement"] == 0 and all_feed:
+        post_summary["engagement"] = sum(
+            _youtube_total_engagement(post)
+            for post in _youtube_posts_in_window(all_feed, start_date, end_date)
+        )
+
+    summary_top_video = max(
+        [
+            {
+                **post,
+                "engagement": _youtube_total_engagement(post),
+                "thumbnail_url": post.get("media_url"),
+                "title": post.get("content") or "",
+            }
+            for post in _youtube_posts_in_window(all_feed, start_date, end_date)
+        ],
+        key=lambda item: _metric_int(item.get("engagement")),
+        default=None,
+    )
+
+    merged_subscriber_growth: dict[str, dict[str, Any]] = {}
+    for series in subscriber_growth_series:
+        for point in series:
+            date_key = point.get("date")
+            if not date_key:
+                continue
+            row = merged_subscriber_growth.setdefault(date_key, {"date": date_key, "gained": 0, "lost": 0, "net": 0})
+            row["gained"] += _metric_int(point.get("gained"))
+            row["lost"] += _metric_int(point.get("lost"))
+            row["net"] += _metric_int(point.get("net"))
+    subscriber_growth = [merged_subscriber_growth[key] for key in sorted(merged_subscriber_growth.keys())]
+
+    merged_subscriber_geo = _merge_named_metrics(
+        [
+            {**item, "key": item.get("country_code"), "label": item.get("country_code")}
+            for item in subscriber_geo_items
+        ],
+        "key",
+        ["count"],
+    )
+    merged_views_geo = _merge_named_metrics(
+        [{**item, "key": item.get("country_code"), "label": item.get("country_code")} for item in views_geo_items],
+        "key",
+        ["count"],
+    )
+    merged_minutes_geo = _merge_named_metrics(
+        [{**item, "key": item.get("country_code"), "label": item.get("country_code")} for item in minutes_geo_items],
+        "key",
+        ["count"],
+    )
+    merged_search_terms = _merge_named_metrics(
+        [{"key": item.get("term"), "label": item.get("term"), "views": item.get("views"), "estimated_minutes_watched": item.get("estimated_minutes_watched")} for item in search_term_items],
+        "key",
+        ["views", "estimated_minutes_watched"],
+    )
+
+    summary_top_geography = merged_views_geo[0] if merged_views_geo else None
+
+    report = {
+        "supported": True,
+        "days": days,
+        "group_by": group_by,
+        "message": message,
+        "errors": errors,
+        "supports": {
+            "cards": card_metrics_supported,
+            "end_screen": False,
+            "audience": True,
+            "video_performance": analytics_enabled,
+        },
+        "account": {
+            "count": len(accounts),
+            "selected_account_id": account_id,
+        },
+        "summary": {
+            "audience_summary": {
+                "subscribers_count": audience_summary["subscribers_count"],
+                "subscribers_gained": audience_summary["subscribers_gained"],
+                "subscribers_lost": audience_summary["subscribers_lost"],
+                "avg_gained_per_day": round(audience_summary["subscribers_gained"] / max(days, 1), 2),
+                "avg_lost_per_day": round(audience_summary["subscribers_lost"] / max(days, 1), 2),
+                "gained_change_pct": _pct_change(audience_summary["subscribers_gained"], previous_totals["subscribers_gained"]),
+                "lost_change_pct": _pct_change(audience_summary["subscribers_lost"], previous_totals["subscribers_lost"]),
+            },
+            "post_summary": {
+                "videos": post_summary["videos"],
+                "engagement": post_summary["engagement"],
+                "avg_videos_per_day": round(post_summary["videos"] / max(days, 1), 2),
+                "avg_engagement_per_day": round(post_summary["engagement"] / max(days, 1), 2),
+                "videos_change_pct": _pct_change(post_summary["videos"], previous_totals["videos"]),
+                "engagement_change_pct": _pct_change(post_summary["engagement"], previous_totals["engagement"]),
+                "top_video": _youtube_video_card(summary_top_video),
+                "top_geography_by_views": merged_views_geo[0] if merged_views_geo else None,
+            },
+            "cards_summary": {
+                "card_impressions": cards_summary["card_impressions"],
+                "card_teaser_impressions": cards_summary["card_teaser_impressions"],
+                "card_clicks": cards_summary["card_clicks"],
+                "card_teaser_clicks": cards_summary["card_teaser_clicks"],
+                "avg_card_impressions_per_day": round(cards_summary["card_impressions"] / max(days, 1), 2),
+                "avg_card_clicks_per_day": round(cards_summary["card_clicks"] / max(days, 1), 2),
+                "card_impressions_change_pct": _pct_change(cards_summary["card_impressions"], previous_totals["card_impressions"]),
+                "card_teaser_impressions_change_pct": _pct_change(cards_summary["card_teaser_impressions"], previous_totals["card_teaser_impressions"]),
+                "card_clicks_change_pct": _pct_change(cards_summary["card_clicks"], previous_totals["card_clicks"]),
+                "card_teaser_clicks_change_pct": _pct_change(cards_summary["card_teaser_clicks"], previous_totals["card_teaser_clicks"]),
+            },
+        },
+        "audience": {
+            "subscriber_growth": subscriber_growth,
+            "total_subscribers": audience_summary["subscribers_count"],
+            "subscribers_gained": audience_summary["subscribers_gained"],
+            "subscribers_lost": audience_summary["subscribers_lost"],
+            "net_change": audience_summary["subscribers_gained"] - audience_summary["subscribers_lost"],
+            "avg_new_subscribers_per_day": round(audience_summary["subscribers_gained"] / max(days, 1), 2),
+            "subscriber_by_geography": [
+                {
+                    "country_code": row.get("key"),
+                    "count": row.get("count"),
+                }
+                for row in merged_subscriber_geo[:20]
+            ],
+        },
+        "video_performance": {
+            "views_minutes_series": {
+                "views": _merge_youtube_series(views_series),
+                "estimated_minutes_watched": _merge_youtube_series(minutes_series),
+            },
+            "avg_views_per_day": round(sum(_metric_int(point.get("count")) for point in _merge_youtube_series(views_series)) / max(days, 1), 2),
+            "avg_minutes_watched_per_day": round(sum(float(point.get("count") or 0) for point in _merge_youtube_series(minutes_series)) / max(days, 1), 4),
+            "views_change_pct": _pct_change(sum(_metric_int(point.get("count")) for point in _merge_youtube_series(views_series)), previous_totals["views"]),
+            "estimated_minutes_watched_change_pct": _pct_change(sum(float(point.get("count") or 0) for point in _merge_youtube_series(minutes_series)), previous_totals["estimated_minutes_watched"]),
+            "top_videos": {
+                "views": _youtube_video_card(max(top_videos_by_views, key=lambda item: _metric_int(item.get("views")), default=None)),
+                "minutes_watched": _youtube_video_card(max(top_videos_by_minutes, key=lambda item: float(item.get("estimated_minutes_watched") or 0), default=None)),
+            },
+            "views_by_geography": [
+                {"country_code": row.get("key"), "count": row.get("count")}
+                for row in merged_views_geo[:20]
+            ],
+            "estimated_minutes_watched_by_geography": [
+                {"country_code": row.get("key"), "count": row.get("count")}
+                for row in merged_minutes_geo[:20]
+            ],
+            "traffic_source": _merge_named_metrics(traffic_source_items, "value", ["views", "estimatedMinutesWatched"])[:10],
+            "playback_location": _merge_named_metrics(playback_location_items, "value", ["views", "estimatedMinutesWatched"])[:10],
+            "youtube_search_terms": [
+                {
+                    "term": row.get("key"),
+                    "views": row.get("views"),
+                    "estimated_minutes_watched": row.get("estimated_minutes_watched"),
+                }
+                for row in merged_search_terms[:10]
+            ],
+            "views_by_device_type": _merge_named_metrics(device_type_items, "value", ["views"]),
+            "views_minutes_by_subscribed_status": _merge_named_metrics(subscribed_status_items, "value", ["views", "estimatedMinutesWatched"]),
+        },
+    }
+
+    if summary_top_geography and not report["summary"]["post_summary"].get("top_geography_by_views"):
+        report["summary"]["post_summary"]["top_geography_by_views"] = summary_top_geography
+
     return report
 
 

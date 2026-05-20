@@ -3,6 +3,7 @@ import os
 from fastapi import HTTPException
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 class GoogleAuth:
     """Helper class for Google/YouTube OAuth"""
@@ -389,35 +390,17 @@ class GoogleAuth:
             growth_metrics = {}
             analytics_error = None
             try:
-                analytics_response = await client.get(
-                    "https://youtubeanalytics.googleapis.com/v2/reports",
-                    params={
-                        "ids": "channel==MINE",
-                        "startDate": start_date.isoformat(),
-                        "endDate": end_date.isoformat(),
-                        "metrics": "views,likes,comments,shares,subscribersGained,subscribersLost",
-                    },
-                    headers={"Authorization": f"Bearer {access_token}"},
+                rows = await self.query_analytics_report(
+                    access_token,
+                    metrics=["views", "likes", "comments", "shares", "subscribersGained", "subscribersLost"],
+                    start_date=start_date,
+                    end_date=end_date,
                 )
-                if analytics_response.status_code == 200:
-                    payload = analytics_response.json()
-                    rows = payload.get("rows", [])
-                    columns = [column.get("name") for column in payload.get("columnHeaders", [])]
-                    if rows and columns:
-                        for row in rows:
-                            for idx, column in enumerate(columns):
-                                if column in {"views", "likes", "comments", "shares", "subscribersGained", "subscribersLost"}:
-                                    growth_metrics[column] = growth_metrics.get(column, 0) + int(row[idx] or 0)
-                else:
-                    logging.warning(f"[YouTube] Analytics metrics unavailable: {analytics_response.text}")
-                    body = analytics_response.text or ""
-                    if analytics_response.status_code == 403 and (
-                        "youtubeanalytics.googleapis.com" in body or "SERVICE_DISABLED" in body or "accessNotConfigured" in body
-                    ):
-                        analytics_error = (
-                            "YouTube Analytics API is disabled for this Google project. "
-                            "Subscriber growth and period engagement are unavailable until it is enabled."
-                        )
+                for row in rows:
+                    for column in {"views", "likes", "comments", "shares", "subscribersGained", "subscribersLost"}:
+                        growth_metrics[column] = growth_metrics.get(column, 0) + self._safe_number(row.get(column))
+            except HTTPException as exc:
+                analytics_error = str(exc.detail)
             except Exception as exc:
                 logging.warning(f"[YouTube] Analytics metrics fetch failed: {exc}")
                 analytics_error = "Unable to fetch YouTube Analytics API metrics for this account right now."
@@ -428,6 +411,8 @@ class GoogleAuth:
                 "subscribers": int(stats.get("subscriberCount", 0)),
                 "total_views": int(stats.get("viewCount", 0)),
                 "video_count": int(stats.get("videoCount", 0)),
+                "subscribers_gained": int(subscribers_gained or 0) if subscribers_gained is not None else None,
+                "subscribers_lost": int(subscribers_lost or 0) if subscribers_lost is not None else None,
                 "followers_growth": (
                     int(subscribers_gained or 0) - int(subscribers_lost or 0)
                     if subscribers_gained is not None or subscribers_lost is not None
@@ -440,6 +425,99 @@ class GoogleAuth:
                 "error": analytics_error,
                 "platform": "youtube",
             }
+
+    @staticmethod
+    def _safe_number(value: Any) -> int | float:
+        if value is None or value == "":
+            return 0
+        try:
+            num = float(value)
+        except Exception:
+            return 0
+        return int(num) if num.is_integer() else num
+
+    @staticmethod
+    def _analytics_error_detail(response: httpx.Response) -> str:
+        body = response.text or ""
+        if response.status_code == 403 and (
+            "youtubeanalytics.googleapis.com" in body or "SERVICE_DISABLED" in body or "accessNotConfigured" in body
+        ):
+            return (
+                "YouTube Analytics API is disabled for this Google project. "
+                "Subscriber growth and period engagement are unavailable until it is enabled."
+            )
+        if response.status_code == 401:
+            return "YouTube access was revoked or expired. Reconnect the account to restore analytics."
+        return "Unable to fetch YouTube Analytics API metrics for this account right now."
+
+    async def query_analytics_report(
+        self,
+        access_token: str,
+        metrics: list[str],
+        start_date,
+        end_date,
+        dimensions: list[str] | None = None,
+        filters: dict[str, str] | None = None,
+        sort: list[str] | None = None,
+        max_results: int | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, str] = {
+            "ids": "channel==MINE",
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat(),
+            "metrics": ",".join(metrics),
+        }
+        if dimensions:
+            params["dimensions"] = ",".join(dimensions)
+        if filters:
+            params["filters"] = ";".join(f"{key}=={value}" for key, value in filters.items())
+        if sort:
+            params["sort"] = ",".join(sort)
+        if max_results:
+            params["maxResults"] = str(max_results)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://youtubeanalytics.googleapis.com/v2/reports",
+                params=params,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if response.status_code != 200:
+            logging.warning("[YouTube] Analytics query failed: %s", response.text)
+            raise HTTPException(status_code=response.status_code, detail=self._analytics_error_detail(response))
+
+        payload = response.json()
+        columns = [column.get("name") for column in payload.get("columnHeaders", [])]
+        rows = payload.get("rows", []) or []
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            normalized.append(
+                {
+                    columns[idx]: self._safe_number(value) if isinstance(value, (int, float, str)) else value
+                    for idx, value in enumerate(row)
+                    if idx < len(columns)
+                }
+            )
+        return normalized
+
+    async def fetch_video_details(self, access_token: str, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not video_ids:
+            return {}
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.YOUTUBE_URL}/videos",
+                params={"part": "snippet,statistics", "id": ",".join(video_ids)},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if response.status_code != 200:
+            logging.warning("[YouTube] Video details fetch failed: %s", response.text)
+            return {}
+
+        details: dict[str, dict[str, Any]] = {}
+        for item in response.json().get("items", []):
+            details[item.get("id")] = item
+        return details
 
     async def fetch_youtube_comments(self, access_token: str, video_id: str, limit: int = 50) -> list:
         """Fetch comments on a YouTube video (read-only)"""

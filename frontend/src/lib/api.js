@@ -847,3 +847,8 @@ export const getBlueskyAnalyticsReport = async (params) => {
   const response = await axios.get(`${API}/analytics/bluesky-report`, { headers: getAuthHeaders(), params });
   return response.data;
 };
+
+export const getYoutubeAnalyticsReport = async (params) => {
+  const response = await axios.get(`${API}/analytics/youtube-report`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
