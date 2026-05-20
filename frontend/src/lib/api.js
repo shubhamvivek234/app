@@ -823,11 +823,6 @@ export const getAnalyticsOverview = async (params) => {
   return response.data;
 };
 
-export const getAnalyticsBrandHealth = async (params) => {
-  const response = await axios.get(`${API}/analytics/brand-health`, { headers: getAuthHeaders(), params });
-  return response.data;
-};
-
 export const getAnalyticsTimeline = async (params) => {
   const response = await axios.get(`${API}/analytics/timeline`, { headers: getAuthHeaders(), params });
   return response.data?.timeline || [];
