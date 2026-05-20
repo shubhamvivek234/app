@@ -1,621 +1,214 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { format, isValid, parseISO } from 'date-fns';
 import DashboardLayout from '@/components/DashboardLayout';
-import {
-  getAnalyticsOverview,
-  getAnalyticsTimeline,
-  getAnalyticsEngagement,
-  getAnalyticsDemographics,
-  getInstagramAnalyticsReport,
-  getBlueskyAnalyticsReport,
-  getSocialAccounts,
-  getPublishFeed,
-} from '@/lib/api';
+import { getAnalyticsBrandHealth, getSocialAccounts } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, Legend, PieChart, Pie, Line, ComposedChart,
-} from 'recharts';
-import {
-  FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
-  FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
-  FaDiscord, FaUsers, FaChartLine, FaBullseye,
-  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight,
+  FaChevronDown,
+  FaExclamationCircle,
+  FaExternalLinkAlt,
+  FaFacebook,
+  FaGripLines,
+  FaInstagram,
+  FaLinkedin,
+  FaPinterest,
+  FaReddit,
+  FaSnapchat,
+  FaTiktok,
+  FaTwitter,
+  FaYoutube,
 } from 'react-icons/fa';
-import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
-import {
-  eachDayOfInterval,
-  eachMonthOfInterval,
-  eachQuarterOfInterval,
-  eachWeekOfInterval,
-  endOfDay,
-  endOfMonth,
-  endOfQuarter,
-  endOfWeek,
-  format,
-  isValid,
-  parseISO,
-  startOfDay,
-  startOfMonth,
-  startOfQuarter,
-  startOfWeek,
-  subDays,
-} from 'date-fns';
+import { SiBluesky, SiDiscord, SiMastodon, SiThreads } from 'react-icons/si';
 
-// ── Platform config ────────────────────────────────────────────────────────────
 const PLATFORM_COLORS = {
   instagram: '#E1306C',
-  twitter:   '#1DA1F2',
-  facebook:  '#1877F2',
-  linkedin:  '#0A66C2',
-  youtube:   '#FF0000',
-  tiktok:    '#010101',
+  twitter: '#1DA1F2',
+  facebook: '#1877F2',
+  linkedin: '#0A66C2',
+  youtube: '#FF0000',
+  tiktok: '#010101',
   pinterest: '#E60023',
-  threads:   '#101010',
-  bluesky:   '#0085FF',
-  reddit:    '#FF4500',
-  snapchat:  '#FFFC00',
-  discord:   '#5865F2',
-  mastodon:  '#6364FF',
+  threads: '#101010',
+  bluesky: '#0085FF',
+  reddit: '#FF4500',
+  snapchat: '#FFFC00',
+  discord: '#5865F2',
+  mastodon: '#6364FF',
 };
 
 const PLATFORM_LABELS = {
-  instagram: 'Instagram', twitter: 'Twitter / X', facebook: 'Facebook',
-  linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok',
-  pinterest: 'Pinterest', threads: 'Threads', bluesky: 'Bluesky',
-  reddit: 'Reddit', snapchat: 'Snapchat', discord: 'Discord', mastodon: 'Mastodon',
+  instagram: 'Instagram',
+  twitter: 'Twitter / X',
+  facebook: 'Facebook',
+  linkedin: 'LinkedIn',
+  youtube: 'YouTube',
+  tiktok: 'TikTok',
+  pinterest: 'Pinterest',
+  threads: 'Threads',
+  bluesky: 'Bluesky',
+  reddit: 'Reddit',
+  snapchat: 'Snapchat',
+  discord: 'Discord',
+  mastodon: 'Mastodon',
+};
+
+const PLATFORM_SOURCE_LABELS = {
+  instagram: 'Instagram',
+  twitter: 'X',
+  facebook: 'Facebook',
+  linkedin: 'LinkedIn',
+  youtube: 'YouTube',
+  tiktok: 'TikTok',
+  pinterest: 'Pinterest',
+  threads: 'Threads',
+  bluesky: 'Bluesky',
+  reddit: 'Reddit',
+  snapchat: 'Snapchat',
+  discord: 'Discord',
+  mastodon: 'Mastodon',
 };
 
 const PLATFORM_ICONS = {
   instagram: FaInstagram,
-  facebook:  FaFacebook,
-  twitter:   FaTwitter,
-  linkedin:  FaLinkedin,
-  youtube:   FaYoutube,
-  tiktok:    FaTiktok,
+  facebook: FaFacebook,
+  twitter: FaTwitter,
+  linkedin: FaLinkedin,
+  youtube: FaYoutube,
+  tiktok: FaTiktok,
   pinterest: FaPinterest,
-  threads:   SiThreads,
-  bluesky:   SiBluesky,
-  reddit:    FaReddit,
-  snapchat:  FaSnapchat,
-  discord:   FaDiscord,
-  mastodon:  SiMastodon,
-};
-
-// Metrics that each platform supports (false = not available from API)
-const PLATFORM_METRICS = {
-  instagram: { likes: true,  comments: true,  shares: false, views: false },
-  facebook:  { likes: true,  comments: true,  shares: true,  views: false },
-  twitter:   { likes: true,  comments: true,  shares: true,  views: false },
-  tiktok:    { likes: true,  comments: true,  shares: true,  views: true  },
-  threads:   { likes: true,  comments: true,  shares: true,  views: true  },
-  reddit:    { likes: true,  comments: true,  shares: false, views: true  },
-  pinterest: { likes: true,  comments: true,  shares: false, views: true  },
-  youtube:   { likes: true,  comments: true,  shares: false, views: true  },
-  linkedin:  { likes: false, comments: false, shares: false, views: false },
-  bluesky:   { likes: true,  comments: true,  shares: true,  views: false },
-  snapchat:  { likes: false, comments: false, shares: false, views: false },
-  discord:   { likes: false, comments: false, shares: false, views: false },
-  mastodon:  { likes: true,  comments: true,  shares: true,  views: false },
+  threads: SiThreads,
+  bluesky: SiBluesky,
+  reddit: FaReddit,
+  snapchat: FaSnapchat,
+  discord: SiDiscord,
+  mastodon: SiMastodon,
 };
 
 const ALL_PLATFORMS = [
-  'instagram', 'facebook', 'twitter', 'linkedin', 'youtube',
-  'tiktok', 'pinterest', 'threads', 'bluesky', 'snapchat', 'reddit', 'discord', 'mastodon',
+  'instagram',
+  'facebook',
+  'twitter',
+  'linkedin',
+  'youtube',
+  'tiktok',
+  'pinterest',
+  'threads',
+  'bluesky',
+  'snapchat',
+  'reddit',
+  'discord',
+  'mastodon',
 ];
 
-const PLATFORM_ORDER_STORAGE_KEY_PREFIX = 'analytics_platform_order_v1';
-
-const PLATFORM_NOTICES = {
-  linkedin: 'LinkedIn can show followers, follower growth, and organization impressions when the connected account has the required analytics scopes and page admin access. Post engagement metrics remain limited.',
-  snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
-  twitter: 'X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.',
-  threads: 'Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.',
-  discord: 'Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.',
-  tiktok: 'TikTok post analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.',
-  pinterest: 'Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.',
-  bluesky: 'Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.',
-  mastodon: 'Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.',
-};
-
 const DAYS_OPTIONS = [
-  { label: '7d',  value: 7  },
+  { label: '7d', value: 7 },
   { label: '30d', value: 30 },
   { label: '90d', value: 90 },
 ];
 
-const SORT_OPTIONS = [
-  { label: 'Date',     value: 'date'     },
-  { label: 'Likes',    value: 'likes'    },
-  { label: 'Comments', value: 'comments' },
-  { label: 'Shares',   value: 'shares'   },
-  { label: 'Views',    value: 'views'    },
-];
+const PLATFORM_ORDER_STORAGE_KEY_PREFIX = 'analytics_platform_order_v1';
 
-const BLUESKY_GRANULARITY_OPTIONS = [
-  { label: 'Day', value: 'day' },
-  { label: 'Week', value: 'week' },
-  { label: 'Month', value: 'month' },
-  { label: 'Quarter', value: 'quarter' },
-];
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
 const fmt = (n) => {
-  if (n == null) return '—';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000)    return (n / 1000).toFixed(1) + 'K';
+  if (n == null) return 'NA';
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(n);
 };
 
-const supportedMetricsFor = (platform) => {
-  if (!platform) return { likes: true, comments: true, shares: true, views: true };
-  return PLATFORM_METRICS[platform] || { likes: false, comments: false, shares: false, views: false };
-};
-
-const metricIsSupported = (platform, metric) => !!supportedMetricsFor(platform)?.[metric];
-
-const hasAnyEngagementMetrics = (platform) =>
-  ['likes', 'comments', 'shares', 'views'].some((metric) => metricIsSupported(platform, metric));
-
-const parseDate = (val) => {
-  if (!val) return null;
-  try {
-    const dt = parseISO(val.replace('Z', ''));
-    return isValid(dt) ? dt : null;
-  } catch { return null; }
-};
-
-const pctLabel = (value) => {
-  if (value == null || Number.isNaN(value)) return null;
-  const rounded = Math.round(value * 10) / 10;
-  return `${rounded > 0 ? '+' : ''}${rounded}%`;
-};
-
-const chartEmptyState = (label = 'No data available currently for this report.') => (
-  <div className="h-40 flex items-center justify-center text-sm text-gray-400 text-center px-6">
-    {label}
-  </div>
-);
-
 const normalizePlatformOrder = (order) => {
   const incoming = Array.isArray(order) ? order : [];
-  const valid = incoming.filter((platform, index) => ALL_PLATFORMS.includes(platform) && incoming.indexOf(platform) === index);
+  const valid = incoming.filter(
+    (platform, index) => ALL_PLATFORMS.includes(platform) && incoming.indexOf(platform) === index,
+  );
   const missing = ALL_PLATFORMS.filter((platform) => !valid.includes(platform));
   return [...valid, ...missing];
 };
 
-const mergeSeriesByDate = (seriesMap) => {
-  const dates = new Set();
-  Object.values(seriesMap || {}).forEach((series) => {
-    (series || []).forEach((point) => {
-      if (point?.date) dates.add(point.date);
-    });
-  });
-
-  return [...dates]
-    .sort()
-    .map((date) => {
-      const row = { date };
-      Object.entries(seriesMap || {}).forEach(([key, series]) => {
-        const point = (series || []).find((item) => item.date === date);
-        row[key] = point?.count || 0;
-      });
-      return row;
-    });
-};
-
-const formatBucketLabel = (date, granularity) => {
-  if (!date) return '';
-  if (granularity === 'quarter') return format(date, "QQQ ''yy");
-  if (granularity === 'month') return format(date, "MMM ''yy");
-  if (granularity === 'week') return format(date, 'd MMM');
-  return format(date, 'd MMM');
-};
-
-const buildTimeBuckets = (days, granularity) => {
-  const end = endOfDay(new Date());
-  const start = startOfDay(subDays(end, Math.max(days - 1, 0)));
-
-  if (granularity === 'week') {
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).map((bucketStart) => ({
-      key: format(startOfWeek(bucketStart, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
-      start: startOfWeek(bucketStart, { weekStartsOn: 1 }),
-      end: endOfWeek(bucketStart, { weekStartsOn: 1 }),
-      label: formatBucketLabel(startOfWeek(bucketStart, { weekStartsOn: 1 }), 'week'),
-    }));
+const parseDate = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = parseISO(value.replace('Z', '+00:00'));
+    return isValid(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
-
-  if (granularity === 'month') {
-    return eachMonthOfInterval({ start, end }).map((bucketStart) => ({
-      key: format(startOfMonth(bucketStart), 'yyyy-MM-dd'),
-      start: startOfMonth(bucketStart),
-      end: endOfMonth(bucketStart),
-      label: formatBucketLabel(startOfMonth(bucketStart), 'month'),
-    }));
-  }
-
-  if (granularity === 'quarter') {
-    return eachQuarterOfInterval({ start, end }).map((bucketStart) => ({
-      key: format(startOfQuarter(bucketStart), 'yyyy-MM-dd'),
-      start: startOfQuarter(bucketStart),
-      end: endOfQuarter(bucketStart),
-      label: formatBucketLabel(startOfQuarter(bucketStart), 'quarter'),
-    }));
-  }
-
-  return eachDayOfInterval({ start, end }).map((bucketStart) => ({
-    key: format(startOfDay(bucketStart), 'yyyy-MM-dd'),
-    start: startOfDay(bucketStart),
-    end: endOfDay(bucketStart),
-    label: formatBucketLabel(startOfDay(bucketStart), 'day'),
-  }));
 };
 
-const bucketSeriesByGranularity = (series, days, granularity) => {
-  const buckets = buildTimeBuckets(days, granularity);
-  const normalized = (series || [])
-    .map((point) => {
-      const parsed = parseDate(point?.date);
-      return parsed ? { when: parsed, count: Number(point?.count) || 0 } : null;
-    })
-    .filter(Boolean);
-
-  return buckets.map((bucket) => ({
-    date: bucket.key,
-    label: bucket.label,
-    count: normalized.reduce((sum, point) => (
-      point.when >= bucket.start && point.when <= bucket.end ? sum + point.count : sum
-    ), 0),
-  }));
+const formatPublishedAt = (value) => {
+  const parsed = parseDate(value);
+  if (!parsed) return null;
+  return format(parsed, 'd MMM');
 };
 
-const mergeBucketedSeries = (seriesMap, days, granularity) => {
-  const buckets = buildTimeBuckets(days, granularity);
-  const normalizedSeries = Object.fromEntries(
-    Object.entries(seriesMap || {}).map(([key, series]) => ([
-      key,
-      (series || [])
-        .map((point) => {
-          const parsed = parseDate(point?.date);
-          return parsed ? { when: parsed, count: Number(point?.count) || 0 } : null;
-        })
-        .filter(Boolean),
-    ])),
-  );
-
-  return buckets.map((bucket) => {
-    const row = { date: bucket.key, label: bucket.label };
-    Object.entries(normalizedSeries).forEach(([key, series]) => {
-      row[key] = series.reduce((sum, point) => (
-        point.when >= bucket.start && point.when <= bucket.end ? sum + point.count : sum
-      ), 0);
-    });
-    return row;
-  });
+const changeLabel = (value) => {
+  if (value == null) return null;
+  const formatted = `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}%`;
+  if (value > 0) return { text: `↑ ${formatted}`, color: 'text-emerald-600' };
+  if (value < 0) return { text: `↓ ${formatted}`, color: 'text-rose-600' };
+  return { text: '0.0%', color: 'text-gray-400' };
 };
 
-const chartHasData = (rows, keys) => (rows || []).some((row) => keys.some((key) => (Number(row?.[key]) || 0) > 0));
-
-const formatReportDate = (date, days) => {
-  try { return format(parseISO(date), days <= 7 ? 'EEE' : 'MMM d'); }
-  catch { return date; }
-};
-
-const pctPillColor = (value) => (
-  value >= 0 ? 'text-emerald-600' : 'text-rose-600'
-);
-
-const aggregateAudienceSupport = (accounts) => ({
-  followers_total: accounts.some((account) => account?.supports?.followers_total && account?.followers_count != null),
-  followers_growth: accounts.some((account) => account?.supports?.followers_growth && account?.followers_growth != null),
-  reach: accounts.some((account) => account?.supports?.reach && account?.reach != null),
-  impressions: accounts.some((account) => account?.supports?.impressions && account?.impressions != null),
-});
-
-const selectedPlatformAudienceSupport = (platform, computedSupport) => {
-  if (platform !== 'linkedin') return computedSupport;
-  return {
-    ...computedSupport,
-    followers_total: true,
-    followers_growth: true,
-    reach: true,
-    impressions: true,
-  };
-};
-
-// ── Sub-components ─────────────────────────────────────────────────────────────
-
-// Engagement summary card
-const EngagementCard = ({ icon: Icon, label, value, color, loading }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5 flex items-center gap-4">
-    <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
-      <Icon className="text-white text-lg" />
-    </div>
-    <div className="min-w-0">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</p>
-      {loading
-        ? <div className="h-7 w-16 bg-gray-200 animate-pulse rounded mt-1" />
-        : <p className="text-2xl font-bold text-gray-900 mt-0.5">{fmt(value)}</p>
-      }
-    </div>
-  </div>
-);
-
-// Platform icon pill
-const PlatformPill = ({ platform, active, onClick }) => {
-  const Icon = PLATFORM_ICONS[platform];
-  const color = PLATFORM_COLORS[platform] || '#6366f1';
-  return (
-    <button
-      onClick={onClick}
-      style={active ? { background: color, borderColor: color, color: '#fff' } : {}}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
-        ${active ? '' : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300 hover:bg-gray-50'}`}
-    >
-      {Icon && <Icon className="text-sm" style={active ? {} : { color }} />}
-      {PLATFORM_LABELS[platform] || platform}
-    </button>
-  );
-};
-
-// Custom tooltip for AreaChart
-const TimelineTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700">{label}</p>
-      <p className="text-indigo-600">{payload[0]?.value} posts</p>
-    </div>
-  );
-};
-
-// Custom tooltip for Bar chart
-const EngagementTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700 mb-1">{PLATFORM_LABELS[label] || label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.fill || p.color }} className="capitalize">
-          {p.name}: {fmt(p.value)}
-        </p>
-      ))}
-    </div>
-  );
-};
-
-const AudienceGrowthTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700">{label}</p>
-      <p className="text-indigo-600">{fmt(payload[0]?.value)} new followers</p>
-    </div>
-  );
-};
-
-const InstagramMetricTile = ({ title, value, subtitle, deltaPct }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
-    <div className="mt-3 flex items-end gap-3">
-      <p className="text-5xl font-bold tracking-tight text-sky-600">{fmt(value)}</p>
-      {deltaPct != null && (
-        <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-          {pctLabel(deltaPct)}
-        </span>
-      )}
-    </div>
-    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
-  </div>
-);
-
-const InstagramDetailCard = ({ title, children, action }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <div className="flex items-center justify-between gap-3 mb-4">
-      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-      {action || null}
-    </div>
-    {children}
-  </div>
-);
-
-const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600' }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
-    <div className="mt-3 flex items-end gap-3">
-      <p className={`text-5xl font-bold tracking-tight ${accent}`}>{fmt(value)}</p>
-      {deltaPct != null && (
-        <span className={`text-sm font-semibold ${pctPillColor(deltaPct)}`}>
-          {pctLabel(deltaPct)}
-        </span>
-      )}
-    </div>
-    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
-  </div>
-);
-
-const ReportCard = ({ title, children, action }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <div className="flex items-center justify-between gap-3 mb-4">
-      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-      {action || null}
-    </div>
-    {children}
-  </div>
-);
-
-const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, emptyLabel = 'No data available currently for this report.' }) => {
-  const palette = ['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'];
-  const positiveItems = (items || []).filter((item) => Number(item?.[valueKey]) > 0);
-  const computedTotal = totalValue ?? positiveItems.reduce((sum, item) => sum + (Number(item?.[valueKey]) || 0), 0);
-
-  if (!positiveItems.length) return chartEmptyState(emptyLabel);
-
-  return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)] xl:items-center">
-      <div className="flex items-center justify-center">
-        <div className="relative h-[240px] w-[240px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={positiveItems}
-                dataKey={valueKey}
-                nameKey="label"
-                cx="50%"
-                cy="50%"
-                innerRadius={66}
-                outerRadius={96}
-                paddingAngle={2}
-              >
-                {positiveItems.map((entry, index) => (
-                  <Cell key={entry.type || entry.label} fill={palette[index % palette.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <span className="text-4xl font-semibold leading-none text-gray-700">{fmt(computedTotal)}</span>
-            <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="min-w-0">
-        <div className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] gap-x-4 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
-          <span>Type</span>
-          <span className="text-right">Engagement</span>
-          <span className="text-right">%</span>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {(items || []).map((item, index) => {
-            const value = Number(item?.[valueKey]) || 0;
-            const pct = computedTotal > 0 ? Math.round((value / computedTotal) * 100) : 0;
-            const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
-            const color = positiveIndex >= 0 ? palette[positiveIndex % palette.length] : '#d1d5db';
-            return (
-              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] items-center gap-x-4 py-4 text-sm">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                  <span className={`truncate font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
-                </div>
-                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{fmt(value)}</span>
-                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{pct}%</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Post card for the Posts tab
-const PostCard = ({ post }) => {
-  const plat = post.platform || 'unknown';
-  const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-  const color = PLATFORM_COLORS[plat] || '#6b7280';
+const recentPostMetricRows = (post) => {
+  const platform = post.platform;
   const metrics = post.metrics || {};
-  const support = PLATFORM_METRICS[plat] || {};
-  const dt = parseDate(post.published_at);
+  const rows = [];
+  const primaryReactionLabel = platform === 'facebook' ? 'Reactions' : 'Likes';
+  const commentsLabel = ['twitter', 'threads', 'bluesky', 'mastodon', 'reddit'].includes(platform) ? 'Replies' : 'Comments';
+  const sharesLabel = ['twitter', 'threads', 'bluesky', 'mastodon'].includes(platform) ? 'Reposts' : 'Shares';
 
-  return (
-    <div className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4 hover:shadow-sm transition-shadow">
-      {/* Thumbnail */}
-      {post.media_url ? (
-        <div className="w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
-          <img
-            src={post.media_url}
-            alt=""
-            className="w-full h-full object-cover"
-            onError={(e) => { e.target.style.display = 'none'; }}
-          />
-        </div>
-      ) : (
-        <div className="w-20 h-20 rounded-lg flex-shrink-0 bg-gray-100 flex items-center justify-center">
-          <FaFileAlt className="text-gray-400 text-2xl" />
-        </div>
-      )}
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        {/* Header */}
-        <div className="flex items-center gap-2 mb-1">
-          <Icon style={{ color }} className="text-sm flex-shrink-0" />
-          <span className="text-xs font-semibold text-gray-600">{post.account_username || PLATFORM_LABELS[plat]}</span>
-          {dt && <span className="text-xs text-gray-400 ml-auto">{format(dt, 'MMM d, yyyy')}</span>}
-        </div>
-        {/* Caption */}
-        <p className="text-sm text-gray-700 line-clamp-2 mb-2">
-          {post.content || '(no caption)'}
-        </p>
-        {/* Metrics row */}
-        <div className="flex items-center gap-4 flex-wrap">
-          {support.likes !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              <FaHeart className="text-rose-400" /> {support.likes ? fmt(metrics.likes ?? 0) : '—'}
-            </span>
-          )}
-          {support.comments !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              <FaComment className="text-blue-400" /> {support.comments ? fmt(metrics.comments ?? 0) : '—'}
-            </span>
-          )}
-          {support.shares !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              <FaShare className="text-green-400" /> {support.shares ? fmt(metrics.shares ?? 0) : '—'}
-            </span>
-          )}
-          {support.views !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
-              <FaEye className="text-purple-400" /> {support.views ? fmt(metrics.views ?? 0) : '—'}
-            </span>
-          )}
-          {post.post_url && (
-            <a
-              href={post.post_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700"
-            >
-              View post <FaExternalLinkAlt className="text-[10px]" />
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  rows.push({ label: primaryReactionLabel, value: metrics.likes ?? 0 });
+  rows.push({ label: commentsLabel, value: metrics.comments ?? 0 });
+  if (platform !== 'linkedin' && platform !== 'discord' && platform !== 'snapchat') {
+    rows.push({ label: sharesLabel, value: metrics.shares ?? 0 });
+  }
+  if ((metrics.views ?? 0) > 0) {
+    rows.push({ label: 'Views', value: metrics.views ?? 0 });
+  }
+  rows.push({ label: 'Engagement', value: post.total_engagement ?? 0 });
+  return rows;
 };
 
-// Demographic placeholder card
-const DemoCard = ({ title }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">{title}</p>
-    <div className="h-32 flex items-center justify-center bg-gray-50 rounded-lg">
-      <p className="text-sm text-gray-400">No data available</p>
-    </div>
-  </div>
+const getAnalyticsUserKey = (accounts) => {
+  const first = Array.isArray(accounts) ? accounts.find((account) => account?.user_id) : null;
+  return first?.user_id || 'default';
+};
+
+const SkeletonBlock = ({ className }) => (
+  <div className={`animate-pulse rounded-xl bg-gray-100 ${className}`} />
 );
 
-// ── Account avatar helper ───────────────────────────────────────────────────
 const AccountAvatar = ({ account, size = 'sm' }) => {
-  const sz = size === 'sm' ? 'w-6 h-6 text-[10px]' : 'w-8 h-8 text-xs';
-  const initials = (account.platform_username || account.platform_user_id || '?')
-    .replace('@', '').slice(0, 2).toUpperCase();
-  const color = PLATFORM_COLORS[account.platform] || '#6b7280';
+  const classes = size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-9 w-9 text-xs';
+  const seed = account?.platform_username || account?.display_name || account?.account_id || '?';
+  const initials = seed.replace('@', '').slice(0, 2).toUpperCase();
+  const color = PLATFORM_COLORS[account?.platform] || '#6b7280';
 
-  if (account.picture_url) {
+  if (account?.picture_url) {
     return (
-      <img
-        src={account.picture_url}
-        alt={initials}
-        className={`${sz} rounded-full object-cover border border-white shadow-sm flex-shrink-0`}
-        onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-      />
+      <div className={`${classes} relative`}>
+        <img
+          src={account.picture_url}
+          alt={initials}
+          className="h-full w-full rounded-full border border-white object-cover shadow-sm"
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+            const fallback = event.currentTarget.nextSibling;
+            if (fallback) fallback.style.display = 'flex';
+          }}
+        />
+        <div
+          className="hidden h-full w-full items-center justify-center rounded-full font-bold text-white shadow-sm"
+          style={{ background: color }}
+        >
+          {initials}
+        </div>
+      </div>
     );
   }
+
   return (
     <div
-      className={`${sz} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`}
+      className={`${classes} flex items-center justify-center rounded-full font-bold text-white shadow-sm`}
       style={{ background: color }}
     >
       {initials}
@@ -623,32 +216,32 @@ const AccountAvatar = ({ account, size = 'sm' }) => {
   );
 };
 
-// ── Custom account dropdown with avatars ────────────────────────────────────
-const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAll }) => {
+const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel }) => {
   const [open, setOpen] = useState(false);
-  const selected = accounts.find((a) => a.id === selectedId) || null;
-  const displayName = (a) => a.platform_username || a.platform_user_id || a.id;
+  const selected = accounts.find((account) => account.id === selectedId) || null;
+  const ref = useRef(null);
 
-  // Close when clicking outside
-  const ref = React.useRef(null);
   useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const handleClick = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
   return (
     <div ref={ref} className="relative">
-      {/* Trigger button */}
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-offwhite hover:bg-gray-50 transition-colors min-w-[180px] shadow-sm"
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-w-[220px] items-center gap-3 rounded-xl border border-gray-200 bg-offwhite px-3 py-2 shadow-sm transition-colors hover:bg-gray-50"
       >
         {selected ? (
           <>
             <AccountAvatar account={selected} size="sm" />
-            <span className="flex-1 text-left text-sm font-semibold text-gray-800 truncate">
-              {displayName(selected)}
+            <span className="flex-1 truncate text-left text-sm font-semibold text-gray-800">
+              {selected.platform_username || selected.display_name || selected.id}
             </span>
           </>
         ) : (
@@ -656,40 +249,40 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
             All {platformLabel} Accounts
           </span>
         )}
-        <FaChevronDown className={`text-gray-400 text-xs flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <FaChevronDown className={`text-xs text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {/* Dropdown panel */}
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-offwhite rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
-          {/* "All accounts" option */}
-          {showAll && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-xl border border-gray-200 bg-offwhite shadow-xl">
+          <button
+            onClick={() => {
+              onSelect(null);
+              setOpen(false);
+            }}
+            className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-gray-50 ${
+              !selectedId ? 'bg-indigo-50 font-semibold text-indigo-700' : 'text-gray-700'
+            }`}
+          >
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-200 text-[10px] font-bold text-gray-500">
+              All
+            </div>
+            <span>All {platformLabel} Accounts</span>
+          </button>
+          {accounts.map((account) => (
             <button
-              onClick={() => { onSelect(null); setOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors
-                ${!selectedId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
+              key={account.id}
+              onClick={() => {
+                onSelect(account.id);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-gray-50 ${
+                selectedId === account.id ? 'bg-indigo-50 font-semibold text-indigo-700' : 'text-gray-700'
+              }`}
             >
-              <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                <span className="text-[10px] font-bold text-gray-500">All</span>
-              </div>
-              <span>All {platformLabel} Accounts</span>
-            </button>
-          )}
-          {/* Each account */}
-          {accounts.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => { onSelect(a.id); setOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors
-                ${selectedId === a.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
-            >
-              <AccountAvatar account={a} size="sm" />
-              <div className="flex-1 text-left min-w-0">
-                <p className="font-semibold truncate">{displayName(a)}</p>
-              </div>
-              {selectedId === a.id && (
-                <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />
-              )}
+              <AccountAvatar account={account} size="sm" />
+              <span className="flex-1 truncate text-left">
+                {account.platform_username || account.display_name || account.id}
+              </span>
             </button>
           ))}
         </div>
@@ -698,7 +291,6 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
   );
 };
 
-// Platform sidebar listing ALL platforms
 const PlatformSidebar = ({
   accounts,
   selectedPlatform,
@@ -709,43 +301,41 @@ const PlatformSidebar = ({
   onDragEnter,
   onDragEnd,
 }) => {
-  const accountsByPlatform = accounts.reduce((acc, a) => {
-    if (!acc[a.platform]) acc[a.platform] = [];
-    acc[a.platform].push(a);
+  const accountsByPlatform = accounts.reduce((acc, account) => {
+    if (!acc[account.platform]) acc[account.platform] = [];
+    acc[account.platform].push(account);
     return acc;
   }, {});
 
   return (
     <nav className="py-2 select-none">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 px-4 py-2">Channels</p>
+      <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">Channels</p>
       <p className="px-4 pb-2 text-[11px] text-gray-400">Drag platforms to arrange this list.</p>
 
-      {/* All Platforms */}
       <button
         onClick={() => onSelect(null)}
-        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
-          ${!selectedPlatform
-            ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
-            : 'text-gray-600 hover:bg-gray-50 border-transparent'}`}
+        className={`flex w-full items-center gap-3 border-r-2 px-4 py-2.5 text-sm transition-colors ${
+          !selectedPlatform
+            ? 'border-indigo-500 bg-indigo-50 font-semibold text-indigo-700'
+            : 'border-transparent text-gray-600 hover:bg-gray-50'
+        }`}
       >
-        <span className="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
-          📊
-        </span>
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-gray-400">📊</span>
         <span className="flex-1 text-left text-[13px]">All Platforms</span>
       </button>
 
-      {/* Each platform row */}
-      {platformOrder.map((plat, index) => {
-        const platAccounts = accountsByPlatform[plat] || [];
-        const isConnected  = platAccounts.length > 0;
-        const isActive     = selectedPlatform === plat;
-        const Icon         = PLATFORM_ICONS[plat];
-        const color        = PLATFORM_COLORS[plat] || '#6b7280';
+      {platformOrder.map((platform, index) => {
+        const platformAccounts = accountsByPlatform[platform] || [];
+        const isConnected = platformAccounts.length > 0;
+        const isActive = selectedPlatform === platform;
+        const Icon = PLATFORM_ICONS[platform];
+        const color = PLATFORM_COLORS[platform] || '#6b7280';
+
         return (
           <button
-            key={plat}
+            key={platform}
             draggable
-            title={isConnected ? `${platAccounts.length} connected ${platAccounts.length === 1 ? 'account' : 'accounts'}` : 'No connected accounts'}
+            title={isConnected ? `${platformAccounts.length} connected ${platformAccounts.length === 1 ? 'account' : 'accounts'}` : 'No connected accounts'}
             onDragStart={() => onDragStart(index)}
             onDragEnter={() => onDragEnter(index)}
             onDragOver={(event) => event.preventDefault()}
@@ -754,29 +344,28 @@ const PlatformSidebar = ({
               onDragEnd();
             }}
             onDragEnd={onDragEnd}
-            onClick={() => onSelect(plat)}
-            className={`group relative w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
-              ${isActive
-                ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
-                : 'text-gray-600 hover:bg-gray-50 border-transparent'}
-              ${!isConnected ? 'opacity-40' : ''}
-              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50 scale-[0.995]' : ''}`}
+            onClick={() => onSelect(platform)}
+            className={`group relative flex w-full items-center gap-3 border-r-2 px-4 py-2.5 text-sm transition-colors ${
+              isActive
+                ? 'border-indigo-500 bg-indigo-50 font-semibold text-indigo-700'
+                : 'border-transparent text-gray-600 hover:bg-gray-50'
+            } ${!isConnected ? 'opacity-40' : ''} ${draggingPlatform === platform ? 'scale-[0.995] bg-gray-50 opacity-60' : ''}`}
           >
             <span
-              className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors
-                ${isActive ? 'bg-indigo-100 text-indigo-500' : 'bg-gray-100 text-gray-400 group-hover:text-gray-600'}`}
-              aria-hidden="true"
+              className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+                isActive ? 'bg-indigo-100 text-indigo-500' : 'bg-gray-100 text-gray-400 group-hover:text-gray-600'
+              }`}
             >
               <FaGripLines className="text-[10px]" />
             </span>
             {Icon && <Icon size={17} style={{ color, flexShrink: 0 }} />}
-            <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
+            <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[platform] || platform}</span>
             {isConnected && (
               <span
-                className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap opacity-0 shadow-sm transition-all duration-150 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 group-focus-visible:opacity-100 group-focus-visible:translate-x-0"
-                style={{ background: color + '22', color }}
+                className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 translate-x-1 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-bold opacity-0 shadow-sm transition-all duration-150 group-hover:translate-x-0 group-hover:opacity-100"
+                style={{ background: `${color}22`, color }}
               >
-                {platAccounts.length} {platAccounts.length === 1 ? 'Account' : 'Accounts'}
+                {platformAccounts.length} {platformAccounts.length === 1 ? 'Account' : 'Accounts'}
               </span>
             )}
           </button>
@@ -786,61 +375,200 @@ const PlatformSidebar = ({
   );
 };
 
-// ── Main Analytics component ───────────────────────────────────────────────────
+const MetricCell = ({ value, delta }) => {
+  const change = changeLabel(delta);
+  if (value == null) return <span className="text-sm font-medium text-gray-400">NA</span>;
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-lg font-semibold text-gray-900">{fmt(value)}</span>
+      {change && <span className={`text-sm font-semibold ${change.color}`}>{change.text}</span>}
+    </div>
+  );
+};
+
+const BrandHealthTable = ({ rows, platformOrder }) => {
+  const platformRank = new Map(platformOrder.map((platform, index) => [platform, index]));
+  const sortedRows = [...rows].sort((a, b) => {
+    const rankA = platformRank.get(a.platform) ?? 999;
+    const rankB = platformRank.get(b.platform) ?? 999;
+    if (rankA !== rankB) return rankA - rankB;
+    return (a.display_name || a.platform_username || '').localeCompare(b.display_name || b.platform_username || '');
+  });
+
+  if (!sortedRows.length) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-offwhite p-10 text-center">
+        <p className="text-base font-semibold text-gray-600">No connected accounts for this filter.</p>
+        <p className="mt-2 text-sm text-gray-400">Connect accounts or switch platforms to see channel health.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-left">
+        <thead>
+          <tr className="border-b border-gray-200 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+            <th className="w-[320px] px-4 py-4">Channels</th>
+            <th className="min-w-[180px] px-4 py-4">Total Followers / Subscribers</th>
+            <th className="min-w-[180px] px-4 py-4">New Followers / Subscribers Gained</th>
+            <th className="min-w-[160px] px-4 py-4">No. of Posts / Videos</th>
+            <th className="min-w-[140px] px-4 py-4">Reach</th>
+            <th className="min-w-[160px] px-4 py-4">Engagements</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedRows.map((row) => {
+            const accountLabel = row.display_name || row.platform_username || row.account_id;
+            const note = row.error || row.notice;
+            return (
+              <tr key={row.account_id} className="border-b border-gray-100 last:border-b-0">
+                <td className="px-4 py-5 align-top">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5">
+                      <AccountAvatar account={row} size="md" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-base font-semibold text-gray-900">{accountLabel}</p>
+                        {note && (
+                          <span title={note}>
+                            <FaExclamationCircle className={`text-sm ${row.error ? 'text-amber-500' : 'text-gray-400'}`} />
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-sm text-gray-500">{PLATFORM_LABELS[row.platform] || row.platform}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-4 py-5 align-top"><MetricCell value={row.followers_total} delta={row.followers_total_change_pct} /></td>
+                <td className="px-4 py-5 align-top"><MetricCell value={row.new_followers} delta={null} /></td>
+                <td className="px-4 py-5 align-top"><MetricCell value={row.posts_count} delta={row.posts_change_pct} /></td>
+                <td className="px-4 py-5 align-top"><MetricCell value={row.reach} delta={null} /></td>
+                <td className="px-4 py-5 align-top"><MetricCell value={row.engagements} delta={row.engagements_change_pct} /></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const RecentPostCard = ({ post }) => {
+  const rows = recentPostMetricRows(post);
+
+  return (
+    <article className="w-[300px] flex-shrink-0 rounded-2xl border border-gray-200 bg-offwhite p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <AccountAvatar
+          account={{
+            platform: post.platform,
+            picture_url: post.picture_url,
+            platform_username: post.account_username,
+            display_name: post.account_label,
+            account_id: post.account_id,
+          }}
+          size="md"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-gray-900">{post.account_label || post.account_username || 'Connected account'}</p>
+          <p className="truncate text-xs text-gray-500">directly via {PLATFORM_SOURCE_LABELS[post.platform] || PLATFORM_LABELS[post.platform] || post.platform}</p>
+          {post.published_at && (
+            <p className="mt-1 text-xs text-gray-400">{formatPublishedAt(post.published_at)}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-gray-100 bg-gray-50">
+        {post.media_url ? (
+          <img
+            src={post.media_url}
+            alt=""
+            className="h-44 w-full object-cover"
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+              const fallback = event.currentTarget.parentElement?.querySelector('[data-fallback]');
+              if (fallback) fallback.classList.remove('hidden');
+            }}
+          />
+        ) : null}
+        <div
+          data-fallback
+          className={`flex h-44 items-center justify-center px-6 text-center text-sm text-gray-400 ${post.media_url ? 'hidden' : ''}`}
+        >
+          {post.content || 'No media preview available'}
+        </div>
+      </div>
+
+      <p className="mt-4 line-clamp-3 text-sm text-gray-800">{post.content || '(no caption)'}</p>
+
+      <div className="mt-4 space-y-2 border-t border-dashed border-gray-200 pt-4">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">{row.label}</span>
+            <span className="font-semibold text-gray-900">{fmt(row.value)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        {post.row_error ? (
+          <span className="text-xs text-amber-600" title={post.row_error}>Feed fallback used</span>
+        ) : <span />}
+        {post.post_url && (
+          <a
+            href={post.post_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+          >
+            View post <FaExternalLinkAlt className="text-[10px]" />
+          </a>
+        )}
+      </div>
+    </article>
+  );
+};
+
 const Analytics = () => {
-  const [activeTab, setActiveTab]           = useState('overview');
-  const [instagramReportTab, setInstagramReportTab] = useState('summary');
-  const [days, setDays]                     = useState(30);
+  const [days, setDays] = useState(30);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
-  const [selectedAccount, setSelectedAccount]   = useState(null);
-
-  const [accounts, setAccounts]       = useState([]);
-  const [overview, setOverview]       = useState(null);
-  const [timeline, setTimeline]       = useState([]);
-  const [engagement, setEngagement]   = useState(null);
-  const [posts, setPosts]             = useState([]);
-  const [postsSort, setPostsSort]     = useState('date');
-  const [postsErrors, setPostsErrors] = useState([]);
-  const [postsMessage, setPostsMessage] = useState(null);
-
-  const [loadingOverview, setLoadingOverview]       = useState(true);
-  const [loadingEngagement, setLoadingEngagement]   = useState(false);
-  const [loadingPosts, setLoadingPosts]             = useState(false);
-  const [demographics, setDemographics]             = useState(null);
-  const [loadingDemos, setLoadingDemos]             = useState(false);
-  const [instagramReport, setInstagramReport]       = useState(null);
-  const [loadingInstagramReport, setLoadingInstagramReport] = useState(false);
-  const [blueskyReport, setBlueskyReport]           = useState(null);
-  const [loadingBlueskyReport, setLoadingBlueskyReport] = useState(false);
-  const [blueskyTopMetric, setBlueskyTopMetric]     = useState('engagement');
-  const [blueskyChartGranularity, setBlueskyChartGranularity] = useState('day');
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [brandHealth, setBrandHealth] = useState(null);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [loadingBrandHealth, setLoadingBrandHealth] = useState(true);
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
   const dragPlatformIdx = useRef(null);
   const dragOverPlatformIdx = useRef(null);
 
-  const platformOrderStorageKey = `${PLATFORM_ORDER_STORAGE_KEY_PREFIX}_${accounts.find((account) => account?.user_id)?.user_id || 'default'}`;
+  const platformOrderStorageKey = `${PLATFORM_ORDER_STORAGE_KEY_PREFIX}_${getAnalyticsUserKey(accounts)}`;
 
-  // Fetch accounts on load with a quick retry so the platform list is less likely to appear empty.
   useEffect(() => {
     let cancelled = false;
 
     const loadAccounts = async (retry = false) => {
+      setLoadingAccounts(true);
       try {
         const data = await getSocialAccounts();
         if (!cancelled) setAccounts(data);
       } catch {
         if (!retry && !cancelled) {
           window.setTimeout(() => loadAccounts(true), 500);
+        } else if (!cancelled) {
+          toast.error('Failed to load connected accounts');
         }
+      } finally {
+        if (!cancelled) setLoadingAccounts(false);
       }
     };
 
     loadAccounts();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -862,1975 +590,251 @@ const Analytics = () => {
     } catch {}
   }, [loadedPlatformOrder, platformOrderStorageKey, platformOrder]);
 
-  // Fetch overview + timeline whenever filters change
-  const fetchOverview = useCallback(async () => {
-    setLoadingOverview(true);
-    try {
-      const params = { days, platform: selectedPlatform, accountId: selectedAccount };
-      const [ov, tl] = await Promise.all([
-        getAnalyticsOverview(params),
-        getAnalyticsTimeline(params),
-      ]);
-      setOverview(ov);
-      setTimeline(tl);
-    } catch {
-      toast.error('Failed to load analytics overview');
-    } finally {
-      setLoadingOverview(false);
-    }
-  }, [days, selectedPlatform, selectedAccount]);
-
   useEffect(() => {
-    fetchOverview();
-  }, [fetchOverview]);
-
-  // Fetch engagement when on Overview tab
-  const fetchEngagement = useCallback(async () => {
-    setLoadingEngagement(true);
-    try {
-      const data = await getAnalyticsEngagement({
-        days,
-        platform: selectedPlatform,
-        accountId: selectedAccount,
-      });
-      setEngagement(data);
-    } catch {
-      toast.error('Failed to load engagement data');
-    } finally {
-      setLoadingEngagement(false);
-    }
-  }, [days, selectedPlatform, selectedAccount]);
-
-  useEffect(() => {
-    if (activeTab === 'overview') {
-      fetchEngagement();
-    }
-  }, [activeTab, fetchEngagement]);
-
-  // Fetch posts when Posts tab is active
-  const fetchPosts = useCallback(async () => {
-    setLoadingPosts(true);
-    try {
-      const data = await getPublishFeed({
-        platform: selectedPlatform,
-        accountId: selectedAccount,
-        limit: 50,
-      });
-      setPosts(data.posts || []);
-      setPostsErrors(Array.isArray(data.errors) ? data.errors : []);
-      setPostsMessage(data.message || null);
-    } catch {
-      toast.error('Failed to load posts');
-      setPosts([]);
-      setPostsErrors([]);
-      setPostsMessage(null);
-    } finally {
-      setLoadingPosts(false);
-    }
-  }, [selectedPlatform, selectedAccount]);
-
-  useEffect(() => {
-    if (activeTab === 'posts') {
-      fetchPosts();
-    }
-  }, [activeTab, fetchPosts]);
-
-  // Fetch demographics when tab is active
-  const fetchDemographics = useCallback(async () => {
-    setLoadingDemos(true);
-    try {
-      const data = await getAnalyticsDemographics({
-        platform: selectedPlatform,
-        accountId: selectedAccount,
-      });
-      setDemographics(data);
-    } catch {
-      toast.error('Failed to load demographics');
-    } finally {
-      setLoadingDemos(false);
-    }
-  }, [selectedPlatform, selectedAccount]);
-
-  useEffect(() => {
-    if (activeTab === 'demographics') {
-      fetchDemographics();
-    }
-  }, [activeTab, fetchDemographics]);
-
-  const fetchInstagramReport = useCallback(async () => {
-    if (selectedPlatform !== 'instagram') {
-      setInstagramReport(null);
+    if (!selectedPlatform) {
+      setSelectedAccount(null);
       return;
     }
-    setLoadingInstagramReport(true);
-    try {
-      const data = await getInstagramAnalyticsReport({
-        days,
-        accountId: selectedAccount,
-      });
-      setInstagramReport(data);
-    } catch {
-      toast.error('Failed to load Instagram report');
-      setInstagramReport(null);
-    } finally {
-      setLoadingInstagramReport(false);
-    }
-  }, [days, selectedPlatform, selectedAccount]);
-
-  useEffect(() => {
-    if (activeTab === 'summary' && selectedPlatform === 'instagram') {
-      fetchInstagramReport();
-    }
-  }, [activeTab, selectedPlatform, fetchInstagramReport]);
-
-  const fetchBlueskyReport = useCallback(async () => {
-    if (selectedPlatform !== 'bluesky') {
-      setBlueskyReport(null);
-      return;
-    }
-    setLoadingBlueskyReport(true);
-    try {
-      const data = await getBlueskyAnalyticsReport({
-        days,
-        accountId: selectedAccount,
-      });
-      setBlueskyReport(data);
-    } catch {
-      toast.error('Failed to load Bluesky report');
-      setBlueskyReport(null);
-    } finally {
-      setLoadingBlueskyReport(false);
-    }
-  }, [days, selectedPlatform, selectedAccount]);
-
-  useEffect(() => {
-    if (
-      selectedPlatform === 'bluesky'
-      && ['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)
-    ) {
-      fetchBlueskyReport();
-    }
-  }, [activeTab, selectedPlatform, fetchBlueskyReport]);
-
-  useEffect(() => {
-    if (selectedPlatform !== 'instagram' && activeTab === 'summary') {
-      setActiveTab('overview');
-    }
-  }, [selectedPlatform, activeTab]);
-
-  useEffect(() => {
-    if (selectedPlatform === 'instagram' && activeTab === 'demographics') {
-      setActiveTab('summary');
-    }
-  }, [selectedPlatform, activeTab]);
-
-  useEffect(() => {
-    if (selectedPlatform !== 'bluesky' && ['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)) {
-      setActiveTab('overview');
-    }
-  }, [selectedPlatform, activeTab]);
-
-  // Platform sidebar selection — auto-select account if only one exists
-  const handlePlatformSelect = (plat) => {
-    setSelectedPlatform(plat);
-    if (plat) {
-      const platAccounts = accounts.filter((a) => a.platform === plat);
-      setSelectedAccount(platAccounts.length === 1 ? platAccounts[0].id : null);
-    } else {
+    const platformAccounts = accounts.filter((account) => account.platform === selectedPlatform);
+    if (selectedAccount && !platformAccounts.some((account) => account.id === selectedAccount)) {
       setSelectedAccount(null);
     }
-  };
+  }, [accounts, selectedPlatform, selectedAccount]);
 
-  // Account dropdown selection
-  const handleAccountChange = (accountId) => {
-    setSelectedAccount(accountId || null);
-  };
+  const fetchBrandHealth = useCallback(async () => {
+    setLoadingBrandHealth(true);
+    try {
+      const data = await getAnalyticsBrandHealth({
+        days,
+        platform: selectedPlatform,
+        accountId: selectedAccount,
+      });
+      setBrandHealth(data);
+    } catch {
+      toast.error('Failed to load analytics');
+      setBrandHealth(null);
+    } finally {
+      setLoadingBrandHealth(false);
+    }
+  }, [days, selectedPlatform, selectedAccount]);
 
-  const handlePlatformDragStart = (index) => {
+  useEffect(() => {
+    fetchBrandHealth();
+  }, [fetchBrandHealth]);
+
+  const filteredPlatformAccounts = useMemo(
+    () => accounts.filter((account) => !selectedPlatform || account.platform === selectedPlatform),
+    [accounts, selectedPlatform],
+  );
+
+  const selectedPlatformAccounts = useMemo(
+    () => accounts.filter((account) => account.platform === selectedPlatform),
+    [accounts, selectedPlatform],
+  );
+
+  const platformTitle = selectedPlatform ? PLATFORM_LABELS[selectedPlatform] || selectedPlatform : 'All Platforms';
+  const selectedIcon = selectedPlatform ? PLATFORM_ICONS[selectedPlatform] : null;
+  const selectedColor = selectedPlatform ? (PLATFORM_COLORS[selectedPlatform] || '#6b7280') : '#6b7280';
+
+  const sortedRows = useMemo(() => {
+    const rows = brandHealth?.rows || [];
+    const rank = new Map(platformOrder.map((platform, index) => [platform, index]));
+    return [...rows].sort((a, b) => {
+      const rankA = rank.get(a.platform) ?? 999;
+      const rankB = rank.get(b.platform) ?? 999;
+      if (rankA !== rankB) return rankA - rankB;
+      return (a.display_name || a.platform_username || a.account_id || '').localeCompare(
+        b.display_name || b.platform_username || b.account_id || '',
+      );
+    });
+  }, [brandHealth?.rows, platformOrder]);
+
+  const sortedRecentPosts = useMemo(() => {
+    const posts = brandHealth?.recent_posts || [];
+    const order = new Map(sortedRows.map((row, index) => [row.account_id, index]));
+    return [...posts].sort((a, b) => {
+      const rankA = order.get(a.account_id) ?? 999;
+      const rankB = order.get(b.account_id) ?? 999;
+      return rankA - rankB;
+    });
+  }, [brandHealth?.recent_posts, sortedRows]);
+
+  const handleDragStart = (index) => {
     dragPlatformIdx.current = index;
     setDraggingPlatform(platformOrder[index] || null);
   };
 
-  const handlePlatformDragEnter = (index) => {
+  const handleDragEnter = (index) => {
     dragOverPlatformIdx.current = index;
   };
 
-  const handlePlatformDragEnd = () => {
-    if (dragPlatformIdx.current == null || dragOverPlatformIdx.current == null) {
+  const handleDragEnd = () => {
+    const fromIndex = dragPlatformIdx.current;
+    const toIndex = dragOverPlatformIdx.current;
+    if (fromIndex == null || toIndex == null || fromIndex === toIndex) {
       dragPlatformIdx.current = null;
       dragOverPlatformIdx.current = null;
       setDraggingPlatform(null);
       return;
     }
-    if (dragPlatformIdx.current === dragOverPlatformIdx.current) {
-      dragPlatformIdx.current = null;
-      dragOverPlatformIdx.current = null;
-      setDraggingPlatform(null);
-      return;
-    }
+
     setPlatformOrder((current) => {
       const next = [...current];
-      const [moved] = next.splice(dragPlatformIdx.current, 1);
-      next.splice(dragOverPlatformIdx.current, 0, moved);
-      return normalizePlatformOrder(next);
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
     });
+
     dragPlatformIdx.current = null;
     dragOverPlatformIdx.current = null;
     setDraggingPlatform(null);
   };
 
-  // Sort posts
-  const sortedPosts = [...posts].sort((a, b) => {
-    const ma = a.metrics || {};
-    const mb = b.metrics || {};
-    if (postsSort === 'date') {
-      const da = parseDate(a.published_at);
-      const db = parseDate(b.published_at);
-      return (db?.getTime() ?? 0) - (da?.getTime() ?? 0);
-    }
-    return (mb[postsSort] ?? 0) - (ma[postsSort] ?? 0);
-  });
-
-  // Platform engagement chart data
-  const platformEngData = Object.entries(engagement?.platform_breakdown || {}).map(([plat, d]) => ({
-    platform: plat,
-    likes:    d.likes    || 0,
-    comments: d.comments || 0,
-    shares:   d.shares   || 0,
-    views:    d.views    || 0,
-  }));
-
-  // Format timeline dates for display
-  const timelineFormatted = timeline.map((t) => ({
-    ...t,
-    label: (() => {
-      try { return format(parseISO(t.date), days <= 7 ? 'EEE' : 'MMM d'); }
-      catch { return t.date; }
-    })(),
-  }));
-
-  // Demographics only available for Instagram and Facebook
-  const DEMOGRAPHICS_PLATFORMS = ['instagram', 'facebook'];
-  const hasDemographics = !selectedPlatform
-    ? accounts.some((a) => DEMOGRAPHICS_PLATFORMS.includes(a.platform))
-    : DEMOGRAPHICS_PLATFORMS.includes(selectedPlatform);
-  const showInstagramReportTab = selectedPlatform === 'instagram';
-  const showBlueskyReportTabs = selectedPlatform === 'bluesky';
-
-  const tabs = useMemo(() => ([
-    { id: 'overview', label: 'Overview' },
-    { id: 'posts',    label: 'Posts'    },
-    ...(showInstagramReportTab ? [{ id: 'summary', label: 'Summary' }] : []),
-    ...(showBlueskyReportTabs ? [
-      { id: 'bluesky-summary', label: 'Summary' },
-      { id: 'bluesky-audience', label: 'Audience' },
-      { id: 'bluesky-posts-engagement', label: 'Posts & Engagement' },
-    ] : []),
-    ...(hasDemographics && selectedPlatform !== 'instagram' ? [{ id: 'demographics', label: 'Demographics' }] : []),
-  ]), [showInstagramReportTab, showBlueskyReportTabs, hasDemographics, selectedPlatform]);
-
-  useEffect(() => {
-    if (!tabs.some((tab) => tab.id === activeTab)) {
-      setActiveTab('overview');
-    }
-  }, [activeTab, tabs]);
-
-  // Accounts for the currently selected platform
-  const platformAccounts = accounts.filter(
-    (a) => !selectedPlatform || a.platform === selectedPlatform
-  );
-  const selectedConnectedAccount =
-    (overview?.connected_accounts || []).find(
-      (a) => (a.account_id || a.id) === selectedAccount
-    ) ||
-    (engagement?.connected_accounts || []).find(
-      (a) => (a.account_id || a.id) === selectedAccount
-    ) ||
-    platformAccounts.find((a) => a.id === selectedAccount);
-  const overviewAccounts = overview?.connected_accounts || [];
-  const computedAudienceSupport = selectedAccount
-    ? (selectedConnectedAccount?.supports || {})
-    : aggregateAudienceSupport(overviewAccounts);
-  const audienceSupport = selectedPlatformAudienceSupport(selectedPlatform, computedAudienceSupport);
-  const audienceSource = selectedAccount
-    ? selectedConnectedAccount
-    : (overview?.audience_totals || {});
-  const reachCardLabel = audienceSupport.reach
-    ? 'Reach'
-    : (audienceSupport.impressions ? 'Impressions' : null);
-  const hasContentOutsideWindow =
-    !!selectedPlatform &&
-    !!selectedAccount &&
-    !loadingOverview &&
-    (overview?.published_in_period || 0) === 0 &&
-    (selectedConnectedAccount?.posts_count || 0) > 0;
-  const isNotConnected = selectedPlatform &&
-    accounts.filter((a) => a.platform === selectedPlatform).length === 0;
-  const SelectedIcon = selectedPlatform ? PLATFORM_ICONS[selectedPlatform] : null;
-  const selectedColor = selectedPlatform ? (PLATFORM_COLORS[selectedPlatform] || '#6b7280') : null;
-  const selectedPlatformMetrics = supportedMetricsFor(selectedPlatform);
-  const selectedPlatformNotice = selectedPlatform
-    ? (engagement?.message || PLATFORM_NOTICES[selectedPlatform] || null)
-    : null;
-  const showEngagementInsights = !selectedPlatform || hasAnyEngagementMetrics(selectedPlatform);
-  const visibleMetricCards = [
-    { key: 'likes', label: 'Total Likes', icon: FaHeart, value: engagement?.totals?.total_likes, color: 'bg-rose-500' },
-    { key: 'comments', label: 'Comments', icon: FaComment, value: engagement?.totals?.total_comments, color: 'bg-blue-500' },
-    { key: 'shares', label: 'Shares', icon: FaShare, value: engagement?.totals?.total_shares, color: 'bg-emerald-500' },
-    { key: 'views', label: 'Views', icon: FaEye, value: engagement?.totals?.total_views, color: 'bg-purple-500' },
-  ].filter((metric) => !selectedPlatform || selectedPlatformMetrics[metric.key]);
-  const audienceMetricCards = [
-    {
-      key: 'followers_total',
-      label: 'Total Followers',
-      icon: FaUsers,
-      value: audienceSource?.followers_count ?? audienceSource?.followers_total,
-      color: 'bg-sky-600',
-      visible: audienceSupport.followers_total,
-    },
-    {
-      key: 'followers_growth',
-      label: `New Followers (${days}d)`,
-      icon: FaChartLine,
-      value: audienceSource?.followers_growth,
-      color: 'bg-emerald-600',
-      visible: audienceSupport.followers_growth,
-    },
-    {
-      key: 'reach',
-      label: reachCardLabel,
-      icon: FaBullseye,
-      value: audienceSupport.reach ? audienceSource?.reach : audienceSource?.impressions,
-      color: 'bg-amber-500',
-      visible: !!reachCardLabel,
-    },
-  ].filter((metric) => metric.visible);
-  const visibleSortOptions = SORT_OPTIONS.filter((opt) => opt.value === 'date' || !selectedPlatform || selectedPlatformMetrics[opt.value]);
-  const topPostMetricLabel = selectedPlatformNotice || (!showEngagementInsights ? 'This platform does not expose post engagement metrics through the current integration.' : null);
-  const summaryMetricColumns = [
-    { key: 'likes', label: 'Likes' },
-    { key: 'comments', label: 'Comments' },
-    { key: 'shares', label: 'Shares' },
-    { key: 'views', label: 'Views' },
-  ].filter(({ key }) => {
-    if (!overview?.platform_counts) return true;
-    return Object.keys(overview.platform_counts).some((plat) => metricIsSupported(plat, key));
-  });
-  const showEngRateColumn = !!overview?.platform_counts && Object.keys(overview.platform_counts).some((plat) =>
-    ['likes', 'comments', 'shares'].some((metric) => metricIsSupported(plat, metric))
-  );
-
-  useEffect(() => {
-    if (!visibleSortOptions.some((opt) => opt.value === postsSort)) {
-      setPostsSort('date');
-    }
-  }, [postsSort, visibleSortOptions]);
-
-  const instagramSummary = instagramReport?.summary || {};
-  const instagramAudience = instagramReport?.audience || {};
-  const instagramFollowerTimeline = (instagramAudience.follower_growth || []).map((point) => ({
-    ...point,
-    label: formatReportDate(point.date, days),
-  }));
-  const instagramDemographics = instagramAudience.demographics || {};
-  const blueskySummary = blueskyReport?.summary || {};
-  const blueskyAudience = blueskyReport?.audience || {};
-  const blueskyPostsEngagement = blueskyReport?.posts_engagement || {};
-  const blueskyFollowerTimeline = bucketSeriesByGranularity(
-    blueskyAudience.follower_growth || [],
-    days,
-    blueskyChartGranularity,
-  );
-  const blueskyMessagesMentionsTimeline = mergeBucketedSeries({
-    mentions: blueskyAudience.mentions_received || [],
-    messages: blueskyAudience.messages_received || [],
-  }, days, blueskyChartGranularity);
-  const blueskyPostsVsEngagementTimeline = mergeBucketedSeries({
-    posts: blueskyPostsEngagement.posts_vs_engagement?.posts || [],
-    engagement: blueskyPostsEngagement.posts_vs_engagement?.engagement || [],
-  }, days, blueskyChartGranularity);
-  const blueskyEngagementActionsTimeline = mergeBucketedSeries({
-    likes: blueskyPostsEngagement.engagement_actions?.likes || [],
-    replies: blueskyPostsEngagement.engagement_actions?.replies || [],
-    reposts: blueskyPostsEngagement.engagement_actions?.reposts || [],
-    quotes: blueskyPostsEngagement.engagement_actions?.quotes || [],
-  }, days, blueskyChartGranularity);
-  const blueskyPostEngagementTimeline = bucketSeriesByGranularity(
-    blueskyPostsEngagement.post_engagement || [],
-    days,
-    blueskyChartGranularity,
-  );
-  const blueskyFollowerGrowthHasData = chartHasData(blueskyFollowerTimeline, ['count']);
-  const blueskyPostsVsEngagementHasData = chartHasData(blueskyPostsVsEngagementTimeline, ['posts', 'engagement']);
-  const blueskyPostEngagementHasData = chartHasData(blueskyPostEngagementTimeline, ['count']);
-  const blueskyEngagementActionsHasData = chartHasData(blueskyEngagementActionsTimeline, ['likes', 'replies', 'reposts', 'quotes']);
-  const blueskyMessagesMentionsHasData = chartHasData(blueskyMessagesMentionsTimeline, ['mentions', 'messages']);
-  const blueskyTopPosts = [...(blueskyPostsEngagement.top_posts || [])].sort((a, b) => {
-    const metricValue = (post, metric) => {
-      if (metric === 'likes') return post.likes || 0;
-      if (metric === 'replies') return post.replies || 0;
-      if (metric === 'reposts') return post.reposts || 0;
-      if (metric === 'quotes') return post.quotes || 0;
-      if (metric === 'engagement_rate') return post.engagement_rate || 0;
-      return post.engagement || 0;
-    };
-    return metricValue(b, blueskyTopMetric) - metricValue(a, blueskyTopMetric);
-  });
-  const blueskyViewSelector = (
-    <select
-      value={blueskyChartGranularity}
-      onChange={(event) => setBlueskyChartGranularity(event.target.value)}
-      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
-    >
-      {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
-        <option key={option.value} value={option.value}>{option.label}</option>
-      ))}
-    </select>
+  const renderLoadingState = () => (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-gray-200 bg-offwhite p-6">
+        <SkeletonBlock className="mb-4 h-6 w-64" />
+        <SkeletonBlock className="h-64 w-full" />
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-offwhite p-6">
+        <SkeletonBlock className="mb-4 h-6 w-40" />
+        <div className="flex gap-4 overflow-hidden">
+          {[1, 2, 3].map((item) => (
+            <div key={item} className="w-[300px] flex-shrink-0 space-y-3">
+              <SkeletonBlock className="h-5 w-40" />
+              <SkeletonBlock className="h-44 w-full" />
+              <SkeletonBlock className="h-16 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 
   return (
-    <DashboardLayout hideSidebar>
-      {/* ── Two-column layout: platform sidebar + content ─────────────── */}
-      <div className="flex h-full overflow-hidden">
-
-        {/* ── Left Platform Sidebar ──────────────────────────────────── */}
-        <aside className="w-52 shrink-0 border-r border-gray-200 bg-offwhite overflow-y-auto hidden md:block">
-          <PlatformSidebar
-            accounts={accounts}
-            selectedPlatform={selectedPlatform}
-            onSelect={handlePlatformSelect}
-            platformOrder={platformOrder}
-            draggingPlatform={draggingPlatform}
-            onDragStart={handlePlatformDragStart}
-            onDragEnter={handlePlatformDragEnter}
-            onDragEnd={handlePlatformDragEnd}
-          />
-        </aside>
-
-        {/* ── Right Content Area ─────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-
-        {/* ── Content header: account selector + date range ────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-          {/* Left: platform icon + account selector */}
-          <div className="flex items-center gap-3">
-            {SelectedIcon && (
-              <SelectedIcon size={22} style={{ color: selectedColor }} />
-            )}
-            {selectedPlatform && platformAccounts.length > 0 ? (
-              /* Platform selected + has accounts → custom dropdown with avatars */
-              <AccountDropdown
-                accounts={platformAccounts}
-                selectedId={selectedAccount}
-                onSelect={handleAccountChange}
-                platformLabel={PLATFORM_LABELS[selectedPlatform] || selectedPlatform}
-                showAll={platformAccounts.length > 1}
+    <DashboardLayout>
+      <div className="min-h-screen bg-white">
+        <div className="mx-auto max-w-[1600px] px-6 py-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="self-start rounded-2xl border border-gray-200 bg-offwhite">
+              <PlatformSidebar
+                accounts={accounts}
+                selectedPlatform={selectedPlatform}
+                onSelect={setSelectedPlatform}
+                platformOrder={platformOrder}
+                draggingPlatform={draggingPlatform}
+                onDragStart={handleDragStart}
+                onDragEnter={handleDragEnter}
+                onDragEnd={handleDragEnd}
               />
-            ) : (
-              /* No platform selected → show Analytics title */
-              <h1 className="text-xl font-bold text-gray-900">Analytics</h1>
-            )}
-          </div>
+            </aside>
 
-          {/* Right: date range selector */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            {DAYS_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setDays(opt.value)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
-                  ${days === opt.value
-                    ? 'bg-offwhite text-indigo-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Mobile platform pills (hidden on md+, shown on small screens) */}
-        <div className="flex items-center gap-2 flex-wrap mb-5 md:hidden">
-          <button
-            onClick={() => handlePlatformSelect(null)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
-              ${!selectedPlatform
-                ? 'bg-indigo-600 border-indigo-600 text-white'
-                : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
-          >
-            All
-          </button>
-          {platformOrder.filter((plat) => accounts.some((account) => account.platform === plat)).map((plat) => (
-            <PlatformPill
-              key={plat}
-              platform={plat}
-              active={selectedPlatform === plat}
-              onClick={() => handlePlatformSelect(plat)}
-            />
-          ))}
-        </div>
-
-        {/* ── Not connected state ──────────────────────────────────── */}
-        {isNotConnected ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            {SelectedIcon && (
-              <SelectedIcon size={48} style={{ color: selectedColor }} className="mb-4 opacity-30" />
-            )}
-            <p className="text-lg font-semibold text-gray-700">
-              No {PLATFORM_LABELS[selectedPlatform] || selectedPlatform} account connected
-            </p>
-            <p className="text-sm text-gray-400 mt-1 mb-4">
-              Connect your {PLATFORM_LABELS[selectedPlatform] || selectedPlatform} account to view analytics here.
-            </p>
-            <a
-              href="/accounts"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              Connect Account →
-            </a>
-          </div>
-        ) : (
-          <>
-
-        {/* ── Platform analytics notice ───────────────────────────── */}
-        {selectedPlatformNotice && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <svg className="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-            </svg>
-            {selectedPlatformNotice}
-          </div>
-        )}
-
-        {/* ── Tabs ─────────────────────────────────────────────────── */}
-        <div className="flex border-b border-gray-200 mb-6 gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px
-                ${activeTab === tab.id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ━━━━━━━━━━━━━━━━━ OVERVIEW TAB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-
-            {hasContentOutsideWindow && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                This {PLATFORM_LABELS[selectedPlatform] || selectedPlatform} account has{' '}
-                <span className="font-semibold">{fmt(selectedConnectedAccount?.posts_count || 0)}</span>{' '}
-                total {selectedPlatform === 'youtube' ? 'videos' : 'posts'}, but none fall within the selected{' '}
-                <span className="font-semibold">{days}-day</span> range. The Posts tab can still show recent account content outside this window.
-              </div>
-            )}
-
-            {!!engagement?.errors?.length && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {engagement.errors.map((item, idx) => (
-                  <div key={`${item.account}-${idx}`}>
-                    <span className="font-semibold">{item.account}:</span> {item.error}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!!overview?.errors?.length && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {overview.errors.map((item, idx) => (
-                  <div key={`${item.account}-${idx}`}>
-                    <span className="font-semibold">{item.account}:</span> {item.error}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Engagement stat cards */}
-            <div className={`grid gap-4 ${(audienceMetricCards.length + visibleMetricCards.length + 1) >= 5 ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
-              {audienceMetricCards.map(({ key, label, icon, value, color }) => (
-                <EngagementCard
-                  key={key}
-                  icon={icon}
-                  label={label}
-                  value={value}
-                  color={color}
-                  loading={loadingOverview}
-                />
-              ))}
-              <EngagementCard
-                icon={FaFileAlt}
-                label="Posts Published"
-                value={overview?.published_in_period}
-                color="bg-indigo-500"
-                loading={loadingOverview}
-              />
-              {visibleMetricCards.map(({ key, label, icon, value, color }) => (
-                <EngagementCard
-                  key={key}
-                  icon={icon}
-                  label={label}
-                  value={value}
-                  color={color}
-                  loading={loadingEngagement}
-                />
-              ))}
-            </div>
-
-            {(audienceMetricCards.length > 0 || selectedPlatform) && (
-              <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-600">
-                Audience metrics come directly from the connected platform API when that platform exposes them. Unsupported metrics stay hidden instead of showing synthetic values.
-                {selectedPlatform === 'youtube' && ' YouTube follower growth uses subscriber gained/lost analytics; reach is not exposed as a channel-level metric.'}
-                {selectedPlatform === 'tiktok' && ' TikTok follower totals require the account to be connected with stats scopes.'}
-              </div>
-            )}
-
-            {/* Engagement insights row */}
-            {!loadingEngagement && engagement?.totals?.total_posts > 0 && showEngagementInsights && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Average engagement per post */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
-                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Avg. Engagement / Post</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {fmt(Math.round(
-                      ((engagement.totals.total_likes || 0) + (engagement.totals.total_comments || 0) + (engagement.totals.total_shares || 0))
-                      / (engagement.totals.total_posts || 1)
-                    ))}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-1">Likes + Comments + Shares per post</p>
-                </div>
-
-                {/* Best performing platform */}
-                {(() => {
-                  const breakdown = engagement?.platform_breakdown || {};
-                  const best = Object.entries(breakdown).sort((a, b) => {
-                    const engA = (a[1].likes || 0) + (a[1].comments || 0) + (a[1].shares || 0);
-                    const engB = (b[1].likes || 0) + (b[1].comments || 0) + (b[1].shares || 0);
-                    return engB - engA;
-                  })[0];
-                  if (!best) return null;
-                  const [plat, data] = best;
-                  const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-                  const totalEng = (data.likes || 0) + (data.comments || 0) + (data.shares || 0);
-                  return (
-                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Best Platform</p>
-                      <div className="flex items-center gap-2">
-                        <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
-                        <span className="text-2xl font-bold text-gray-900">{PLATFORM_LABELS[plat] || plat}</span>
+            <main className="min-w-0 space-y-6">
+              <div className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-offwhite p-6 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-wrap items-center gap-4">
+                  {selectedPlatform && selectedIcon ? (
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-sm">
+                        {React.createElement(selectedIcon, { style: { color: selectedColor }, className: 'text-xl' })}
                       </div>
-                      <p className="text-xs text-gray-400 mt-1">{fmt(totalEng)} total engagement from {data.posts || 0} posts</p>
-                    </div>
-                  );
-                })()}
-
-                {/* Most viewed platform */}
-                {(() => {
-                  const breakdown = engagement?.platform_breakdown || {};
-                  const best = Object.entries(breakdown).filter(([, d]) => (d.views || 0) > 0).sort((a, b) => (b[1].views || 0) - (a[1].views || 0))[0];
-                  if (!best) return null;
-                  const [plat, data] = best;
-                  const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-                  return (
-                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Most Viewed</p>
-                      <div className="flex items-center gap-2">
-                        <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
-                        <span className="text-2xl font-bold text-gray-900">{fmt(data.views)}</span>
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Analytics</p>
+                        <p className="text-xl font-semibold text-gray-900">{platformTitle}</p>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1">Views on {PLATFORM_LABELS[plat] || plat}</p>
                     </div>
-                  );
-                })()}
-              </div>
-            )}
-
-            {/* Charts row */}
-            <div className={`grid grid-cols-1 gap-4 ${showEngagementInsights ? 'xl:grid-cols-2' : ''}`}>
-
-              {/* Posts Over Time */}
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts Published Over Time</h3>
-                {loadingOverview ? (
-                  <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
-                ) : timeline.length === 0 ? (
-                  <div className="h-48 flex items-center justify-center text-sm text-gray-400">No data</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={180}>
-                    <AreaChart data={timelineFormatted} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                      <defs>
-                        <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={28} />
-                      <Tooltip content={<TimelineTooltip />} />
-                      <Area type="monotone" dataKey="count" name="Posts" stroke="#6366f1" strokeWidth={2} fill="url(#colorPosts)" dot={false} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-
-              {showEngagementInsights && (
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
-                  {loadingEngagement ? (
-                    <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
-                  ) : platformEngData.length === 0 ? (
-                    <div className="h-48 flex items-center justify-center text-sm text-gray-400">No engagement data</div>
                   ) : (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <BarChart data={platformEngData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="platform"
-                          tick={{ fontSize: 11, fill: '#9ca3af' }}
-                          tickLine={false}
-                          axisLine={false}
-                          tickFormatter={(v) => PLATFORM_LABELS[v]?.split(' ')[0] || v}
-                        />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
-                        <Tooltip content={<EngagementTooltip />} />
-                        <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                        {summaryMetricColumns.map(({ key, label }, index) => (
-                          <Bar
-                            key={key}
-                            dataKey={key}
-                            name={label}
-                            stackId="engagement"
-                            fill={
-                              key === 'likes' ? '#ef4444'
-                                : key === 'comments' ? '#3b82f6'
-                                : key === 'shares' ? '#22c55e'
-                                : '#f59e0b'
-                            }
-                            radius={index === summaryMetricColumns.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                          />
-                        ))}
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Analytics</p>
+                      <p className="text-xl font-semibold text-gray-900">All Platforms</p>
+                    </div>
+                  )}
+
+                  {selectedPlatform && selectedPlatformAccounts.length > 0 && (
+                    <AccountDropdown
+                      accounts={selectedPlatformAccounts}
+                      selectedId={selectedAccount}
+                      onSelect={setSelectedAccount}
+                      platformLabel={platformTitle}
+                    />
                   )}
                 </div>
-              )}
-            </div>
 
-            {/* Post type breakdown */}
-            {overview && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts by Type</h3>
-                {loadingOverview ? (
-                  <div className="h-10 bg-gray-100 animate-pulse rounded-lg" />
-                ) : (
-                  <div className="space-y-3">
-                    {[
-                      { key: 'text',  label: 'Text',  color: '#6366f1' },
-                      { key: 'image', label: 'Image', color: '#22c55e' },
-                      { key: 'video', label: 'Video', color: '#f59e0b' },
-                    ].map(({ key, label, color }) => {
-                      const count = overview.type_counts?.[key] || 0;
-                      const total = overview.published_in_period || 1;
-                      const pct = Math.round((count / total) * 100);
-                      return (
-                        <div key={key} className="flex items-center gap-3">
-                          <span className="text-sm text-gray-600 w-12">{label}</span>
-                          <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${pct}%`, background: color }}
-                            />
-                          </div>
-                          <span className="text-sm text-gray-500 w-16 text-right">{count} ({pct}%)</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {showEngagementInsights && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
-                {loadingEngagement ? (
-                  <div className="space-y-3">
-                    {[1, 2, 3].map((i) => (
-                      <div key={i} className="h-14 bg-gray-100 animate-pulse rounded-lg" />
-                    ))}
-                  </div>
-                ) : !engagement?.top_posts?.length ? (
-                  <div className="py-8 text-center text-sm text-gray-400">
-                    {topPostMetricLabel || 'No posts with engagement data yet. Connect accounts and publish posts to see results here.'}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {(engagement?.top_posts || []).slice(0, 5).map((post, i) => {
-                      const plat = post.platform || 'unknown';
-                      const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-                      const color = PLATFORM_COLORS[plat] || '#6b7280';
-                      const m = post.metrics || {};
-                      const dt = parseDate(post.published_at);
-                      const support = PLATFORM_METRICS[plat] || {};
-                      return (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                          <span className="w-5 text-center text-xs font-bold text-gray-400">{i + 1}</span>
-                          <Icon style={{ color, flexShrink: 0 }} className="text-base" />
-                          {post.media_url && (
-                            <img
-                              src={post.media_url}
-                              alt=""
-                              className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
-                              onError={(e) => { e.target.style.display = 'none'; }}
-                            />
-                          )}
-                          <p className="flex-1 text-sm text-gray-700 truncate min-w-0">
-                            {post.content || '(no caption)'}
-                          </p>
-                          <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500">
-                            {support.likes && <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(m.likes)}</span>}
-                            {support.comments && <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(m.comments)}</span>}
-                            {support.shares && <span className="flex items-center gap-1"><FaShare className="text-green-400" />{fmt(m.shares)}</span>}
-                            {support.views && <span className="flex items-center gap-1"><FaEye className="text-purple-400" />{fmt(m.views)}</span>}
-                            {dt && <span className="text-gray-400 hidden sm:block">{format(dt, 'MMM d')}</span>}
-                            {post.post_url && (
-                              <a href={post.post_url} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:text-indigo-700">
-                                <FaExternalLinkAlt />
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Platform summary table */}
-            {overview?.platform_counts && Object.keys(overview.platform_counts).length > 0 && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Platform Summary</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                        <th className="text-left py-2 pr-4">Platform</th>
-                        <th className="text-right py-2 pr-4">Followers</th>
-                        <th className="text-right py-2 pr-4">Growth</th>
-                        <th className="text-right py-2 pr-4">Reach / Impr.</th>
-                        <th className="text-right py-2 pr-4">Posts</th>
-                        {summaryMetricColumns.map(({ key, label }) => (
-                          <th key={key} className="text-right py-2 pr-4">{label}</th>
-                        ))}
-                        {showEngRateColumn && <th className="text-right py-2">Eng. Rate</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(overview.platform_counts)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([plat, count]) => {
-                          const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
-                          const color = PLATFORM_COLORS[plat] || '#6b7280';
-                          const pd = engagement?.platform_breakdown?.[plat] || {};
-                          const accountRows = overviewAccounts.filter((account) => account.platform === plat);
-                          const support = aggregateAudienceSupport(accountRows);
-                          const followerTotal = support.followers_total
-                            ? accountRows.reduce((sum, account) => sum + (account.followers_count || 0), 0)
-                            : null;
-                          const followerGrowth = support.followers_growth
-                            ? accountRows.reduce((sum, account) => sum + (account.followers_growth || 0), 0)
-                            : null;
-                          const reachOrImpressions = support.reach
-                            ? accountRows.reduce((sum, account) => sum + (account.reach || 0), 0)
-                            : (support.impressions
-                              ? accountRows.reduce((sum, account) => sum + (account.impressions || 0), 0)
-                              : null);
-                          const sup = PLATFORM_METRICS[plat] || {};
-                          return (
-                            <tr key={plat} className="border-b border-gray-50 hover:bg-gray-50">
-                              <td className="py-2.5 pr-4">
-                                <div className="flex items-center gap-2">
-                                  <Icon style={{ color }} className="text-base" />
-                                  <span className="font-medium text-gray-700">{PLATFORM_LABELS[plat] || plat}</span>
-                                </div>
-                              </td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerTotal)}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerGrowth)}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(reachOrImpressions)}</td>
-                              <td className="text-right py-2.5 pr-4 font-semibold text-gray-900">{count}</td>
-                              {summaryMetricColumns.map(({ key }) => (
-                                <td key={key} className="text-right py-2.5 pr-4 text-gray-600">
-                                  {sup[key] ? fmt(pd[key] ?? 0) : '—'}
-                                </td>
-                              ))}
-                              {showEngRateColumn && (
-                                <td className="text-right py-2.5 text-gray-600">
-                                  {pd.posts > 0 && (sup.likes || sup.comments || sup.shares)
-                                    ? (((pd.likes || 0) + (pd.comments || 0) + (pd.shares || 0)) / pd.posts).toFixed(1)
-                                    : '—'
-                                  }
-                                </td>
-                              )}
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
+                <div className="flex items-center gap-2 self-start rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+                  {DAYS_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setDays(option.value)}
+                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                        days === option.value ? 'bg-indigo-50 text-indigo-600' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
 
-          </div>
-        )}
-
-        {/* ━━━━━━━━━━━━━━━━━ BLUESKY REPORT TABS ━━━━━━━━━━━━━━━━━━━━━ */}
-        {['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab) && selectedPlatform === 'bluesky' && (
-          <div className="space-y-6">
-            {!!blueskyReport?.errors?.length && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {blueskyReport.errors.map((item, idx) => (
-                  <div key={`${item.account}-${idx}`}>
-                    <span className="font-semibold">{item.account}:</span> {item.error}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!!blueskyReport?.message_errors?.length && activeTab !== 'bluesky-summary' && (
-              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                {blueskyReport.message_errors.map((item, idx) => (
-                  <div key={`${item.account}-msg-${idx}`}>
-                    <span className="font-semibold">{item.account}:</span> {item.error}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {loadingBlueskyReport ? (
-              <div className="space-y-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
-                ))}
-              </div>
-            ) : !blueskyReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
-                <p className="text-gray-500 font-medium">Bluesky report not available</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  {blueskyReport?.message || 'Connect a Bluesky account to see this report.'}
-                </p>
-              </div>
-            ) : (
-              <>
-                {activeTab === 'bluesky-summary' && (
-                  <div className="space-y-6">
-                    <ReportCard title="Audience Summary">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Followers</p>
-                          <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(blueskySummary.followers_total)}</p>
-                          <p className="mt-2 text-sm text-gray-500">Total followers for the selected Bluesky account.</p>
-                        </div>
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">New Followers</p>
-                          <div className="mt-2 flex items-end gap-2">
-                            <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.new_followers)}</p>
-                            {blueskySummary.new_followers_change_pct != null && (
-                              <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.new_followers_change_pct)}`}>
-                                {pctLabel(blueskySummary.new_followers_change_pct)}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.avg_new_followers_per_day ?? 0}</p>
-                        </div>
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Following</p>
-                          <p className="mt-2 text-4xl font-bold text-sky-600">{fmt(blueskySummary.following_total)}</p>
-                          <p className="mt-2 text-sm text-gray-500">Accounts followed by this Bluesky profile.</p>
-                        </div>
-                      </div>
-                    </ReportCard>
-
-                    <ReportCard title="Posts and Engagement Summary">
-                      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                        <div className="space-y-4">
-                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Posts</p>
-                            <div className="mt-2 flex items-end gap-2">
-                              <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.post_summary?.total_posts)}</p>
-                              {blueskySummary.post_summary?.total_posts_change_pct != null && (
-                                <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.post_summary.total_posts_change_pct)}`}>
-                                  {pctLabel(blueskySummary.post_summary.total_posts_change_pct)}
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.post_summary?.avg_posts_per_day ?? 0}</p>
-                          </div>
-                          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagements</p>
-                            <div className="mt-2 flex items-end gap-2">
-                              <p className="text-4xl font-bold text-sky-600">{fmt(blueskySummary.post_summary?.total_engagement)}</p>
-                              {blueskySummary.post_summary?.total_engagement_change_pct != null && (
-                                <span className={`text-sm font-semibold ${pctPillColor(blueskySummary.post_summary.total_engagement_change_pct)}`}>
-                                  {pctLabel(blueskySummary.post_summary.total_engagement_change_pct)}
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-2 text-sm text-gray-500">Avg. per day: {blueskySummary.post_summary?.avg_engagement_per_day ?? 0}</p>
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Post</p>
-                          {blueskySummary.post_summary?.top_post ? (
-                            <div className="space-y-3">
-                              {blueskySummary.post_summary.top_post.media_url ? (
-                                <img
-                                  src={blueskySummary.post_summary.top_post.media_url}
-                                  alt=""
-                                  className="w-full h-44 rounded-xl object-cover"
-                                  onError={(e) => { e.target.style.display = 'none'; }}
-                                />
-                              ) : (
-                                <div className="w-full h-44 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
-                                  No media preview
-                                </div>
-                              )}
-                              <div className="flex items-center gap-2 text-xs text-gray-500">
-                                <span className="font-semibold">{blueskySummary.post_summary.top_post.source_app}</span>
-                                {blueskySummary.post_summary.top_post.timestamp && (
-                                  <span>{formatReportDate(blueskySummary.post_summary.top_post.timestamp, days)}</span>
-                                )}
-                              </div>
-                              <p className="text-sm text-gray-700 line-clamp-4">
-                                {blueskySummary.post_summary.top_post.content || '(no caption)'}
-                              </p>
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
-                                <span>Likes</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.likes)}</span>
-                                <span>Replies</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.replies)}</span>
-                                <span>Reposts</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.reposts)}</span>
-                                <span>Quotes</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.quotes)}</span>
-                                <span>Engagements</span><span className="text-right font-semibold">{fmt(blueskySummary.post_summary.top_post.engagement)}</span>
-                                <span>Engagement Rate</span><span className="text-right font-semibold">{blueskySummary.post_summary.top_post.engagement_rate}%</span>
-                              </div>
-                              {blueskySummary.post_summary.top_post.permalink && (
-                                <a
-                                  href={blueskySummary.post_summary.top_post.permalink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-                                >
-                                  View on Bluesky <FaExternalLinkAlt className="text-xs" />
-                                </a>
-                              )}
-                            </div>
-                          ) : (
-                            chartEmptyState('No Bluesky post engagement data is available for this period.')
-                          )}
-                        </div>
-
-                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 min-w-0 overflow-hidden">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagements by Post Type</p>
-                          <ReportDonutBreakdown
-                            items={blueskySummary.post_summary?.engagement_by_type || []}
-                            valueKey="engagement"
-                            totalValue={blueskySummary.post_summary?.total_engagement || 0}
-                            emptyLabel="No Bluesky posts were returned for this period."
-                          />
-                        </div>
-                      </div>
-                    </ReportCard>
-                  </div>
-                )}
-
-                {activeTab === 'bluesky-audience' && (
-                  <div className="space-y-6">
-                    <ReportCard title="Follower Growth" action={blueskyViewSelector}>
-                      {blueskyFollowerGrowthHasData ? (
-                        <>
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Followers</p>
-                              <p className="mt-2 text-3xl font-bold text-sky-600">{fmt(blueskySummary.followers_total)}</p>
-                            </div>
-                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">New Followers</p>
-                              <p className="mt-2 text-3xl font-bold text-sky-600">{fmt(blueskySummary.new_followers)}</p>
-                            </div>
-                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Follower Change</p>
-                              <p className={`mt-2 text-3xl font-bold ${pctPillColor(blueskySummary.new_followers_change_pct ?? 0)}`}>
-                                {pctLabel(blueskySummary.new_followers_change_pct) || '0%'}
-                              </p>
-                            </div>
-                            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Avg. New Followers / Day</p>
-                              <p className="mt-2 text-3xl font-bold text-sky-600">{blueskySummary.avg_new_followers_per_day ?? 0}</p>
-                            </div>
-                          </div>
-                          <ResponsiveContainer width="100%" height={260}>
-                            <BarChart data={blueskyFollowerTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <Tooltip content={<AudienceGrowthTooltip />} />
-                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="count" name="New Followers" fill="#2f6690" radius={[6, 6, 0, 0]} barSize={32} minPointSize={2} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </>
-                      ) : (
-                        chartEmptyState('Follower growth data is not available for this Bluesky account right now.')
-                      )}
-                    </ReportCard>
-                  </div>
-                )}
-
-                {activeTab === 'bluesky-posts-engagement' && (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Number of Posts vs Engagement" action={blueskyViewSelector}>
-                        {blueskyPostsVsEngagementHasData ? (
-                          <ResponsiveContainer width="100%" height={240}>
-                            <ComposedChart data={blueskyPostsVsEngagementTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <Tooltip />
-                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar yAxisId="left" dataKey="posts" name="Posts" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={28} minPointSize={2} />
-                              <Line yAxisId="right" type="monotone" dataKey="engagement" name="Engagement" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          chartEmptyState()
-                        )}
-                      </ReportCard>
-
-                      <ReportCard title="Posts by Type">
-                        {(blueskyPostsEngagement.posts_by_type || []).some((item) => item.posts > 0) ? (
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-                            <ResponsiveContainer width="100%" height={220}>
-                              <PieChart>
-                                <Pie
-                                  data={(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0)}
-                                  dataKey="posts"
-                                  nameKey="label"
-                                  innerRadius={55}
-                                  outerRadius={85}
-                                  paddingAngle={2}
-                                >
-                                  {(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0).map((entry, index) => (
-                                    <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip />
-                              </PieChart>
-                            </ResponsiveContainer>
-                            <div className="space-y-3">
-                              {(blueskyPostsEngagement.posts_by_type || []).map((item) => {
-                                const total = (blueskySummary.post_summary?.total_posts || 1);
-                                const pct = Math.round(((item.posts || 0) / total) * 100);
-                                return (
-                                  <div key={item.type} className="flex items-center justify-between text-sm gap-3">
-                                    <span className="font-medium text-gray-700">{item.label}</span>
-                                    <span className="text-gray-500">{fmt(item.posts)} • {pct}%</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          chartEmptyState()
-                        )}
-                      </ReportCard>
+              {selectedPlatform && !loadingAccounts && filteredPlatformAccounts.length === 0 ? (
+                <div className="rounded-2xl border border-gray-200 bg-offwhite p-10 text-center">
+                  <p className="text-base font-semibold text-gray-600">
+                    No {platformTitle} account connected
+                  </p>
+                  <p className="mt-2 text-sm text-gray-400">
+                    Connect your {platformTitle} account to see analytics here.
+                  </p>
+                </div>
+              ) : loadingBrandHealth || loadingAccounts ? (
+                renderLoadingState()
+              ) : (
+                <>
+                  <section className="rounded-2xl border border-gray-200 bg-offwhite p-6">
+                    <div className="mb-5 flex flex-wrap items-center gap-3">
+                      <h2 className="text-2xl font-semibold text-gray-900">Brand Health</h2>
+                      <span className="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-500">
+                        Channels overview for the past {days} days
+                      </span>
                     </div>
 
-                    <ReportCard
-                      title="Top Posts By"
-                      action={(
-                        <select
-                          value={blueskyTopMetric}
-                          onChange={(event) => setBlueskyTopMetric(event.target.value)}
-                          className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
-                        >
-                          <option value="likes">Likes</option>
-                          <option value="replies">Replies</option>
-                          <option value="reposts">Reposts</option>
-                          <option value="quotes">Quotes</option>
-                          <option value="engagement">Engagement</option>
-                          <option value="engagement_rate">Engagement Rate</option>
-                        </select>
+                    {brandHealth?.message ? (
+                      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
+                        <p className="text-base font-semibold text-gray-600">{brandHealth.message}</p>
+                      </div>
+                    ) : (
+                      <BrandHealthTable rows={sortedRows} platformOrder={platformOrder} />
+                    )}
+                  </section>
+
+                  <section className="rounded-2xl border border-gray-200 bg-offwhite p-6">
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <h2 className="text-2xl font-semibold text-gray-900">Recent Posts</h2>
+                      {!!sortedRecentPosts.length && (
+                        <span className="text-sm text-gray-400">{sortedRecentPosts.length} accounts with posts in range</span>
                       )}
-                    >
-                      {blueskyTopPosts.length > 0 ? (
-                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                          {blueskyTopPosts.slice(0, 6).map((post) => (
-                            <div key={post.id} className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
-                              <div className="flex items-center gap-2 text-xs text-gray-500">
-                                <span className="font-semibold">{post.source_app}</span>
-                                {post.timestamp && <span>{formatReportDate(post.timestamp, days)}</span>}
-                              </div>
-                              {post.media_url ? (
-                                <img
-                                  src={post.media_url}
-                                  alt=""
-                                  className="w-full h-28 rounded-xl object-cover"
-                                  onError={(e) => { e.target.style.display = 'none'; }}
-                                />
-                              ) : (
-                                <div className="w-full h-28 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
-                                  No media preview
-                                </div>
-                              )}
-                              <p className="text-sm text-gray-700 line-clamp-3">{post.content || '(no caption)'}</p>
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
-                                <span>Likes</span><span className="text-right font-semibold">{fmt(post.likes)}</span>
-                                <span>Replies</span><span className="text-right font-semibold">{fmt(post.replies)}</span>
-                                <span>Reposts</span><span className="text-right font-semibold">{fmt(post.reposts)}</span>
-                                <span>Quotes</span><span className="text-right font-semibold">{fmt(post.quotes)}</span>
-                                <span>Engagement</span><span className="text-right font-semibold">{fmt(post.engagement)}</span>
-                                <span>Engagement Rate</span><span className="text-right font-semibold">{post.engagement_rate}%</span>
-                              </div>
-                            </div>
+                    </div>
+
+                    {sortedRecentPosts.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <div className="flex gap-4 pb-2">
+                          {sortedRecentPosts.map((post) => (
+                            <RecentPostCard key={`${post.account_id}-${post.id}`} post={post} />
                           ))}
                         </div>
-                      ) : (
-                        chartEmptyState()
-                      )}
-                    </ReportCard>
-
-                    <ReportCard title="Posts by Publishing Apps">
-                      {(blueskyPostsEngagement.posts_by_publishing_apps || []).length > 0 ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
-                                <th className="text-left py-2 pr-4">Apps</th>
-                                <th className="text-right py-2 pr-4">Posts</th>
-                                <th className="text-right py-2 pr-4">Likes</th>
-                                <th className="text-right py-2 pr-4">Replies</th>
-                                <th className="text-right py-2 pr-4">Reposts</th>
-                                <th className="text-right py-2">Quotes</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(blueskyPostsEngagement.posts_by_publishing_apps || []).map((item) => (
-                                <tr key={item.app} className="border-b border-gray-50">
-                                  <td className="py-2.5 pr-4 font-medium text-gray-700">{item.app}</td>
-                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.posts)}</td>
-                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.likes)}</td>
-                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.replies)}</td>
-                                  <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(item.reposts)}</td>
-                                  <td className="text-right py-2.5 text-gray-600">{fmt(item.quotes)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        chartEmptyState()
-                      )}
-                    </ReportCard>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Post Engagement" action={blueskyViewSelector}>
-                        {blueskyPostEngagementHasData ? (
-                          <ResponsiveContainer width="100%" height={240}>
-                            <BarChart data={blueskyPostEngagementTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <Tooltip />
-                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="count" name="Engagement" fill="#2f6690" radius={[6, 6, 0, 0]} barSize={32} minPointSize={2} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          chartEmptyState()
-                        )}
-                      </ReportCard>
-
-                      <ReportCard title="Engagement by Post Type">
-                        <ReportDonutBreakdown
-                          items={blueskyPostsEngagement.engagement_by_type || []}
-                          valueKey="engagement"
-                          totalValue={blueskySummary.post_summary?.total_engagement || 0}
-                        />
-                      </ReportCard>
-                    </div>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                      <ReportCard title="Engagement Actions" action={blueskyViewSelector}>
-                        {blueskyEngagementActionsHasData ? (
-                          <ResponsiveContainer width="100%" height={260}>
-                            <BarChart data={blueskyEngagementActionsTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <Tooltip />
-                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="likes" name="Likes" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                              <Bar dataKey="replies" name="Replies" fill="#d1d5db" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                              <Bar dataKey="reposts" name="Reposts" fill="#9ca3af" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                              <Bar dataKey="quotes" name="Quotes" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          chartEmptyState()
-                        )}
-                      </ReportCard>
-
-                      <ReportCard title="Messages & Mentions Received" action={blueskyViewSelector}>
-                        {blueskyMessagesMentionsHasData ? (
-                          <ResponsiveContainer width="100%" height={260}>
-                            <BarChart data={blueskyMessagesMentionsTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                              <Tooltip />
-                              <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                              <Bar dataKey="mentions" name="Mentions" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                              <Bar dataKey="messages" name="Messages" fill="#d1d5db" radius={[4, 4, 0, 0]} barSize={24} minPointSize={2} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          chartEmptyState(blueskyAudience.messages_message || 'There is no data available currently for this report.')
-                        )}
-                      </ReportCard>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ━━━━━━━━━━━━━━━━━ INSTAGRAM SUMMARY TAB ━━━━━━━━━━━━━━━━━━━━ */}
-        {activeTab === 'summary' && selectedPlatform === 'instagram' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap gap-3">
-              {[
-                { id: 'summary', label: 'Summary' },
-                { id: 'audience', label: 'Audience' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setInstagramReportTab(tab.id)}
-                  className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
-                    instagramReportTab === tab.id
-                      ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
-                      : 'border-gray-300 text-gray-600 bg-offwhite hover:border-gray-400'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {!!instagramReport?.errors?.length && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {instagramReport.errors.map((item, idx) => (
-                  <div key={`${item.account}-${idx}`}>
-                    <span className="font-semibold">{item.account}:</span> {item.error}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {loadingInstagramReport ? (
-              <div className="space-y-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
-                ))}
-              </div>
-            ) : !instagramReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
-                <p className="text-gray-500 font-medium">Instagram report not available</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
-                </p>
-              </div>
-            ) : instagramReportTab === 'summary' ? (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <InstagramMetricTile
-                    title="Total Followers"
-                    value={instagramSummary.followers_total}
-                    subtitle="Current Instagram followers"
-                  />
-                  <InstagramMetricTile
-                    title="New Followers"
-                    value={instagramSummary.new_followers}
-                    subtitle={`Avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
-                  />
-                </div>
-
-                <InstagramDetailCard title="Performance Summary">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Profile Views</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.profile_views)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Total profile views in the selected period.</p>
-                    </div>
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Posts Published</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_posts)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_posts_per_day ?? 0}</p>
-                    </div>
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagement</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_engagement)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Avg. per post: {instagramSummary.post_summary?.avg_engagement_per_post ?? 0}</p>
-                    </div>
-                  </div>
-                </InstagramDetailCard>
-
-                <InstagramDetailCard title="Reach Summary">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <InstagramMetricTile
-                      title="Reach"
-                      value={instagramSummary.reach}
-                      subtitle="Accounts reached in the selected period"
-                    />
-                    <InstagramMetricTile
-                      title="Impressions"
-                      value={instagramSummary.impressions}
-                      subtitle="Total content impressions in the selected period"
-                    />
-                  </div>
-                </InstagramDetailCard>
-
-                <InstagramDetailCard title="Post & Engagement Summary">
-                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Posts</p>
-                        <div className="mt-2 flex items-end gap-2">
-                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.post_summary?.total_posts)}</p>
-                          {instagramSummary.post_summary?.total_posts_change_pct != null && (
-                            <span className={`text-sm font-semibold ${instagramSummary.post_summary.total_posts_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {pctLabel(instagramSummary.post_summary.total_posts_change_pct)}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_posts_per_day ?? 0}</p>
-                      </div>
-                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagement</p>
-                        <div className="mt-2 flex items-end gap-2">
-                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.post_summary?.total_engagement)}</p>
-                          {instagramSummary.post_summary?.total_engagement_change_pct != null && (
-                            <span className={`text-sm font-semibold ${instagramSummary.post_summary.total_engagement_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {pctLabel(instagramSummary.post_summary.total_engagement_change_pct)}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_engagement_per_day ?? 0}</p>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Post</p>
-                      {instagramSummary.post_summary?.top_post ? (
-                        <div className="space-y-3">
-                          {instagramSummary.post_summary.top_post.media_url ? (
-                            <img
-                              src={instagramSummary.post_summary.top_post.media_url}
-                              alt=""
-                              className="w-full h-44 rounded-xl object-cover"
-                              onError={(e) => { e.target.style.display = 'none'; }}
-                            />
-                          ) : (
-                            <div className="w-full h-44 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
-                              No media preview
-                            </div>
-                          )}
-                          <p className="text-sm text-gray-700 line-clamp-4">
-                            {instagramSummary.post_summary.top_post.content || '(no caption)'}
-                          </p>
-                          <div className="flex items-center gap-4 text-xs text-gray-500">
-                            <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(instagramSummary.post_summary.top_post.likes)}</span>
-                            <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(instagramSummary.post_summary.top_post.comments)}</span>
-                            <span className="font-semibold text-gray-700">{fmt(instagramSummary.post_summary.top_post.engagement)} total engagement</span>
-                          </div>
-                          {instagramSummary.post_summary.top_post.permalink && (
-                            <a
-                              href={instagramSummary.post_summary.top_post.permalink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-                            >
-                              View on Instagram <FaExternalLinkAlt className="text-xs" />
-                            </a>
-                          )}
-                        </div>
-                      ) : (
-                        chartEmptyState('No Instagram post engagement data is available for this period.')
-                      )}
-                    </div>
-
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Engagement by Post Type</p>
-                      {instagramSummary.post_summary?.engagement_by_type?.length > 0 ? (
-                        <div className="space-y-4">
-                          {instagramSummary.post_summary.engagement_by_type.map((item) => {
-                            const total = instagramSummary.post_summary.total_engagement || 1;
-                            const pct = Math.round(((item.engagement || 0) / total) * 100);
-                            return (
-                              <div key={item.type}>
-                                <div className="flex items-center justify-between text-sm mb-1">
-                                  <span className="font-medium text-gray-700">{item.label}</span>
-                                  <span className="text-gray-500">{fmt(item.engagement)} engagement • {fmt(item.posts)} posts</span>
-                                </div>
-                                <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                                  <div className="h-full rounded-full bg-indigo-500" style={{ width: `${pct}%` }} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        chartEmptyState('No Instagram posts were returned for this period.')
-                      )}
-                    </div>
-                  </div>
-                </InstagramDetailCard>
-
-                <InstagramDetailCard title="Reels & Engagement Summary">
-                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Reels</p>
-                        <div className="mt-2 flex items-end gap-2">
-                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.reels_summary?.total_reels)}</p>
-                          {instagramSummary.reels_summary?.total_reels_change_pct != null && (
-                            <span className={`text-sm font-semibold ${instagramSummary.reels_summary.total_reels_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {pctLabel(instagramSummary.reels_summary.total_reels_change_pct)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Reel Engagement</p>
-                        <div className="mt-2 flex items-end gap-2">
-                          <p className="text-4xl font-bold text-sky-600">{fmt(instagramSummary.reels_summary?.total_engagement)}</p>
-                          {instagramSummary.reels_summary?.total_engagement_change_pct != null && (
-                            <span className={`text-sm font-semibold ${instagramSummary.reels_summary.total_engagement_change_pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {pctLabel(instagramSummary.reels_summary.total_engagement_change_pct)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 xl:col-span-2">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Reel</p>
-                      {instagramSummary.reels_summary?.top_reel ? (
-                        <div className="flex flex-col md:flex-row gap-4">
-                          {instagramSummary.reels_summary.top_reel.media_url ? (
-                            <img
-                              src={instagramSummary.reels_summary.top_reel.media_url}
-                              alt=""
-                              className="w-full md:w-56 h-56 rounded-xl object-cover"
-                              onError={(e) => { e.target.style.display = 'none'; }}
-                            />
-                          ) : null}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-gray-700 line-clamp-6">
-                              {instagramSummary.reels_summary.top_reel.content || '(no caption)'}
-                            </p>
-                            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-gray-500">
-                              <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(instagramSummary.reels_summary.top_reel.likes)}</span>
-                              <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(instagramSummary.reels_summary.top_reel.comments)}</span>
-                              <span className="font-semibold text-gray-700">{fmt(instagramSummary.reels_summary.top_reel.engagement)} total engagement</span>
-                            </div>
-                            {instagramSummary.reels_summary.top_reel.permalink && (
-                              <a
-                                href={instagramSummary.reels_summary.top_reel.permalink}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-                              >
-                                View reel on Instagram <FaExternalLinkAlt className="text-xs" />
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        chartEmptyState('No reels were returned for this period.')
-                      )}
-                    </div>
-                  </div>
-                </InstagramDetailCard>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-                  <strong>Note:</strong> Instagram audience charts reflect follower demographics returned by Instagram, not likes. Audience demographics are typically available for Business/Creator accounts once enough audience data exists.
-                  {instagramAudience?.accounts_used?.length > 0 && (
-                    <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
-                  )}
-                </div>
-
-                {!!instagramReport?.demographics_errors?.length && (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    {instagramReport.demographics_errors.map((item, idx) => (
-                      <div key={`${item.account}-${idx}`}>
-                        <span className="font-semibold">{item.account}:</span> {item.error}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <InstagramDetailCard title="Follower Growth">
-                  {instagramFollowerTimeline.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <AreaChart data={instagramFollowerTimeline} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                        <defs>
-                          <linearGradient id="colorFollowers" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.28} />
-                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                        <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
-                        <Tooltip content={<AudienceGrowthTooltip />} />
-                        <Area type="monotone" dataKey="count" name="Followers" stroke="#2563eb" strokeWidth={2} fill="url(#colorFollowers)" dot={false} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    chartEmptyState('Follower growth data is not available for this Instagram account right now.')
-                  )}
-                </InstagramDetailCard>
-
-                {!instagramAudience.demographics_supported && (
-                  <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-500">
-                    {instagramAudience.demographics_message || 'Audience demographics are not available for this Instagram account yet.'}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <InstagramDetailCard title="Followers by Country">
-                    {instagramDemographics.countries?.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={240}>
-                        <BarChart data={instagramDemographics.countries} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 50 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                          <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
-                          <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </InstagramDetailCard>
-
-                  <InstagramDetailCard title="Followers by Gender">
-                    {instagramDemographics.gender?.length > 0 ? (
-                      <div className="space-y-4">
-                        {instagramDemographics.gender.map((item) => {
-                          const total = instagramDemographics.gender.reduce((sum, current) => sum + current.count, 0) || 1;
-                          const pct = Math.round((item.count / total) * 100);
-                          return (
-                            <div key={item.label}>
-                              <div className="flex items-center justify-between text-sm mb-1">
-                                <span className="font-medium text-gray-700">{item.label}</span>
-                                <span className="text-gray-500">{fmt(item.count)} ({pct}%)</span>
-                              </div>
-                              <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                                <div className="h-full rounded-full bg-pink-500" style={{ width: `${pct}%` }} />
-                              </div>
-                            </div>
-                          );
-                        })}
                       </div>
                     ) : (
-                      chartEmptyState()
+                      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center">
+                        <p className="text-base font-semibold text-gray-600">No recent posts in this date range.</p>
+                        <p className="mt-2 text-sm text-gray-400">
+                          Connected accounts remain visible in Brand Health even when they have no post in the selected window.
+                        </p>
+                      </div>
                     )}
-                  </InstagramDetailCard>
-
-                  <InstagramDetailCard title="Followers by Age Group">
-                    {instagramDemographics.age?.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={240}>
-                        <BarChart data={instagramDemographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                          <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
-                          <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#6366f1" radius={[0, 4, 4, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </InstagramDetailCard>
-
-                  <InstagramDetailCard title="Followers by City">
-                    {instagramDemographics.cities?.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={240}>
-                        <BarChart data={instagramDemographics.cities} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 90 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                          <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={90} />
-                          <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#22c55e" radius={[0, 4, 4, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </InstagramDetailCard>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ━━━━━━━━━━━━━━━━━ POSTS TAB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-        {activeTab === 'posts' && (
-          <div className="space-y-4">
-
-            {/* Controls row */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <FaSortAmountDown className="text-gray-400 text-sm" />
-              <span className="text-sm text-gray-500 mr-1">Sort by:</span>
-              {visibleSortOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPostsSort(opt.value)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
-                    ${postsSort === opt.value
-                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-              {loadingPosts && (
-                <span className="text-xs text-gray-400 ml-auto animate-pulse">Loading...</span>
+                  </section>
+                </>
               )}
-              {!loadingPosts && (
-                <span className="text-xs text-gray-400 ml-auto">{sortedPosts.length} posts</span>
-              )}
-            </div>
-
-            {/* Feed errors / notices */}
-            {!loadingPosts && (postsMessage || (postsErrors && postsErrors.length > 0)) && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900">
-                {postsMessage && (
-                  <p className="font-semibold">{postsMessage}</p>
-                )}
-                {postsErrors?.length > 0 && (
-                  <div className={postsMessage ? 'mt-2 space-y-1' : 'space-y-1'}>
-                    {postsErrors.slice(0, 3).map((item, idx) => (
-                      <p key={idx}>
-                        <strong>{item.account || 'Account'}:</strong>{' '}
-                        {String(item.error || 'Unable to fetch posts').includes('CreditsDepleted')
-                          ? 'X API credits are depleted. Showing only posts published from Unravler (if any).'
-                          : (item.error || 'Unable to fetch posts')}
-                      </p>
-                    ))}
-                    {postsErrors.length > 3 && (
-                      <p className="text-xs text-amber-800">+{postsErrors.length - 3} more…</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Post summary stats */}
-            {!loadingPosts && sortedPosts.length > 0 && (
-              <div className={`grid gap-3 ${visibleMetricCards.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
-                {visibleMetricCards.map(({ key, label, icon: Icon }) => (
-                  <div key={label} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-                    <Icon className={`${
-                      key === 'likes' ? 'text-rose-500'
-                        : key === 'comments' ? 'text-blue-500'
-                        : key === 'shares' ? 'text-green-500'
-                        : 'text-purple-500'
-                    } text-lg`} />
-                    <div>
-                      <p className="text-xs text-gray-500">{label}</p>
-                      <p className="text-lg font-bold text-gray-900">
-                        {fmt(sortedPosts.reduce((sum, post) => sum + (post.metrics?.[key] || 0), 0))}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Post list */}
-            {loadingPosts ? (
-              <div className="space-y-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4">
-                    <div className="w-20 h-20 bg-gray-100 animate-pulse rounded-lg flex-shrink-0" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-1/3" />
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-2/3" />
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-1/2" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : sortedPosts.length === 0 ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 py-16 text-center">
-                <FaFileAlt className="text-4xl text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500 font-medium">No published posts found</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  {selectedPlatform
-                    ? (selectedPlatform === 'twitter' && postsErrors?.some(e => String(e?.error || '').includes('CreditsDepleted'))
-                      ? 'X is blocking feed reads due to depleted API credits. Without X credits we can only show posts published from Unravler. None found for this account.'
-                      : `No posts from ${PLATFORM_LABELS[selectedPlatform]} yet.`)
-                    : 'Connect social accounts and publish posts to see analytics here.'}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {sortedPosts.map((post, i) => (
-                  <PostCard key={post.platform_post_id || i} post={post} />
-                ))}
-              </div>
-            )}
+            </main>
           </div>
-        )}
-
-        {/* ━━━━━━━━━━━━━━━━━ DEMOGRAPHICS TAB ━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-        {activeTab === 'demographics' && (
-          <div className="space-y-6">
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-              <strong>Note:</strong> Follower demographics are available for Instagram Business/Creator accounts (100+ followers) and Facebook Pages.
-              {demographics?.accounts_used?.length > 0 && (
-                <span className="ml-1">Showing data from: <strong>{demographics.accounts_used.join(', ')}</strong></span>
-              )}
-            </div>
-
-            {demographics?.errors?.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
-                {demographics.errors.map((e, i) => (
-                  <p key={i}><strong>{e.account}:</strong> {e.error}</p>
-                ))}
-              </div>
-            )}
-
-            {loadingDemos ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                    <div className="h-4 bg-gray-100 animate-pulse rounded w-1/3 mb-4" />
-                    <div className="h-40 bg-gray-100 animate-pulse rounded-lg" />
-                  </div>
-                ))}
-              </div>
-            ) : !demographics?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
-                <p className="text-gray-500 font-medium">Demographics not available</p>
-                <p className="text-sm text-gray-400 mt-1">{demographics?.message || 'Connect an Instagram Business or Facebook Page account to see demographics.'}</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Age Distribution */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Age Distribution</h4>
-                  {demographics?.demographics?.age?.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={demographics.demographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                        <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
-                        <Tooltip />
-                        <Bar dataKey="count" name="Followers" fill="#6366f1" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-sm text-gray-400">No age data</div>
-                  )}
-                </div>
-
-                {/* Gender Breakdown */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Gender Breakdown</h4>
-                  {demographics?.demographics?.gender?.length > 0 ? (
-                    <div className="space-y-3 mt-2">
-                      {demographics.demographics.gender.map((g) => {
-                        const total = demographics.demographics.gender.reduce((s, x) => s + x.count, 0) || 1;
-                        const pct = Math.round((g.count / total) * 100);
-                        const colors = { Male: '#3b82f6', Female: '#ec4899', Other: '#8b5cf6' };
-                        return (
-                          <div key={g.label}>
-                            <div className="flex justify-between text-sm mb-1">
-                              <span className="text-gray-700 font-medium">{g.label}</span>
-                              <span className="text-gray-500">{fmt(g.count)} ({pct}%)</span>
-                            </div>
-                            <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: colors[g.label] || '#6b7280' }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-sm text-gray-400">No gender data</div>
-                  )}
-                </div>
-
-                {/* Top Cities */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Cities</h4>
-                  {demographics?.demographics?.cities?.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <BarChart data={demographics.demographics.cities.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 80 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                        <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={80} />
-                        <Tooltip />
-                        <Bar dataKey="count" name="Followers" fill="#22c55e" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-sm text-gray-400">No city data</div>
-                  )}
-                </div>
-
-                {/* Top Countries */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Countries</h4>
-                  {demographics?.demographics?.countries?.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <BarChart data={demographics.demographics.countries.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                        <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={40} />
-                        <Tooltip />
-                        <Bar dataKey="count" name="Followers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-sm text-gray-400">No country data</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-          </>
-        )}
-          </div>{/* closes max-w-5xl */}
-        </div>{/* closes flex-1 overflow-y-auto */}
-      </div>{/* closes flex h-full */}
+        </div>
+      </div>
     </DashboardLayout>
   );
 };
