@@ -1207,11 +1207,34 @@ const Analytics = () => {
     }
     setLoadingYoutubeReport(true);
     try {
-      const data = await getYoutubeAnalyticsReport({
+      const selectedYoutubeAccount = accounts.find((account) => (
+        account.platform === 'youtube' && (
+          account.id === selectedAccount
+          || account.account_id === selectedAccount
+          || account.platform_user_id === selectedAccount
+          || account.platform_username === selectedAccount
+        )
+      ));
+      const requestedAccountId =
+        selectedYoutubeAccount?.account_id
+        || selectedYoutubeAccount?.id
+        || selectedAccount
+        || null;
+
+      let data = await getYoutubeAnalyticsReport({
         days,
-        accountId: selectedAccount,
+        accountId: requestedAccountId,
         groupBy: youtubeChartGranularity,
       });
+      if (requestedAccountId && data && data.supported === false) {
+        const fallbackData = await getYoutubeAnalyticsReport({
+          days,
+          groupBy: youtubeChartGranularity,
+        });
+        if (fallbackData?.supported) {
+          data = fallbackData;
+        }
+      }
       setYoutubeReport(data);
     } catch {
       toast.error('Failed to load YouTube report');
@@ -1219,7 +1242,7 @@ const Analytics = () => {
     } finally {
       setLoadingYoutubeReport(false);
     }
-  }, [days, selectedPlatform, selectedAccount, youtubeChartGranularity]);
+  }, [accounts, days, selectedPlatform, selectedAccount, youtubeChartGranularity]);
 
   useEffect(() => {
     if (

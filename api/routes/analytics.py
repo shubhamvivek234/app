@@ -322,6 +322,42 @@ async def _load_social_accounts(
     return [await _hydrate_social_account_metadata(db, doc) for doc in docs]
 
 
+def _account_identifier_matches(account: dict[str, Any], account_id: str) -> bool:
+    target = str(account_id or "").strip().lower()
+    if not target:
+        return False
+    identifiers = {
+        str(account.get("account_id") or "").strip().lower(),
+        str(account.get("id") or "").strip().lower(),
+        str(account.get("platform_user_id") or "").strip().lower(),
+        str(account.get("platform_username") or "").strip().lower(),
+        str(account.get("display_name") or "").strip().lower(),
+    }
+    identifiers.discard("")
+    return target in identifiers
+
+
+async def _load_social_accounts_for_report(
+    db,
+    user_id: str,
+    platform: str,
+    account_id: str | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    accounts = await _load_social_accounts(db, user_id, platform, account_id)
+    if accounts or not account_id:
+        return accounts, False
+
+    fallback_accounts = await _load_social_accounts(db, user_id, platform, None)
+    exact_matches = [account for account in fallback_accounts if _account_identifier_matches(account, account_id)]
+    if exact_matches:
+        return exact_matches, True
+
+    if len(fallback_accounts) == 1:
+        return fallback_accounts, True
+
+    return [], False
+
+
 def _pick_facebook_page(account: dict[str, Any], pages: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not pages:
         return None
@@ -1310,7 +1346,12 @@ async def analytics_youtube_report(
     account_id: str | None = Query(None, alias="accountId"),
     group_by: str = Query("day", alias="groupBy", pattern="^(day|week|month|quarter)$"),
 ):
-    accounts = await _load_social_accounts(db, current_user["user_id"], "youtube", account_id)
+    accounts, fallback_used = await _load_social_accounts_for_report(
+        db,
+        current_user["user_id"],
+        "youtube",
+        account_id,
+    )
     if not accounts:
         return {
             "supported": False,
@@ -1830,6 +1871,7 @@ async def analytics_youtube_report(
         "account": {
             "count": len(accounts),
             "selected_account_id": account_id,
+            "fallback_used": fallback_used,
         },
         "summary": {
             "audience_summary": {
