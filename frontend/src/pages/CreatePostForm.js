@@ -575,6 +575,17 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [loading,               setLoading]               = useState(false);
   const [altTexts,              setAltTexts]              = useState([]);
 
+  const inferMediaKind = useCallback((items) => {
+    const mediaItems = Array.isArray(items) ? items : [];
+    if (mediaItems.length === 0) return 'text';
+    const hasImage = mediaItems.some((item) => item?.type === 'image');
+    const hasVideo = mediaItems.some((item) => item?.type === 'video');
+    if (hasImage && hasVideo) return 'mixed';
+    if (hasVideo) return 'video';
+    if (hasImage) return 'image';
+    return 'text';
+  }, []);
+
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
@@ -1284,6 +1295,27 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     const primaryContent = commonCaption || firstAccountContent || (primaryAccountId ? getEffectiveCaptionForAccount(primaryAccountId) : '') || '';
     const hasPoll = selectedAccounts.some((accountId) => Boolean(getEffectivePollForAccount(accountId)?.question));
     const hasAnyMedia = uploadedMedia.length > 0 || selectedAccounts.some((accountId) => getEffectiveMediaForAccount(accountId).length > 0);
+    const mediaKinds = new Set(
+      selectedAccounts
+        .map((accountId) => inferMediaKind(getEffectiveMediaForAccount(accountId)))
+        .filter((kind) => kind !== 'text')
+    );
+    const topLevelMediaKind = inferMediaKind(uploadedMedia);
+    if (topLevelMediaKind !== 'text') {
+      mediaKinds.add(topLevelMediaKind);
+    }
+    const hasVideoMedia = mediaKinds.has('video') || mediaKinds.has('mixed');
+    const hasImageMedia = mediaKinds.has('image') || mediaKinds.has('mixed');
+    let effectivePostType = type || 'text';
+    if (hasVideoMedia && hasImageMedia) {
+      effectivePostType = selectedPlatforms.some((platform) => platform === 'youtube' || platform === 'tiktok')
+        ? 'video'
+        : 'mixed';
+    } else if (hasVideoMedia) {
+      effectivePostType = 'video';
+    } else if (hasImageMedia) {
+      effectivePostType = 'image';
+    }
     const hasContent = Boolean(primaryContent.trim())
       || selectedAccounts.some((accountId) => {
         const caption = getEffectiveCaptionForAccount(accountId);
@@ -1386,7 +1418,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       await axios.post(`${apiUrl}/api/posts`, {
         content: primaryContent,
         platforms: selectedPlatforms,
-        post_type: !hasAnyMedia && hasPoll ? 'text' : type,
+        post_type: !hasAnyMedia && hasPoll ? 'text' : effectivePostType,
         media_ids: mediaIds,
         media_urls: mediaUrls,
         media_types: mediaTypes,

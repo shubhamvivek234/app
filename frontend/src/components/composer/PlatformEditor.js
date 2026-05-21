@@ -228,7 +228,8 @@ const PlatformEditor = ({
 
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
   const hasVideo   = mediaArray.some(m => m.type === 'video');
-  const isVideo    = postType === 'video';
+  const isVideoPlatform = platform === 'youtube' || platform === 'tiktok';
+  const isVideo    = postType === 'video' || isVideoPlatform;
   const canAddMore = onFilesSelect && !uploading && !hasVideo && !isVideo;
 
   // Aspect ratio logic
