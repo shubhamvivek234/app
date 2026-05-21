@@ -561,6 +561,31 @@ const PlatformEditor = ({
     if (files?.length && onFilesSelect) onFilesSelect(Array.from(files));
   };
 
+  const triggerFilePicker = useCallback((event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const input = inputRef?.current || document.getElementById(fileInputId);
+    if (!input) {
+      toast.error('Unable to open file picker right now. Please refresh and try again.');
+      return;
+    }
+    try {
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+    } catch (_) {
+      // Some browsers expose showPicker() but reject it for file inputs in certain contexts.
+    }
+    input.click();
+  }, [fileInputId, inputRef]);
+
+  const handlePickerKeyDown = useCallback((event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      triggerFilePicker(event);
+    }
+  }, [triggerFilePicker]);
+
   const handleFileChange = (e) => {
     const files = e.target.files;
     if (files?.length && onFilesSelect) {
@@ -757,7 +782,9 @@ const PlatformEditor = ({
                 accept={isVideo ? 'video/*' : 'image/*, image/gif'}
                 multiple={!isVideo}
                 onChange={handleFileChange}
-                className="hidden"
+                className="sr-only absolute -left-[9999px] h-px w-px opacity-0 pointer-events-none"
+                tabIndex={-1}
+                aria-hidden="true"
               />
               {/* Hidden GIF file input */}
               <input
@@ -854,10 +881,13 @@ const PlatformEditor = ({
                     {canAddMore && (
                       mediaArray.length === 0 ? (
                         /* Large empty-state drop zone */
-                        <label
-                          htmlFor={fileInputId}
+                        <div
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
+                          onClick={triggerFilePicker}
+                          onKeyDown={handlePickerKeyDown}
+                          role="button"
+                          tabIndex={0}
                           className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
                         >
                           <svg className="text-gray-300 mb-1.5" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -871,13 +901,16 @@ const PlatformEditor = ({
                             Drag & drop or <span className="text-blue-600">select files</span>
                           </p>
                           <p className="text-[10px] text-gray-300 mt-0.5">Supports multiple images</p>
-                        </label>
+                        </div>
                       ) : (
                         /* Small "+" add-more tile */
-                        <label
-                          htmlFor={fileInputId}
+                        <div
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
+                          onClick={triggerFilePicker}
+                          onKeyDown={handlePickerKeyDown}
+                          role="button"
+                          tabIndex={0}
                           className="border border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all"
                           style={{ width: '80px', height: '80px', flexShrink: 0 }}
                           title="Add more images"
@@ -890,16 +923,19 @@ const PlatformEditor = ({
                             <line x1="8" y1="12" x2="16" y2="12" />
                           </svg>
                           <p className="text-[10px] text-gray-400 mt-1 text-center">Add more</p>
-                        </label>
+                        </div>
                       )
                     )}
 
                     {/* Video: show drop zone only if empty */}
                     {onFilesSelect && isVideo && !uploading && mediaArray.length === 0 && (
-                      <label
-                        htmlFor={fileInputId}
+                      <div
                         onDrop={handleDrop}
                         onDragOver={(e) => e.preventDefault()}
+                        onClick={triggerFilePicker}
+                        onKeyDown={handlePickerKeyDown}
+                        role="button"
+                        tabIndex={0}
                         className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
                       >
                         <svg className="text-gray-300 mb-1.5" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -909,7 +945,7 @@ const PlatformEditor = ({
                         <p className="text-xs text-gray-500">
                           Drag & drop or <span className="text-blue-600">select video</span>
                         </p>
-                      </label>
+                      </div>
                     )}
                   </div>
 
