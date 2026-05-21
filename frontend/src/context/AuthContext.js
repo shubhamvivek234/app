@@ -23,6 +23,15 @@ const AuthContext = createContext();
 
 const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const PUBLIC_AUTH_PATHS = new Set(['/login', '/signup', '/auth/callback']);
+
+const resolvePostAuthDestination = (profile) => {
+  if (!profile) return '/login';
+  if (!profile.onboarding_completed) return '/onboarding';
+  if (profile.subscription_status === 'free') return '/onboarding/pricing';
+  if (profile.subscription_status === 'expired') return '/subscription-expired';
+  return '/dashboard';
+};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null); // Backend User Profile (MongoDB)
@@ -40,6 +49,17 @@ export const AuthProvider = ({ children }) => {
       setUser(profile);
       setUserContext(profile);
       setAuthIssue(null);
+      if (typeof window !== 'undefined') {
+        const currentPath = window.location.pathname;
+        const pendingGoogleAuth = sessionStorage.getItem('pending_google_auth') === '1';
+        if (pendingGoogleAuth || PUBLIC_AUTH_PATHS.has(currentPath)) {
+          sessionStorage.removeItem('pending_google_auth');
+          const target = resolvePostAuthDestination(profile);
+          if (target && currentPath !== target) {
+            window.location.replace(target);
+          }
+        }
+      }
       return profile;
     } catch (error) {
       const transient = isRetriableBackendError(error);
@@ -100,6 +120,9 @@ export const AuthProvider = ({ children }) => {
               await firebaseSignOut();
             } catch (_) {
               clearAuthData();
+            }
+            if (typeof window !== 'undefined') {
+              sessionStorage.removeItem('pending_google_auth');
             }
             setToken(null);
             setUser(null);
@@ -210,12 +233,18 @@ export const AuthProvider = ({ children }) => {
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('pending_google_auth');
+      }
       // Use authService logout which clears all auth data
       await firebaseSignOut();
     } catch (error) {
       console.error('[AuthContext] Logout error:', error);
       // Even if signOut fails, ensure local state is cleared
       clearAuthData();
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('pending_google_auth');
+      }
       setToken(null);
       setUser(null);
       setFirebaseUser(null);

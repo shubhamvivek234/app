@@ -90,6 +90,9 @@ export const googleSignIn = async () => {
     assertFirebaseAuthConfig();
     // Prevent stale backend-only sessions from interfering with a fresh Firebase login.
     clearAuthData();
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('pending_google_auth', '1');
+    }
     if (useRedirectOnly) {
       console.log('[AuthService] Starting Google sign-in with redirect...');
       await signInWithRedirect(auth, googleProvider);
@@ -141,6 +144,9 @@ export const handleRedirectResult = async () => {
     if (result && result.user) {
       console.log('[AuthService] Redirect login successful:', result.user.email);
       return result.user;
+    }
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('pending_google_auth');
     }
   } catch (error) {
     console.error('[AuthService] Error handling redirect result:', error);
