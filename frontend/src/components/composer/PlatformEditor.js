@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -219,7 +219,6 @@ const PlatformEditor = ({
   const textareaRef = useRef(null);
   const localFileRef = useRef(null);
   const gifFileRef = useRef(null);
-  const fileInputId = useId();
   const inputRef = fileInputRef || localFileRef;
 
   // Drag-to-reorder media thumbnails
@@ -561,31 +560,6 @@ const PlatformEditor = ({
     if (files?.length && onFilesSelect) onFilesSelect(Array.from(files));
   };
 
-  const triggerFilePicker = useCallback((event) => {
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-    const input = inputRef?.current || document.getElementById(fileInputId);
-    if (!input) {
-      toast.error('Unable to open file picker right now. Please refresh and try again.');
-      return;
-    }
-    try {
-      if (typeof input.showPicker === 'function') {
-        input.showPicker();
-        return;
-      }
-    } catch (_) {
-      // Some browsers expose showPicker() but reject it for file inputs in certain contexts.
-    }
-    input.click();
-  }, [fileInputId, inputRef]);
-
-  const handlePickerKeyDown = useCallback((event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      triggerFilePicker(event);
-    }
-  }, [triggerFilePicker]);
-
   const handleFileChange = (e) => {
     const files = e.target.files;
     if (files?.length && onFilesSelect) {
@@ -774,18 +748,6 @@ const PlatformEditor = ({
           {/* Media area (image / video posts only) */}
           {postType !== 'text' && (
             <div className="px-4 pb-3">
-              {/* Hidden file input — multiple for images, single for video */}
-              <input
-                id={fileInputId}
-                ref={inputRef}
-                type="file"
-                accept={isVideo ? 'video/*' : 'image/*, image/gif'}
-                multiple={!isVideo}
-                onChange={handleFileChange}
-                className="sr-only absolute -left-[9999px] h-px w-px opacity-0 pointer-events-none"
-                tabIndex={-1}
-                aria-hidden="true"
-              />
               {/* Hidden GIF file input */}
               <input
                 ref={gifFileRef}
@@ -884,12 +846,17 @@ const PlatformEditor = ({
                         <div
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
-                          onClick={triggerFilePicker}
-                          onKeyDown={handlePickerKeyDown}
-                          role="button"
-                          tabIndex={0}
-                          className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
+                          className="relative border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
                         >
+                          <input
+                            ref={inputRef}
+                            type="file"
+                            accept="image/*, image/gif"
+                            multiple
+                            onChange={handleFileChange}
+                            className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                            aria-label="Select files"
+                          />
                           <svg className="text-gray-300 mb-1.5" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                             <rect x="3" y="3" width="18" height="18" rx="2" />
                             <circle cx="8.5" cy="8.5" r="1.5" />
@@ -907,14 +874,19 @@ const PlatformEditor = ({
                         <div
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
-                          onClick={triggerFilePicker}
-                          onKeyDown={handlePickerKeyDown}
-                          role="button"
-                          tabIndex={0}
-                          className="border border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all"
+                          className="relative border border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all"
                           style={{ width: '80px', height: '80px', flexShrink: 0 }}
                           title="Add more images"
                         >
+                          <input
+                            ref={inputRef}
+                            type="file"
+                            accept="image/*, image/gif"
+                            multiple
+                            onChange={handleFileChange}
+                            className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                            aria-label="Add more files"
+                          />
                           <svg className="text-gray-300" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                             <rect x="3" y="3" width="18" height="18" rx="2" />
                             <circle cx="8.5" cy="8.5" r="1.5" />
@@ -932,12 +904,16 @@ const PlatformEditor = ({
                       <div
                         onDrop={handleDrop}
                         onDragOver={(e) => e.preventDefault()}
-                        onClick={triggerFilePicker}
-                        onKeyDown={handlePickerKeyDown}
-                        role="button"
-                        tabIndex={0}
-                        className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
+                        className="relative border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
                       >
+                        <input
+                          ref={inputRef}
+                          type="file"
+                          accept="video/*"
+                          onChange={handleFileChange}
+                          className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                          aria-label="Select video"
+                        />
                         <svg className="text-gray-300 mb-1.5" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                           <polygon points="23 7 16 12 23 17 23 7" />
                           <rect x="1" y="5" width="15" height="14" rx="2" />
