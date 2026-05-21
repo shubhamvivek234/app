@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -219,6 +219,7 @@ const PlatformEditor = ({
   const textareaRef = useRef(null);
   const localFileRef = useRef(null);
   const gifFileRef = useRef(null);
+  const fileInputId = useId();
   const inputRef = fileInputRef || localFileRef;
 
   // Drag-to-reorder media thumbnails
@@ -749,6 +750,7 @@ const PlatformEditor = ({
             <div className="px-4 pb-3">
               {/* Hidden file input — multiple for images, single for video */}
               <input
+                id={fileInputId}
                 ref={inputRef}
                 type="file"
                 accept={isVideo ? 'video/*' : 'image/*, image/gif'}
@@ -851,8 +853,8 @@ const PlatformEditor = ({
                     {canAddMore && (
                       mediaArray.length === 0 ? (
                         /* Large empty-state drop zone */
-                        <div
-                          onClick={() => inputRef.current?.click()}
+                        <label
+                          htmlFor={fileInputId}
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
                           className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
@@ -868,11 +870,11 @@ const PlatformEditor = ({
                             Drag & drop or <span className="text-blue-600">select files</span>
                           </p>
                           <p className="text-[10px] text-gray-300 mt-0.5">Supports multiple images</p>
-                        </div>
+                        </label>
                       ) : (
                         /* Small "+" add-more tile */
-                        <div
-                          onClick={() => inputRef.current?.click()}
+                        <label
+                          htmlFor={fileInputId}
                           onDrop={handleDrop}
                           onDragOver={(e) => e.preventDefault()}
                           className="border border-dashed border-gray-300 rounded-md flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all"
@@ -887,14 +889,14 @@ const PlatformEditor = ({
                             <line x1="8" y1="12" x2="16" y2="12" />
                           </svg>
                           <p className="text-[10px] text-gray-400 mt-1 text-center">Add more</p>
-                        </div>
+                        </label>
                       )
                     )}
 
                     {/* Video: show drop zone only if empty */}
                     {onFilesSelect && isVideo && !uploading && mediaArray.length === 0 && (
-                      <div
-                        onClick={() => inputRef.current?.click()}
+                      <label
+                        htmlFor={fileInputId}
                         onDrop={handleDrop}
                         onDragOver={(e) => e.preventDefault()}
                         className="border border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/20 transition-all text-center w-full py-6"
@@ -906,7 +908,7 @@ const PlatformEditor = ({
                         <p className="text-xs text-gray-500">
                           Drag & drop or <span className="text-blue-600">select video</span>
                         </p>
-                      </div>
+                      </label>
                     )}
                   </div>
 
