@@ -664,6 +664,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const activePlatform = (activePreviewPlatform && selectedPlatforms.includes(activePreviewPlatform))
     ? activePreviewPlatform
     : selectedPlatforms[0] || null;
+  const commonEditorPostType = useMemo(() => {
+    if (type) return type;
+    if (selectedPlatforms.some((platform) => platform === 'youtube' || platform === 'tiktok')) {
+      return 'video';
+    }
+    return undefined;
+  }, [selectedPlatforms, type]);
 
   const selectedAccountsByPlatform = useCallback(
     (platform) => availableAccounts.filter(
@@ -1568,7 +1575,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             title="Common Post"
             headerIcon={FaImages}
             headerColor="#2563EB"
-            postType={type}
+            postType={commonEditorPostType}
             content={commonCaption}
             onContentChange={setCommonCaption}
             isExpanded={expandedPlatform === COMMON_POST_SECTION}
