@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from api.deps import CurrentUser, DB
 from utils.encryption import decrypt
@@ -270,7 +270,16 @@ def _account_error_label(account: dict[str, Any]) -> str:
 
 
 def _analytics_error_message(platform: str | None, exc: Exception) -> str:
-    message = str(exc).strip() or "Unable to fetch recent analytics from the platform API."
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, str) and detail.strip():
+            message = detail.strip()
+        else:
+            message = str(exc).strip()
+    else:
+        message = str(exc).strip()
+    if not message:
+        message = "Unable to fetch recent analytics from the platform API."
     if platform == "twitter" and "CreditsDepleted" in message:
         return "X API credits are depleted for this connected developer account. Live X analytics are temporarily unavailable."
     if platform == "bluesky" and ("Failed to fetch Bluesky profile" in message or "Bluesky session expired" in message):
@@ -1370,6 +1379,16 @@ async def analytics_youtube_report(
     message: str | None = None
     analytics_enabled = False
     card_metrics_supported = False
+    optional_support = {
+        "subscriber_geography": True,
+        "views_geography": True,
+        "minutes_geography": True,
+        "traffic_source": True,
+        "playback_location": True,
+        "device_type": True,
+        "subscribed_status": True,
+        "search_terms": True,
+    }
 
     audience_summary = {
         "subscribers_count": 0,
@@ -1422,6 +1441,7 @@ async def analytics_youtube_report(
         sort: list[str] | None = None,
         max_results: int | None = None,
         label: str,
+        critical: bool = False,
     ) -> list[dict[str, Any]]:
         nonlocal analytics_enabled, message, card_metrics_supported
         try:
@@ -1440,7 +1460,9 @@ async def analytics_youtube_report(
                 card_metrics_supported = True
             return rows
         except Exception as exc:
-            if not message:
+            if not critical and label in optional_support:
+                optional_support[label] = False
+            if critical and not message:
                 message = _analytics_error_message("youtube", exc)
             event_log(
                 logger,
@@ -1467,7 +1489,7 @@ async def analytics_youtube_report(
         access_token: str,
         metrics: list[str],
     ) -> dict[str, int | float]:
-        nonlocal analytics_enabled, message
+        nonlocal analytics_enabled
         try:
             rows = await auth.query_analytics_report(
                 access_token,
@@ -1481,9 +1503,7 @@ async def analytics_youtube_report(
                 for key in metrics:
                     totals[key] = totals.get(key, 0) + float(row.get(key) or 0)
             return totals
-        except Exception as exc:
-            if not message:
-                message = _analytics_error_message("youtube", exc)
+        except Exception:
             return {}
 
     for account in accounts:
@@ -1511,7 +1531,10 @@ async def analytics_youtube_report(
                 continue
 
         channel_id = str(channel.get("id") or platform_user_id or "")
-        audience_summary["subscribers_count"] += _metric_int(channel.get("subscribers"))
+        engagement_snapshot = await auth.fetch_youtube_engagement(access_token, channel_id, days=days)
+        audience_summary["subscribers_count"] += _metric_int(
+            engagement_snapshot.get("subscribers") or channel.get("subscribers")
+        )
 
         try:
             feed = await auth.fetch_youtube_feed(access_token, channel_id, limit=100)
@@ -1547,6 +1570,7 @@ async def analytics_youtube_report(
             ["subscribersGained", "subscribersLost"],
             dimensions=["day"],
             label="subscriber_growth",
+            critical=True,
         )
         if daily_subscriber_rows:
             subscriber_growth_series.append(
@@ -1563,11 +1587,15 @@ async def analytics_youtube_report(
             )
             audience_summary["subscribers_gained"] += sum(_metric_int(row.get("subscribersGained")) for row in daily_subscriber_rows)
             audience_summary["subscribers_lost"] += sum(_metric_int(row.get("subscribersLost")) for row in daily_subscriber_rows)
+        else:
+            audience_summary["subscribers_gained"] += _metric_int(engagement_snapshot.get("subscribers_gained"))
+            audience_summary["subscribers_lost"] += _metric_int(engagement_snapshot.get("subscribers_lost"))
 
         totals_rows = await safe_query(
             access_token,
             ["likes", "comments", "shares", "views", "estimatedMinutesWatched"],
             label="totals",
+            critical=True,
         )
         if totals_rows:
             post_summary["engagement"] += sum(
@@ -1583,16 +1611,27 @@ async def analytics_youtube_report(
             previous_totals["estimated_minutes_watched"] += float(previous_period_totals.get("estimatedMinutesWatched") or 0)
             previous_totals["subscribers_gained"] += _metric_int(previous_period_totals.get("subscribersGained"))
             previous_totals["subscribers_lost"] += _metric_int(previous_period_totals.get("subscribersLost"))
+        else:
+            post_summary["engagement"] += (
+                _metric_int(engagement_snapshot.get("period_likes"))
+                + _metric_int(engagement_snapshot.get("period_comments"))
+                + _metric_int(engagement_snapshot.get("period_shares"))
+            )
 
         daily_views_rows = await safe_query(
             access_token,
             ["views", "estimatedMinutesWatched"],
             dimensions=["day"],
             label="views_minutes_series",
+            critical=True,
         )
         if daily_views_rows:
             views_series.append(_youtube_series_from_rows(daily_views_rows, "views"))
             minutes_series.append(_youtube_series_from_rows(daily_views_rows, "estimatedMinutesWatched"))
+        elif engagement_snapshot.get("period_views") is not None or engagement_snapshot.get("period_minutes_watched") is not None:
+            synthetic_date = end_date.isoformat()
+            views_series.append([{"date": synthetic_date, "count": _metric_int(engagement_snapshot.get("period_views"))}])
+            minutes_series.append([{"date": synthetic_date, "count": float(engagement_snapshot.get("period_minutes_watched") or 0)}])
 
         video_metric_rows = await safe_query(
             access_token,
@@ -1856,6 +1895,20 @@ async def analytics_youtube_report(
 
     summary_top_geography = merged_views_geo[0] if merged_views_geo else None
 
+    report_has_primary_metrics = bool(
+        audience_summary["subscribers_count"]
+        or audience_summary["subscribers_gained"]
+        or audience_summary["subscribers_lost"]
+        or post_summary["videos"]
+        or post_summary["engagement"]
+        or views_series
+        or minutes_series
+        or top_videos_by_views
+        or top_videos_by_minutes
+    )
+    if message and report_has_primary_metrics:
+        message = None
+
     report = {
         "supported": True,
         "days": days,
@@ -1867,6 +1920,7 @@ async def analytics_youtube_report(
             "end_screen": False,
             "audience": True,
             "video_performance": analytics_enabled,
+            **optional_support,
         },
         "account": {
             "count": len(accounts),

@@ -121,7 +121,13 @@ class JsonFormatter(logging.Formatter):
         if isinstance(record.msg, dict):
             payload.update(_serialize(record.msg))
         else:
-            payload["message"] = record.getMessage()
+            try:
+                payload["message"] = record.getMessage()
+            except Exception:
+                fallback_message = str(record.msg)
+                if record.args:
+                    fallback_message = f"{fallback_message} | args={_serialize(record.args)}"
+                payload["message"] = fallback_message
 
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)

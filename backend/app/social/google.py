@@ -116,7 +116,7 @@ class GoogleAuth:
             response = await client.get(
                 f"{self.YOUTUBE_URL}/channels",
                 params={
-                    "part": "snippet,contentDetails",
+                    "part": "snippet,contentDetails,statistics",
                     "mine": "true"
                 },
                 headers={"Authorization": f"Bearer {access_token}"}
@@ -130,8 +130,13 @@ class GoogleAuth:
             items = data.get('items', [])
             if not items:
                 raise HTTPException(status_code=404, detail="No YouTube channel found")
-                
-            return items[0]
+
+            item = items[0]
+            stats = item.get("statistics", {}) or {}
+            item["subscribers"] = int(stats.get("subscriberCount", 0) or 0)
+            item["total_views"] = int(stats.get("viewCount", 0) or 0)
+            item["video_count"] = int(stats.get("videoCount", 0) or 0)
+            return item
 
     async def upload_video(self, access_token: str, file_path: str, title: str, description: str, privacy_status: str = "public", cover_image_path: str = None) -> str:
         """
@@ -419,6 +424,7 @@ class GoogleAuth:
                     else None
                 ),
                 "period_views": growth_metrics.get("views"),
+                "period_minutes_watched": growth_metrics.get("estimatedMinutesWatched"),
                 "period_likes": growth_metrics.get("likes"),
                 "period_comments": growth_metrics.get("comments"),
                 "period_shares": growth_metrics.get("shares"),
@@ -484,7 +490,16 @@ class GoogleAuth:
             )
 
         if response.status_code != 200:
-            logging.warning("[YouTube] Analytics query failed: %s", response.text)
+            logging.warning(
+                "[YouTube] Analytics query failed metrics=%s dimensions=%s filters=%s sort=%s max_results=%s status=%s body=%s",
+                ",".join(metrics),
+                ",".join(dimensions or []),
+                filters or {},
+                ",".join(sort or []),
+                max_results,
+                response.status_code,
+                (response.text or "")[:400],
+            )
             raise HTTPException(status_code=response.status_code, detail=self._analytics_error_detail(response))
 
         payload = response.json()
