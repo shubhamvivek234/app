@@ -1744,12 +1744,12 @@ async def analytics_youtube_report(
                 await safe_query(
                     access_token,
                     ["views", "estimatedMinutesWatched"],
-                    dimensions=["playbackLocationType"],
+                    dimensions=["insightPlaybackLocationType"],
                     sort=["-views"],
                     max_results=25,
                     label="playback_location",
                 ),
-                "playbackLocationType",
+                "insightPlaybackLocationType",
                 ["views", "estimatedMinutesWatched"],
                 _YOUTUBE_PLAYBACK_LOCATION_LABELS,
             )
