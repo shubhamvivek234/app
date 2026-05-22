@@ -150,9 +150,6 @@ const PLATFORM_ASPECT_RULES = {
     image: { ratio: 1.91, label: '1.91:1' },
     video: { ratio: 1.91, label: '1.91:1' },
   },
-  youtube: {
-    video: { ratio: 16 / 9, label: '16:9' },
-  },
   tiktok: {
     video: { ratio: 9 / 16, label: '9:16' },
   },

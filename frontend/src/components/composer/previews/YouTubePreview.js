@@ -10,16 +10,19 @@ const YouTubePreview = ({ content, media, account, videoTitle }) => {
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
   const firstItem  = mediaArray[0] || null;
   const hasVideo   = firstItem?.type === 'video';
+  const previewAspectRatio = firstItem?.width && firstItem?.height
+    ? `${firstItem.width} / ${firstItem.height}`
+    : '16 / 9';
 
   return (
     <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
       {/* Thumbnail / Video */}
-      <div className="relative aspect-video bg-gray-900 overflow-hidden">
+      <div className="relative bg-gray-900 overflow-hidden" style={{ aspectRatio: previewAspectRatio }}>
         {firstItem ? (
           firstItem.type === 'video' ? (
-            <video src={firstItem.url} className="w-full h-full object-cover" />
+            <video src={firstItem.url} className="w-full h-full object-contain bg-black" />
           ) : (
-            <img src={firstItem.url} alt="" className="w-full h-full object-cover" />
+            <img src={firstItem.url} alt="" className="w-full h-full object-contain bg-black" />
           )
         ) : (
           /* Empty state — prompt to add video */

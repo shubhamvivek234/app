@@ -954,7 +954,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         ? await getVideoMetadata(file)
         : null;
       const dims = inferredIsVideo
-        ? { width: asset.width || videoMeta?.width || 0, height: asset.height || videoMeta?.height || 0 }
+        ? { width: videoMeta?.width || asset.width || 0, height: videoMeta?.height || asset.height || 0 }
         : await getImageDimensions(mediaUrl);
 
       setUploadedMedia(prev => [
@@ -971,8 +971,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           mimeType: asset.mime_type || file.type,
           size: file.size,
           name: file.name,
-          width: asset.width || dims.width,
-          height: asset.height || dims.height,
+          width: dims.width || asset.width || 0,
+          height: dims.height || asset.height || 0,
           duration: videoMeta?.duration || 0,
           hasAudio: videoMeta?.hasAudio,
         },
@@ -1028,7 +1028,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         ? await getVideoMetadata(file)
         : null;
       const dims = inferredIsVideo
-        ? { width: asset.width || videoMeta?.width || 0, height: asset.height || videoMeta?.height || 0 }
+        ? { width: videoMeta?.width || asset.width || 0, height: videoMeta?.height || asset.height || 0 }
         : await getImageDimensions(mediaUrl);
       arr.push({
         file,
@@ -1042,8 +1042,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         mimeType: asset.mime_type || file.type,
         size: file.size,
         name: file.name,
-        width: asset.width || dims.width,
-        height: asset.height || dims.height,
+        width: dims.width || asset.width || 0,
+        height: dims.height || asset.height || 0,
         duration: videoMeta?.duration || 0,
         hasAudio: videoMeta?.hasAudio,
       });

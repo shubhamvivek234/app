@@ -106,8 +106,29 @@ def _parse_ffprobe(probe: dict) -> dict:
     for stream in streams:
         codec_type = stream.get("codec_type")
         if codec_type == "video":
-            result["width"] = stream.get("width")
-            result["height"] = stream.get("height")
+            raw_width = int(stream.get("width") or 0)
+            raw_height = int(stream.get("height") or 0)
+            rotation = 0
+            for side_data in stream.get("side_data_list", []) or []:
+                side_rotation = side_data.get("rotation")
+                if side_rotation is None:
+                    continue
+                try:
+                    rotation = int(round(float(side_rotation))) % 360
+                    break
+                except (TypeError, ValueError):
+                    continue
+            if not rotation:
+                try:
+                    rotation = int(round(float((stream.get("tags", {}) or {}).get("rotate", 0)))) % 360
+                except (TypeError, ValueError):
+                    rotation = 0
+            if rotation in (90, 270):
+                result["width"] = raw_height
+                result["height"] = raw_width
+            else:
+                result["width"] = raw_width
+                result["height"] = raw_height
             result["codec"] = stream.get("codec_name")
             result["color_transfer"] = stream.get("color_transfer", "")
             nb_frames = int(stream.get("nb_frames") or 0)

@@ -191,8 +191,28 @@ def get_video_metadata(file_path: str) -> Optional[dict]:
             return None
 
         duration = float(data.get("format", {}).get("duration", 0))
-        width = int(video_stream.get("width", 0))
-        height = int(video_stream.get("height", 0))
+        raw_width = int(video_stream.get("width", 0))
+        raw_height = int(video_stream.get("height", 0))
+        rotation = 0
+        for side_data in video_stream.get("side_data_list", []) or []:
+            side_rotation = side_data.get("rotation")
+            if side_rotation is None:
+                continue
+            try:
+                rotation = int(round(float(side_rotation))) % 360
+                break
+            except (TypeError, ValueError):
+                continue
+        if not rotation:
+            try:
+                rotation = int(round(float((video_stream.get("tags", {}) or {}).get("rotate", 0)))) % 360
+            except (TypeError, ValueError):
+                rotation = 0
+
+        if rotation in (90, 270):
+            width, height = raw_height, raw_width
+        else:
+            width, height = raw_width, raw_height
         codec = video_stream.get("codec_name", "unknown")
         fps_str = video_stream.get("r_frame_rate", "0/1")
         try:
