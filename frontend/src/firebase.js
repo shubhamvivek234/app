@@ -4,19 +4,10 @@ import { getStorage } from "firebase/storage";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import env from "./env";
 
-const runtimeHostname = typeof window !== 'undefined' ? window.location.hostname : '';
-const firstPartyAuthDomains = new Set([
-    'www.unravler.com',
-    'unravler.com',
-    'app.unravler.com',
-]);
-
-const useFirstPartyAuthDomain = env.FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN === 'true';
-const resolvedAuthDomain = (
-    useFirstPartyAuthDomain && firstPartyAuthDomains.has(runtimeHostname)
-)
-    ? runtimeHostname
-    : env.FIREBASE_AUTH_DOMAIN;
+// Keep Google/Firebase auth pinned to Firebase's managed auth domain in production.
+// The first-party auth handler path on www.unravler.com is not fully whitelisted in
+// the linked Google OAuth client yet, which can cause redirect_uri_mismatch loops.
+const resolvedAuthDomain = env.FIREBASE_AUTH_DOMAIN;
 
 /**
  * Firebase config is loaded exclusively from environment variables.

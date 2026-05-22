@@ -14,6 +14,7 @@ import env from '../env';
 import {
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
@@ -88,12 +89,33 @@ export const googleSignIn = async () => {
     clearAuthData();
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('pending_google_auth', '1');
-      sessionStorage.setItem('google_auth_step', 'popup_start');
+      sessionStorage.setItem('google_auth_step', 'auth_start');
     }
-    console.log('[AuthService] Starting Google sign-in with popup...', {
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+    const isHostedRuntime = Boolean(
+      hostname
+      && hostname !== 'localhost'
+      && hostname !== '127.0.0.1'
+      && hostname !== '::1'
+    );
+
+    console.log('[AuthService] Starting Google sign-in...', {
+      mode: isHostedRuntime ? 'redirect' : 'popup',
       authDomain: auth?.config?.authDomain || auth?.app?.options?.authDomain || null,
       currentPath: typeof window !== 'undefined' ? window.location.pathname : null,
     });
+
+    if (isHostedRuntime) {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('google_auth_step', 'redirect_start');
+      }
+      await signInWithRedirect(auth, googleProvider);
+      return true;
+    }
+
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('google_auth_step', 'popup_start');
+    }
     await signInWithPopup(auth, googleProvider);
     return true;
   } catch (error) {
@@ -108,8 +130,7 @@ export const googleSignIn = async () => {
       return false;
     }
 
-    // Explicitly surface popup issues instead of silently falling back into a
-    // redirect flow that depends on Google OAuth redirect whitelist settings.
+    // Popup-specific issues are only relevant in local/dev popup mode.
     if (
       error.code === 'auth/popup-blocked'
       || error.code === 'auth/operation-not-supported-in-this-environment'
