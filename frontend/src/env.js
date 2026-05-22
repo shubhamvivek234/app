@@ -21,6 +21,13 @@ const env = {
     || import.meta.env.REACT_APP_FIREBASE_AUTH_DOMAIN
     || process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
 
+  FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN: (
+    import.meta.env.VITE_FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN
+    || import.meta.env.REACT_APP_FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN
+    || process.env.REACT_APP_FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN
+    || 'false'
+  ).toLowerCase(),
+
   FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID
     || import.meta.env.REACT_APP_FIREBASE_PROJECT_ID
     || process.env.REACT_APP_FIREBASE_PROJECT_ID,

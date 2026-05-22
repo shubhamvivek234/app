@@ -17,7 +17,6 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
-  signInWithRedirect,
   getRedirectResult,
 } from 'firebase/auth';
 
@@ -89,28 +88,16 @@ export const googleSignIn = async () => {
     clearAuthData();
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('pending_google_auth', '1');
+      sessionStorage.setItem('google_auth_step', 'popup_start');
     }
-    console.log('[AuthService] Starting Google sign-in with popup...');
+    console.log('[AuthService] Starting Google sign-in with popup...', {
+      authDomain: auth?.config?.authDomain || auth?.app?.options?.authDomain || null,
+      currentPath: typeof window !== 'undefined' ? window.location.pathname : null,
+    });
     await signInWithPopup(auth, googleProvider);
     return true;
   } catch (error) {
     console.error('[AuthService] Google popup error:', error.code, error.message);
-
-    // Popup was blocked or unsupported - fall back to redirect flow
-    if (
-      error.code === 'auth/popup-blocked'
-      || error.code === 'auth/operation-not-supported-in-this-environment'
-      || error.code === 'auth/cancelled-popup-request'
-    ) {
-      console.log('[AuthService] Popup blocked, falling back to redirect flow...');
-      try {
-        await signInWithRedirect(auth, googleProvider);
-        return true;
-      } catch (redirectError) {
-        console.error('[AuthService] Redirect flow error:', redirectError);
-        throw redirectError;
-      }
-    }
 
     // User cancelled popup
     if (error.code === 'auth/popup-closed-by-user') {
@@ -121,6 +108,27 @@ export const googleSignIn = async () => {
       return false;
     }
 
+    // Explicitly surface popup issues instead of silently falling back into a
+    // redirect flow that depends on Google OAuth redirect whitelist settings.
+    if (
+      error.code === 'auth/popup-blocked'
+      || error.code === 'auth/operation-not-supported-in-this-environment'
+      || error.code === 'auth/cancelled-popup-request'
+    ) {
+      const popupError = new Error(
+        'Google sign-in needs a popup window. Please allow popups for Unravler and try again.'
+      );
+      popupError.code = error.code;
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('pending_google_auth');
+        sessionStorage.setItem('google_auth_step', `popup_error:${error.code}`);
+      }
+      throw popupError;
+    }
+
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('google_auth_step', `auth_error:${error.code || 'unknown'}`);
+    }
     throw error;
   }
 };
@@ -136,13 +144,20 @@ export const handleRedirectResult = async () => {
     const result = await getRedirectResult(auth);
     if (result && result.user) {
       console.log('[AuthService] Redirect login successful:', result.user.email);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('google_auth_step', 'redirect_result_user');
+      }
       return result.user;
     }
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('pending_google_auth');
+      sessionStorage.setItem('google_auth_step', 'redirect_result_empty');
     }
   } catch (error) {
     console.error('[AuthService] Error handling redirect result:', error);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('google_auth_step', `redirect_result_error:${error.code || 'unknown'}`);
+    }
     throw error;
   }
 };

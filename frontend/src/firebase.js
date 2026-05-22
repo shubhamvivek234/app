@@ -11,7 +11,10 @@ const firstPartyAuthDomains = new Set([
     'app.unravler.com',
 ]);
 
-const resolvedAuthDomain = firstPartyAuthDomains.has(runtimeHostname)
+const useFirstPartyAuthDomain = env.FIREBASE_USE_FIRST_PARTY_AUTH_DOMAIN === 'true';
+const resolvedAuthDomain = (
+    useFirstPartyAuthDomain && firstPartyAuthDomains.has(runtimeHostname)
+)
     ? runtimeHostname
     : env.FIREBASE_AUTH_DOMAIN;
 
