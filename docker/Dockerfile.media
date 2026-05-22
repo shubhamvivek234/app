@@ -25,6 +25,7 @@ COPY utils/ utils/
 COPY db/ db/
 
 ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONPATH=/app:/home/appuser/.local/lib/python3.11/site-packages \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
