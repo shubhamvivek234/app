@@ -37,6 +37,7 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null); // Backend User Profile (MongoDB)
   const [firebaseUser, setFirebaseUser] = useState(null); // Firebase User Object
   const [loading, setLoading] = useState(true);
+  const [redirectCheckComplete, setRedirectCheckComplete] = useState(false);
   const [authIssue, setAuthIssue] = useState(null);
   const [token, setToken] = useState(() => {
     // Initialize from localStorage if available
@@ -81,36 +82,48 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  const syncFirebaseSession = useCallback(async (currentUser, { silent = false } = {}) => {
+    if (!currentUser) return null;
+    setFirebaseUser(currentUser);
+    const idToken = await getIdToken(currentUser);
+    setToken(idToken);
+    setAuthIssue(null);
+    return syncProfile(idToken, currentUser, { silent });
+  }, [syncProfile]);
+
   // 1. Check for redirect result on mount (Google sign-in via redirect)
   useEffect(() => {
     const checkRedirectResult = async () => {
       try {
-        await handleRedirectResult();
-        // handleRedirectResult triggers onAuthStateChanged if successful
+        setLoading(true);
+        const redirectUser = await handleRedirectResult();
+        if (redirectUser) {
+          console.log('[AuthContext] Processing Google redirect result directly');
+          await syncFirebaseSession(redirectUser);
+        }
       } catch (error) {
         console.error('[AuthContext] Error handling redirect result:', error);
+      } finally {
+        setRedirectCheckComplete(true);
       }
     };
     checkRedirectResult();
-  }, []);
+  }, [syncFirebaseSession]);
 
   // 2. Listen for Firebase Auth Changes (using isolated authService)
   useEffect(() => {
+    if (!redirectCheckComplete) {
+      return undefined;
+    }
+
     const unsubscribe = listenToAuthState(async (currentUser) => {
       // Always set loading=true at the start of an auth state change.
       // This prevents PrivateRoute from seeing (user=null, loading=false)
       // during the async fetchBackendProfile call on a fresh login.
       setLoading(true);
       if (currentUser) {
-        setFirebaseUser(currentUser);
         try {
-          // Get ID Token
-          const idToken = await getIdToken(currentUser);
-          setToken(idToken);
-          setAuthIssue(null);
-
-          // Sync with Backend (Get detailed profile)
-          await syncProfile(idToken, currentUser);
+          await syncFirebaseSession(currentUser);
         } catch (error) {
           if (isRetriableBackendError(error) && !isFatalAuthSyncError(error)) {
             toast.error('Signed in, but the server is temporarily unavailable. We will keep trying.');
@@ -146,7 +159,7 @@ export const AuthProvider = ({ children }) => {
     });
 
     return () => unsubscribe();
-  }, [syncProfile]);
+  }, [redirectCheckComplete, syncFirebaseSession]);
 
   // 3. If token exists but user doesn't, fetch user profile (handles backend OAuth)
   useEffect(() => {
