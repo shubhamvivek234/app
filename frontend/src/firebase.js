@@ -4,6 +4,17 @@ import { getStorage } from "firebase/storage";
 import { getAnalytics, isSupported } from "firebase/analytics";
 import env from "./env";
 
+const runtimeHostname = typeof window !== 'undefined' ? window.location.hostname : '';
+const firstPartyAuthDomains = new Set([
+    'www.unravler.com',
+    'unravler.com',
+    'app.unravler.com',
+]);
+
+const resolvedAuthDomain = firstPartyAuthDomains.has(runtimeHostname)
+    ? runtimeHostname
+    : env.FIREBASE_AUTH_DOMAIN;
+
 /**
  * Firebase config is loaded exclusively from environment variables.
  * Set these in frontend/.env (already in .gitignore — never commit real values).
@@ -19,7 +30,7 @@ import env from "./env";
  */
 const firebaseConfig = {
     apiKey:            env.FIREBASE_API_KEY,
-    authDomain:        env.FIREBASE_AUTH_DOMAIN,
+    authDomain:        resolvedAuthDomain,
     projectId:         env.FIREBASE_PROJECT_ID,
     storageBucket:     env.FIREBASE_STORAGE_BUCKET,
     messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID,
