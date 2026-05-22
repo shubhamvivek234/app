@@ -26,7 +26,6 @@ async function getFreshFirebaseToken(forceRefresh = false) {
     if (typeof window !== 'undefined') {
       localStorage.setItem('token', token);
     }
-    axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     return token;
   } catch (error) {
     console.warn('[http] Unable to refresh Firebase ID token', error);
@@ -41,14 +40,19 @@ export function initHttpInterceptors() {
   axios.interceptors.request.use(async (config) => {
     const nextConfig = { ...config };
     nextConfig.headers = nextConfig.headers || {};
-    if (!nextConfig.headers['X-Trace-ID']) {
-      nextConfig.headers['X-Trace-ID'] = generateTraceId();
-    }
     if (isBackendRequest(nextConfig)) {
+      if (!nextConfig.headers['X-Trace-ID']) {
+        nextConfig.headers['X-Trace-ID'] = generateTraceId();
+      }
       const token = await getFreshFirebaseToken(false);
       if (token) {
         nextConfig.headers.Authorization = `Bearer ${token}`;
       }
+    } else {
+      delete nextConfig.headers.Authorization;
+      delete nextConfig.headers.authorization;
+      delete nextConfig.headers['X-Trace-ID'];
+      delete nextConfig.headers['x-trace-id'];
     }
     return nextConfig;
   });

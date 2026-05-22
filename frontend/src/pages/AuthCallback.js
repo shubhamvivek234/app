@@ -39,10 +39,9 @@ const AuthCallback = () => {
       }
 
       try {
-        // Store token and set axios header
+        // Store token for backend-authenticated requests
         localStorage.setItem('token', tokenParam);
         setToken(tokenParam);
-        axios.defaults.headers.common['Authorization'] = `Bearer ${tokenParam}`;
 
         // Fetch backend profile with the new token
         const response = await axios.get(`${BACKEND_URL}/api/auth/me`, {
@@ -64,7 +63,6 @@ const AuthCallback = () => {
         console.error('Auth callback error:', error);
         // Clear any partial state
         localStorage.removeItem('token');
-        delete axios.defaults.headers.common['Authorization'];
         toast.error('Authentication failed. Please try again.');
         navigate('/login');
       }
