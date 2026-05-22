@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -220,6 +220,7 @@ const PlatformEditor = ({
   const localFileRef = useRef(null);
   const gifFileRef = useRef(null);
   const inputRef = fileInputRef || localFileRef;
+  const fileInputId = useId();
 
   // Drag-to-reorder media thumbnails
   const mediaDragIdx  = useRef(null);
@@ -775,14 +776,13 @@ const PlatformEditor = ({
             <div className="px-4 pb-3">
               {/* Hidden file input — multiple for images, single for video */}
               <input
+                id={fileInputId}
                 ref={inputRef}
                 type="file"
                 accept={isVideo ? 'video/*' : 'image/*, image/gif'}
                 multiple={!isVideo}
                 onChange={handleFileChange}
                 className="sr-only absolute -left-[9999px] h-px w-px opacity-0"
-                tabIndex={-1}
-                aria-hidden="true"
               />
               {/* Hidden GIF file input */}
               <input
@@ -896,7 +896,14 @@ const PlatformEditor = ({
                             <line x1="8" y1="12" x2="16" y2="12" />
                           </svg>
                           <p className="text-xs text-gray-500">
-                            Drag & drop or <span className="text-blue-600">select files</span>
+                            Drag & drop or{' '}
+                            <label
+                              htmlFor={fileInputId}
+                              className="text-blue-600 cursor-pointer font-medium"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              select files
+                            </label>
                           </p>
                           <p className="text-[10px] text-gray-300 mt-0.5">Supports multiple images</p>
                         </div>
@@ -941,7 +948,14 @@ const PlatformEditor = ({
                           <rect x="1" y="5" width="15" height="14" rx="2" />
                         </svg>
                         <p className="text-xs text-gray-500">
-                          Drag & drop or <span className="text-blue-600">select video</span>
+                          Drag & drop or{' '}
+                          <label
+                            htmlFor={fileInputId}
+                            className="text-blue-600 cursor-pointer font-medium"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            select video
+                          </label>
                         </p>
                       </div>
                     )}
