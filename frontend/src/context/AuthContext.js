@@ -164,6 +164,7 @@ export const AuthProvider = ({ children }) => {
   // 3. If token exists but user doesn't, fetch user profile (handles backend OAuth)
   useEffect(() => {
     if (token && !user && !firebaseUser) {
+      setLoading(true);
       fetchProfileService(token)
         .then(profile => {
           setUser(profile);
@@ -185,6 +186,9 @@ export const AuthProvider = ({ children }) => {
           } else {
             toast.error('Failed to load your profile. Please refresh the page.');
           }
+        })
+        .finally(() => {
+          setLoading(false);
         });
     }
   }, [token, user, firebaseUser]);

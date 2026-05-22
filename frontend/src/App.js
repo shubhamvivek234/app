@@ -105,7 +105,7 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   const { user, loading, firebaseUser, token, authIssue } = useAuth();
   const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
-  if (loading) {
+  if (loading || hasPendingSession) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <BrandMarkLoader />
@@ -113,7 +113,7 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
     );
   }
 
-  if (hasPendingSession && authIssue) {
+  if (authIssue) {
     return <AuthRecoveryScreen />;
   }
 
@@ -158,15 +158,20 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
 };
 
 const PublicRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, firebaseUser, token, authIssue } = useAuth();
   const location = useLocation();
+  const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
-  if (loading) {
+  if (loading || hasPendingSession) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <BrandMarkLoader />
       </div>
     );
+  }
+
+  if (authIssue) {
+    return <AuthRecoveryScreen />;
   }
 
   if (!user) {
