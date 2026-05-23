@@ -550,6 +550,7 @@ const ReportDonutBreakdown = ({
   valueFormatter = fmt,
   totalFormatter = valueFormatter,
   showZeroBreakdown = false,
+  showLegend = true,
 }) => {
   const palette = ['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'];
   const sourceItems = items || [];
@@ -560,9 +561,9 @@ const ReportDonutBreakdown = ({
   if (!positiveItems.length && !shouldRenderZeroBreakdown) return chartEmptyState(emptyLabel);
 
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)] xl:items-center">
-      <div className="flex items-center justify-center">
-        <div className="relative h-[240px] w-[240px]">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[240px_minmax(0,1fr)] xl:items-center">
+      <div className="flex flex-col items-center justify-center gap-4">
+        <div className="relative h-[220px] w-[220px]">
           {positiveItems.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -572,8 +573,8 @@ const ReportDonutBreakdown = ({
                   nameKey="label"
                   cx="50%"
                   cy="50%"
-                  innerRadius={66}
-                  outerRadius={96}
+                  innerRadius={60}
+                  outerRadius={88}
                   paddingAngle={2}
                 >
                   {positiveItems.map((entry, index) => (
@@ -584,18 +585,37 @@ const ReportDonutBreakdown = ({
             </ResponsiveContainer>
           ) : (
             <div className="flex h-full w-full items-center justify-center">
-              <div className="h-[190px] w-[190px] rounded-full border-[28px] border-gray-200 bg-white" />
+              <div className="h-[176px] w-[176px] rounded-full border-[24px] border-gray-200 bg-white" />
             </div>
           )}
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <span className="text-4xl font-semibold leading-none text-gray-700">{totalFormatter(computedTotal)}</span>
+            <span className="text-3xl font-semibold leading-none text-gray-700">{totalFormatter(computedTotal)}</span>
             <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
           </div>
         </div>
+
+        {showLegend && (
+          <div className="flex w-full flex-wrap justify-center gap-2">
+            {sourceItems.map((item) => {
+              const value = Number(item?.[valueKey]) || 0;
+              const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
+              const color = positiveIndex >= 0 ? palette[positiveIndex % palette.length] : '#d1d5db';
+              return (
+                <div
+                  key={`legend-${item.type || item.label}`}
+                  className={`inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${value > 0 ? 'border-gray-200 bg-white text-gray-700' : 'border-gray-100 bg-gray-50 text-gray-400'}`}
+                >
+                  <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                  <span className="truncate">{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="min-w-0">
-        <div className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] gap-x-4 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+        <div className="grid grid-cols-[minmax(0,1fr)_88px_52px] gap-x-3 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 sm:grid-cols-[minmax(0,1.2fr)_108px_64px]">
           <span>Type</span>
           <span className="text-right">{valueHeader}</span>
           <span className="text-right">%</span>
@@ -607,7 +627,7 @@ const ReportDonutBreakdown = ({
             const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
             const color = positiveIndex >= 0 ? palette[positiveIndex % palette.length] : '#d1d5db';
             return (
-              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] items-center gap-x-4 py-4 text-sm">
+              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1fr)_88px_52px] items-center gap-x-3 py-4 text-sm sm:grid-cols-[minmax(0,1.2fr)_108px_64px]">
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
                   <span className={`truncate font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
@@ -2968,7 +2988,7 @@ const Analytics = () => {
 
                   <ReportCard title="Views & Estimated Minutes Watched by Subscribed Status">
                     {(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).length > 0 ? (
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
                         <div className="space-y-3">
                           <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Views</p>
                           <ReportDonutBreakdown
@@ -2989,7 +3009,7 @@ const Analytics = () => {
                               engagement: item.estimatedMinutesWatched,
                             }))}
                             valueKey="engagement"
-                            valueHeader="Minutes Watched"
+                            valueHeader="Minutes"
                             valueFormatter={formatPreciseMetric}
                             totalFormatter={formatPreciseMetric}
                             totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.estimatedMinutesWatched) || 0), 0)}
