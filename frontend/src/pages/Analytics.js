@@ -729,9 +729,9 @@ const YoutubeDeviceTypeCard = ({ items }) => {
   return (
     <ReportCard title="Views by Device Type">
       {positiveItems.length > 0 ? (
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[360px_minmax(0,1fr)] xl:items-center">
+        <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[280px_minmax(0,1fr)] 2xl:items-center">
           <div className="flex justify-center">
-            <div className="relative h-[280px] w-[280px]">
+            <div className="relative h-[220px] w-[220px] lg:h-[240px] lg:w-[240px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -740,8 +740,8 @@ const YoutubeDeviceTypeCard = ({ items }) => {
                     nameKey="label"
                     cx="50%"
                     cy="50%"
-                    innerRadius={82}
-                    outerRadius={126}
+                    innerRadius={64}
+                    outerRadius={104}
                     strokeWidth={0}
                     paddingAngle={1.5}
                   >
@@ -752,23 +752,23 @@ const YoutubeDeviceTypeCard = ({ items }) => {
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-4xl font-semibold leading-none text-gray-700">{fmt(totalViews)}</span>
+                <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{fmt(totalViews)}</span>
                 <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
               </div>
             </div>
           </div>
 
           <div className="min-w-0">
-            <div className="grid grid-cols-[minmax(0,1fr)_110px_80px] gap-x-6 border-b border-gray-200 pb-4 text-[12px] font-bold uppercase tracking-widest text-gray-500">
+            <div className="grid grid-cols-[minmax(0,1fr)_72px_56px] gap-x-3 border-b border-gray-200 pb-4 text-[12px] font-bold uppercase tracking-widest text-gray-500 sm:grid-cols-[minmax(0,1fr)_88px_64px] lg:grid-cols-[minmax(0,1fr)_96px_72px]">
               <span>Type</span>
               <span className="text-right">Views</span>
               <span className="text-right">%</span>
             </div>
             <div className="divide-y divide-gray-100">
               {positiveItems.map((item, index) => (
-                <div key={item.value || item.label} className="grid grid-cols-[minmax(0,1fr)_110px_80px] items-center gap-x-6 py-5 text-base">
-                  <div className="flex min-w-0 items-center gap-4">
-                    <span className="h-4 w-4 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
+                <div key={item.value || item.label} className="grid grid-cols-[minmax(0,1fr)_72px_56px] items-center gap-x-3 py-4 text-sm sm:grid-cols-[minmax(0,1fr)_88px_64px] sm:text-base lg:grid-cols-[minmax(0,1fr)_96px_72px]">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="h-3.5 w-3.5 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
                     <span className="truncate font-medium text-gray-700">{String(item.label || '').toUpperCase()}</span>
                   </div>
                   <span className="text-right font-medium text-gray-700">{fmt(item.views)}</span>
@@ -805,7 +805,7 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
   const primaryMinuteLabel = totalMinutes > 0 ? 'mins_watched' : 'mins_watched';
 
   const renderDonut = (data, dataKey, total, centerValue, centerLabel) => (
-    <div className="relative h-[260px] w-[260px]">
+    <div className="relative h-[210px] w-[210px] lg:h-[230px] lg:w-[230px]">
       {data.length > 0 ? (
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -815,8 +815,8 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
               nameKey="label"
               cx="50%"
               cy="50%"
-              innerRadius={78}
-              outerRadius={122}
+              innerRadius={62}
+              outerRadius={102}
               strokeWidth={0}
               paddingAngle={1.5}
             >
@@ -828,11 +828,11 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
         </ResponsiveContainer>
       ) : (
         <div className="flex h-full w-full items-center justify-center">
-          <div className="h-[238px] w-[238px] rounded-full border-[36px] border-gray-200 bg-white" />
+          <div className="h-[190px] w-[190px] rounded-full border-[28px] border-gray-200 bg-white lg:h-[210px] lg:w-[210px]" />
         </div>
       )}
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-4xl font-semibold leading-none text-gray-700">{centerValue}</span>
+        <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{centerValue}</span>
         <span className="mt-2 text-sm font-medium text-gray-500">{centerLabel}</span>
       </div>
     </div>
@@ -842,7 +842,7 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
     <ReportCard title="Views and Estimated Minutes Watched by Subscribed Status of Users">
       {normalized.length > 0 ? (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:gap-8">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
             <div className="flex justify-center">
               {renderDonut(
                 positiveViewRows,
@@ -864,16 +864,16 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
           </div>
 
           <div className="mx-auto max-w-3xl overflow-hidden rounded-xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_90px_170px] gap-x-5 border-b border-gray-200 px-5 py-4 text-[12px] font-bold uppercase tracking-widest text-gray-500">
+            <div className="grid grid-cols-[minmax(0,1fr)_72px_96px] gap-x-3 border-b border-gray-200 px-4 py-4 text-[12px] font-bold uppercase tracking-widest text-gray-500 sm:grid-cols-[minmax(0,1fr)_84px_120px] sm:gap-x-4 sm:px-5">
               <span>Type</span>
               <span className="text-right">Views</span>
               <span className="text-right">Mins_Watched</span>
             </div>
             <div className="divide-y divide-gray-100">
               {normalized.map((item) => (
-                <div key={item.value} className="grid grid-cols-[minmax(0,1fr)_90px_170px] items-center gap-x-5 px-5 py-5 text-base">
-                  <div className="flex min-w-0 items-center gap-4">
-                    <span className="h-4 w-4 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[item.value] }} />
+                <div key={item.value} className="grid grid-cols-[minmax(0,1fr)_72px_96px] items-center gap-x-3 px-4 py-4 text-sm sm:grid-cols-[minmax(0,1fr)_84px_120px] sm:gap-x-4 sm:px-5 sm:text-base">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="h-3.5 w-3.5 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[item.value] }} />
                     <span className={`truncate font-medium ${item.views > 0 || item.estimatedMinutesWatched > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
                   </div>
                   <span className={`text-right font-medium ${item.views > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{fmt(item.views)}</span>
