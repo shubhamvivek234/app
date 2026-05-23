@@ -721,6 +721,175 @@ const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data availa
   );
 };
 
+const YoutubeDeviceTypeCard = ({ items }) => {
+  const palette = ['#2f6690', '#4a86b8', '#7aa6cf', '#9fc4df', '#c6dced'];
+  const positiveItems = (items || []).filter((item) => Number(item?.views) > 0);
+  const totalViews = positiveItems.reduce((sum, item) => sum + (Number(item?.views) || 0), 0);
+
+  return (
+    <ReportCard title="Views by Device Type">
+      {positiveItems.length > 0 ? (
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[360px_minmax(0,1fr)] xl:items-center">
+          <div className="flex justify-center">
+            <div className="relative h-[280px] w-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={positiveItems}
+                    dataKey="views"
+                    nameKey="label"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={82}
+                    outerRadius={126}
+                    strokeWidth={0}
+                    paddingAngle={1.5}
+                  >
+                    {positiveItems.map((item, index) => (
+                      <Cell key={item.value || item.label} fill={palette[index % palette.length]} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                <span className="text-4xl font-semibold leading-none text-gray-700">{fmt(totalViews)}</span>
+                <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="grid grid-cols-[minmax(0,1fr)_110px_80px] gap-x-6 border-b border-gray-200 pb-4 text-[12px] font-bold uppercase tracking-widest text-gray-500">
+              <span>Type</span>
+              <span className="text-right">Views</span>
+              <span className="text-right">%</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {positiveItems.map((item, index) => (
+                <div key={item.value || item.label} className="grid grid-cols-[minmax(0,1fr)_110px_80px] items-center gap-x-6 py-5 text-base">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <span className="h-4 w-4 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
+                    <span className="truncate font-medium text-gray-700">{String(item.label || '').toUpperCase()}</span>
+                  </div>
+                  <span className="text-right font-medium text-gray-700">{fmt(item.views)}</span>
+                  <span className="text-right font-medium text-gray-700">{((Number(item.views) || 0) / Math.max(totalViews, 1) * 100).toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        chartEmptyState()
+      )}
+    </ReportCard>
+  );
+};
+
+const YoutubeSubscribedStatusCard = ({ items }) => {
+  const palette = { SUBSCRIBED: '#cfcfcf', UNSUBSCRIBED: '#2f6690' };
+  const labelMap = { SUBSCRIBED: 'Subscribed', UNSUBSCRIBED: 'Non Subscribed' };
+  const normalized = ['SUBSCRIBED', 'UNSUBSCRIBED'].map((value) => {
+    const match = (items || []).find((item) => String(item?.value || '').toUpperCase() === value);
+    return {
+      value,
+      label: labelMap[value],
+      views: Number(match?.views) || 0,
+      estimatedMinutesWatched: Number(match?.estimatedMinutesWatched) || 0,
+    };
+  });
+  const totalViews = normalized.reduce((sum, item) => sum + item.views, 0);
+  const totalMinutes = normalized.reduce((sum, item) => sum + item.estimatedMinutesWatched, 0);
+  const positiveViewRows = normalized.filter((item) => item.views > 0);
+  const positiveMinuteRows = normalized.filter((item) => item.estimatedMinutesWatched > 0);
+  const primaryViewLabel = positiveViewRows[0]?.label || 'No Data';
+  const primaryMinuteLabel = totalMinutes > 0 ? 'mins_watched' : 'mins_watched';
+
+  const renderDonut = (data, dataKey, total, centerValue, centerLabel) => (
+    <div className="relative h-[260px] w-[260px]">
+      {data.length > 0 ? (
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey={dataKey}
+              nameKey="label"
+              cx="50%"
+              cy="50%"
+              innerRadius={78}
+              outerRadius={122}
+              strokeWidth={0}
+              paddingAngle={1.5}
+            >
+              {data.map((item) => (
+                <Cell key={item.value} fill={palette[item.value]} />
+              ))}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <div className="h-[238px] w-[238px] rounded-full border-[36px] border-gray-200 bg-white" />
+        </div>
+      )}
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+        <span className="text-4xl font-semibold leading-none text-gray-700">{centerValue}</span>
+        <span className="mt-2 text-sm font-medium text-gray-500">{centerLabel}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <ReportCard title="Views and Estimated Minutes Watched by Subscribed Status of Users">
+      {normalized.length > 0 ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:gap-8">
+            <div className="flex justify-center">
+              {renderDonut(
+                positiveViewRows,
+                'views',
+                totalViews,
+                fmt(totalViews),
+                primaryViewLabel,
+              )}
+            </div>
+            <div className="flex justify-center">
+              {renderDonut(
+                positiveMinuteRows,
+                'estimatedMinutesWatched',
+                totalMinutes,
+                totalMinutes > 0 ? `${formatPreciseMetric(totalMinutes)}m` : '0m',
+                primaryMinuteLabel,
+              )}
+            </div>
+          </div>
+
+          <div className="mx-auto max-w-3xl overflow-hidden rounded-xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_90px_170px] gap-x-5 border-b border-gray-200 px-5 py-4 text-[12px] font-bold uppercase tracking-widest text-gray-500">
+              <span>Type</span>
+              <span className="text-right">Views</span>
+              <span className="text-right">Mins_Watched</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {normalized.map((item) => (
+                <div key={item.value} className="grid grid-cols-[minmax(0,1fr)_90px_170px] items-center gap-x-5 px-5 py-5 text-base">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <span className="h-4 w-4 flex-shrink-0 rounded-full" style={{ backgroundColor: palette[item.value] }} />
+                    <span className={`truncate font-medium ${item.views > 0 || item.estimatedMinutesWatched > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
+                  </div>
+                  <span className={`text-right font-medium ${item.views > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{fmt(item.views)}</span>
+                  <span className={`text-right font-medium ${item.estimatedMinutesWatched > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{formatPreciseMetric(item.estimatedMinutesWatched)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        chartEmptyState()
+      )}
+    </ReportCard>
+  );
+};
+
 const YoutubeCountryMapCard = ({
   title,
   rows,
@@ -2974,53 +3143,9 @@ const Analytics = () => {
                 </ReportCard>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <ReportCard title="Views by Device Type">
-                    <ReportDonutBreakdown
-                      items={(youtubeVideoPerformance.views_by_device_type || []).map((item) => ({
-                        label: item.label,
-                        engagement: item.views,
-                      }))}
-                      valueKey="engagement"
-                      valueHeader="Views"
-                      totalValue={(youtubeVideoPerformance.views_by_device_type || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
-                    />
-                  </ReportCard>
+                  <YoutubeDeviceTypeCard items={youtubeVideoPerformance.views_by_device_type || []} />
 
-                  <ReportCard title="Views & Estimated Minutes Watched by Subscribed Status">
-                    {(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).length > 0 ? (
-                      <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
-                        <div className="space-y-3">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Views</p>
-                          <ReportDonutBreakdown
-                            items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
-                              label: item.label,
-                              engagement: item.views,
-                            }))}
-                            valueKey="engagement"
-                            valueHeader="Views"
-                            totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
-                          />
-                        </div>
-                        <div className="space-y-3">
-                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Estimated Minutes Watched</p>
-                          <ReportDonutBreakdown
-                            items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
-                              label: item.label,
-                              engagement: item.estimatedMinutesWatched,
-                            }))}
-                            valueKey="engagement"
-                            valueHeader="Minutes"
-                            valueFormatter={formatPreciseMetric}
-                            totalFormatter={formatPreciseMetric}
-                            totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.estimatedMinutesWatched) || 0), 0)}
-                            showZeroBreakdown
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </ReportCard>
+                  <YoutubeSubscribedStatusCard items={youtubeVideoPerformance.views_minutes_by_subscribed_status || []} />
                 </div>
               </div>
             )}
