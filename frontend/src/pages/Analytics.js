@@ -722,7 +722,8 @@ const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data availa
 };
 
 const YoutubeDeviceTypeCard = ({ items }) => {
-  const palette = ['#2f6690', '#4a86b8', '#7aa6cf', '#9fc4df', '#c6dced'];
+  // Distinct categorical colors (not blue shades) to match "Type" identity at a glance.
+  const palette = ['#2563eb', '#16a34a', '#f97316', '#a855f7', '#64748b'];
   const positiveItems = (items || []).filter((item) => Number(item?.views) > 0);
   const totalViews = positiveItems.reduce((sum, item) => sum + (Number(item?.views) || 0), 0);
 
