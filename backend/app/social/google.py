@@ -124,7 +124,19 @@ class GoogleAuth:
             
             if response.status_code != 200:
                 logging.error(f"YouTube API Error: {response.text}")
-                raise HTTPException(status_code=400, detail="Failed to fetch channel info")
+                detail = "Failed to fetch channel info"
+                try:
+                    payload = response.json()
+                    error = payload.get("error") or {}
+                    reason = ""
+                    errors = error.get("errors") or []
+                    if errors:
+                        reason = str(errors[0].get("reason") or "")
+                    if response.status_code == 401 or reason == "authError":
+                        detail = "YouTube access was revoked or expired. Reconnect the account."
+                except Exception:
+                    pass
+                raise HTTPException(status_code=400, detail=detail)
                 
             data = response.json()
             items = data.get('items', [])
