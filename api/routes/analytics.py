@@ -2099,6 +2099,8 @@ async def analytics_youtube_report(
             "top_videos": {
                 "views": _youtube_video_card(max(top_videos_by_views, key=lambda item: _metric_int(item.get("views")), default=None)),
                 "minutes_watched": _youtube_video_card(max(top_videos_by_minutes, key=lambda item: float(item.get("estimated_minutes_watched") or 0), default=None)),
+                "top5_views": [_youtube_video_card(item) for item in top_videos_by_views[:5]],
+                "top5_minutes_watched": [_youtube_video_card(item) for item in top_videos_by_minutes[:5]],
             },
             "views_by_geography": merged_views_geo_payload,
             "estimated_minutes_watched_by_geography": merged_minutes_geo_payload,

@@ -1036,6 +1036,56 @@ const YoutubeTopVideoCard = ({ title, video, metricLabel, primaryMetric, action 
   </ReportCard>
 );
 
+const YoutubeTopVideosStrip = ({ title, videos, metricLabel, primaryMetric, action }) => (
+  <ReportCard title={title} action={action}>
+    {(videos || []).length > 0 ? (
+      <div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
+        {videos.map((video, index) => (
+          <div key={video.id || `${video.title}-${index}`} className="w-[260px] flex-shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <span className="text-xs font-bold uppercase tracking-widest text-gray-400">#{index + 1}</span>
+              <span className="text-xs font-semibold text-gray-500">via YouTube</span>
+            </div>
+            {video.thumbnail_url ? (
+              <img src={video.thumbnail_url} alt="" className="h-36 w-full object-cover" />
+            ) : (
+              <div className="h-36 w-full bg-gray-100 flex items-center justify-center text-sm text-gray-400">No thumbnail</div>
+            )}
+            <div className="space-y-3 px-4 py-4">
+              <p className="line-clamp-2 text-lg font-semibold text-gray-900">{video.title || video.content || '(untitled)'}</p>
+              <p className="text-sm text-gray-500">
+                {video.timestamp ? format(parseISO(video.timestamp), 'd MMM yyyy h:mm a') : '—'}
+              </p>
+              <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">{metricLabel}</span>
+                  <span className="font-semibold text-gray-900">
+                    {primaryMetric === 'estimated_minutes_watched'
+                      ? formatPreciseMetric(video.estimated_minutes_watched)
+                      : fmt(video.views)}
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-gray-100 px-3 py-2">
+                  <p className="text-gray-400">Views</p>
+                  <p className="mt-1 font-semibold text-gray-800">{fmt(video.views)}</p>
+                </div>
+                <div className="rounded-lg border border-gray-100 px-3 py-2">
+                  <p className="text-gray-400">Minutes</p>
+                  <p className="mt-1 font-semibold text-gray-800">{formatPreciseMetric(video.estimated_minutes_watched)}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      chartEmptyState('No YouTube video data is available for this period.')
+    )}
+  </ReportCard>
+);
+
 // Post card for the Posts tab
 const PostCard = ({ post }) => {
   const plat = post.platform || 'unknown';
@@ -1910,9 +1960,9 @@ const Analytics = () => {
   );
   const youtubeSubscriberGrowthHasData = chartHasData(youtubeSubscriberGrowthTimeline, ['gained', 'lost', 'net']);
   const youtubeViewsMinutesHasData = chartHasData(youtubeViewsMinutesTimeline, ['views', 'estimated_minutes_watched']);
-  const youtubeTopVideo = youtubeTopVideoMetric === 'estimated_minutes_watched'
-    ? youtubeVideoPerformance.top_videos?.minutes_watched
-    : youtubeVideoPerformance.top_videos?.views;
+  const youtubeTopVideos = youtubeTopVideoMetric === 'estimated_minutes_watched'
+    ? (youtubeVideoPerformance.top_videos?.top5_minutes_watched || [])
+    : (youtubeVideoPerformance.top_videos?.top5_views || []);
   const youtubeAutoRefreshSeconds = Number(
     youtubeViewsByGeographyCard.meta?.auto_refresh_seconds
     || youtubeMinutesByGeographyCard.meta?.auto_refresh_seconds
@@ -3075,9 +3125,9 @@ const Analytics = () => {
                   )}
                 </ReportCard>
 
-                <YoutubeTopVideoCard
+                <YoutubeTopVideosStrip
                   title="Top Videos By"
-                  video={youtubeTopVideo}
+                  videos={youtubeTopVideos}
                   metricLabel={youtubeTopVideoMetric === 'estimated_minutes_watched' ? 'Minutes Watched' : 'Views'}
                   primaryMetric={youtubeTopVideoMetric}
                   action={(
