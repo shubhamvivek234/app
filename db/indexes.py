@@ -85,6 +85,17 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.api_keys, [("key_hash", 1)], unique=True)
     await _safe_create_index(db.api_keys, [("workspace_id", 1), ("revoked", 1), ("created_at", -1)])
 
+    # youtube_analytics_snapshots
+    await _safe_create_index(
+        db.youtube_analytics_snapshots,
+        [("account_id", 1), ("platform", 1), ("report_type", 1), ("metric", 1), ("window_days", 1), ("as_of_date", -1)],
+        unique=True,
+    )
+    await _safe_create_index(
+        db.youtube_analytics_snapshots,
+        [("platform", 1), ("report_type", 1), ("window_days", 1), ("last_refreshed_at", -1)],
+    )
+
     # workspace_invites
     await _safe_create_index(db.workspace_invites, [("token", 1)], unique=True)
     await _safe_create_index(db.workspace_invites, [("workspace_id", 1), ("status", 1), ("created_at", -1)])

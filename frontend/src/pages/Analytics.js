@@ -331,6 +331,29 @@ const formatPreciseMetric = (value) => {
   return num.toFixed(num >= 10 ? 1 : 4).replace(/\.?0+$/, '');
 };
 
+const formatAnalyticsDate = (value, includeTime = false) => {
+  if (!value) return '';
+  try {
+    return format(parseISO(String(value)), includeTime ? 'MMM d, yyyy h:mm a' : 'MMM d, yyyy');
+  } catch {
+    return String(value);
+  }
+};
+
+const formatAutoRefreshInterval = (seconds) => {
+  const totalSeconds = Number(seconds) || 0;
+  if (!totalSeconds) return '';
+  if (totalSeconds % 3600 === 0) {
+    const hours = totalSeconds / 3600;
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  if (totalSeconds % 60 === 0) {
+    const minutes = totalSeconds / 60;
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  return `${totalSeconds} seconds`;
+};
+
 const bucketMultiValueSeries = (rows, days, granularity, keys) => mergeBucketedSeries(
   Object.fromEntries(
     keys.map((key) => [
@@ -354,6 +377,25 @@ const countryNameForCode = (code) => {
 const percentForBreakdown = (value, total) => {
   if (!total) return 0;
   return Math.round(((Number(value) || 0) / total) * 100);
+};
+
+const normalizeYoutubeGeographyCard = (payload, fallbackMetricLabel) => {
+  if (Array.isArray(payload)) {
+    return {
+      rows: payload,
+      metricLabel: fallbackMetricLabel,
+      meta: null,
+      emptyLabel: 'No data available currently for this report.',
+    };
+  }
+
+  const normalizedPayload = payload && typeof payload === 'object' ? payload : {};
+  return {
+    rows: normalizedPayload.rows || [],
+    metricLabel: normalizedPayload.metric_label || fallbackMetricLabel,
+    meta: normalizedPayload,
+    emptyLabel: normalizedPayload.provider_message || 'YouTube did not return geography data for this channel in the selected period.',
+  };
 };
 
 const pctPillColor = (value) => (
@@ -569,6 +611,7 @@ const YoutubeCountryMapCard = ({
   title,
   rows,
   metricLabel,
+  meta,
   valueFormatter = formatPreciseMetric,
   action,
   emptyLabel = 'No data available currently for this report.',
@@ -581,11 +624,28 @@ const YoutubeCountryMapCard = ({
     }))
     .filter((row) => row.countryName);
   const topRows = positiveRows.slice(0, 5);
+  const topRowsTotal = topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
   const valueByCountry = Object.fromEntries(positiveRows.map((row) => [row.countryName, Number(row.count) || 0]));
   const maxValue = Math.max(...Object.values(valueByCountry), 0);
+  const effectiveEndLabel = formatAnalyticsDate(meta?.effective_end_date, false);
+  const lastRefreshedLabel = formatAnalyticsDate(meta?.last_refreshed_at, true);
+  const autoRefreshLabel = formatAutoRefreshInterval(meta?.auto_refresh_seconds);
+  const freshnessLabel = meta?.source === 'snapshot'
+    ? (effectiveEndLabel ? `Showing last available geography data from ${effectiveEndLabel}` : 'Showing last available geography snapshot')
+    : (effectiveEndLabel ? `Updated through ${effectiveEndLabel}` : '');
+  const settledLabel = meta?.is_lag_adjusted ? "Using YouTube's latest settled geography data" : '';
+  const showMeta = Boolean(freshnessLabel || settledLabel || lastRefreshedLabel || autoRefreshLabel);
 
   return (
     <ReportCard title={title} action={action}>
+      {showMeta && (
+        <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+          {freshnessLabel && <span>{freshnessLabel}</span>}
+          {settledLabel && <span>{settledLabel}</span>}
+          {lastRefreshedLabel && <span>Last refreshed {lastRefreshedLabel}</span>}
+          {autoRefreshLabel && <span>Auto-refreshes every {autoRefreshLabel}</span>}
+        </div>
+      )}
       {topRows.length === 0 ? (
         chartEmptyState(emptyLabel)
       ) : (
@@ -635,11 +695,11 @@ const YoutubeCountryMapCard = ({
                     <div className="h-2 w-20 rounded-full bg-gray-200 overflow-hidden">
                       <div
                         className="h-full rounded-full bg-[#2f6690]"
-                        style={{ width: `${percentForBreakdown(row.count, topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0))}%` }}
+                        style={{ width: `${percentForBreakdown(row.count, topRowsTotal)}%` }}
                       />
                     </div>
                     <span className="w-12 text-right text-lg text-gray-700">
-                      {percentForBreakdown(row.count, topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0))}%
+                      {percentForBreakdown(row.count, topRowsTotal)}%
                     </span>
                   </div>
                 </div>
@@ -1543,6 +1603,14 @@ const Analytics = () => {
   const youtubeSummary = youtubeReport?.summary || {};
   const youtubeAudience = youtubeReport?.audience || {};
   const youtubeVideoPerformance = youtubeReport?.video_performance || {};
+  const youtubeViewsByGeographyCard = normalizeYoutubeGeographyCard(
+    youtubeVideoPerformance.views_by_geography,
+    'Views',
+  );
+  const youtubeMinutesByGeographyCard = normalizeYoutubeGeographyCard(
+    youtubeVideoPerformance.estimated_minutes_watched_by_geography,
+    'Minutes Watched',
+  );
   const youtubeSubscriberGrowthTimeline = bucketMultiValueSeries(
     youtubeAudience.subscriber_growth || [],
     days,
@@ -1562,6 +1630,29 @@ const Analytics = () => {
   const youtubeTopVideo = youtubeTopVideoMetric === 'estimated_minutes_watched'
     ? youtubeVideoPerformance.top_videos?.minutes_watched
     : youtubeVideoPerformance.top_videos?.views;
+  const youtubeAutoRefreshSeconds = Number(
+    youtubeViewsByGeographyCard.meta?.auto_refresh_seconds
+    || youtubeMinutesByGeographyCard.meta?.auto_refresh_seconds
+    || 15 * 60
+  );
+  useEffect(() => {
+    if (
+      selectedPlatform !== 'youtube'
+      || !['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)
+    ) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      fetchYoutubeReport();
+    }, Math.max(youtubeAutoRefreshSeconds, 60) * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeTab, selectedPlatform, fetchYoutubeReport, youtubeAutoRefreshSeconds]);
+
   const youtubeChartSelector = (
     <select
       value={youtubeChartGranularity}
@@ -2720,13 +2811,17 @@ const Analytics = () => {
 
                 <YoutubeCountryMapCard
                   title="Views by Geography"
-                  rows={youtubeVideoPerformance.views_by_geography || []}
-                  metricLabel="Views"
+                  rows={youtubeViewsByGeographyCard.rows}
+                  metricLabel={youtubeViewsByGeographyCard.metricLabel}
+                  meta={youtubeViewsByGeographyCard.meta}
+                  emptyLabel={youtubeViewsByGeographyCard.emptyLabel}
                 />
                 <YoutubeCountryMapCard
                   title="Estimated Minutes Watched by Geography"
-                  rows={youtubeVideoPerformance.estimated_minutes_watched_by_geography || []}
-                  metricLabel="Minutes Watched"
+                  rows={youtubeMinutesByGeographyCard.rows}
+                  metricLabel={youtubeMinutesByGeographyCard.metricLabel}
+                  meta={youtubeMinutesByGeographyCard.meta}
+                  emptyLabel={youtubeMinutesByGeographyCard.emptyLabel}
                   valueFormatter={formatPreciseMetric}
                 />
 

@@ -12,7 +12,13 @@ import httpx
 
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
-from utils.encryption import decrypt
+from utils.encryption import decrypt, encrypt
+from utils.youtube_geography import (
+    YOUTUBE_GEOGRAPHY_BACKGROUND_REFRESH_SECONDS,
+    compute_youtube_settled_window,
+    normalize_youtube_geography_rows,
+    store_youtube_geography_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,11 @@ celery_app.conf.beat_schedule.update({
         "args": ("7d",),
         "options": {"queue": "default"},
     },
+    "refresh-youtube-geography-snapshots": {
+        "task": "celery_workers.tasks.analytics.refresh_youtube_geography_snapshots",
+        "schedule": YOUTUBE_GEOGRAPHY_BACKGROUND_REFRESH_SECONDS,
+        "options": {"queue": "default"},
+    },
 })
 
 
@@ -37,6 +48,12 @@ celery_app.conf.beat_schedule.update({
 def collect_analytics(window: str = "24h") -> dict:
     """Collect engagement metrics for recently-published posts."""
     return asyncio.get_event_loop().run_until_complete(_async_collect(window))
+
+
+@celery_app.task(name="celery_workers.tasks.analytics.refresh_youtube_geography_snapshots")
+def refresh_youtube_geography_snapshots() -> dict:
+    """Refresh lag-adjusted YouTube geography snapshots for active accounts."""
+    return asyncio.get_event_loop().run_until_complete(_async_refresh_youtube_geography_snapshots())
 
 
 async def _async_collect(window: str) -> dict:
@@ -98,6 +115,161 @@ async def _async_collect(window: str) -> dict:
 
     logger.info("analytics: collected %d data points for window=%s", collected, window)
     return {"collected": collected, "window": window}
+
+
+async def _get_youtube_worker_access_token(db, account: dict) -> str:
+    encrypted_access_token = account.get("access_token")
+    if not encrypted_access_token:
+        raise ValueError("Missing YouTube access token")
+
+    access_token = decrypt(encrypted_access_token)
+    refresh_token_encrypted = account.get("refresh_token")
+
+    expires_at = account.get("expires_at") or account.get("token_expiry")
+    expires_dt = None
+    if isinstance(expires_at, str) and expires_at:
+        try:
+            expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except Exception:
+            expires_dt = None
+    elif isinstance(expires_at, datetime):
+        expires_dt = expires_at
+
+    if isinstance(expires_dt, datetime) and expires_dt.tzinfo is None:
+        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+    is_expired = isinstance(expires_dt, datetime) and expires_dt <= datetime.now(timezone.utc)
+    if not is_expired:
+        return access_token
+
+    if not refresh_token_encrypted:
+        return access_token
+
+    refresh_token = decrypt(refresh_token_encrypted)
+
+    from backend.app.social.google import GoogleAuth
+
+    refreshed = await GoogleAuth().refresh_access_token(refresh_token)
+    new_access_token = refreshed.get("access_token")
+    if not new_access_token:
+        raise ValueError("Failed to refresh YouTube access token")
+
+    now = datetime.now(timezone.utc)
+    updates: dict[str, object] = {
+        "access_token": encrypt(new_access_token),
+        "token_error": None,
+        "updated_at": now,
+    }
+    expires_in = refreshed.get("expires_in")
+    if expires_in:
+        expires_at_value = now + timedelta(seconds=int(expires_in))
+        updates["expires_at"] = expires_at_value
+        updates["token_expiry"] = expires_at_value
+    new_refresh_token = refreshed.get("refresh_token")
+    if new_refresh_token:
+        updates["refresh_token"] = encrypt(new_refresh_token)
+
+    await db.social_accounts.update_one(
+        {"account_id": account.get("account_id")},
+        {"$set": updates},
+    )
+    account.update(updates)
+    return new_access_token
+
+
+async def _async_refresh_youtube_geography_snapshots() -> dict:
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    from backend.app.social.google import GoogleAuth
+
+    auth = GoogleAuth()
+    cursor = db.social_accounts.find(
+        {"platform": "youtube", "is_active": True},
+        {
+            "_id": 0,
+            "account_id": 1,
+            "id": 1,
+            "user_id": 1,
+            "platform_user_id": 1,
+            "access_token": 1,
+            "refresh_token": 1,
+            "expires_at": 1,
+            "token_expiry": 1,
+        },
+    )
+
+    accounts_seen = 0
+    snapshots_written = 0
+    empty_queries = 0
+    failed_queries = 0
+
+    async for account in cursor:
+        accounts_seen += 1
+        account_id = account.get("account_id") or account.get("id")
+        try:
+            access_token = await _get_youtube_worker_access_token(db, account)
+        except Exception as exc:
+            failed_queries += 1
+            logger.warning("youtube geography refresh: failed to get token for %s: %s", account_id, exc)
+            continue
+
+        for window_days in (7, 30, 90):
+            effective_start_date, effective_end_date, _ = compute_youtube_settled_window(window_days)
+            for metric in ("views", "estimatedMinutesWatched"):
+                try:
+                    rows = await auth.query_analytics_report(
+                        access_token,
+                        metrics=[metric],
+                        start_date=effective_start_date,
+                        end_date=effective_end_date,
+                        dimensions=["country"],
+                        sort=[f"-{metric}"],
+                        max_results=25,
+                    )
+                except Exception as exc:
+                    failed_queries += 1
+                    logger.warning(
+                        "youtube geography refresh: query failed for %s window=%sd metric=%s: %s",
+                        account_id,
+                        window_days,
+                        metric,
+                        exc,
+                    )
+                    continue
+
+                normalized_rows = normalize_youtube_geography_rows(rows, value_key=metric)
+                if not normalized_rows:
+                    empty_queries += 1
+                    continue
+
+                await store_youtube_geography_snapshot(
+                    db,
+                    account_id=account_id,
+                    user_id=account.get("user_id"),
+                    channel_id=account.get("platform_user_id"),
+                    metric=metric,
+                    window_days=window_days,
+                    rows=normalized_rows,
+                    effective_start_date=effective_start_date,
+                    effective_end_date=effective_end_date,
+                    fetched_at=datetime.now(timezone.utc),
+                )
+                snapshots_written += 1
+
+    logger.info(
+        "youtube geography refresh: accounts=%d snapshots_written=%d empty_queries=%d failed_queries=%d",
+        accounts_seen,
+        snapshots_written,
+        empty_queries,
+        failed_queries,
+    )
+    return {
+        "accounts_seen": accounts_seen,
+        "snapshots_written": snapshots_written,
+        "empty_queries": empty_queries,
+        "failed_queries": failed_queries,
+    }
 
 
 async def _fetch_platform_metrics(

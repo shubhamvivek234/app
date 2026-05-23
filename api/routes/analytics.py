@@ -9,6 +9,15 @@ from fastapi import APIRouter, HTTPException, Query
 from api.deps import CurrentUser, DB
 from utils.encryption import decrypt
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
+from utils.youtube_geography import (
+    YOUTUBE_GEOGRAPHY_DEFAULT_EMPTY_MESSAGE,
+    build_youtube_geography_payload,
+    compute_youtube_settled_window,
+    load_latest_youtube_geography_snapshot,
+    merge_youtube_geography_payloads,
+    normalize_youtube_geography_rows,
+    store_youtube_geography_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
@@ -829,6 +838,77 @@ def _youtube_period_bounds(days: int) -> tuple[datetime.date, datetime.date, dat
     return start_date, end_date, previous_start, previous_end
 
 
+async def _resolve_youtube_geography_payload(
+    db: DB,
+    *,
+    account: dict[str, Any],
+    metric: str,
+    metric_label: str,
+    query_rows: list[dict[str, Any]],
+    effective_start_date,
+    effective_end_date,
+    is_lag_adjusted: bool,
+) -> dict[str, Any]:
+    account_id = account.get("account_id") or account.get("id")
+    normalized_rows = normalize_youtube_geography_rows(query_rows, value_key=metric)
+    if normalized_rows:
+        fetched_at = datetime.now(timezone.utc)
+        await store_youtube_geography_snapshot(
+            db,
+            account_id=account_id,
+            user_id=account.get("user_id"),
+            channel_id=account.get("platform_user_id"),
+            metric=metric,
+            window_days=account.get("_youtube_window_days") or 30,
+            rows=normalized_rows,
+            effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date,
+            fetched_at=fetched_at,
+        )
+        return build_youtube_geography_payload(
+            rows=normalized_rows,
+            metric_label=metric_label,
+            effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date,
+            last_refreshed_at=fetched_at,
+            source="live",
+            provider_message=None,
+            is_lag_adjusted=is_lag_adjusted,
+            is_snapshot_fallback=False,
+        )
+
+    snapshot = await load_latest_youtube_geography_snapshot(
+        db,
+        account_id=account_id,
+        metric=metric,
+        window_days=account.get("_youtube_window_days") or 30,
+    )
+    if snapshot and snapshot.get("rows"):
+        return build_youtube_geography_payload(
+            rows=snapshot.get("rows") or [],
+            metric_label=metric_label,
+            effective_start_date=snapshot.get("effective_start_date"),
+            effective_end_date=snapshot.get("effective_end_date"),
+            last_refreshed_at=snapshot.get("last_refreshed_at"),
+            source="snapshot",
+            provider_message=None,
+            is_lag_adjusted=bool(is_lag_adjusted or snapshot.get("effective_end_date") != effective_end_date.isoformat()),
+            is_snapshot_fallback=True,
+        )
+
+    return build_youtube_geography_payload(
+        rows=[],
+        metric_label=metric_label,
+        effective_start_date=effective_start_date,
+        effective_end_date=effective_end_date,
+        last_refreshed_at=None,
+        source="empty",
+        provider_message=YOUTUBE_GEOGRAPHY_DEFAULT_EMPTY_MESSAGE,
+        is_lag_adjusted=is_lag_adjusted,
+        is_snapshot_fallback=False,
+    )
+
+
 def _youtube_posts_in_window(posts: list[dict[str, Any]], start_date, end_date) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
     for post in posts:
@@ -1374,6 +1454,10 @@ async def analytics_youtube_report(
 
     auth = GoogleAuth()
     start_date, end_date, previous_start, previous_end = _youtube_period_bounds(days)
+    geography_start_date, geography_end_date, geography_is_lag_adjusted = compute_youtube_settled_window(
+        days,
+        selected_end_date=end_date,
+    )
     all_feed: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     message: str | None = None
@@ -1422,8 +1506,8 @@ async def analytics_youtube_report(
     views_series: list[list[dict[str, Any]]] = []
     minutes_series: list[list[dict[str, Any]]] = []
     subscriber_geo_items: list[dict[str, Any]] = []
-    views_geo_items: list[dict[str, Any]] = []
-    minutes_geo_items: list[dict[str, Any]] = []
+    views_geo_payloads: list[dict[str, Any]] = []
+    minutes_geo_payloads: list[dict[str, Any]] = []
     traffic_source_items: list[dict[str, Any]] = []
     playback_location_items: list[dict[str, Any]] = []
     device_type_items: list[dict[str, Any]] = []
@@ -1442,14 +1526,16 @@ async def analytics_youtube_report(
         max_results: int | None = None,
         label: str,
         critical: bool = False,
+        start_date_override=None,
+        end_date_override=None,
     ) -> list[dict[str, Any]]:
         nonlocal analytics_enabled, message, card_metrics_supported
         try:
             rows = await auth.query_analytics_report(
                 access_token,
                 metrics=metrics,
-                start_date=start_date,
-                end_date=end_date,
+                start_date=start_date_override or start_date,
+                end_date=end_date_override or end_date,
                 dimensions=dimensions,
                 filters=filters,
                 sort=sort,
@@ -1507,6 +1593,7 @@ async def analytics_youtube_report(
             return {}
 
     for account in accounts:
+        account["_youtube_window_days"] = days
         label = _account_error_label(account)
         encrypted_token = account.get("access_token")
         platform_user_id = account.get("platform_user_id")
@@ -1692,16 +1779,20 @@ async def analytics_youtube_report(
             sort=["-views"],
             max_results=25,
             label="views_geography",
+            start_date_override=geography_start_date,
+            end_date_override=geography_end_date,
         )
-        views_geo_items.extend(
-            [
-                {
-                    "country_code": str(row.get("country") or "").upper(),
-                    "count": _metric_int(row.get("views")),
-                }
-                for row in views_geo_rows
-                if row.get("country")
-            ]
+        views_geo_payloads.append(
+            await _resolve_youtube_geography_payload(
+                db,
+                account=account,
+                metric="views",
+                metric_label="Views",
+                query_rows=views_geo_rows,
+                effective_start_date=geography_start_date,
+                effective_end_date=geography_end_date,
+                is_lag_adjusted=geography_is_lag_adjusted,
+            )
         )
 
         minutes_geo_rows = await safe_query(
@@ -1711,16 +1802,20 @@ async def analytics_youtube_report(
             sort=["-estimatedMinutesWatched"],
             max_results=25,
             label="minutes_geography",
+            start_date_override=geography_start_date,
+            end_date_override=geography_end_date,
         )
-        minutes_geo_items.extend(
-            [
-                {
-                    "country_code": str(row.get("country") or "").upper(),
-                    "count": round(float(row.get("estimatedMinutesWatched") or 0), 4),
-                }
-                for row in minutes_geo_rows
-                if row.get("country")
-            ]
+        minutes_geo_payloads.append(
+            await _resolve_youtube_geography_payload(
+                db,
+                account=account,
+                metric="estimatedMinutesWatched",
+                metric_label="Minutes Watched",
+                query_rows=minutes_geo_rows,
+                effective_start_date=geography_start_date,
+                effective_end_date=geography_end_date,
+                is_lag_adjusted=geography_is_lag_adjusted,
+            )
         )
 
         traffic_source_items.extend(
@@ -1877,15 +1972,13 @@ async def analytics_youtube_report(
         "key",
         ["count"],
     )
-    merged_views_geo = _merge_named_metrics(
-        [{**item, "key": item.get("country_code"), "label": item.get("country_code")} for item in views_geo_items],
-        "key",
-        ["count"],
+    merged_views_geo_payload = merge_youtube_geography_payloads(
+        views_geo_payloads,
+        metric_label="Views",
     )
-    merged_minutes_geo = _merge_named_metrics(
-        [{**item, "key": item.get("country_code"), "label": item.get("country_code")} for item in minutes_geo_items],
-        "key",
-        ["count"],
+    merged_minutes_geo_payload = merge_youtube_geography_payloads(
+        minutes_geo_payloads,
+        metric_label="Minutes Watched",
     )
     merged_search_terms = _merge_named_metrics(
         [{"key": item.get("term"), "label": item.get("term"), "views": item.get("views"), "estimated_minutes_watched": item.get("estimated_minutes_watched")} for item in search_term_items],
@@ -1893,7 +1986,7 @@ async def analytics_youtube_report(
         ["views", "estimated_minutes_watched"],
     )
 
-    summary_top_geography = merged_views_geo[0] if merged_views_geo else None
+    summary_top_geography = (merged_views_geo_payload.get("rows") or [None])[0]
 
     report_has_primary_metrics = bool(
         audience_summary["subscribers_count"]
@@ -1945,7 +2038,7 @@ async def analytics_youtube_report(
                 "videos_change_pct": _pct_change(post_summary["videos"], previous_totals["videos"]),
                 "engagement_change_pct": _pct_change(post_summary["engagement"], previous_totals["engagement"]),
                 "top_video": _youtube_video_card(summary_top_video),
-                "top_geography_by_views": merged_views_geo[0] if merged_views_geo else None,
+                "top_geography_by_views": summary_top_geography,
             },
             "cards_summary": {
                 "card_impressions": cards_summary["card_impressions"],
@@ -1988,14 +2081,8 @@ async def analytics_youtube_report(
                 "views": _youtube_video_card(max(top_videos_by_views, key=lambda item: _metric_int(item.get("views")), default=None)),
                 "minutes_watched": _youtube_video_card(max(top_videos_by_minutes, key=lambda item: float(item.get("estimated_minutes_watched") or 0), default=None)),
             },
-            "views_by_geography": [
-                {"country_code": row.get("key"), "count": row.get("count")}
-                for row in merged_views_geo[:20]
-            ],
-            "estimated_minutes_watched_by_geography": [
-                {"country_code": row.get("key"), "count": row.get("count")}
-                for row in merged_minutes_geo[:20]
-            ],
+            "views_by_geography": merged_views_geo_payload,
+            "estimated_minutes_watched_by_geography": merged_minutes_geo_payload,
             "traffic_source": _merge_named_metrics(traffic_source_items, "value", ["views", "estimatedMinutesWatched"])[:10],
             "playback_location": _merge_named_metrics(playback_location_items, "value", ["views", "estimatedMinutesWatched"])[:10],
             "youtube_search_terms": [
