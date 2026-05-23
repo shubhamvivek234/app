@@ -1720,38 +1720,57 @@ async def analytics_youtube_report(
             views_series.append([{"date": synthetic_date, "count": _metric_int(engagement_snapshot.get("period_views"))}])
             minutes_series.append([{"date": synthetic_date, "count": float(engagement_snapshot.get("period_minutes_watched") or 0)}])
 
-        video_metric_rows = await safe_query(
+        top_videos_by_view_rows = await safe_query(
             access_token,
             ["views", "estimatedMinutesWatched", "likes", "comments", "shares"],
             dimensions=["video"],
             sort=["-views"],
             max_results=25,
-            label="top_videos",
+            label="top_videos_by_views",
         )
-        if video_metric_rows:
-            details = await auth.fetch_video_details(access_token, [str(row.get("video")) for row in video_metric_rows if row.get("video")])
-            for row in video_metric_rows:
-                video_id = str(row.get("video") or "")
-                detail = details.get(video_id, {})
-                snippet = detail.get("snippet", {})
-                stats = detail.get("statistics", {})
-                item = {
-                    "id": video_id,
-                    "title": snippet.get("title") or "",
-                    "content": snippet.get("title") or "",
-                    "thumbnail_url": (snippet.get("thumbnails") or {}).get("high", {}).get("url"),
-                    "timestamp": snippet.get("publishedAt"),
-                    "permalink": f"https://youtube.com/watch?v={video_id}" if video_id else None,
-                    "views": _metric_int(row.get("views") or stats.get("viewCount")),
-                    "estimated_minutes_watched": round(float(row.get("estimatedMinutesWatched") or 0), 4),
-                    "likes": _metric_int(row.get("likes") or stats.get("likeCount")),
-                    "comments": _metric_int(row.get("comments") or stats.get("commentCount")),
-                    "comments_count": _metric_int(row.get("comments") or stats.get("commentCount")),
-                    "shares": _metric_int(row.get("shares")),
-                }
-                item["engagement"] = item["likes"] + item["comments"] + item["shares"]
-                top_videos_by_views.append(item)
-                top_videos_by_minutes.append(item)
+        top_videos_by_minutes_rows = await safe_query(
+            access_token,
+            ["views", "estimatedMinutesWatched", "likes", "comments", "shares"],
+            dimensions=["video"],
+            sort=["-estimatedMinutesWatched"],
+            max_results=25,
+            label="top_videos_by_minutes",
+        )
+        unique_video_ids = {
+            str(row.get("video") or "")
+            for row in [*(top_videos_by_view_rows or []), *(top_videos_by_minutes_rows or [])]
+            if row.get("video")
+        }
+        if unique_video_ids:
+            details = await auth.fetch_video_details(access_token, sorted(unique_video_ids))
+
+            def build_top_video_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                items: list[dict[str, Any]] = []
+                for row in rows:
+                    video_id = str(row.get("video") or "")
+                    detail = details.get(video_id, {})
+                    snippet = detail.get("snippet", {})
+                    stats = detail.get("statistics", {})
+                    item = {
+                        "id": video_id,
+                        "title": snippet.get("title") or "",
+                        "content": snippet.get("title") or "",
+                        "thumbnail_url": (snippet.get("thumbnails") or {}).get("high", {}).get("url"),
+                        "timestamp": snippet.get("publishedAt"),
+                        "permalink": f"https://youtube.com/watch?v={video_id}" if video_id else None,
+                        "views": _metric_int(row.get("views") or stats.get("viewCount")),
+                        "estimated_minutes_watched": round(float(row.get("estimatedMinutesWatched") or 0), 4),
+                        "likes": _metric_int(row.get("likes") or stats.get("likeCount")),
+                        "comments": _metric_int(row.get("comments") or stats.get("commentCount")),
+                        "comments_count": _metric_int(row.get("comments") or stats.get("commentCount")),
+                        "shares": _metric_int(row.get("shares")),
+                    }
+                    item["engagement"] = item["likes"] + item["comments"] + item["shares"]
+                    items.append(item)
+                return items
+
+            top_videos_by_views.extend(build_top_video_items(top_videos_by_view_rows or []))
+            top_videos_by_minutes.extend(build_top_video_items(top_videos_by_minutes_rows or []))
 
         subscriber_geo_rows = await safe_query(
             access_token,

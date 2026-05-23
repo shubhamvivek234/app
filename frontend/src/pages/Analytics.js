@@ -541,38 +541,54 @@ const ReportCard = ({ title, children, action }) => (
   </div>
 );
 
-const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, emptyLabel = 'No data available currently for this report.' }) => {
+const ReportDonutBreakdown = ({
+  items,
+  valueKey = 'engagement',
+  totalValue,
+  emptyLabel = 'No data available currently for this report.',
+  valueHeader = 'Engagement',
+  valueFormatter = fmt,
+  totalFormatter = valueFormatter,
+  showZeroBreakdown = false,
+}) => {
   const palette = ['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'];
-  const positiveItems = (items || []).filter((item) => Number(item?.[valueKey]) > 0);
+  const sourceItems = items || [];
+  const positiveItems = sourceItems.filter((item) => Number(item?.[valueKey]) > 0);
   const computedTotal = totalValue ?? positiveItems.reduce((sum, item) => sum + (Number(item?.[valueKey]) || 0), 0);
+  const shouldRenderZeroBreakdown = showZeroBreakdown && sourceItems.length > 0;
 
-  if (!positiveItems.length) return chartEmptyState(emptyLabel);
+  if (!positiveItems.length && !shouldRenderZeroBreakdown) return chartEmptyState(emptyLabel);
 
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)] xl:items-center">
       <div className="flex items-center justify-center">
         <div className="relative h-[240px] w-[240px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={positiveItems}
-                dataKey={valueKey}
-                nameKey="label"
-                cx="50%"
-                cy="50%"
-                innerRadius={66}
-                outerRadius={96}
-                paddingAngle={2}
-              >
-                {positiveItems.map((entry, index) => (
-                  <Cell key={entry.type || entry.label} fill={palette[index % palette.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+          {positiveItems.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={positiveItems}
+                  dataKey={valueKey}
+                  nameKey="label"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={66}
+                  outerRadius={96}
+                  paddingAngle={2}
+                >
+                  {positiveItems.map((entry, index) => (
+                    <Cell key={entry.type || entry.label} fill={palette[index % palette.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <div className="h-[190px] w-[190px] rounded-full border-[28px] border-gray-200 bg-white" />
+            </div>
+          )}
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <span className="text-4xl font-semibold leading-none text-gray-700">{fmt(computedTotal)}</span>
+            <span className="text-4xl font-semibold leading-none text-gray-700">{totalFormatter(computedTotal)}</span>
             <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
           </div>
         </div>
@@ -581,11 +597,11 @@ const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, empt
       <div className="min-w-0">
         <div className="grid grid-cols-[minmax(0,1.3fr)_120px_90px] gap-x-4 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
           <span>Type</span>
-          <span className="text-right">Engagement</span>
+          <span className="text-right">{valueHeader}</span>
           <span className="text-right">%</span>
         </div>
         <div className="divide-y divide-gray-100">
-          {(items || []).map((item, index) => {
+          {sourceItems.map((item, index) => {
             const value = Number(item?.[valueKey]) || 0;
             const pct = computedTotal > 0 ? Math.round((value / computedTotal) * 100) : 0;
             const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
@@ -596,7 +612,7 @@ const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, empt
                   <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
                   <span className={`truncate font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
                 </div>
-                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{fmt(value)}</span>
+                <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{valueFormatter(value)}</span>
                 <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{pct}%</span>
               </div>
             );
@@ -604,6 +620,84 @@ const ReportDonutBreakdown = ({ items, valueKey = 'engagement', totalValue, empt
         </div>
       </div>
     </div>
+  );
+};
+
+const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data available currently for this report.' }) => {
+  const normalizedItems = (items || []).map((item) => ({
+    ...item,
+    views: Number(item?.views) || 0,
+    estimatedMinutesWatched: Number(item?.estimatedMinutesWatched) || 0,
+  }));
+  const hasRows = normalizedItems.length > 0;
+  const totalViews = normalizedItems.reduce((sum, item) => sum + item.views, 0);
+  const totalMinutes = normalizedItems.reduce((sum, item) => sum + item.estimatedMinutesWatched, 0);
+  const chartData = normalizedItems.map((item) => ({
+    ...item,
+    valueScore: item.views + item.estimatedMinutesWatched,
+  }));
+
+  return (
+    <ReportCard title={title}>
+      {hasRows ? (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Total Views</p>
+              <p className="mt-2 text-3xl font-bold text-sky-700">{fmt(totalViews)}</p>
+            </div>
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Estimated Minutes Watched</p>
+              <p className="mt-2 text-3xl font-bold text-gray-700">{formatPreciseMetric(totalMinutes)}</p>
+            </div>
+          </div>
+
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} layout="vertical" margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={120}
+                  tick={{ fontSize: 11, fill: '#6b7280' }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  formatter={(value, name) => (
+                    name === 'Estimated Minutes Watched'
+                      ? formatPreciseMetric(value)
+                      : fmt(value)
+                  )}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                <Bar dataKey="views" name="Views" fill="#2f6690" radius={[0, 4, 4, 0]} barSize={14} minPointSize={2} />
+                <Bar dataKey="estimatedMinutesWatched" name="Estimated Minutes Watched" fill="#d1d5db" radius={[0, 4, 4, 0]} barSize={14} minPointSize={2} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_100px_160px] gap-x-4 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+              <span>Type</span>
+              <span className="text-right">Views</span>
+              <span className="text-right">Estimated Minutes Watched</span>
+            </div>
+            {normalizedItems.map((item) => (
+              <div key={item.value || item.label} className="grid grid-cols-[minmax(0,1fr)_100px_160px] gap-x-4 px-4 py-3 text-sm">
+                <span className="truncate font-medium text-gray-700">{item.label}</span>
+                <span className="text-right text-gray-700">{fmt(item.views)}</span>
+                <span className="text-right text-gray-700">{formatPreciseMetric(item.estimatedMinutesWatched)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        chartEmptyState(emptyLabel)
+      )}
+    </ReportCard>
   );
 };
 
@@ -2826,41 +2920,16 @@ const Analytics = () => {
                 />
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <ReportCard title="Playback Location">
-                    {(youtubeVideoPerformance.playback_location || []).length > 0 ? (
-                      <ResponsiveContainer width="100%" height={260}>
-                        <BarChart data={youtubeVideoPerformance.playback_location}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} interval={0} angle={-15} textAnchor="end" height={60} />
-                          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                          <Tooltip />
-                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                          <Bar dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} minPointSize={2} />
-                          <Bar dataKey="estimatedMinutesWatched" name="Estimated Minutes Watched" fill="#d1d5db" radius={[4, 4, 0, 0]} minPointSize={2} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </ReportCard>
-
-                  <ReportCard title="Traffic Source">
-                    {(youtubeVideoPerformance.traffic_source || []).length > 0 ? (
-                      <ResponsiveContainer width="100%" height={260}>
-                        <BarChart data={youtubeVideoPerformance.traffic_source}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} interval={0} angle={-15} textAnchor="end" height={60} />
-                          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
-                          <Tooltip />
-                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                          <Bar dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} minPointSize={2} />
-                          <Bar dataKey="estimatedMinutesWatched" name="Estimated Minutes Watched" fill="#d1d5db" radius={[4, 4, 0, 0]} minPointSize={2} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      chartEmptyState()
-                    )}
-                  </ReportCard>
+                  <YoutubeMetricBreakdownCard
+                    title="Playback Location"
+                    items={youtubeVideoPerformance.playback_location || []}
+                    emptyLabel="Playback-location data is not available for this period."
+                  />
+                  <YoutubeMetricBreakdownCard
+                    title="Traffic Source"
+                    items={youtubeVideoPerformance.traffic_source || []}
+                    emptyLabel="Traffic-source data is not available for this period."
+                  />
                 </div>
 
                 <ReportCard title="YouTube Search Terms">
@@ -2892,6 +2961,7 @@ const Analytics = () => {
                         engagement: item.views,
                       }))}
                       valueKey="engagement"
+                      valueHeader="Views"
                       totalValue={(youtubeVideoPerformance.views_by_device_type || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
                     />
                   </ReportCard>
@@ -2899,22 +2969,33 @@ const Analytics = () => {
                   <ReportCard title="Views & Estimated Minutes Watched by Subscribed Status">
                     {(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).length > 0 ? (
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                        <ReportDonutBreakdown
-                          items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
-                            label: item.label,
-                            engagement: item.views,
-                          }))}
-                          valueKey="engagement"
-                          totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
-                        />
-                        <ReportDonutBreakdown
-                          items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
-                            label: item.label,
-                            engagement: item.estimatedMinutesWatched,
-                          }))}
-                          valueKey="engagement"
-                          totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.estimatedMinutesWatched) || 0), 0)}
-                        />
+                        <div className="space-y-3">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Views</p>
+                          <ReportDonutBreakdown
+                            items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
+                              label: item.label,
+                              engagement: item.views,
+                            }))}
+                            valueKey="engagement"
+                            valueHeader="Views"
+                            totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
+                          />
+                        </div>
+                        <div className="space-y-3">
+                          <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Estimated Minutes Watched</p>
+                          <ReportDonutBreakdown
+                            items={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).map((item) => ({
+                              label: item.label,
+                              engagement: item.estimatedMinutesWatched,
+                            }))}
+                            valueKey="engagement"
+                            valueHeader="Minutes Watched"
+                            valueFormatter={formatPreciseMetric}
+                            totalFormatter={formatPreciseMetric}
+                            totalValue={(youtubeVideoPerformance.views_minutes_by_subscribed_status || []).reduce((sum, item) => sum + (Number(item.estimatedMinutesWatched) || 0), 0)}
+                            showZeroBreakdown
+                          />
+                        </div>
                       </div>
                     ) : (
                       chartEmptyState()
