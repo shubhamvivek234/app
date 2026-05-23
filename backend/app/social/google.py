@@ -459,6 +459,19 @@ class GoogleAuth:
             return 0
         return int(num) if num.is_integer() else num
 
+    @classmethod
+    def _normalize_analytics_value(cls, value: Any, column_header: dict[str, Any] | None) -> Any:
+        if value is None:
+            return value
+        column_header = column_header or {}
+        data_type = str(column_header.get("dataType") or "").upper()
+        column_type = str(column_header.get("columnType") or "").upper()
+        if data_type in {"INTEGER", "FLOAT", "DOUBLE", "CURRENCY", "PERCENT"}:
+            return cls._safe_number(value)
+        if column_type == "METRIC":
+            return cls._safe_number(value)
+        return value
+
     @staticmethod
     def _analytics_error_detail(response: httpx.Response) -> str:
         body = response.text or ""
@@ -520,13 +533,17 @@ class GoogleAuth:
             raise HTTPException(status_code=response.status_code, detail=self._analytics_error_detail(response))
 
         payload = response.json()
-        columns = [column.get("name") for column in payload.get("columnHeaders", [])]
+        column_headers = payload.get("columnHeaders", []) or []
+        columns = [column.get("name") for column in column_headers]
         rows = payload.get("rows", []) or []
         normalized: list[dict[str, Any]] = []
         for row in rows:
             normalized.append(
                 {
-                    columns[idx]: self._safe_number(value) if isinstance(value, (int, float, str)) else value
+                    columns[idx]: self._normalize_analytics_value(
+                        value,
+                        column_headers[idx] if idx < len(column_headers) else None,
+                    )
                     for idx, value in enumerate(row)
                     if idx < len(columns)
                 }
