@@ -36,7 +36,12 @@ class GoogleAuth:
             raise HTTPException(status_code=500, detail="Google/YouTube credentials not configured")
             
         # Scopes for YouTube upload and channel management
-        scope = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly"
+        scope = (
+            "https://www.googleapis.com/auth/youtube.upload "
+            "https://www.googleapis.com/auth/youtube.readonly "
+            "https://www.googleapis.com/auth/yt-analytics.readonly "
+            "https://www.googleapis.com/auth/youtube.force-ssl"
+        )
         
         return (
             f"{self.AUTH_URL}"

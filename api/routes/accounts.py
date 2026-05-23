@@ -1212,6 +1212,24 @@ def _build_frontend_oauth_callback(frontend_base: str | None) -> str | None:
     return f"{normalized}/oauth/callback"
 
 
+def _normalize_google_scope_names(scope_value: str | list[str] | None) -> list[str]:
+    if not scope_value:
+        return []
+    if isinstance(scope_value, list):
+        raw_scopes = [str(item).strip() for item in scope_value if str(item).strip()]
+    else:
+        raw_scopes = [item.strip() for item in str(scope_value).split() if item.strip()]
+
+    mapping = {
+        "https://www.googleapis.com/auth/youtube.upload": "youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly": "youtube.readonly",
+        "https://www.googleapis.com/auth/yt-analytics.readonly": "yt-analytics.readonly",
+        "https://www.googleapis.com/auth/youtube.force-ssl": "youtube.force-ssl",
+        "https://www.googleapis.com/auth/youtube": "youtube",
+    }
+    return [mapping.get(scope, scope) for scope in raw_scopes]
+
+
 def _external_request_base(request: Request) -> str:
     forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
     forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
@@ -1298,8 +1316,12 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
 
     now = datetime.now(timezone.utc)
     account_id = f"{platform}_{user_id}_{secrets.token_hex(8)}"
+    query = {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")}
+    existing = await db.social_accounts.find_one(query, {"_id": 0, "refresh_token": 1})
+    raw_refresh_token = token_data.get("refresh_token")
+    refresh_token_value = encrypt(raw_refresh_token) if raw_refresh_token else (existing or {}).get("refresh_token", "")
     await db.social_accounts.update_one(
-        {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")},
+        query,
         {
             "$set": {
                 "id": account_id,
@@ -1314,12 +1336,17 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
                 "following_count": token_data.get("following_count"),
                 "posts_count": token_data.get("posts_count"),
                 "access_token": encrypt(token_data["access_token"]),
-                "refresh_token": encrypt(token_data.get("refresh_token", "")),
+                "refresh_token": refresh_token_value,
                 "scopes": token_data.get("scopes", []),
                 "expires_at": token_data.get("expires_at"),
                 "token_expiry": token_data.get("expires_at"),
                 "is_active": True,
                 "connected_at": now,
+                "requires_reconnect": False,
+                "reconnect_reason": None,
+                "reconnect_required_at": None,
+                "suspension_reason": None,
+                "suspended_at": None,
             }
         },
         upsert=True,
@@ -1347,7 +1374,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
 
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
-        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly",
+        "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl",
         "twitter": "tweet.read tweet.write users.read offline.access",
         "linkedin": linkedin_scopes,
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
@@ -1394,6 +1421,10 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     }
     if scope:
         params["scope"] = scope
+    if platform == "youtube":
+        params["access_type"] = "offline"
+        params["prompt"] = "consent"
+        params["include_granted_scopes"] = "true"
     return f"{base}?{urlencode(params)}"
 
 
@@ -1556,6 +1587,10 @@ async def _exchange_youtube_code(code: str, state_context: dict | None = None) -
         engagement = await auth.fetch_youtube_engagement(access_token, channel.get("id", ""))
         snippet = channel.get("snippet", {})
 
+        granted_scopes = _normalize_google_scope_names(tokens.get("scope"))
+        if granted_scopes and "youtube.force-ssl" not in granted_scopes:
+            logger.warning("YouTube OAuth completed without youtube.force-ssl scope: %s", granted_scopes)
+
         return {
             "access_token": access_token,
             "refresh_token": tokens.get("refresh_token"),
@@ -1566,7 +1601,7 @@ async def _exchange_youtube_code(code: str, state_context: dict | None = None) -
             or snippet.get("thumbnails", {}).get("default", {}).get("url"),
             "followers_count": engagement.get("subscribers"),
             "posts_count": engagement.get("video_count"),
-            "scopes": ["youtube.upload", "youtube.readonly", "yt-analytics.readonly"],
+            "scopes": granted_scopes or ["youtube.upload", "youtube.readonly", "yt-analytics.readonly", "youtube.force-ssl"],
             "expires_at": expires_at,
         }
     except Exception as exc:

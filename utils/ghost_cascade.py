@@ -10,6 +10,48 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+async def _pause_future_posts(
+    db,
+    social_account_id: str,
+    now: datetime,
+    paused_reason: str,
+) -> int:
+    paused_count = 0
+
+    result = await db.posts.update_many(
+        {
+            "social_account_id": social_account_id,
+            "status": "scheduled",
+            "scheduled_time": {"$gt": now},
+        },
+        {
+            "$set": {
+                "status": "paused",
+                "paused_reason": paused_reason,
+                "updated_at": now,
+            },
+        },
+    )
+    paused_count += result.modified_count
+
+    result_multi = await db.posts.update_many(
+        {
+            "platform_account_ids": social_account_id,
+            "status": "scheduled",
+            "scheduled_time": {"$gt": now},
+        },
+        {
+            "$set": {
+                "status": "paused",
+                "paused_reason": paused_reason,
+                "updated_at": now,
+            },
+        },
+    )
+    paused_count += result_multi.modified_count
+    return paused_count
+
+
 async def handle_ghost_account(
     db,
     social_account_id: str,
@@ -48,42 +90,16 @@ async def handle_ghost_account(
     user_id = account.get("user_id", "")
     platform = account.get("platform", "unknown")
 
-    # 2. Pause all future scheduled posts targeting this social account
-    result = await db.posts.update_many(
-        {
-            "social_account_id": social_account_id,
-            "status": "scheduled",
-            "scheduled_time": {"$gt": now},
-        },
-        {
-            "$set": {
-                "status": "paused",
-                "paused_reason": "account_suspended",
-                "updated_at": now,
-            },
-        },
-    )
-    paused_count = result.modified_count
-
-    # Also check posts that reference this account in a platforms list
-    result_multi = await db.posts.update_many(
-        {
-            "platform_account_ids": social_account_id,
-            "status": "scheduled",
-            "scheduled_time": {"$gt": now},
-        },
-        {
-            "$set": {
-                "status": "paused",
-                "paused_reason": "account_suspended",
-                "updated_at": now,
-            },
-        },
-    )
-    paused_count += result_multi.modified_count
+    paused_count = await _pause_future_posts(db, social_account_id, now, "account_suspended")
 
     # 3. Send ONE consolidated notification
-    account_name = account.get("account_name", account.get("username", social_account_id))
+    account_name = (
+        account.get("account_name")
+        or account.get("display_name")
+        or account.get("platform_username")
+        or account.get("username")
+        or social_account_id
+    )
     await db.notifications.insert_one({
         "user_id": user_id,
         "type": "account.suspended",
@@ -110,6 +126,84 @@ async def handle_ghost_account(
         platform,
         paused_count,
         suspension_reason,
+    )
+
+    return {"paused_count": paused_count, "account_id": social_account_id}
+
+
+async def handle_account_reconnect_required(
+    db,
+    social_account_id: str,
+    reconnect_reason: str,
+    *,
+    error_code: str | None = None,
+) -> dict:
+    """
+    Handle an account that can still be read but cannot publish until the user
+    reconnects with the right OAuth grant.
+
+    Unlike a ghost/suspended account, we keep the connection active for read
+    paths such as analytics, but pause future scheduled posts that would fail.
+    """
+    now = datetime.now(timezone.utc)
+
+    account = await db.social_accounts.find_one_and_update(
+        {"account_id": social_account_id},
+        {
+            "$set": {
+                "requires_reconnect": True,
+                "reconnect_reason": reconnect_reason,
+                "reconnect_required_at": now,
+                "updated_at": now,
+            },
+            "$unset": {
+                "suspension_reason": "",
+                "suspended_at": "",
+            },
+        },
+        return_document=True,
+    )
+
+    if not account:
+        logger.warning("Social account %s not found for reconnect-required flow", social_account_id)
+        return {"paused_count": 0, "account_id": social_account_id}
+
+    user_id = account.get("user_id", "")
+    platform = account.get("platform", "unknown")
+    account_name = (
+        account.get("account_name")
+        or account.get("display_name")
+        or account.get("platform_username")
+        or account.get("username")
+        or social_account_id
+    )
+    paused_count = await _pause_future_posts(db, social_account_id, now, "account_reconnect_required")
+
+    await db.notifications.insert_one({
+        "user_id": user_id,
+        "type": "account.reconnect_required",
+        "channel": "email",
+        "message": (
+            f"Your {platform} account '{account_name}' needs to be reconnected before publishing can resume. "
+            f"Reason: {reconnect_reason}. "
+            f"{paused_count} scheduled post(s) have been paused. "
+            "Reconnect the account to grant the required permissions and resume posting."
+        ),
+        "metadata": {
+            "social_account_id": social_account_id,
+            "platform": platform,
+            "error_code": str(error_code or ""),
+            "paused_count": paused_count,
+        },
+        "created_at": now,
+        "read": False,
+    })
+
+    logger.info(
+        "Reconnect-required flow complete: account=%s platform=%s paused=%d",
+        social_account_id,
+        platform,
+        paused_count,
     )
 
     return {"paused_count": paused_count, "account_id": social_account_id}

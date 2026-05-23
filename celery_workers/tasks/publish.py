@@ -64,6 +64,33 @@ def _is_video_like(post_type: str | None) -> bool:
     return normalized in {"video", "reel", "story"} or "video" in normalized
 
 
+def _is_scope_insufficient_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "access_token_scope_insufficient" in text
+        or "insufficient authentication scopes" in text
+        or "insufficientpermissions" in text
+    )
+
+
+def _is_platform_suspension_error(platform: str, exc: Exception) -> bool:
+    text = str(exc).lower()
+    patterns = {
+        "youtube": ("account suspended", "channel has been terminated", "suspended account"),
+        "twitter": ("account suspended", "user is suspended", "account locked"),
+        "linkedin": ("account restricted", "account suspended", "member account is suspended"),
+        "tiktok": ("account banned", "account suspended", "account has been suspended"),
+        "default": (
+            "account suspended",
+            "account banned",
+            "account disabled",
+            "account blocked",
+            "account terminated",
+        ),
+    }
+    return any(token in text for token in patterns.get(platform, patterns["default"]))
+
+
 def _publish_queue_for(platform: str, post: dict) -> str:
     """
     Route heavy media publishes away from light text/image work so one burst of
@@ -1369,42 +1396,72 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
 
                 error_code = getattr(exc, "code", None)
                 subcode = getattr(exc, "subcode", None)
+                is_scope_error = _is_scope_insufficient_error(exc)
+                is_suspension_error = _is_platform_suspension_error(platform, exc)
                 is_auth_error = (
                     (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
                     or subcode in {458, 460}
                     or error_code in (190, 261, 326)
                 )
                 if is_auth_error:
-                    try:
-                        from celery_workers.tasks.tokens import _refresh_with_lock
-                        _acct = post.get("account", {})
-                        _acct_id = _acct.get("account_id", _acct.get("id", ""))
-                        if _acct_id and attempt == 0:
-                            logger.info(
-                                "Auth error on %s/%s — attempting on-demand token refresh for account %s",
-                                post_id, platform, _acct_id,
-                            )
-                            await _refresh_with_lock(db, _acct_id, platform)
-                            logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
-                            publish_to_platform.apply_async(
-                                kwargs={"post_id": post_id, "platform": platform, "account_id": _acct_id, "attempt": attempt + 1},
-                                countdown=5,
-                                queue=publish_queue,
-                            )
-                            return {"status": "token_refreshed_requeued"}
-                    except Exception as _refresh_err:
-                        logger.warning("On-demand token refresh failed for %s: %s", post_id, _refresh_err)
+                    _acct = post.get("account", {})
+                    _acct_id = _acct.get("account_id", _acct.get("id", ""))
+                    if is_scope_error and _acct_id:
+                        try:
+                            from utils.ghost_cascade import handle_account_reconnect_required
 
-                    try:
-                        from utils.ghost_cascade import handle_ghost_account
-                        social_account_id = post.get("social_account_id") or post.get("account", {}).get("id", "")
-                        if social_account_id:
-                            await handle_ghost_account(
-                                db, social_account_id, error_code,
-                                suspension_reason=str(exc),
+                            await handle_account_reconnect_required(
+                                db,
+                                _acct_id,
+                                reconnect_reason=(
+                                    "Missing required YouTube publish permissions. "
+                                    "Reconnect the account and grant upload/edit access."
+                                    if platform == "youtube"
+                                    else str(exc)
+                                ),
+                                error_code=str(error_code or "insufficient_scopes"),
                             )
-                    except ImportError:
-                        pass
+                        except ImportError:
+                            pass
+                    else:
+                        try:
+                            from celery_workers.tasks.tokens import _refresh_with_lock
+                            if _acct_id and attempt == 0:
+                                logger.info(
+                                    "Auth error on %s/%s — attempting on-demand token refresh for account %s",
+                                    post_id, platform, _acct_id,
+                                )
+                                await _refresh_with_lock(db, _acct_id, platform)
+                                logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
+                                publish_to_platform.apply_async(
+                                    kwargs={"post_id": post_id, "platform": platform, "account_id": _acct_id, "attempt": attempt + 1},
+                                    countdown=5,
+                                    queue=publish_queue,
+                                )
+                                return {"status": "token_refreshed_requeued"}
+                        except Exception as _refresh_err:
+                            logger.warning("On-demand token refresh failed for %s: %s", post_id, _refresh_err)
+
+                        try:
+                            if _acct_id:
+                                if is_suspension_error:
+                                    from utils.ghost_cascade import handle_ghost_account
+
+                                    await handle_ghost_account(
+                                        db, _acct_id, error_code,
+                                        suspension_reason=str(exc),
+                                    )
+                                else:
+                                    from utils.ghost_cascade import handle_account_reconnect_required
+
+                                    await handle_account_reconnect_required(
+                                        db,
+                                        _acct_id,
+                                        reconnect_reason=str(exc),
+                                        error_code=str(error_code or ""),
+                                    )
+                        except ImportError:
+                            pass
 
                 await record_failure(r_cache, platform, resolved_account_id)
                 await _finalize_post_status(db, post_id)
