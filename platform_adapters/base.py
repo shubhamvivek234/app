@@ -122,6 +122,9 @@ def classify_error(exc: Exception, platform: str = "") -> ErrorClass:
         code = getattr(exc, "code", None)
         subcode = getattr(exc, "subcode", None)
 
+        if code == 429 or str(code) == "429":
+            return ErrorClass.RATE_LIMITED
+
         # EC16: account suspension / access revocation → always permanent
         if code in ("account_suspended", "access_revoked"):
             return ErrorClass.PERMANENT

@@ -18,7 +18,7 @@ from platform_adapters.base import (
     PlatformResponseError,
 )
 from utils.encryption import decrypt
-from utils.rate_limit import check_rate_limit
+from utils.rate_limit import check_rate_limit, get_retry_after_seconds
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,9 @@ class TikTokAdapter(PlatformAdapter):
         if redis:
             if not await check_rate_limit(redis, self.platform, str(social_account_id)):
                 raise PlatformAPIError(
-                    "TikTok rate limit reached (5 posts/day) — requeue for tomorrow", code=429
+                    "TikTok rate limit reached (5 posts/day) — requeue for tomorrow",
+                    code=429,
+                    retry_after=await get_retry_after_seconds(redis, self.platform, str(social_account_id)),
                 )
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)

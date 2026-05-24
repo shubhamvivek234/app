@@ -37,7 +37,7 @@ MAX_RETRIES = 3
 MAX_DELIVERY_COUNT = 5  # Poison pill threshold
 PUBLISH_LIGHT_QUEUE = "publish_light"
 PUBLISH_VIDEO_QUEUE = "publish_video"
-_PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS = int(os.getenv("PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS", "5"))
+_PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS = int(os.getenv("PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS", "60"))
 _PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
 _PUBLISH_LOCK_STALE_SECONDS = int(os.getenv("PUBLISH_LOCK_STALE_SECONDS", "90"))
 _PRE_UPLOAD_LOCK_TTL_SECONDS = int(os.getenv("PRE_UPLOAD_LOCK_TTL_SECONDS", "14400"))
@@ -556,7 +556,7 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
 
         fallback_queue = _fallback_publish_queue_for(queue_name)
         if fallback_queue:
-            fallback_countdown = max(jitter, _PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS)
+            fallback_countdown = jitter + _PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS
             fallback_result = publish_to_platform.apply_async(
                 kwargs={
                     "post_id": post_id,
@@ -815,6 +815,18 @@ def _get_platform_pre_upload_completed_at(post: dict, target_key: str):
     return _coerce_utc_datetime(state.get("completed_at") or post.get("pre_upload_completed_at"))
 
 
+def _get_platform_pre_upload_next_retry_at(post: dict, target_key: str):
+    state = _get_platform_pre_upload_state(post, target_key)
+    return _coerce_utc_datetime(state.get("next_retry_at"))
+
+
+def _seconds_until_retry(next_retry_at, fallback: int) -> int:
+    if not isinstance(next_retry_at, datetime):
+        return fallback
+    remaining = int((next_retry_at - datetime.now(timezone.utc)).total_seconds())
+    return max(fallback, remaining if remaining > 0 else 0)
+
+
 def _get_target_publish_state(post: dict, platform: str, target_key: str) -> dict:
     account_results = post.get("account_results") or {}
     if target_key in account_results:
@@ -904,6 +916,8 @@ async def _sync_pre_upload_aggregate(db, post_id: str) -> None:
         aggregate_status = "failed"
     elif "timeout" in statuses:
         aggregate_status = "timeout"
+    elif "retrying" in statuses:
+        aggregate_status = "retrying"
     elif "uploading" in statuses:
         aggregate_status = "uploading"
     elif "pending" in statuses:
@@ -1221,9 +1235,41 @@ async def _async_publish_to_platform(
         if _requires_pre_upload(platform, post):
             container_ids = post.get("platform_container_ids") or {}
             pre_status = _get_platform_pre_upload_status(post, target_key) or ""
+            pre_retry_at = _get_platform_pre_upload_next_retry_at(post, target_key)
             has_container = bool(container_ids.get(target_key))
 
-            if not has_container or pre_status in ("", None):
+            if not has_container and pre_status in {"pending", "uploading", "retrying"}:
+                retry_after = _seconds_until_retry(pre_retry_at, _PRE_UPLOAD_POLL_INTERVAL)
+                event_log(
+                    logger,
+                    "info",
+                    "publish.pre_upload.awaiting_retry",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=account_id,
+                    retry_after=retry_after,
+                    pre_upload_status=pre_status,
+                    outcome="retrying",
+                )
+                await _update_platform_result(
+                    db,
+                    post_id,
+                    platform,
+                    {
+                        "status": "retrying",
+                        "error": f"{platform} pre-upload is retrying",
+                        "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
+                    },
+                    account_id=account_id,
+                )
+                raise task.retry(
+                    countdown=retry_after,
+                    exc=Exception(f"{platform} pre_upload retry scheduled"),
+                    kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
+                )
+
+            if pre_status in ("", None) or (pre_status == "ready" and not has_container):
                 logger.info(
                     "Bootstrapping pre-upload for %s/%s (post_type=%s, has_container=%s, pre_status=%r)",
                     post_id,
@@ -1960,32 +2006,71 @@ async def _async_pre_upload(task, post_id: str, platform: str, account_id: str |
         return {"status": "ready", "platform": platform, "account_id": account_id, "actual_duration_secs": actual_duration}
 
     except Exception as exc:
+        from platform_adapters.base import ErrorClass, classify_error
+
+        error_class = classify_error(exc, platform)
+        retry_after = int(getattr(exc, "retry_after", 60) or 60)
+        now = datetime.now(timezone.utc)
+
+        if error_class == ErrorClass.PERMANENT:
+            event_log(
+                logger,
+                "error",
+                "publish.pre_upload.failed",
+                exc_info=exc,
+                task_name="pre_upload_task",
+                post_id=post_id,
+                platform=platform,
+                account_id=account_id,
+                failure_type="pre_upload_failed",
+                provider_error=shorten_provider_error(exc),
+                outcome="failed",
+            )
+            await db.posts.update_one(
+                {"id": post_id},
+                {
+                    "$set": {
+                        _pre_upload_result_path(target_key, "status"): "failed",
+                        _pre_upload_result_path(target_key, "error"): str(exc),
+                        _pre_upload_result_path(target_key, "completed_at"): now,
+                        "updated_at": now,
+                    }
+                }
+            )
+            await _sync_pre_upload_aggregate(db, post_id)
+            raise
+
         event_log(
             logger,
-            "error",
-            "publish.pre_upload.failed",
+            "warning",
+            "publish.pre_upload.retry_scheduled",
             exc_info=exc,
             task_name="pre_upload_task",
             post_id=post_id,
             platform=platform,
             account_id=account_id,
-            failure_type="pre_upload_failed",
+            failure_type="pre_upload_retry",
             provider_error=shorten_provider_error(exc),
-            outcome="failed",
+            retry_after=retry_after,
+            outcome="retrying",
         )
         await db.posts.update_one(
             {"id": post_id},
             {
                 "$set": {
-                    _pre_upload_result_path(target_key, "status"): "failed",
+                    _pre_upload_result_path(target_key, "status"): "retrying",
                     _pre_upload_result_path(target_key, "error"): str(exc),
-                    _pre_upload_result_path(target_key, "completed_at"): datetime.now(timezone.utc),
-                    "updated_at": datetime.now(timezone.utc),
-                }
+                    _pre_upload_result_path(target_key, "next_retry_at"): now + timedelta(seconds=retry_after),
+                    "updated_at": now,
+                },
+                "$unset": {
+                    _pre_upload_result_path(target_key, "completed_at"): "",
+                    _pre_upload_result_path(target_key, "actual_duration_secs"): "",
+                },
             }
         )
         await _sync_pre_upload_aggregate(db, post_id)
-        raise task.retry(countdown=60, exc=exc)
+        raise task.retry(countdown=retry_after, exc=exc)
     finally:
         await _release_pre_upload_lock(r_cache, post_id, target_key, lock_owner)
 

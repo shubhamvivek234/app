@@ -19,7 +19,7 @@ from platform_adapters.base import (
     PlatformResponseError,
 )
 from utils.encryption import decrypt
-from utils.rate_limit import check_rate_limit
+from utils.rate_limit import check_rate_limit, get_retry_after_seconds
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,11 @@ class YouTubeAdapter(PlatformAdapter):
 
         if redis:
             if not await check_rate_limit(redis, self.platform, str(social_account_id)):
-                raise PlatformAPIError("Rate limited — requeue", code=429)
+                raise PlatformAPIError(
+                    "Rate limited — requeue",
+                    code=429,
+                    retry_after=await get_retry_after_seconds(redis, self.platform, str(social_account_id)),
+                )
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)
 
@@ -236,8 +240,6 @@ class YouTubeAdapter(PlatformAdapter):
             raise PlatformResponseError("No youtube video_id found — run pre_upload first")
 
         if redis:
-            if not await check_rate_limit(redis, self.platform, str(social_account_id)):
-                raise PlatformAPIError("Rate limited — requeue", code=429)
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)
 
