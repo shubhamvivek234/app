@@ -60,11 +60,14 @@ async def _async_poll() -> dict:
     orphan_cutoff = now - timedelta(minutes=_ORPHAN_CHILD_THRESHOLD_MINUTES)
     stale_cutoff = now - timedelta(hours=_STALE_THRESHOLD_HOURS)
 
-    # Find posts that are still PROCESSING and haven't been updated recently
+    # Find posts that are still PROCESSING and old enough for either:
+    # - orphaned child-task recovery (3 min), or
+    # - normal provider polling (10 min).
+    candidate_cutoff = orphan_cutoff
     cursor = db.posts.find(
         {
             "status": "processing",
-            "updated_at": {"$lt": polling_cutoff},
+            "updated_at": {"$lt": candidate_cutoff},
         },
         {
             "_id": 0,
@@ -141,6 +144,9 @@ async def _async_poll() -> dict:
                 continue
 
             if not platform_post_id:
+                continue
+
+            if post.get("updated_at", now) >= polling_cutoff:
                 continue
 
             if not await can_attempt(cache_redis, platform):

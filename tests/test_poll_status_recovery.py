@@ -28,8 +28,10 @@ class FakePostsCollection:
     def __init__(self, docs):
         self.docs = list(docs)
         self.update_calls = []
+        self.find_calls = []
 
-    def find(self, *_args, **_kwargs):
+    def find(self, *args, **kwargs):
+        self.find_calls.append((args, kwargs))
         return FakeCursor(self.docs)
 
     async def update_one(self, query, update):
@@ -104,3 +106,7 @@ async def test_poll_status_requeues_orphaned_child_publish_task(monkeypatch):
     set_fields = update["$set"]
     assert set_fields["account_results.youtube-account-1.status"] == "retrying"
     assert set_fields["platform_results.youtube.status"] == "retrying"
+    assert fake_db.posts.find_calls
+    find_query = fake_db.posts.find_calls[0][0][0]
+    cutoff = find_query["updated_at"]["$lt"]
+    assert now - cutoff < timedelta(minutes=4)
