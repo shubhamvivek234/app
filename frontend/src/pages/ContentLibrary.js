@@ -130,6 +130,14 @@ const getPostAccountIds = (post) => {
       .map((target) => target?.account_id)
       .filter(Boolean);
   }
+  if (post?.account_results && typeof post.account_results === 'object') {
+    const accountResultIds = Object.keys(post.account_results).filter(Boolean);
+    if (accountResultIds.length > 0) return accountResultIds;
+  }
+  if (post?.account_overrides && typeof post.account_overrides === 'object') {
+    const accountOverrideIds = Object.keys(post.account_overrides).filter(Boolean);
+    if (accountOverrideIds.length > 0) return accountOverrideIds;
+  }
   return [];
 };
 
@@ -198,8 +206,11 @@ const ContentLibrary = () => {
     return () => clearInterval(intervalId);
   }, [fetchAll, initialStatus]);
 
+  const defaultTimeFilter = initialStatus === 'published' ? 'past_6_months' : 'all';
+
   const accountMap = accounts.reduce((acc, a) => {
-    acc[a.id] = a;
+    if (a.id) acc[a.id] = a;
+    if (a.account_id) acc[a.account_id] = a;
     return acc;
   }, {});
 
@@ -356,9 +367,21 @@ const ContentLibrary = () => {
     );
   }
 
-  const pageTitle = initialStatus === 'scheduled' ? 'Scheduled Posts' : 
-                    initialStatus === 'published' ? 'Published Posts' : 
+  const pageTitle = initialStatus === 'scheduled' ? 'Scheduled Posts' :
+                    initialStatus === 'published' ? 'Published Posts' :
                     'All Posts';
+  const hasActiveFilters =
+    Boolean(searchQuery.trim()) ||
+    selectedPlatform !== 'all' ||
+    selectedAccount !== 'all' ||
+    selectedTime !== defaultTimeFilter;
+  const emptyStateMessage = !hasActiveFilters && posts.length === 0
+    ? (initialStatus === 'published'
+        ? 'No published posts yet.'
+        : initialStatus === 'scheduled'
+          ? 'No scheduled posts yet.'
+          : 'No posts yet.')
+    : 'No posts match your filters.';
 
   return (
     <DashboardLayout>
@@ -424,9 +447,9 @@ const ContentLibrary = () => {
               value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}
             >
               {initialStatus === 'published' ? (
-                <option value="past_6_months">Past 6 Months</option>
+                <option value={defaultTimeFilter}>Past 6 Months</option>
               ) : (
-                <option value="all">All Time</option>
+                <option value={defaultTimeFilter}>All Time</option>
               )}
               <option value="today">Today</option>
               {initialStatus !== 'published' && <option value="tomorrow">Tomorrow</option>}
@@ -445,7 +468,9 @@ const ContentLibrary = () => {
             >
               <option value="all">All Accounts</option>
               {accounts.map(a => (
-                <option key={a.id} value={a.id}>{a.platform_username || a.platform}</option>
+                <option key={a.account_id || a.id} value={a.account_id || a.id}>
+                  {a.platform_username || a.display_name || a.platform}
+                </option>
               ))}
             </select>
           </div>
@@ -455,7 +480,7 @@ const ContentLibrary = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredPosts.length === 0 ? (
             <div className="col-span-full border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-500">
-              No posts match your filters.
+              {emptyStateMessage}
             </div>
           ) : (
             filteredPosts.map((post) => {
