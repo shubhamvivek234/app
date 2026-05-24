@@ -99,7 +99,7 @@ async def _async_poll() -> dict:
             platform = target["platform"]
             target_key = target["target_key"]
             result = account_results.get(target_key) or platform_results.get(platform) or {}
-            if result.get("status") not in ("processing", "pending"):
+            if result.get("status") not in ("processing", "pending", "retrying"):
                 continue
 
             platform_post_id = result.get("platform_post_id")
@@ -107,18 +107,27 @@ async def _async_poll() -> dict:
 
             if (
                 not platform_post_id
-                and not last_attempt_at
+                and (
+                    not last_attempt_at
+                    or (
+                        isinstance(last_attempt_at, datetime)
+                        and last_attempt_at < orphan_cutoff
+                    )
+                )
                 and is_orphaned
                 and post.get("pre_upload_status") not in {"uploading", "pending"}
             ):
+                publish_queue = _publish_queue_for(platform, post)
+                recovery_queue = "default" if publish_queue == "publish_video" else publish_queue
                 publish_to_platform.apply_async(
                     kwargs={
                         "post_id": post_id,
                         "platform": platform,
                         "account_id": target.get("account_id"),
                         "attempt": 0,
+                        "dispatch_source": "recovery",
                     },
-                    queue=_publish_queue_for(platform, post),
+                    queue=recovery_queue,
                 )
                 await db.posts.update_one(
                     {"id": post_id},
@@ -126,10 +135,18 @@ async def _async_poll() -> dict:
                         "$set": {
                             f"account_results.{target_key}.status": "retrying",
                             f"account_results.{target_key}.last_attempt_at": now,
-                            f"account_results.{target_key}.error": "Recovered orphaned publish task",
+                            f"account_results.{target_key}.error": (
+                                "Recovered orphaned publish task"
+                                if recovery_queue == publish_queue
+                                else "Recovered orphaned publish task via default fallback"
+                            ),
                             f"platform_results.{platform}.status": "retrying",
                             f"platform_results.{platform}.last_attempt_at": now,
-                            f"platform_results.{platform}.error": "Recovered orphaned publish task",
+                            f"platform_results.{platform}.error": (
+                                "Recovered orphaned publish task"
+                                if recovery_queue == publish_queue
+                                else "Recovered orphaned publish task via default fallback"
+                            ),
                             "updated_at": now,
                         }
                     },

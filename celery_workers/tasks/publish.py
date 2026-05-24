@@ -37,6 +37,7 @@ MAX_RETRIES = 3
 MAX_DELIVERY_COUNT = 5  # Poison pill threshold
 PUBLISH_LIGHT_QUEUE = "publish_light"
 PUBLISH_VIDEO_QUEUE = "publish_video"
+_PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS = int(os.getenv("PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS", "120"))
 _PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
 _PRE_UPLOAD_LOCK_TTL_SECONDS = int(os.getenv("PRE_UPLOAD_LOCK_TTL_SECONDS", "14400"))
 _PUBLISHED_CARD_THUMB_SIZE = (160, 160)
@@ -102,6 +103,12 @@ def _publish_queue_for(platform: str, post: dict) -> str:
     if _is_video_like(post.get("post_type")):
         return PUBLISH_VIDEO_QUEUE
     return PUBLISH_LIGHT_QUEUE
+
+
+def _fallback_publish_queue_for(queue_name: str) -> str | None:
+    if queue_name == PUBLISH_VIDEO_QUEUE:
+        return "default"
+    return None
 
 
 def _result_target_key(platform: str, account_id: str | None = None) -> str:
@@ -514,6 +521,7 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
                 "platform": target["platform"],
                 "account_id": target["account_id"],
                 "attempt": 0,
+                "dispatch_source": "primary",
             },
             countdown=jitter,
             queue=queue_name,
@@ -531,6 +539,24 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
                 "task_id": async_result.id,
             }
         )
+
+        fallback_queue = _fallback_publish_queue_for(queue_name)
+        if fallback_queue:
+            fallback_result = publish_to_platform.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "platform": target["platform"],
+                    "account_id": target["account_id"],
+                    "attempt": 0,
+                    "dispatch_source": "fallback",
+                },
+                countdown=jitter + _PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS,
+                queue=fallback_queue,
+            )
+            dispatch_updates[f"account_results.{target['target_key']}.fallback_dispatch_task_id"] = fallback_result.id
+            dispatch_updates[f"account_results.{target['target_key']}.fallback_dispatch_enqueued_at"] = processing_started_at
+            dispatch_updates[f"platform_results.{target['platform']}.fallback_dispatch_task_id"] = fallback_result.id
+            dispatch_updates[f"platform_results.{target['platform']}.fallback_dispatch_enqueued_at"] = processing_started_at
 
     if dispatch_updates:
         dispatch_updates["updated_at"] = processing_started_at
@@ -925,11 +951,25 @@ async def _resolve_post_account(db, post: dict, platform: str, account_id: str |
     max_retries=MAX_RETRIES,
     acks_late=True,
 )
-def publish_to_platform(self, post_id: str, platform: str, account_id: str | None = None, attempt: int = 0) -> dict:
-    return _run_async(_async_publish_to_platform(self, post_id, platform, account_id, attempt))
+def publish_to_platform(
+    self,
+    post_id: str,
+    platform: str,
+    account_id: str | None = None,
+    attempt: int = 0,
+    dispatch_source: str = "primary",
+) -> dict:
+    return _run_async(_async_publish_to_platform(self, post_id, platform, account_id, attempt, dispatch_source))
 
 
-async def _async_publish_to_platform(task, post_id: str, platform: str, account_id: str | None, attempt: int) -> dict:
+async def _async_publish_to_platform(
+    task,
+    post_id: str,
+    platform: str,
+    account_id: str | None,
+    attempt: int,
+    dispatch_source: str = "primary",
+) -> dict:
     from platform_adapters import get_adapter
     from celery_workers.tasks.publish import recompute_aggregate_status, should_cleanup_media
     from celery_workers.tasks.cleanup import schedule_media_cleanup
@@ -1057,14 +1097,35 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
             account_id=account_id,
             outcome="requeued",
         )
+        if dispatch_source == "fallback":
+            return {"status": "already_inflight", "platform": platform, "account_id": account_id}
         publish_to_platform.apply_async(
-            kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
+            kwargs={
+                "post_id": post_id,
+                "platform": platform,
+                "account_id": account_id,
+                "attempt": attempt,
+                "dispatch_source": dispatch_source,
+            },
             countdown=random.randint(20, 40),
             queue=publish_queue,
         )
         return {"status": "already_inflight_requeued", "platform": platform, "account_id": account_id}
 
     try:
+        await _update_platform_result(
+            db,
+            post_id,
+            platform,
+            {
+                "status": "processing",
+                "last_attempt_at": datetime.now(timezone.utc),
+                "dispatch_started_at": datetime.now(timezone.utc),
+                "dispatch_source": dispatch_source,
+            },
+            account_id=account_id,
+        )
+
         # Bootstrap pre-upload for platforms that require a prepared container/video_id
         # before publish. This is critical for immediate "post now" flows because they do
         # not always pass through the scheduled pre-upload window first.

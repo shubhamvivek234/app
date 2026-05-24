@@ -101,6 +101,8 @@ async def test_poll_status_requeues_orphaned_child_publish_task(monkeypatch):
     assert kwargs["post_id"] == "post-1"
     assert kwargs["platform"] == "youtube"
     assert kwargs["account_id"] == "youtube-account-1"
+    assert kwargs["dispatch_source"] == "recovery"
+    assert apply_async_mock.call_args.kwargs["queue"] == "default"
     assert fake_db.posts.update_calls
     _query, update = fake_db.posts.update_calls[0]
     set_fields = update["$set"]
@@ -110,3 +112,54 @@ async def test_poll_status_requeues_orphaned_child_publish_task(monkeypatch):
     find_query = fake_db.posts.find_calls[0][0][0]
     cutoff = find_query["updated_at"]["$lt"]
     assert now - cutoff < timedelta(minutes=4)
+
+
+@pytest.mark.asyncio
+async def test_poll_status_requeues_retrying_orphaned_video_publish(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    last_attempt = now - timedelta(minutes=5)
+    post = {
+        "id": "post-2",
+        "status": "processing",
+        "platforms": ["youtube"],
+        "post_type": "video",
+        "updated_at": now - timedelta(minutes=6),
+        "pre_upload_status": None,
+        "publish_targets": [
+            {
+                "platform": "youtube",
+                "account_id": "youtube-account-2",
+            }
+        ],
+        "platform_results": {
+            "youtube": {
+                "status": "retrying",
+                "platform_post_id": None,
+                "last_attempt_at": last_attempt,
+            }
+        },
+        "account_results": {
+            "youtube-account-2": {
+                "status": "retrying",
+                "platform_post_id": None,
+                "last_attempt_at": last_attempt,
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", Mock(return_value=object()))
+
+    apply_async_mock = Mock()
+    monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", apply_async_mock)
+
+    result = await poll_status._async_poll()
+
+    assert result["requeued"] == 1
+    assert apply_async_mock.call_count == 1
+    assert apply_async_mock.call_args.kwargs["queue"] == "default"
+    kwargs = apply_async_mock.call_args.kwargs["kwargs"]
+    assert kwargs["dispatch_source"] == "recovery"
+    assert kwargs["account_id"] == "youtube-account-2"

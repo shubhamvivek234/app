@@ -71,7 +71,12 @@ async def test_publish_post_dispatches_children_explicitly_and_records_task_ids(
     monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
     monkeypatch.setattr(publish_tasks, "_jitter_seconds", Mock(return_value=0))
 
-    child_results = [SimpleNamespace(id="child-youtube"), SimpleNamespace(id="child-linkedin")]
+    child_results = [
+        SimpleNamespace(id="child-youtube"),
+        SimpleNamespace(id="fallback-youtube"),
+        SimpleNamespace(id="child-linkedin"),
+        SimpleNamespace(id="fallback-linkedin"),
+    ]
     apply_async_mock = Mock(side_effect=child_results)
     monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", apply_async_mock)
 
@@ -79,16 +84,26 @@ async def test_publish_post_dispatches_children_explicitly_and_records_task_ids(
 
     assert result["status"] == "dispatched"
     assert [child["task_id"] for child in result["child_tasks"]] == ["child-youtube", "child-linkedin"]
-    assert apply_async_mock.call_count == 2
+    assert apply_async_mock.call_count == 4
 
     youtube_call = apply_async_mock.call_args_list[0]
-    linkedin_call = apply_async_mock.call_args_list[1]
+    youtube_fallback_call = apply_async_mock.call_args_list[1]
+    linkedin_call = apply_async_mock.call_args_list[2]
+    linkedin_fallback_call = apply_async_mock.call_args_list[3]
     assert youtube_call.kwargs["queue"] == "publish_video"
+    assert youtube_call.kwargs["kwargs"]["dispatch_source"] == "primary"
+    assert youtube_fallback_call.kwargs["queue"] == "default"
+    assert youtube_fallback_call.kwargs["kwargs"]["dispatch_source"] == "fallback"
     assert linkedin_call.kwargs["queue"] == "publish_video"
+    assert linkedin_call.kwargs["kwargs"]["dispatch_source"] == "primary"
+    assert linkedin_fallback_call.kwargs["queue"] == "default"
+    assert linkedin_fallback_call.kwargs["kwargs"]["dispatch_source"] == "fallback"
 
     assert len(fake_db.posts.update_calls) == 2
     dispatch_update = fake_db.posts.update_calls[1][1]["$set"]
     assert dispatch_update["account_results.youtube-account-1.dispatch_task_id"] == "child-youtube"
     assert dispatch_update["account_results.linkedin-account-1.dispatch_task_id"] == "child-linkedin"
+    assert dispatch_update["account_results.youtube-account-1.fallback_dispatch_task_id"] == "fallback-youtube"
+    assert dispatch_update["account_results.linkedin-account-1.fallback_dispatch_task_id"] == "fallback-linkedin"
     assert dispatch_update["platform_results.youtube.dispatch_task_id"] == "child-youtube"
     assert dispatch_update["platform_results.linkedin.dispatch_task_id"] == "child-linkedin"
