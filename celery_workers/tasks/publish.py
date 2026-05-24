@@ -460,6 +460,9 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     if post is None:
         logger.info("Post %s deleted mid-flight — aborting cleanly", post_id)
         return {"status": "post_deleted"}
+    if post.get("deleted_at") or post.get("status") == "cancelled":
+        logger.info("Post %s cancelled before parent dispatch — aborting cleanly", post_id)
+        return {"status": "post_deleted"}
 
     # Version mismatch — post was edited while queued (EC3)
     if post.get("version", 1) != version:
@@ -1026,6 +1029,18 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
         return {"status": "post_deleted"}
+    if post.get("deleted_at") or post.get("status") == "cancelled":
+        event_log(
+            logger,
+            "info",
+            "publish.platform.cancelled_before_start",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            outcome="post_deleted_or_cancelled",
+        )
+        return {"status": "post_deleted", "platform": platform, "account_id": account_id}
     post = await _hydrate_post_media(db, post)
 
     publish_queue = _publish_queue_for(platform, post)
@@ -1094,6 +1109,8 @@ async def _async_publish_to_platform(task, post_id: str, platform: str, account_
                 post = await db.posts.find_one({"id": post_id}, {"_id": 0})
                 if post is None:
                     return {"status": "post_deleted"}
+                if post.get("deleted_at") or post.get("status") == "cancelled":
+                    return {"status": "post_deleted", "platform": platform, "account_id": account_id}
                 post = await _hydrate_post_media(db, post)
 
         # EC15: Check subscription is still active before publishing

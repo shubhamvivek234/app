@@ -118,6 +118,23 @@ def _infer_published_media_kind(doc: dict) -> str:
     return "text"
 
 
+def _collect_dispatch_task_ids(doc: dict | None) -> list[str]:
+    if not doc:
+        return []
+    task_ids: list[str] = []
+    for result_group in (doc.get("account_results") or {}, doc.get("platform_results") or {}):
+        if not isinstance(result_group, dict):
+            continue
+        for result in result_group.values():
+            if not isinstance(result, dict):
+                continue
+            task_id = result.get("dispatch_task_id")
+            if task_id:
+                task_ids.append(str(task_id))
+    # Preserve order but dedupe.
+    return list(dict.fromkeys(task_ids))
+
+
 def _hydrate_post_card_fields(doc: dict) -> dict:
     if doc.get("published_media_kind") not in {"text", "image", "video", "mixed"}:
         doc["published_media_kind"] = _infer_published_media_kind(doc)
@@ -1145,21 +1162,36 @@ async def delete_post(
 
     existing = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "queue_job_id": 1, "media_ids": 1, "workspace_id": 1},
+        {
+            "_id": 0,
+            "status": 1,
+            "queue_job_id": 1,
+            "media_ids": 1,
+            "workspace_id": 1,
+            "platform_results": 1,
+            "account_results": 1,
+        },
     )
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
 
-    if existing.get("status") in _BLOCKED_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Post is currently being published",
-        )
-
     now = datetime.now(timezone.utc)
+    set_updates = {"deleted_at": now, "updated_at": now, "status": PostStatus.CANCELLED}
+    if existing.get("status") in _BLOCKED_STATUSES:
+        platform_results = existing.get("platform_results") or {}
+        account_results = existing.get("account_results") or {}
+        for platform, result in platform_results.items():
+            if (result or {}).get("status") not in {"published", "failed", "permanently_failed", "cancelled"}:
+                set_updates[f"platform_results.{platform}.status"] = "cancelled"
+                set_updates[f"platform_results.{platform}.error"] = "Cancelled by user"
+        for account_id, result in account_results.items():
+            if (result or {}).get("status") not in {"published", "failed", "permanently_failed", "cancelled"}:
+                set_updates[f"account_results.{account_id}.status"] = "cancelled"
+                set_updates[f"account_results.{account_id}.error"] = "Cancelled by user"
+
     await db.posts.update_one(
         {"id": post_id, "user_id": user_id},
-        {"$set": {"deleted_at": now, "updated_at": now, "status": PostStatus.CANCELLED}},
+        {"$set": set_updates},
     )
 
     # Revoke Celery task if queued
@@ -1169,6 +1201,12 @@ async def delete_post(
             revoke_task(queue_job_id, terminate=False)
         except Exception as exc:
             logger.warning("Failed to revoke Celery task %s: %s", queue_job_id, exc)
+
+    for child_task_id in _collect_dispatch_task_ids(existing):
+        try:
+            revoke_task(child_task_id, terminate=False)
+        except Exception as exc:
+            logger.warning("Failed to revoke child Celery task %s: %s", child_task_id, exc)
 
     # Schedule media cleanup with 5-minute delay
     try:
