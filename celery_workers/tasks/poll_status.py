@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Posts stuck in PROCESSING for longer than this are eligible for polling
 _POLLING_THRESHOLD_MINUTES = 10
+# Processing posts with no platform post id and no publish attempt after this
+# window are treated as orphaned child tasks and re-queued.
+_ORPHAN_CHILD_THRESHOLD_MINUTES = 3
 # Maximum staleness before we mark as failed (platform gives up)
 _STALE_THRESHOLD_HOURS = 2
 
@@ -43,6 +46,7 @@ def poll_processing_posts() -> dict:
 
 
 async def _async_poll() -> dict:
+    from celery_workers.tasks.publish import _get_publish_targets, _publish_queue_for, publish_to_platform
     from platform_adapters import get_adapter
     from utils.circuit_breaker import can_attempt
     from db.redis_client import get_cache_redis
@@ -53,6 +57,7 @@ async def _async_poll() -> dict:
 
     now = datetime.now(timezone.utc)
     polling_cutoff = now - timedelta(minutes=_POLLING_THRESHOLD_MINUTES)
+    orphan_cutoff = now - timedelta(minutes=_ORPHAN_CHILD_THRESHOLD_MINUTES)
     stale_cutoff = now - timedelta(hours=_STALE_THRESHOLD_HOURS)
 
     # Find posts that are still PROCESSING and haven't been updated recently
@@ -64,7 +69,12 @@ async def _async_poll() -> dict:
         {
             "_id": 0,
             "id": 1,
+            "platforms": 1,
             "platform_results": 1,
+            "account_results": 1,
+            "publish_targets": 1,
+            "post_type": 1,
+            "pre_upload_status": 1,
             "updated_at": 1,
             "workspace_id": 1,
         },
@@ -73,17 +83,63 @@ async def _async_poll() -> dict:
 
     polled = 0
     resolved = 0
+    requeued = 0
 
     async for post in cursor:
         post_id = post["id"]
         platform_results = post.get("platform_results", {})
+        account_results = post.get("account_results", {})
         is_stale = post.get("updated_at", now) < stale_cutoff
+        is_orphaned = post.get("updated_at", now) < orphan_cutoff
 
-        for platform, result in platform_results.items():
+        for target in _get_publish_targets(post):
+            platform = target["platform"]
+            target_key = target["target_key"]
+            result = account_results.get(target_key) or platform_results.get(platform) or {}
             if result.get("status") not in ("processing", "pending"):
                 continue
 
             platform_post_id = result.get("platform_post_id")
+            last_attempt_at = result.get("last_attempt_at")
+
+            if (
+                not platform_post_id
+                and not last_attempt_at
+                and is_orphaned
+                and post.get("pre_upload_status") not in {"uploading", "pending"}
+            ):
+                publish_to_platform.apply_async(
+                    kwargs={
+                        "post_id": post_id,
+                        "platform": platform,
+                        "account_id": target.get("account_id"),
+                        "attempt": 0,
+                    },
+                    queue=_publish_queue_for(platform, post),
+                )
+                await db.posts.update_one(
+                    {"id": post_id},
+                    {
+                        "$set": {
+                            f"account_results.{target_key}.status": "retrying",
+                            f"account_results.{target_key}.last_attempt_at": now,
+                            f"account_results.{target_key}.error": "Recovered orphaned publish task",
+                            f"platform_results.{platform}.status": "retrying",
+                            f"platform_results.{platform}.last_attempt_at": now,
+                            f"platform_results.{platform}.error": "Recovered orphaned publish task",
+                            "updated_at": now,
+                        }
+                    },
+                )
+                logger.warning(
+                    "poll_status: requeued orphaned publish task for %s/%s (%s)",
+                    post_id,
+                    platform,
+                    target_key,
+                )
+                requeued += 1
+                continue
+
             if not platform_post_id:
                 continue
 
@@ -127,10 +183,11 @@ async def _async_poll() -> dict:
                 )
 
     logger.info(
-        "poll_status: scanned processing posts, polled=%d resolved=%d",
+        "poll_status: scanned processing posts, polled=%s resolved=%s requeued=%s",
         polled, resolved,
+        requeued,
     )
-    return {"polled": polled, "resolved": resolved}
+    return {"polled": polled, "resolved": resolved, "requeued": requeued}
 
 
 # ── Status update helpers ─────────────────────────────────────────────────────
