@@ -37,8 +37,9 @@ MAX_RETRIES = 3
 MAX_DELIVERY_COUNT = 5  # Poison pill threshold
 PUBLISH_LIGHT_QUEUE = "publish_light"
 PUBLISH_VIDEO_QUEUE = "publish_video"
-_PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS = int(os.getenv("PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS", "120"))
+_PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS = int(os.getenv("PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS", "5"))
 _PUBLISH_LOCK_TTL_SECONDS = int(os.getenv("PUBLISH_LOCK_TTL_SECONDS", "14400"))
+_PUBLISH_LOCK_STALE_SECONDS = int(os.getenv("PUBLISH_LOCK_STALE_SECONDS", "90"))
 _PRE_UPLOAD_LOCK_TTL_SECONDS = int(os.getenv("PRE_UPLOAD_LOCK_TTL_SECONDS", "14400"))
 _PUBLISHED_CARD_THUMB_SIZE = (160, 160)
 _PUBLISHED_CARD_THUMB_QUALITY = int(os.getenv("PUBLISHED_CARD_THUMB_QUALITY", "65"))
@@ -526,6 +527,19 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
             countdown=jitter,
             queue=queue_name,
         )
+        event_log(
+            logger,
+            "info",
+            "publish.platform.dispatched",
+            task_name="publish_post",
+            post_id=post_id,
+            platform=target["platform"],
+            account_id=target["account_id"],
+            queue_name=queue_name,
+            child_task_id=async_result.id,
+            dispatch_source="primary",
+            outcome="enqueued",
+        )
         dispatch_updates[f"account_results.{target['target_key']}.dispatch_task_id"] = async_result.id
         dispatch_updates[f"account_results.{target['target_key']}.dispatch_enqueued_at"] = processing_started_at
         dispatch_updates[f"platform_results.{target['platform']}.dispatch_task_id"] = async_result.id
@@ -542,6 +556,7 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
 
         fallback_queue = _fallback_publish_queue_for(queue_name)
         if fallback_queue:
+            fallback_countdown = max(jitter, _PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS)
             fallback_result = publish_to_platform.apply_async(
                 kwargs={
                     "post_id": post_id,
@@ -550,13 +565,28 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
                     "attempt": 0,
                     "dispatch_source": "fallback",
                 },
-                countdown=jitter + _PUBLISH_VIDEO_FALLBACK_DELAY_SECONDS,
+                countdown=fallback_countdown,
                 queue=fallback_queue,
+            )
+            event_log(
+                logger,
+                "info",
+                "publish.platform.dispatched",
+                task_name="publish_post",
+                post_id=post_id,
+                platform=target["platform"],
+                account_id=target["account_id"],
+                queue_name=fallback_queue,
+                child_task_id=fallback_result.id,
+                dispatch_source="fallback",
+                outcome="enqueued",
             )
             dispatch_updates[f"account_results.{target['target_key']}.fallback_dispatch_task_id"] = fallback_result.id
             dispatch_updates[f"account_results.{target['target_key']}.fallback_dispatch_enqueued_at"] = processing_started_at
+            dispatch_updates[f"account_results.{target['target_key']}.fallback_dispatch_countdown"] = fallback_countdown
             dispatch_updates[f"platform_results.{target['platform']}.fallback_dispatch_task_id"] = fallback_result.id
             dispatch_updates[f"platform_results.{target['platform']}.fallback_dispatch_enqueued_at"] = processing_started_at
+            dispatch_updates[f"platform_results.{target['platform']}.fallback_dispatch_countdown"] = fallback_countdown
 
     if dispatch_updates:
         dispatch_updates["updated_at"] = processing_started_at
@@ -783,6 +813,33 @@ def _get_platform_pre_upload_started_at(post: dict, target_key: str):
 def _get_platform_pre_upload_completed_at(post: dict, target_key: str):
     state = _get_platform_pre_upload_state(post, target_key)
     return _coerce_utc_datetime(state.get("completed_at") or post.get("pre_upload_completed_at"))
+
+
+def _get_target_publish_state(post: dict, platform: str, target_key: str) -> dict:
+    account_results = post.get("account_results") or {}
+    if target_key in account_results:
+        return account_results.get(target_key) or {}
+    return (post.get("platform_results") or {}).get(platform) or {}
+
+
+def _is_stale_publish_lock(post: dict, platform: str, target_key: str, now: datetime) -> bool:
+    result = _get_target_publish_state(post, platform, target_key)
+    if not result:
+        return False
+
+    if _coerce_utc_datetime(result.get("dispatch_started_at")) or _coerce_utc_datetime(result.get("last_attempt_at")):
+        return False
+
+    enqueued_candidates = [
+        _coerce_utc_datetime(result.get("dispatch_enqueued_at")),
+        _coerce_utc_datetime(result.get("fallback_dispatch_enqueued_at")),
+    ]
+    enqueued_candidates = [candidate for candidate in enqueued_candidates if isinstance(candidate, datetime)]
+    if not enqueued_candidates:
+        return False
+
+    latest_enqueue = max(enqueued_candidates)
+    return latest_enqueue <= now - timedelta(seconds=_PUBLISH_LOCK_STALE_SECONDS)
 
 
 def _pre_upload_platforms_for(post: dict) -> list[dict]:
@@ -1082,10 +1139,42 @@ async def _async_publish_to_platform(
         )
         return {"status": "post_deleted", "platform": platform, "account_id": account_id}
     post = await _hydrate_post_media(db, post)
+    event_log(
+        logger,
+        "info",
+        "publish.platform.received",
+        task_name="publish_to_platform",
+        post_id=post_id,
+        platform=platform,
+        account_id=account_id,
+        dispatch_source=dispatch_source,
+        attempt=attempt,
+        outcome="received",
+    )
 
     publish_queue = _publish_queue_for(platform, post)
     lock_owner = task.request.id or f"{post_id}:{target_key}:{attempt}"
     lock_acquired = await _acquire_publish_lock(r_cache, post_id, target_key, lock_owner)
+    if not lock_acquired and _is_stale_publish_lock(post, platform, target_key, datetime.now(timezone.utc)):
+        await safe_delete(
+            r_cache,
+            _publish_lock_key(post_id, target_key),
+            default=0,
+            feature="Publish stale lock recovery",
+        )
+        event_log(
+            logger,
+            "warning",
+            "publish.platform.stale_lock_cleared",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            dispatch_source=dispatch_source,
+            failure_type="stale_lock",
+            outcome="recovered",
+        )
+        lock_acquired = await _acquire_publish_lock(r_cache, post_id, target_key, lock_owner)
     if not lock_acquired:
         event_log(
             logger,

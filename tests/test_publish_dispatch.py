@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -107,3 +107,87 @@ async def test_publish_post_dispatches_children_explicitly_and_records_task_ids(
     assert dispatch_update["account_results.linkedin-account-1.fallback_dispatch_task_id"] == "fallback-linkedin"
     assert dispatch_update["platform_results.youtube.dispatch_task_id"] == "child-youtube"
     assert dispatch_update["platform_results.linkedin.dispatch_task_id"] == "child-linkedin"
+
+
+@pytest.mark.asyncio
+async def test_publish_to_platform_clears_stale_lock_before_retrying(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-2",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["youtube"],
+        "publish_targets": [
+            {"platform": "youtube", "account_id": "youtube-account-1"},
+        ],
+        "account_results": {
+            "youtube-account-1": {
+                "status": "pending",
+                "dispatch_enqueued_at": now - timedelta(seconds=180),
+                "fallback_dispatch_enqueued_at": now - timedelta(seconds=170),
+                "last_attempt_at": None,
+                "dispatch_started_at": None,
+            }
+        },
+        "platform_results": {
+            "youtube": {
+                "status": "pending",
+                "dispatch_enqueued_at": now - timedelta(seconds=180),
+                "fallback_dispatch_enqueued_at": now - timedelta(seconds=170),
+                "last_attempt_at": None,
+                "dispatch_started_at": None,
+            }
+        },
+        "media_ids": [],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-1"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "safe_setex", AsyncMock(return_value=True))
+    safe_delete_mock = AsyncMock(return_value=1)
+    monkeypatch.setattr(publish_tasks, "safe_delete", safe_delete_mock)
+    acquire_lock_mock = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(publish_tasks, "_acquire_publish_lock", acquire_lock_mock)
+    monkeypatch.setattr(publish_tasks, "_release_publish_lock", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_requires_pre_upload", Mock(return_value=False))
+    monkeypatch.setattr(publish_tasks, "_resolve_post_account", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_acquire_platform_slot", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_platform_slot", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_finalize_post_status", AsyncMock(return_value=("user-1", "processing", "published")))
+    monkeypatch.setattr(publish_tasks, "_send_success_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_send_recovery_notification", AsyncMock(return_value=None))
+
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("utils.circuit_breaker.record_success", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.record_failure", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+
+    adapter = SimpleNamespace(publish=AsyncMock(return_value={"post_url": "https://youtube.example/post", "platform_post_id": "yt-post-1"}))
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=adapter))
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-2",
+        "youtube",
+        "youtube-account-1",
+        0,
+        "fallback",
+    )
+
+    assert result["status"] == "published"
+    assert acquire_lock_mock.await_count == 2
+    safe_delete_mock.assert_awaited_once()
+    assert any(
+        "$set" in update and update["$set"].get("account_results.youtube-account-1.status") == "processing"
+        for _query, update in fake_db.posts.update_calls
+    )
