@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from celery_workers.tasks import publish as publish_tasks
-from platform_adapters.base import ErrorClass, PlatformAPIError, classify_error
+from platform_adapters.base import ErrorClass, PlatformAPIError, PlatformHTTPError, classify_error
 
 
 class FakePostsCollection:
@@ -322,3 +322,69 @@ async def test_publish_to_platform_waits_for_existing_pre_upload_retry(monkeypat
 
     assert exc_info.value.countdown >= 540
     publish_tasks._async_pre_upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_publish_to_platform_refreshes_token_when_pre_upload_auth_fails(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-5",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["youtube"],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+        "publish_targets": [{"platform": "youtube", "account_id": "youtube-account-1"}],
+        "account_results": {
+            "youtube-account-1": {
+                "status": "pending",
+                "dispatch_enqueued_at": now - timedelta(seconds=10),
+            }
+        },
+        "platform_results": {"youtube": {"status": "pending"}},
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="publish-task-3"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "safe_setex", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_acquire_publish_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_publish_lock", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_hydrate_post_media", AsyncMock(side_effect=lambda _db, current: current))
+    monkeypatch.setattr(publish_tasks, "_resolve_post_account", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+
+    pre_upload_exc = PlatformHTTPError(401, "Invalid Credentials")
+    monkeypatch.setattr(publish_tasks, "_async_pre_upload", AsyncMock(side_effect=pre_upload_exc))
+    refresh_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr("celery_workers.tasks.tokens._refresh_with_lock", refresh_mock)
+    apply_async_mock = Mock(return_value=SimpleNamespace(id="requeued-after-refresh"))
+    monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", apply_async_mock)
+    monkeypatch.setattr(publish_tasks, "_sync_pre_upload_aggregate", AsyncMock(return_value=None))
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-5",
+        "youtube",
+        "youtube-account-1",
+        0,
+        "primary",
+    )
+
+    assert result["status"] == "token_refreshed_requeued"
+    refresh_mock.assert_awaited_once_with(fake_db, "youtube-account-1", "youtube")
+    assert apply_async_mock.call_count == 1
+    requeue_kwargs = apply_async_mock.call_args.kwargs["kwargs"]
+    assert requeue_kwargs["attempt"] == 1
+    assert requeue_kwargs["account_id"] == "youtube-account-1"
+    reset_update = fake_db.posts.update_calls[-1][1]
+    assert reset_update["$set"]["pre_upload_results.youtube-account-1.status"] == "pending"
+    assert "pre_upload_results.youtube-account-1.next_retry_at" in reset_update["$unset"]

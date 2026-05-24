@@ -15,6 +15,7 @@ import io
 from datetime import datetime, timedelta, timezone
 
 from redis.exceptions import RedisError
+from platform_adapters.base import PlatformError, PlatformHTTPError
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_queue_redis, get_cache_redis
@@ -827,6 +828,128 @@ def _seconds_until_retry(next_retry_at, fallback: int) -> int:
     return max(fallback, remaining if remaining > 0 else 0)
 
 
+async def _handle_pre_upload_permanent_error(
+    *,
+    db,
+    task,
+    post: dict,
+    post_id: str,
+    platform: str,
+    account_id: str | None,
+    target_key: str,
+    publish_queue: str,
+    attempt: int,
+    exc: PlatformError,
+) -> dict:
+    error_code = getattr(exc, "code", None)
+    subcode = getattr(exc, "subcode", None)
+    is_scope_error = _is_scope_insufficient_error(exc)
+    is_suspension_error = _is_platform_suspension_error(platform, exc)
+    is_auth_error = (
+        (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
+        or subcode in {458, 460}
+        or error_code in (190, 261, 326)
+    )
+    resolved_account_id = account_id or target_key
+
+    if is_auth_error and resolved_account_id and attempt == 0:
+        try:
+            from celery_workers.tasks.tokens import _refresh_with_lock
+
+            logger.info(
+                "Auth error during pre-upload on %s/%s — attempting on-demand token refresh for account %s",
+                post_id,
+                platform,
+                resolved_account_id,
+            )
+            await _refresh_with_lock(db, resolved_account_id, platform)
+            await db.posts.update_one(
+                {"id": post_id},
+                {
+                    "$unset": {
+                        f"platform_container_ids.{target_key}": "",
+                        f"container_expiry_at.{target_key}": "",
+                        _pre_upload_result_path(target_key, "error"): "",
+                        _pre_upload_result_path(target_key, "completed_at"): "",
+                        _pre_upload_result_path(target_key, "actual_duration_secs"): "",
+                        _pre_upload_result_path(target_key, "next_retry_at"): "",
+                    },
+                    "$set": {
+                        _pre_upload_result_path(target_key, "status"): "pending",
+                        _pre_upload_result_path(target_key, "started_at"): None,
+                        "updated_at": datetime.now(timezone.utc),
+                    },
+                },
+            )
+            await _sync_pre_upload_aggregate(db, post_id)
+            publish_to_platform.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "platform": platform,
+                    "account_id": resolved_account_id,
+                    "attempt": attempt + 1,
+                },
+                countdown=5,
+                queue=publish_queue,
+            )
+            return {"status": "token_refreshed_requeued", "platform": platform, "account_id": resolved_account_id}
+        except Exception as refresh_err:
+            logger.warning("On-demand pre-upload token refresh failed for %s: %s", post_id, refresh_err)
+
+    await _update_platform_result(
+        db,
+        post_id,
+        platform,
+        {
+            "status": "failed",
+            "error": str(exc),
+            "retry_count": attempt,
+            "last_attempt_at": datetime.now(timezone.utc),
+        },
+        account_id=resolved_account_id,
+    )
+
+    if is_auth_error and resolved_account_id:
+        try:
+            if is_scope_error:
+                from utils.ghost_cascade import handle_account_reconnect_required
+
+                await handle_account_reconnect_required(
+                    db,
+                    resolved_account_id,
+                    reconnect_reason=(
+                        "Missing required YouTube publish permissions. Reconnect the account and grant upload/edit access."
+                        if platform == "youtube"
+                        else str(exc)
+                    ),
+                    error_code=str(error_code or "insufficient_scopes"),
+                )
+            elif is_suspension_error:
+                from utils.ghost_cascade import handle_ghost_account
+
+                await handle_ghost_account(
+                    db,
+                    resolved_account_id,
+                    error_code,
+                    suspension_reason=str(exc),
+                )
+            else:
+                from utils.ghost_cascade import handle_account_reconnect_required
+
+                await handle_account_reconnect_required(
+                    db,
+                    resolved_account_id,
+                    reconnect_reason=str(exc),
+                    error_code=str(error_code or ""),
+                )
+        except ImportError:
+            pass
+
+    await _finalize_post_status(db, post_id)
+    await _send_failure_notification(db, post_id, platform, str(exc), post.get("user_id", ""))
+    return {"status": "permanent_failure", "platform": platform, "account_id": resolved_account_id}
+
+
 def _get_target_publish_state(post: dict, platform: str, target_key: str) -> dict:
     account_results = post.get("account_results") or {}
     if target_key in account_results:
@@ -1289,7 +1412,21 @@ async def _async_publish_to_platform(
                     post_type=post.get("post_type"),
                     outcome="bootstrapped",
                 )
-                pre_result = await _async_pre_upload(task, post_id, platform, account_id)
+                try:
+                    pre_result = await _async_pre_upload(task, post_id, platform, account_id)
+                except PlatformError as exc:
+                    return await _handle_pre_upload_permanent_error(
+                        db=db,
+                        task=task,
+                        post=post,
+                        post_id=post_id,
+                        platform=platform,
+                        account_id=account_id,
+                        target_key=target_key,
+                        publish_queue=publish_queue,
+                        attempt=attempt,
+                        exc=exc,
+                    )
                 if pre_result.get("status") == "polling":
                     await _update_platform_result(db, post_id, platform, {
                         "status": "retrying",

@@ -15,13 +15,15 @@ Completed:
   Files: `utils/rate_limit.py`, `platform_adapters/youtube.py`
 - Backend: propagated precise local rate-limit retry windows to all platform adapters that use `check_rate_limit`.
   Files: `platform_adapters/facebook.py`, `platform_adapters/instagram.py`, `platform_adapters/linkedin.py`, `platform_adapters/threads.py`, `platform_adapters/tiktok.py`, `platform_adapters/twitter.py`
+- Backend: pre-upload auth failures (for example YouTube `401 Invalid Credentials` during resumable-upload init) now go through token refresh / reconnect handling instead of escaping as an unexpected task crash and leaving the post in `processing`.
+  Files: `celery_workers/tasks/publish.py`
 - Tests: added regressions for fallback timing, 429 classification, retryable pre-upload state handling, and waiting on an existing pre-upload retry.
   Files: `tests/test_publish_dispatch.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify EC2 deploy for the new rate-limit/publish retry fix on a fresh YouTube video post.
+- Verify EC2 deploy for the new pre-upload auth refresh fix on a fresh YouTube video post.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
