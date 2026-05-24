@@ -7,30 +7,24 @@ Branch: main
 Focus: R2 migration + composer reliability + onboarding reliability
 
 ## Last Session Completed
-Date: 2026-05-14
+Date: 2026-05-24
 Completed:
-- Frontend: fixed Create Post crash on account selection (React max-update-depth #185).
-  Files: `frontend/src/pages/CreatePostForm.js`
-- Frontend: normalized social-account payloads + cache key bump (`social_accounts_cache_v2`).
-  File: `frontend/src/lib/api.js`
-- Frontend: same-platform account switcher shows circular avatars.
+- Backend/Frontend: expanded YouTube analytics tabs with watch quality, demographics, retention, device/source breakdowns, and geography fallback metadata.
+  Files: `api/routes/analytics.py`, `backend/app/social/google.py`, `frontend/src/pages/Analytics.js`
+- Backend/Frontend: implemented Publish Inbox capability routing for supported DM/comment platforms and fixed Instagram DM display-name fallback.
+  Files: `api/routes/inbox.py`, `backend/app/social/instagram.py`, `frontend/src/pages/Publish.js`, `frontend/src/lib/api.js`
+- Frontend: fixed composer file picker so both dropzone and CTA text use the same trigger path.
   File: `frontend/src/components/composer/PlatformEditor.js`
-- Backend (modular app): added missing `PATCH /api/auth/me` so onboarding “Next” + payment completion can update profile fields.
-  File: `api/routes/auth.py`
-- Backend/Frontend: fixed Twitter/X OAuth flow by adding required PKCE params (code_challenge/S256) and sending `state` on callback.
-  Files: `api/routes/accounts.py`, `frontend/src/pages/OAuthCallback.js`
-- Frontend: changed OAuth connect UX to use same-tab redirects (no popup/new-tab).
-  Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
-- Frontend: clear any stale `oauth_popup_expected` state on connections pages to avoid old popup behavior lingering.
-  Files: `frontend/src/pages/OnboardingConnect.js`, `frontend/src/pages/ConnectedAccounts.js`
-- Backend: Twitter analytics feed can fail due to X API credits; we now surface the exact feed failure in analytics `errors` instead of silently returning empty posts.
-  Files: `api/routes/analytics.py`, `backend/app/social/twitter.py`
-- Frontend: Analytics Posts tab now displays `/publish/feed` errors and a clear Twitter credits-depleted notice; still lists Unravler-published DB posts when available.
-  File: `frontend/src/pages/Analytics.js`
+- Backend/Frontend: fixed content-library published-post filtering/account mapping and timeslot auto-scheduling flows.
+  Files: `api/routes/posts.py`, `api/routes/bulk_upload.py`, `utils/timeslots.py`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Timeslots.js`
+- Backend: hardened publish pipeline for orphaned child tasks, video fallback dispatch, and stale publish-lock recovery with explicit dispatch/receipt logs.
+  Files: `celery_workers/tasks/publish.py`, `celery_workers/tasks/poll_status.py`
 
 ## Active Work
 Currently implementing: None
-Next: Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
+Next:
+- Verify EC2 deploy for publish-pipeline fixes and inspect fresh worker logs if any platform still remains in `processing`.
+- Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
@@ -41,5 +35,6 @@ Next: Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and elimin
 ```bash
 git status --short
 CI=true npm run build --prefix frontend
-python3 -m compileall api/routes/auth.py
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests --ignore=tests/sandbox -q
+python3 -m compileall celery_workers/tasks/publish.py
 ```
