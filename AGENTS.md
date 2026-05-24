@@ -21,13 +21,17 @@ Completed:
   Files: `celery_workers/tasks/tokens.py`
 - Backend: fixed YouTube pre-upload refresh requeue state so a successful token refresh clears stale pre-upload state instead of leaving the publish worker in an infinite `pending` retry loop; publish-task retries now preserve `dispatch_source`.
   Files: `celery_workers/tasks/publish.py`
+- Backend: post list/detail card payloads now backfill missing `thumbnail_urls`, `media_urls`, and `published_card_thumbnail_url` from stored media assets / thumbnail keys so All Posts and Published Posts keep showing previews even when older post docs are sparse.
+  Files: `api/routes/posts.py`
+- Backend: pre-upload status lookup no longer falls back from an empty per-target state to a stale aggregate `pre_upload_status`, which fixes retry loops for pre-upload platforms after state resets.
+  Files: `celery_workers/tasks/publish.py`
 - Tests: added token refresh regressions and kept publish-dispatch regressions passing.
-  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`
+  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`, `tests/test_published_post_retention.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify EC2 deploy for the shared async-runner + token-refresh fixes on a fresh YouTube video post.
+- Verify EC2 deploy for the card-hydration + pre-upload-state fixes on a fresh YouTube video post and confirm thumbnails reappear in Content Library.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes

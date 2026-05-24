@@ -209,6 +209,17 @@ def test_classify_error_treats_platform_api_429_as_rate_limited():
     assert classify_error(exc, "youtube") == ErrorClass.RATE_LIMITED
 
 
+def test_get_platform_pre_upload_status_does_not_fall_back_to_stale_aggregate_status():
+    post = {
+        "pre_upload_status": "pending",
+        "pre_upload_results": {
+            "youtube-account-1": {},
+        },
+    }
+
+    assert publish_tasks._get_platform_pre_upload_status(post, "youtube-account-1") is None
+
+
 @pytest.mark.asyncio
 async def test_async_pre_upload_marks_retryable_rate_limit_as_retrying(monkeypatch):
     os.environ["DB_NAME"] = "testdb"

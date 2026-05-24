@@ -768,6 +768,10 @@ def _get_platform_pre_upload_state(post: dict, target_key: str) -> dict:
     return ((post.get("pre_upload_results") or {}).get(target_key) or {})
 
 
+def _has_platform_pre_upload_state(post: dict, target_key: str) -> bool:
+    return target_key in (post.get("pre_upload_results") or {})
+
+
 def _coerce_utc_datetime(value):
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -782,22 +786,30 @@ def _coerce_utc_datetime(value):
 
 def _get_platform_pre_upload_status(post: dict, target_key: str) -> str | None:
     state = _get_platform_pre_upload_state(post, target_key)
-    return state.get("status") or post.get("pre_upload_status")
+    if _has_platform_pre_upload_state(post, target_key):
+        return state.get("status")
+    return post.get("pre_upload_status")
 
 
 def _get_platform_pre_upload_error(post: dict, target_key: str) -> str | None:
     state = _get_platform_pre_upload_state(post, target_key)
-    return state.get("error") or post.get("pre_upload_error")
+    if _has_platform_pre_upload_state(post, target_key):
+        return state.get("error")
+    return post.get("pre_upload_error")
 
 
 def _get_platform_pre_upload_started_at(post: dict, target_key: str):
     state = _get_platform_pre_upload_state(post, target_key)
-    return _coerce_utc_datetime(state.get("started_at") or post.get("pre_upload_started_at"))
+    if _has_platform_pre_upload_state(post, target_key):
+        return _coerce_utc_datetime(state.get("started_at"))
+    return _coerce_utc_datetime(post.get("pre_upload_started_at"))
 
 
 def _get_platform_pre_upload_completed_at(post: dict, target_key: str):
     state = _get_platform_pre_upload_state(post, target_key)
-    return _coerce_utc_datetime(state.get("completed_at") or post.get("pre_upload_completed_at"))
+    if _has_platform_pre_upload_state(post, target_key):
+        return _coerce_utc_datetime(state.get("completed_at"))
+    return _coerce_utc_datetime(post.get("pre_upload_completed_at"))
 
 
 def _get_platform_pre_upload_next_retry_at(post: dict, target_key: str):

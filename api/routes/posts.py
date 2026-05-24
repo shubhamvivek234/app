@@ -33,6 +33,7 @@ from utils.content_policy import check_content_policy, validate_platform_content
 from utils.observability import event_log, shorten_provider_error
 from utils.schedule_density import check_schedule_density
 from utils.ssrf_guard import assert_safe_url
+from utils.storage import public_url_for_key
 from utils.timeslots import normalize_timeslot_category, resolve_next_timeslot_for_account
 
 logger = logging.getLogger(__name__)
@@ -135,10 +136,97 @@ def _collect_dispatch_task_ids(doc: dict | None) -> list[str]:
     return list(dict.fromkeys(task_ids))
 
 
-def _hydrate_post_card_fields(doc: dict) -> dict:
-    if doc.get("published_media_kind") not in {"text", "image", "video", "mixed"}:
-        doc["published_media_kind"] = _infer_published_media_kind(doc)
+def _needs_card_media_backfill(doc: dict) -> bool:
+    return bool(doc.get("media_ids")) and (
+        not doc.get("media_urls")
+        or not doc.get("thumbnail_urls")
+        or not doc.get("media_url")
+    )
+
+
+def _backfill_post_media_card_fields(doc: dict, media_assets_by_id: dict[str, dict]) -> dict:
+    ordered_media_ids = [media_id for media_id in (doc.get("media_ids") or []) if media_id]
+    if not ordered_media_ids:
+        return doc
+
+    ordered_assets = [
+        media_assets_by_id[media_id]
+        for media_id in ordered_media_ids
+        if media_id in media_assets_by_id
+    ]
+    if not ordered_assets:
+        return doc
+
+    if not doc.get("media_urls"):
+        doc["media_urls"] = [
+            asset.get("media_url")
+            for asset in ordered_assets
+            if asset.get("media_url")
+        ]
+    if not doc.get("thumbnail_urls"):
+        doc["thumbnail_urls"] = [
+            asset.get("thumbnail_url") or asset.get("media_url")
+            for asset in ordered_assets
+            if asset.get("thumbnail_url") or asset.get("media_url")
+        ]
+    if not doc.get("media_url"):
+        media_urls = doc.get("media_urls") or []
+        doc["media_url"] = media_urls[0] if media_urls else None
     return doc
+
+
+async def _hydrate_post_card_fields_for_docs(db, docs: list[dict]) -> list[dict]:
+    hydrated_docs = [dict(doc) for doc in docs]
+
+    media_ids_by_user: dict[str, set[str]] = {}
+    for doc in hydrated_docs:
+        thumbnail_key = doc.get("published_card_thumbnail_key")
+        if thumbnail_key and not doc.get("published_card_thumbnail_url"):
+            try:
+                doc["published_card_thumbnail_url"] = public_url_for_key(str(thumbnail_key))
+            except Exception:
+                logger.warning("Could not derive public thumbnail URL for post %s", doc.get("id"))
+
+        if not _needs_card_media_backfill(doc):
+            continue
+        user_id = str(doc.get("user_id") or "").strip()
+        if not user_id:
+            continue
+        media_ids_by_user.setdefault(user_id, set()).update(
+            str(media_id).strip()
+            for media_id in (doc.get("media_ids") or [])
+            if str(media_id).strip()
+        )
+
+    media_assets_by_user: dict[str, dict[str, dict]] = {}
+    for user_id, media_ids in media_ids_by_user.items():
+        media_docs = await db.media_assets.find(
+            {
+                "user_id": user_id,
+                "media_id": {"$in": list(media_ids)},
+            },
+            {"_id": 0, "media_id": 1, "media_url": 1, "thumbnail_url": 1},
+        ).to_list(len(media_ids))
+        media_assets_by_user[user_id] = {
+            doc["media_id"]: doc
+            for doc in media_docs
+            if doc.get("media_id")
+        }
+
+    for doc in hydrated_docs:
+        if _needs_card_media_backfill(doc):
+            user_id = str(doc.get("user_id") or "").strip()
+            if user_id and user_id in media_assets_by_user:
+                _backfill_post_media_card_fields(doc, media_assets_by_user[user_id])
+        if doc.get("published_media_kind") not in {"text", "image", "video", "mixed"}:
+            doc["published_media_kind"] = _infer_published_media_kind(doc)
+
+    return hydrated_docs
+
+
+async def _hydrate_post_card_fields(db, doc: dict) -> dict:
+    hydrated_docs = await _hydrate_post_card_fields_for_docs(db, [doc])
+    return hydrated_docs[0]
 
 
 def _plan_post_limit(plan: str) -> int:
@@ -979,7 +1067,8 @@ async def list_posts(
         sort_spec = [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
     cursor = db.posts.find(query, {"_id": 0}).sort(sort_spec).skip(skip).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_response(_hydrate_post_card_fields(d)) for d in docs]
+    hydrated_docs = await _hydrate_post_card_fields_for_docs(db, docs)
+    return [_doc_to_response(d) for d in hydrated_docs]
 
 
 @router.get("/posts/recent-published", response_model=list[PostResponse],
@@ -1004,7 +1093,8 @@ async def list_recent_published_posts(
         [("published_at", -1), ("updated_at", -1), ("created_at", -1)]
     ).limit(limit)
     docs = await cursor.to_list(length=limit)
-    return [_doc_to_response(_hydrate_post_card_fields(d)) for d in docs]
+    hydrated_docs = await _hydrate_post_card_fields_for_docs(db, docs)
+    return [_doc_to_response(d) for d in hydrated_docs]
 
 
 # ── Get single ───────────────────────────────────────────────────────────────
@@ -1034,7 +1124,7 @@ async def get_post(
         if not member:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return _doc_to_response(_hydrate_post_card_fields(doc))
+    return _doc_to_response(await _hydrate_post_card_fields(db, doc))
 
 
 # ── Update (optimistic lock EC25) ────────────────────────────────────────────
@@ -1146,7 +1236,7 @@ async def update_post(
         details={"fields_changed": list(updates.keys())},
     )
 
-    return _doc_to_response(_hydrate_post_card_fields(updated))
+    return _doc_to_response(await _hydrate_post_card_fields(db, updated))
 
 
 # ── Soft-delete ───────────────────────────────────────────────────────────────
@@ -1245,7 +1335,8 @@ async def list_failed_posts(current_user: CurrentUser, db: DB):
         {"_id": 0},
     ).sort("updated_at", -1).limit(100)
     docs = await cursor.to_list(None)
-    return [_doc_to_response(d) for d in docs]
+    hydrated_docs = await _hydrate_post_card_fields_for_docs(db, docs)
+    return [_doc_to_response(d) for d in hydrated_docs]
 
 
 @router.post("/posts/{post_id}/retry", dependencies=[require_permission("post:update")])
