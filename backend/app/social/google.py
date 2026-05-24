@@ -550,6 +550,78 @@ class GoogleAuth:
             )
         return normalized
 
+    async def query_channel_analytics_totals(
+        self,
+        access_token: str,
+        metrics: list[str],
+        start_date,
+        end_date,
+    ) -> list[dict[str, Any]]:
+        return await self.query_analytics_report(
+            access_token,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def query_channel_analytics_time_series(
+        self,
+        access_token: str,
+        metrics: list[str],
+        start_date,
+        end_date,
+        *,
+        dimension: str = "day",
+    ) -> list[dict[str, Any]]:
+        return await self.query_analytics_report(
+            access_token,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+            dimensions=[dimension],
+        )
+
+    async def query_channel_dimension_breakdown(
+        self,
+        access_token: str,
+        metrics: list[str],
+        start_date,
+        end_date,
+        *,
+        dimensions: list[str],
+        filters: dict[str, str] | None = None,
+        sort: list[str] | None = None,
+        max_results: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.query_analytics_report(
+            access_token,
+            metrics=metrics,
+            start_date=start_date,
+            end_date=end_date,
+            dimensions=dimensions,
+            filters=filters,
+            sort=sort,
+            max_results=max_results,
+        )
+
+    async def query_video_retention(
+        self,
+        access_token: str,
+        video_id: str,
+        start_date,
+        end_date,
+    ) -> list[dict[str, Any]]:
+        return await self.query_analytics_report(
+            access_token,
+            metrics=["audienceWatchRatio", "relativeRetentionPerformance"],
+            start_date=start_date,
+            end_date=end_date,
+            dimensions=["elapsedVideoTimeRatio"],
+            filters={"video": video_id},
+            sort=["elapsedVideoTimeRatio"],
+            max_results=200,
+        )
+
     async def fetch_video_details(self, access_token: str, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not video_ids:
             return {}

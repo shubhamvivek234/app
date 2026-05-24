@@ -926,6 +926,23 @@ def _youtube_metric_label(value: str) -> str:
     return value.replace("_", " ").replace("-", " ").title()
 
 
+_YOUTUBE_AGE_GROUP_LABELS = {
+    "AGE_13_17": "13-17",
+    "AGE_18_24": "18-24",
+    "AGE_25_34": "25-34",
+    "AGE_35_44": "35-44",
+    "AGE_45_54": "45-54",
+    "AGE_55_64": "55-64",
+    "AGE_65_": "65+",
+}
+
+_YOUTUBE_GENDER_LABELS = {
+    "FEMALE": "Female",
+    "MALE": "Male",
+    "USER_SPECIFIED": "User Specified",
+    "GENDER_OTHER": "Other",
+}
+
 _YOUTUBE_TRAFFIC_SOURCE_LABELS = {
     "ADVERTISING": "Advertising",
     "ANNOTATION": "Annotations",
@@ -957,6 +974,26 @@ _YOUTUBE_PLAYBACK_LOCATION_LABELS = {
     "CHANNEL": "Channel Page",
 }
 
+_YOUTUBE_OPERATING_SYSTEM_LABELS = {
+    "ANDROID": "Android",
+    "BLACKBERRY": "BlackBerry",
+    "CHROMECAST": "Chromecast",
+    "CHROMEOS": "Chrome OS",
+    "DESKTOP": "Desktop",
+    "FIREFOX": "Firefox",
+    "IOS": "iOS",
+    "LINUX": "Linux",
+    "MACINTOSH": "macOS",
+    "NINTENDO": "Nintendo",
+    "PLAYSTATION": "PlayStation",
+    "SMART_TV": "Smart TV",
+    "TVHTML5": "TV",
+    "UNKNOWN": "Unknown",
+    "WII": "Wii",
+    "WINDOWS": "Windows",
+    "XBOX": "Xbox",
+}
+
 _YOUTUBE_DEVICE_TYPE_LABELS = {
     "DESKTOP": "Desktop",
     "MOBILE": "Mobile",
@@ -969,6 +1006,37 @@ _YOUTUBE_DEVICE_TYPE_LABELS = {
 _YOUTUBE_SUBSCRIBED_STATUS_LABELS = {
     "SUBSCRIBED": "Subscribed",
     "UNSUBSCRIBED": "Non Subscribed",
+}
+
+_YOUTUBE_CREATOR_CONTENT_TYPE_LABELS = {
+    "SHORTS": "Shorts",
+    "VIDEO_ON_DEMAND": "Long-form Video",
+    "LIVE_STREAM": "Live Stream",
+}
+
+_YOUTUBE_LIVE_ON_DEMAND_LABELS = {
+    "LIVE": "Live",
+    "ON_DEMAND": "On Demand",
+}
+
+_YOUTUBE_SHARING_SERVICE_LABELS = {
+    "COPY_TO_CLIPBOARD": "Copy Link",
+    "EMBED": "Embed",
+    "EMAIL": "Email",
+    "FACEBOOK": "Facebook",
+    "FACEBOOK_MESSENGER": "Messenger",
+    "GMAIL": "Gmail",
+    "INSTAGRAM": "Instagram",
+    "LINE": "LINE",
+    "OTHER": "Other",
+    "PINTEREST": "Pinterest",
+    "REDDIT": "Reddit",
+    "SMS": "SMS",
+    "TELEGRAM": "Telegram",
+    "TUMBLR": "Tumblr",
+    "TWITTER": "X / Twitter",
+    "UNKNOWN": "Unknown",
+    "WHATS_APP": "WhatsApp",
 }
 
 
@@ -1052,6 +1120,56 @@ def _merge_named_metrics(
     return normalized
 
 
+def _merge_named_weighted_metrics(
+    items: list[dict[str, Any]],
+    key_name: str,
+    additive_metric_keys: list[str],
+    average_metric_keys: list[str],
+    *,
+    weight_key: str = "views",
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in items:
+        key = str(item.get(key_name) or "")
+        if not key:
+            continue
+        row = merged.setdefault(
+            key,
+            {
+                key_name: key,
+                "_weight_total": 0.0,
+                **{f"_{metric_key}_weighted": 0.0 for metric_key in average_metric_keys},
+            },
+        )
+        if item.get("label") and not row.get("label"):
+            row["label"] = item.get("label")
+        weight_value = float(item.get(weight_key) or 0)
+        row["_weight_total"] += weight_value
+        for metric_key in additive_metric_keys:
+            row[metric_key] = row.get(metric_key, 0) + float(item.get(metric_key) or 0)
+        for metric_key in average_metric_keys:
+            row[f"_{metric_key}_weighted"] += float(item.get(metric_key) or 0) * weight_value
+
+    normalized: list[dict[str, Any]] = []
+    for row in merged.values():
+        weight_total = float(row.pop("_weight_total", 0) or 0)
+        for metric_key in additive_metric_keys:
+            value = float(row.get(metric_key) or 0)
+            row[metric_key] = int(value) if value.is_integer() else round(value, 4)
+        for metric_key in average_metric_keys:
+            weighted_total = float(row.pop(f"_{metric_key}_weighted", 0) or 0)
+            value = (weighted_total / weight_total) if weight_total > 0 else 0.0
+            row[metric_key] = int(value) if float(value).is_integer() else round(value, 4)
+        normalized.append(row)
+
+    ranking_keys = additive_metric_keys or average_metric_keys
+    normalized.sort(
+        key=lambda row: sum(float(row.get(metric_key) or 0) for metric_key in ranking_keys),
+        reverse=True,
+    )
+    return normalized
+
+
 def _youtube_series_from_rows(rows: list[dict[str, Any]], value_key: str) -> list[dict[str, int | float]]:
     return [
         {
@@ -1063,6 +1181,63 @@ def _youtube_series_from_rows(rows: list[dict[str, Any]], value_key: str) -> lis
         for row in rows
         if row.get("day")
     ]
+
+
+def _youtube_watch_quality_series_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, int | float]]:
+    normalized: list[dict[str, int | float]] = []
+    for row in rows:
+        if not row.get("day"):
+            continue
+        normalized.append(
+            {
+                "date": str(row.get("day")),
+                "engaged_views": _metric_int(row.get("engagedViews")),
+                "average_view_duration_seconds": round(float(row.get("averageViewDuration") or 0), 4),
+                "average_view_percentage": round(float(row.get("averageViewPercentage") or 0), 4),
+                "views": _metric_int(row.get("views")),
+            }
+        )
+    return normalized
+
+
+def _merge_youtube_watch_quality_series(items: list[list[dict[str, Any]]]) -> list[dict[str, int | float]]:
+    merged: dict[str, dict[str, float]] = {}
+    for series in items:
+        for point in series or []:
+            date_key = str(point.get("date") or "")
+            if not date_key:
+                continue
+            row = merged.setdefault(
+                date_key,
+                {
+                    "engaged_views": 0.0,
+                    "views": 0.0,
+                    "_duration_weighted": 0.0,
+                    "_percentage_weighted": 0.0,
+                },
+            )
+            views = float(point.get("views") or 0)
+            row["engaged_views"] += float(point.get("engaged_views") or 0)
+            row["views"] += views
+            row["_duration_weighted"] += float(point.get("average_view_duration_seconds") or 0) * views
+            row["_percentage_weighted"] += float(point.get("average_view_percentage") or 0) * views
+
+    normalized: list[dict[str, int | float]] = []
+    for date_key in sorted(merged.keys()):
+        row = merged[date_key]
+        views = float(row.get("views") or 0)
+        avg_duration = (float(row.get("_duration_weighted") or 0) / views) if views > 0 else 0.0
+        avg_percentage = (float(row.get("_percentage_weighted") or 0) / views) if views > 0 else 0.0
+        normalized.append(
+            {
+                "date": date_key,
+                "engaged_views": int(row["engaged_views"]) if float(row["engaged_views"]).is_integer() else round(float(row["engaged_views"]), 4),
+                "views": int(views) if views.is_integer() else round(views, 4),
+                "average_view_duration_seconds": int(avg_duration) if float(avg_duration).is_integer() else round(avg_duration, 4),
+                "average_view_percentage": int(avg_percentage) if float(avg_percentage).is_integer() else round(avg_percentage, 4),
+            }
+        )
+    return normalized
 
 
 def _youtube_video_card(video: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1472,6 +1647,12 @@ async def analytics_youtube_report(
         "device_type": True,
         "subscribed_status": True,
         "search_terms": True,
+        "watch_quality": True,
+        "viewer_demographics": True,
+        "operating_system": True,
+        "content_type_breakdown": True,
+        "sharing_services": True,
+        "retention": True,
     }
 
     audience_summary = {
@@ -1489,6 +1670,18 @@ async def analytics_youtube_report(
         "card_clicks": 0,
         "card_teaser_clicks": 0,
     }
+    watch_quality_summary = {
+        "engaged_views": 0,
+        "views_weight": 0,
+        "avg_duration_weighted": 0.0,
+        "avg_percentage_weighted": 0.0,
+    }
+    previous_watch_quality_summary = {
+        "engaged_views": 0,
+        "views_weight": 0,
+        "avg_duration_weighted": 0.0,
+        "avg_percentage_weighted": 0.0,
+    }
     previous_totals = {
         "subscribers_gained": 0,
         "subscribers_lost": 0,
@@ -1505,16 +1698,26 @@ async def analytics_youtube_report(
     subscriber_growth_series: list[list[dict[str, Any]]] = []
     views_series: list[list[dict[str, Any]]] = []
     minutes_series: list[list[dict[str, Any]]] = []
+    watch_quality_series: list[list[dict[str, Any]]] = []
     subscriber_geo_items: list[dict[str, Any]] = []
     views_geo_payloads: list[dict[str, Any]] = []
     minutes_geo_payloads: list[dict[str, Any]] = []
     traffic_source_items: list[dict[str, Any]] = []
     playback_location_items: list[dict[str, Any]] = []
+    operating_system_items: list[dict[str, Any]] = []
     device_type_items: list[dict[str, Any]] = []
     subscribed_status_items: list[dict[str, Any]] = []
     search_term_items: list[dict[str, Any]] = []
+    creator_content_type_items: list[dict[str, Any]] = []
+    live_on_demand_items: list[dict[str, Any]] = []
+    sharing_service_items: list[dict[str, Any]] = []
+    demographic_age_items: list[dict[str, Any]] = []
+    demographic_gender_items: list[dict[str, Any]] = []
+    demographic_matrix_items: list[dict[str, Any]] = []
     top_videos_by_views: list[dict[str, Any]] = []
     top_videos_by_minutes: list[dict[str, Any]] = []
+    retention_video_ids: list[str] = []
+    retention_payloads: dict[str, dict[str, Any]] = {}
 
     async def safe_query(
         access_token: str,
@@ -1528,19 +1731,56 @@ async def analytics_youtube_report(
         critical: bool = False,
         start_date_override=None,
         end_date_override=None,
+        query_kind: str = "generic",
     ) -> list[dict[str, Any]]:
         nonlocal analytics_enabled, message, card_metrics_supported
         try:
-            rows = await auth.query_analytics_report(
-                access_token,
-                metrics=metrics,
-                start_date=start_date_override or start_date,
-                end_date=end_date_override or end_date,
-                dimensions=dimensions,
-                filters=filters,
-                sort=sort,
-                max_results=max_results,
-            )
+            query_start = start_date_override or start_date
+            query_end = end_date_override or end_date
+            if query_kind == "totals":
+                rows = await auth.query_channel_analytics_totals(
+                    access_token,
+                    metrics=metrics,
+                    start_date=query_start,
+                    end_date=query_end,
+                )
+            elif query_kind == "time_series":
+                rows = await auth.query_channel_analytics_time_series(
+                    access_token,
+                    metrics=metrics,
+                    start_date=query_start,
+                    end_date=query_end,
+                    dimension=(dimensions or ["day"])[0],
+                )
+            elif query_kind == "dimension_breakdown":
+                rows = await auth.query_channel_dimension_breakdown(
+                    access_token,
+                    metrics=metrics,
+                    start_date=query_start,
+                    end_date=query_end,
+                    dimensions=dimensions or [],
+                    filters=filters,
+                    sort=sort,
+                    max_results=max_results,
+                )
+            elif query_kind == "retention":
+                rows = await auth.query_video_retention(
+                    access_token,
+                    video_id=(filters or {}).get("video", ""),
+                    start_date=query_start,
+                    end_date=query_end,
+                )
+            else:
+                rows = await auth.query_analytics_report(
+                    access_token,
+                    metrics=metrics,
+                    start_date=query_start,
+                    end_date=query_end,
+                    dimensions=dimensions,
+                    filters=filters,
+                    sort=sort,
+                    max_results=max_results,
+                )
             analytics_enabled = True
             if label == "cards":
                 card_metrics_supported = True
@@ -1577,7 +1817,7 @@ async def analytics_youtube_report(
     ) -> dict[str, int | float]:
         nonlocal analytics_enabled
         try:
-            rows = await auth.query_analytics_report(
+            rows = await auth.query_channel_analytics_totals(
                 access_token,
                 metrics=metrics,
                 start_date=previous_start,
@@ -1658,6 +1898,7 @@ async def analytics_youtube_report(
             dimensions=["day"],
             label="subscriber_growth",
             critical=True,
+            query_kind="time_series",
         )
         if daily_subscriber_rows:
             subscriber_growth_series.append(
@@ -1683,12 +1924,15 @@ async def analytics_youtube_report(
             ["likes", "comments", "shares", "views", "estimatedMinutesWatched"],
             label="totals",
             critical=True,
+            query_kind="totals",
         )
+        account_period_views = _metric_int(engagement_snapshot.get("period_views"))
         if totals_rows:
             post_summary["engagement"] += sum(
                 _metric_int(row.get("likes")) + _metric_int(row.get("comments")) + _metric_int(row.get("shares"))
                 for row in totals_rows
             )
+            account_period_views = sum(_metric_int(row.get("views")) for row in totals_rows)
             previous_period_totals = await safe_previous_totals(
                 access_token,
                 ["likes", "comments", "shares", "views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost"],
@@ -1711,6 +1955,7 @@ async def analytics_youtube_report(
             dimensions=["day"],
             label="views_minutes_series",
             critical=True,
+            query_kind="time_series",
         )
         if daily_views_rows:
             views_series.append(_youtube_series_from_rows(daily_views_rows, "views"))
@@ -1720,6 +1965,40 @@ async def analytics_youtube_report(
             views_series.append([{"date": synthetic_date, "count": _metric_int(engagement_snapshot.get("period_views"))}])
             minutes_series.append([{"date": synthetic_date, "count": float(engagement_snapshot.get("period_minutes_watched") or 0)}])
 
+        watch_quality_totals_rows = await safe_query(
+            access_token,
+            ["engagedViews", "averageViewDuration", "averageViewPercentage", "views"],
+            label="watch_quality",
+            query_kind="totals",
+        )
+        if watch_quality_totals_rows:
+            for row in watch_quality_totals_rows:
+                views_weight = _metric_int(row.get("views"))
+                watch_quality_summary["engaged_views"] += _metric_int(row.get("engagedViews"))
+                watch_quality_summary["views_weight"] += views_weight
+                watch_quality_summary["avg_duration_weighted"] += float(row.get("averageViewDuration") or 0) * views_weight
+                watch_quality_summary["avg_percentage_weighted"] += float(row.get("averageViewPercentage") or 0) * views_weight
+
+            previous_watch_quality_rows = await safe_previous_totals(
+                access_token,
+                ["engagedViews", "averageViewDuration", "averageViewPercentage", "views"],
+            )
+            previous_views_weight = _metric_int(previous_watch_quality_rows.get("views"))
+            previous_watch_quality_summary["engaged_views"] += _metric_int(previous_watch_quality_rows.get("engagedViews"))
+            previous_watch_quality_summary["views_weight"] += previous_views_weight
+            previous_watch_quality_summary["avg_duration_weighted"] += float(previous_watch_quality_rows.get("averageViewDuration") or 0) * previous_views_weight
+            previous_watch_quality_summary["avg_percentage_weighted"] += float(previous_watch_quality_rows.get("averageViewPercentage") or 0) * previous_views_weight
+
+        watch_quality_daily_rows = await safe_query(
+            access_token,
+            ["engagedViews", "averageViewDuration", "averageViewPercentage", "views"],
+            dimensions=["day"],
+            label="watch_quality",
+            query_kind="time_series",
+        )
+        if watch_quality_daily_rows:
+            watch_quality_series.append(_youtube_watch_quality_series_from_rows(watch_quality_daily_rows))
+
         top_videos_by_view_rows = await safe_query(
             access_token,
             ["views", "estimatedMinutesWatched", "likes", "comments", "shares"],
@@ -1727,6 +2006,7 @@ async def analytics_youtube_report(
             sort=["-views"],
             max_results=25,
             label="top_videos_by_views",
+            query_kind="dimension_breakdown",
         )
         top_videos_by_minutes_rows = await safe_query(
             access_token,
@@ -1735,6 +2015,7 @@ async def analytics_youtube_report(
             sort=["-estimatedMinutesWatched"],
             max_results=25,
             label="top_videos_by_minutes",
+            query_kind="dimension_breakdown",
         )
         unique_video_ids = {
             str(row.get("video") or "")
@@ -1772,6 +2053,42 @@ async def analytics_youtube_report(
             top_videos_by_views.extend(build_top_video_items(top_videos_by_view_rows or []))
             top_videos_by_minutes.extend(build_top_video_items(top_videos_by_minutes_rows or []))
 
+            ordered_retention_video_ids: list[str] = []
+            for item in [*top_videos_by_views[:5], *top_videos_by_minutes[:5]]:
+                video_id = str(item.get("id") or "")
+                if video_id and video_id not in ordered_retention_video_ids:
+                    ordered_retention_video_ids.append(video_id)
+
+            for video_id in ordered_retention_video_ids:
+                retention_rows = await safe_query(
+                    access_token,
+                    ["audienceWatchRatio", "relativeRetentionPerformance"],
+                    filters={"video": video_id},
+                    label="retention",
+                    query_kind="retention",
+                )
+                if not retention_rows:
+                    continue
+                detail = details.get(video_id, {})
+                snippet = detail.get("snippet", {})
+                retention_payloads[video_id] = {
+                    "video_id": video_id,
+                    "title": snippet.get("title") or "",
+                    "thumbnail_url": (snippet.get("thumbnails") or {}).get("high", {}).get("url"),
+                    "published_at": snippet.get("publishedAt"),
+                    "series": [
+                        {
+                            "elapsed_video_time_ratio": round(float(row.get("elapsedVideoTimeRatio") or 0), 4),
+                            "audience_watch_ratio": round(float(row.get("audienceWatchRatio") or 0), 4),
+                            "relative_retention_performance": round(float(row.get("relativeRetentionPerformance") or 0), 4),
+                        }
+                        for row in retention_rows
+                        if row.get("elapsedVideoTimeRatio") is not None
+                    ],
+                }
+                if retention_payloads[video_id]["series"]:
+                    retention_video_ids.append(video_id)
+
         subscriber_geo_rows = await safe_query(
             access_token,
             ["subscribersGained"],
@@ -1779,6 +2096,7 @@ async def analytics_youtube_report(
             sort=["-subscribersGained"],
             max_results=25,
             label="subscriber_geography",
+            query_kind="dimension_breakdown",
         )
         subscriber_geo_items.extend(
             [
@@ -1800,6 +2118,7 @@ async def analytics_youtube_report(
             label="views_geography",
             start_date_override=geography_start_date,
             end_date_override=geography_end_date,
+            query_kind="dimension_breakdown",
         )
         views_geo_payloads.append(
             await _resolve_youtube_geography_payload(
@@ -1823,6 +2142,7 @@ async def analytics_youtube_report(
             label="minutes_geography",
             start_date_override=geography_start_date,
             end_date_override=geography_end_date,
+            query_kind="dimension_breakdown",
         )
         minutes_geo_payloads.append(
             await _resolve_youtube_geography_payload(
@@ -1846,6 +2166,7 @@ async def analytics_youtube_report(
                     sort=["-views"],
                     max_results=25,
                     label="traffic_source",
+                    query_kind="dimension_breakdown",
                 ),
                 "insightTrafficSourceType",
                 ["views", "estimatedMinutesWatched"],
@@ -1862,10 +2183,28 @@ async def analytics_youtube_report(
                     sort=["-views"],
                     max_results=25,
                     label="playback_location",
+                    query_kind="dimension_breakdown",
                 ),
                 "insightPlaybackLocationType",
                 ["views", "estimatedMinutesWatched"],
                 _YOUTUBE_PLAYBACK_LOCATION_LABELS,
+            )
+        )
+
+        operating_system_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched"],
+                    dimensions=["operatingSystem"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="operating_system",
+                    query_kind="dimension_breakdown",
+                ),
+                "operatingSystem",
+                ["views", "estimatedMinutesWatched"],
+                _YOUTUBE_OPERATING_SYSTEM_LABELS,
             )
         )
 
@@ -1878,6 +2217,7 @@ async def analytics_youtube_report(
                     sort=["-views"],
                     max_results=25,
                     label="device_type",
+                    query_kind="dimension_breakdown",
                 ),
                 "deviceType",
                 ["views"],
@@ -1894,10 +2234,45 @@ async def analytics_youtube_report(
                     sort=["-views"],
                     max_results=25,
                     label="subscribed_status",
+                    query_kind="dimension_breakdown",
                 ),
                 "subscribedStatus",
                 ["views", "estimatedMinutesWatched"],
                 _YOUTUBE_SUBSCRIBED_STATUS_LABELS,
+            )
+        )
+
+        creator_content_type_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched", "engagedViews", "averageViewDuration", "averageViewPercentage"],
+                    dimensions=["creatorContentType"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="content_type_breakdown",
+                    query_kind="dimension_breakdown",
+                ),
+                "creatorContentType",
+                ["views", "estimatedMinutesWatched", "engagedViews", "averageViewDuration", "averageViewPercentage"],
+                _YOUTUBE_CREATOR_CONTENT_TYPE_LABELS,
+            )
+        )
+
+        live_on_demand_items.extend(
+            _youtube_named_breakdown(
+                await safe_query(
+                    access_token,
+                    ["views", "estimatedMinutesWatched", "engagedViews", "averageViewDuration", "averageViewPercentage"],
+                    dimensions=["liveOrOnDemand"],
+                    sort=["-views"],
+                    max_results=25,
+                    label="content_type_breakdown",
+                    query_kind="dimension_breakdown",
+                ),
+                "liveOrOnDemand",
+                ["views", "estimatedMinutesWatched", "engagedViews", "averageViewDuration", "averageViewPercentage"],
+                _YOUTUBE_LIVE_ON_DEMAND_LABELS,
             )
         )
 
@@ -1909,6 +2284,7 @@ async def analytics_youtube_report(
             sort=["-views"],
             max_results=20,
             label="search_terms",
+            query_kind="dimension_breakdown",
         )
         search_term_items.extend(
             [
@@ -1922,10 +2298,94 @@ async def analytics_youtube_report(
             ]
         )
 
+        demographic_rows = await safe_query(
+            access_token,
+            ["viewerPercentage"],
+            dimensions=["ageGroup", "gender"],
+            sort=["-viewerPercentage"],
+            max_results=100,
+            label="viewer_demographics",
+            query_kind="dimension_breakdown",
+        )
+        demographic_weight = max(account_period_views, 1)
+        account_age_percentages: dict[str, float] = {}
+        account_gender_percentages: dict[str, float] = {}
+        for row in demographic_rows:
+            age_key = str(row.get("ageGroup") or "").upper()
+            gender_key = str(row.get("gender") or "").upper()
+            viewer_percentage = round(float(row.get("viewerPercentage") or 0), 4)
+            if not age_key or not gender_key:
+                continue
+            account_age_percentages[age_key] = account_age_percentages.get(age_key, 0.0) + viewer_percentage
+            account_gender_percentages[gender_key] = account_gender_percentages.get(gender_key, 0.0) + viewer_percentage
+            demographic_matrix_items.append(
+                {
+                    "value": f"{age_key}:{gender_key}",
+                    "label": f"{_YOUTUBE_AGE_GROUP_LABELS.get(age_key) or _youtube_metric_label(age_key)} / {_YOUTUBE_GENDER_LABELS.get(gender_key) or _youtube_metric_label(gender_key)}",
+                    "age_group": age_key,
+                    "age_group_label": _YOUTUBE_AGE_GROUP_LABELS.get(age_key) or _youtube_metric_label(age_key),
+                    "gender": gender_key,
+                    "gender_label": _YOUTUBE_GENDER_LABELS.get(gender_key) or _youtube_metric_label(gender_key),
+                    "viewer_percentage": viewer_percentage,
+                    "views": demographic_weight,
+                }
+            )
+        demographic_age_items.extend(
+            [
+                {
+                    "value": age_key,
+                    "label": _YOUTUBE_AGE_GROUP_LABELS.get(age_key) or _youtube_metric_label(age_key),
+                    "viewer_percentage": round(value, 4),
+                    "views": demographic_weight,
+                }
+                for age_key, value in account_age_percentages.items()
+            ]
+        )
+        demographic_gender_items.extend(
+            [
+                {
+                    "value": gender_key,
+                    "label": _YOUTUBE_GENDER_LABELS.get(gender_key) or _youtube_metric_label(gender_key),
+                    "viewer_percentage": round(value, 4),
+                    "views": demographic_weight,
+                }
+                for gender_key, value in account_gender_percentages.items()
+            ]
+        )
+
+        sharing_service_rows = await safe_query(
+            access_token,
+            ["shares", "views", "estimatedMinutesWatched"],
+            dimensions=["sharingService"],
+            sort=["-shares"],
+            max_results=25,
+            label="sharing_services",
+            query_kind="dimension_breakdown",
+        )
+        if not sharing_service_rows:
+            sharing_service_rows = await safe_query(
+                access_token,
+                ["shares"],
+                dimensions=["sharingService"],
+                sort=["-shares"],
+                max_results=25,
+                label="sharing_services",
+                query_kind="dimension_breakdown",
+            )
+        sharing_service_items.extend(
+            _youtube_named_breakdown(
+                sharing_service_rows,
+                "sharingService",
+                ["shares", "views", "estimatedMinutesWatched"],
+                _YOUTUBE_SHARING_SERVICE_LABELS,
+            )
+        )
+
         card_rows = await safe_query(
             access_token,
             ["cardImpressions", "cardTeaserImpressions", "cardClicks", "cardTeaserClicks"],
             label="cards",
+            query_kind="totals",
         )
         if card_rows:
             for row in card_rows:
@@ -1999,10 +2459,97 @@ async def analytics_youtube_report(
         minutes_geo_payloads,
         metric_label="Minutes Watched",
     )
+    merged_watch_quality_series = _merge_youtube_watch_quality_series(watch_quality_series)
+    merged_views_series = _merge_youtube_series(views_series)
+    merged_minutes_series = _merge_youtube_series(minutes_series)
+    merged_age_groups = _merge_named_weighted_metrics(
+        demographic_age_items,
+        "value",
+        [],
+        ["viewer_percentage"],
+    )
+    merged_gender_distribution = _merge_named_weighted_metrics(
+        demographic_gender_items,
+        "value",
+        [],
+        ["viewer_percentage"],
+    )
+    merged_age_gender_matrix = _merge_named_weighted_metrics(
+        demographic_matrix_items,
+        "value",
+        [],
+        ["viewer_percentage"],
+    )
+    for row in merged_age_gender_matrix:
+        if ":" in str(row.get("value") or ""):
+            age_group, gender = str(row.get("value") or "").split(":", 1)
+            row["age_group"] = age_group
+            row["age_group_label"] = _YOUTUBE_AGE_GROUP_LABELS.get(age_group) or _youtube_metric_label(age_group)
+            row["gender"] = gender
+            row["gender_label"] = _YOUTUBE_GENDER_LABELS.get(gender) or _youtube_metric_label(gender)
+    merged_operating_system = _merge_named_metrics(operating_system_items, "value", ["views", "estimatedMinutesWatched"])
+    merged_creator_content_type = _merge_named_weighted_metrics(
+        creator_content_type_items,
+        "value",
+        ["views", "estimatedMinutesWatched", "engagedViews"],
+        ["averageViewDuration", "averageViewPercentage"],
+    )
+    merged_live_on_demand = _merge_named_weighted_metrics(
+        live_on_demand_items,
+        "value",
+        ["views", "estimatedMinutesWatched", "engagedViews"],
+        ["averageViewDuration", "averageViewPercentage"],
+    )
+    merged_sharing_services = _merge_named_metrics(sharing_service_items, "value", ["shares", "views", "estimatedMinutesWatched"])
     merged_search_terms = _merge_named_metrics(
         [{"key": item.get("term"), "label": item.get("term"), "views": item.get("views"), "estimated_minutes_watched": item.get("estimated_minutes_watched")} for item in search_term_items],
         "key",
         ["views", "estimated_minutes_watched"],
+    )
+
+    watch_quality_avg_duration = (
+        round(watch_quality_summary["avg_duration_weighted"] / watch_quality_summary["views_weight"], 4)
+        if watch_quality_summary["views_weight"] > 0 else 0.0
+    )
+    watch_quality_avg_percentage = (
+        round(watch_quality_summary["avg_percentage_weighted"] / watch_quality_summary["views_weight"], 4)
+        if watch_quality_summary["views_weight"] > 0 else 0.0
+    )
+    previous_watch_quality_avg_duration = (
+        round(previous_watch_quality_summary["avg_duration_weighted"] / previous_watch_quality_summary["views_weight"], 4)
+        if previous_watch_quality_summary["views_weight"] > 0 else 0.0
+    )
+    previous_watch_quality_avg_percentage = (
+        round(previous_watch_quality_summary["avg_percentage_weighted"] / previous_watch_quality_summary["views_weight"], 4)
+        if previous_watch_quality_summary["views_weight"] > 0 else 0.0
+    )
+
+    retention_available_videos: list[dict[str, Any]] = []
+    seen_retention_ids: set[str] = set()
+    for source_metric, videos in (
+        ("views", top_videos_by_views[:5]),
+        ("estimated_minutes_watched", top_videos_by_minutes[:5]),
+    ):
+        for video in videos:
+            video_id = str(video.get("id") or "")
+            if not video_id or video_id in seen_retention_ids:
+                continue
+            seen_retention_ids.add(video_id)
+            retention_available_videos.append(
+                {
+                    **(_youtube_video_card(video) or {}),
+                    "video_id": video_id,
+                    "published_at": video.get("timestamp"),
+                    "source_metric": source_metric,
+                }
+            )
+    retention_default_video_id = next(
+        (
+            str(video.get("id") or "")
+            for video in top_videos_by_views
+            if str(video.get("id") or "") in retention_payloads and retention_payloads[str(video.get("id") or "")].get("series")
+        ),
+        next((video_id for video_id in retention_video_ids if retention_payloads.get(video_id, {}).get("series")), None),
     )
 
     summary_top_geography = (merged_views_geo_payload.get("rows") or [None])[0]
@@ -2020,6 +2567,27 @@ async def analytics_youtube_report(
     )
     if message and report_has_primary_metrics:
         message = None
+
+    optional_support["watch_quality"] = bool(
+        optional_support["watch_quality"]
+        or watch_quality_summary["engaged_views"]
+        or watch_quality_summary["views_weight"]
+        or merged_watch_quality_series
+    )
+    optional_support["viewer_demographics"] = bool(
+        optional_support["viewer_demographics"]
+        or merged_age_groups
+        or merged_gender_distribution
+        or merged_age_gender_matrix
+    )
+    optional_support["operating_system"] = bool(optional_support["operating_system"] or merged_operating_system)
+    optional_support["content_type_breakdown"] = bool(
+        optional_support["content_type_breakdown"]
+        or merged_creator_content_type
+        or merged_live_on_demand
+    )
+    optional_support["sharing_services"] = bool(optional_support["sharing_services"] or merged_sharing_services)
+    optional_support["retention"] = bool(optional_support["retention"] or retention_payloads)
 
     report = {
         "supported": True,
@@ -2071,6 +2639,15 @@ async def analytics_youtube_report(
                 "card_clicks_change_pct": _pct_change(cards_summary["card_clicks"], previous_totals["card_clicks"]),
                 "card_teaser_clicks_change_pct": _pct_change(cards_summary["card_teaser_clicks"], previous_totals["card_teaser_clicks"]),
             },
+            "watch_quality_summary": {
+                "engaged_views": watch_quality_summary["engaged_views"],
+                "average_view_duration_seconds": watch_quality_avg_duration,
+                "average_view_percentage": watch_quality_avg_percentage,
+                "engaged_views_change_pct": _pct_change(watch_quality_summary["engaged_views"], previous_watch_quality_summary["engaged_views"]),
+                "average_view_duration_change_pct": _pct_change(watch_quality_avg_duration, previous_watch_quality_avg_duration),
+                "average_view_percentage_change_pct": _pct_change(watch_quality_avg_percentage, previous_watch_quality_avg_percentage),
+                "series": merged_watch_quality_series,
+            },
         },
         "audience": {
             "subscriber_growth": subscriber_growth,
@@ -2086,16 +2663,46 @@ async def analytics_youtube_report(
                 }
                 for row in merged_subscriber_geo[:20]
             ],
+            "viewer_demographics": {
+                "age_groups": [
+                    {
+                        "value": row.get("value"),
+                        "label": row.get("label"),
+                        "viewer_percentage": row.get("viewer_percentage"),
+                    }
+                    for row in merged_age_groups
+                ],
+                "gender_distribution": [
+                    {
+                        "value": row.get("value"),
+                        "label": row.get("label"),
+                        "viewer_percentage": row.get("viewer_percentage"),
+                    }
+                    for row in merged_gender_distribution
+                ],
+                "age_gender_matrix": [
+                    {
+                        "value": row.get("value"),
+                        "label": row.get("label"),
+                        "age_group": row.get("age_group"),
+                        "age_group_label": row.get("age_group_label"),
+                        "gender": row.get("gender"),
+                        "gender_label": row.get("gender_label"),
+                        "viewer_percentage": row.get("viewer_percentage"),
+                    }
+                    for row in merged_age_gender_matrix
+                ],
+            },
         },
         "video_performance": {
             "views_minutes_series": {
-                "views": _merge_youtube_series(views_series),
-                "estimated_minutes_watched": _merge_youtube_series(minutes_series),
+                "views": merged_views_series,
+                "estimated_minutes_watched": merged_minutes_series,
             },
-            "avg_views_per_day": round(sum(_metric_int(point.get("count")) for point in _merge_youtube_series(views_series)) / max(days, 1), 2),
-            "avg_minutes_watched_per_day": round(sum(float(point.get("count") or 0) for point in _merge_youtube_series(minutes_series)) / max(days, 1), 4),
-            "views_change_pct": _pct_change(sum(_metric_int(point.get("count")) for point in _merge_youtube_series(views_series)), previous_totals["views"]),
-            "estimated_minutes_watched_change_pct": _pct_change(sum(float(point.get("count") or 0) for point in _merge_youtube_series(minutes_series)), previous_totals["estimated_minutes_watched"]),
+            "avg_views_per_day": round(sum(_metric_int(point.get("count")) for point in merged_views_series) / max(days, 1), 2),
+            "avg_minutes_watched_per_day": round(sum(float(point.get("count") or 0) for point in merged_minutes_series) / max(days, 1), 4),
+            "views_change_pct": _pct_change(sum(_metric_int(point.get("count")) for point in merged_views_series), previous_totals["views"]),
+            "estimated_minutes_watched_change_pct": _pct_change(sum(float(point.get("count") or 0) for point in merged_minutes_series), previous_totals["estimated_minutes_watched"]),
             "top_videos": {
                 "views": _youtube_video_card(max(top_videos_by_views, key=lambda item: _metric_int(item.get("views")), default=None)),
                 "minutes_watched": _youtube_video_card(max(top_videos_by_minutes, key=lambda item: float(item.get("estimated_minutes_watched") or 0), default=None)),
@@ -2106,6 +2713,43 @@ async def analytics_youtube_report(
             "estimated_minutes_watched_by_geography": merged_minutes_geo_payload,
             "traffic_source": _merge_named_metrics(traffic_source_items, "value", ["views", "estimatedMinutesWatched"])[:10],
             "playback_location": _merge_named_metrics(playback_location_items, "value", ["views", "estimatedMinutesWatched"])[:10],
+            "operating_system": merged_operating_system[:10],
+            "content_type_breakdown": {
+                "creator_content_type": [
+                    {
+                        "value": row.get("value"),
+                        "label": row.get("label"),
+                        "views": row.get("views"),
+                        "estimated_minutes_watched": row.get("estimatedMinutesWatched"),
+                        "engaged_views": row.get("engagedViews"),
+                        "average_view_duration_seconds": row.get("averageViewDuration"),
+                        "average_view_percentage": row.get("averageViewPercentage"),
+                    }
+                    for row in merged_creator_content_type
+                ],
+                "live_or_on_demand": [
+                    {
+                        "value": row.get("value"),
+                        "label": row.get("label"),
+                        "views": row.get("views"),
+                        "estimated_minutes_watched": row.get("estimatedMinutesWatched"),
+                        "engaged_views": row.get("engagedViews"),
+                        "average_view_duration_seconds": row.get("averageViewDuration"),
+                        "average_view_percentage": row.get("averageViewPercentage"),
+                    }
+                    for row in merged_live_on_demand
+                ],
+            },
+            "sharing_services": [
+                {
+                    "value": row.get("value"),
+                    "label": row.get("label"),
+                    "shares": row.get("shares"),
+                    "views": row.get("views"),
+                    "estimated_minutes_watched": row.get("estimatedMinutesWatched"),
+                }
+                for row in merged_sharing_services[:10]
+            ],
             "youtube_search_terms": [
                 {
                     "term": row.get("key"),
@@ -2116,11 +2760,33 @@ async def analytics_youtube_report(
             ],
             "views_by_device_type": _merge_named_metrics(device_type_items, "value", ["views"]),
             "views_minutes_by_subscribed_status": _merge_named_metrics(subscribed_status_items, "value", ["views", "estimatedMinutesWatched"]),
+            "retention": {
+                "selected_video_id": retention_default_video_id,
+                "videos": [
+                    {
+                        **video,
+                        **(retention_payloads.get(video.get("video_id")) or {}),
+                    }
+                    for video in retention_available_videos
+                    if retention_payloads.get(video.get("video_id"))
+                ],
+            },
         },
     }
 
     if summary_top_geography and not report["summary"]["post_summary"].get("top_geography_by_views"):
         report["summary"]["post_summary"]["top_geography_by_views"] = summary_top_geography
+
+    report["supports"].update(
+        {
+            "watch_quality": optional_support["watch_quality"],
+            "viewer_demographics": optional_support["viewer_demographics"],
+            "operating_system": optional_support["operating_system"],
+            "content_type_breakdown": optional_support["content_type_breakdown"],
+            "sharing_services": optional_support["sharing_services"],
+            "retention": optional_support["retention"],
+        }
+    )
 
     return report
 

@@ -331,6 +331,22 @@ const formatPreciseMetric = (value) => {
   return num.toFixed(num >= 10 ? 1 : 4).replace(/\.?0+$/, '');
 };
 
+const formatDurationSeconds = (value) => {
+  const totalSeconds = Math.max(Number(value) || 0, 0);
+  if (!totalSeconds) return '0s';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+};
+
+const formatPercentageMetric = (value) => {
+  const num = Number(value) || 0;
+  return `${num.toFixed(num >= 10 ? 1 : 2).replace(/\.?0+$/, '')}%`;
+};
+
 const formatAnalyticsDate = (value, includeTime = false) => {
   if (!value) return '';
   try {
@@ -367,6 +383,39 @@ const bucketMultiValueSeries = (rows, days, granularity, keys) => mergeBucketedS
   days,
   granularity,
 );
+
+const bucketYoutubeWatchQualitySeries = (rows, days, granularity) => {
+  const buckets = buildTimeBuckets(days, granularity);
+  const normalized = (rows || [])
+    .map((point) => {
+      const when = parseDate(point?.date);
+      return when ? {
+        when,
+        engaged_views: Number(point?.engaged_views) || 0,
+        views: Number(point?.views) || 0,
+        average_view_duration_seconds: Number(point?.average_view_duration_seconds) || 0,
+        average_view_percentage: Number(point?.average_view_percentage) || 0,
+      } : null;
+    })
+    .filter(Boolean);
+
+  return buckets.map((bucket) => {
+    const bucketRows = normalized.filter((point) => point.when >= bucket.start && point.when <= bucket.end);
+    const totalViews = bucketRows.reduce((sum, point) => sum + point.views, 0);
+    const totalEngagedViews = bucketRows.reduce((sum, point) => sum + point.engaged_views, 0);
+    const durationWeighted = bucketRows.reduce((sum, point) => sum + (point.average_view_duration_seconds * point.views), 0);
+    const percentageWeighted = bucketRows.reduce((sum, point) => sum + (point.average_view_percentage * point.views), 0);
+
+    return {
+      date: bucket.key,
+      label: bucket.label,
+      engaged_views: totalEngagedViews,
+      average_view_duration_seconds: totalViews > 0 ? durationWeighted / totalViews : 0,
+      average_view_percentage: totalViews > 0 ? percentageWeighted / totalViews : 0,
+      views: totalViews,
+    };
+  });
+};
 
 const countryNameForCode = (code) => {
   const normalized = String(code || '').toUpperCase();
@@ -516,11 +565,11 @@ const InstagramDetailCard = ({ title, children, action }) => (
   </div>
 );
 
-const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600' }) => (
+const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600', valueFormatter = fmt }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
     <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
     <div className="mt-3 flex items-end gap-3">
-      <p className={`text-5xl font-bold tracking-tight ${accent}`}>{fmt(value)}</p>
+      <p className={`text-5xl font-bold tracking-tight ${accent}`}>{valueFormatter(value)}</p>
       {deltaPct != null && (
         <span className={`text-sm font-semibold ${pctPillColor(deltaPct)}`}>
           {pctLabel(deltaPct)}
@@ -886,6 +935,280 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
         </div>
       ) : (
         chartEmptyState()
+      )}
+    </ReportCard>
+  );
+};
+
+const YoutubeWatchQualityCard = ({ summary, timeline, hasData, action }) => (
+  <ReportCard title="Watch Quality Summary" action={action}>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <ReportMetricTile
+        title="Engaged Views"
+        value={summary?.engaged_views}
+        subtitle="Views counted as engaged by YouTube."
+        deltaPct={summary?.engaged_views_change_pct}
+      />
+      <ReportMetricTile
+        title="Avg View Duration"
+        value={summary?.average_view_duration_seconds}
+        subtitle="Average watch duration per view."
+        deltaPct={summary?.average_view_duration_change_pct}
+        valueFormatter={formatDurationSeconds}
+        accent="text-emerald-600"
+      />
+      <ReportMetricTile
+        title="Avg View %"
+        value={summary?.average_view_percentage}
+        subtitle="Average percentage of video watched."
+        deltaPct={summary?.average_view_percentage_change_pct}
+        valueFormatter={formatPercentageMetric}
+        accent="text-violet-600"
+      />
+    </div>
+    {hasData ? (
+      <ResponsiveContainer width="100%" height={300}>
+        <ComposedChart data={timeline}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="rightDuration" orientation="right" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+          <YAxis yAxisId="rightPct" hide />
+          <Tooltip
+            formatter={(value, name) => {
+              if (name === 'Avg View Duration') return formatDurationSeconds(value);
+              if (name === 'Avg View %') return formatPercentageMetric(value);
+              return fmt(value);
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+          <Bar yAxisId="left" dataKey="engaged_views" name="Engaged Views" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={20} minPointSize={2} />
+          <Line yAxisId="rightDuration" type="monotone" dataKey="average_view_duration_seconds" name="Avg View Duration" stroke="#16a34a" strokeWidth={2.5} dot={false} />
+          <Line yAxisId="rightPct" type="monotone" dataKey="average_view_percentage" name="Avg View %" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    ) : (
+      chartEmptyState('Watch-quality data is not available for this period.')
+    )}
+  </ReportCard>
+);
+
+const YoutubeDemographicsCard = ({ demographics }) => {
+  const ageGroups = demographics?.age_groups || [];
+  const genderDistribution = demographics?.gender_distribution || [];
+  const matrix = demographics?.age_gender_matrix || [];
+  const hasData = ageGroups.length > 0 || genderDistribution.length > 0 || matrix.length > 0;
+
+  return (
+    <ReportCard title="Viewer Demographics">
+      {hasData ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_380px] gap-5">
+            <div className="rounded-xl border border-gray-100 bg-white p-5">
+              <div className="grid grid-cols-[minmax(0,1fr)_72px] gap-x-3 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+                <span>Age Group</span>
+                <span className="text-right">Viewers</span>
+              </div>
+              <div className="space-y-4 pt-4">
+                {ageGroups.map((row) => (
+                  <div key={row.value} className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-gray-700">{row.label}</span>
+                      <span className="text-gray-600">{formatPercentageMetric(row.viewer_percentage)}</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                      <div className="h-full rounded-full bg-[#2f6690]" style={{ width: `${Math.min(Number(row.viewer_percentage) || 0, 100)}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <ReportDonutBreakdown
+              items={genderDistribution.map((row) => ({ ...row, engagement: Number(row.viewer_percentage) || 0 }))}
+              valueKey="engagement"
+              totalValue={genderDistribution.reduce((sum, row) => sum + (Number(row.viewer_percentage) || 0), 0)}
+              valueHeader="Viewers"
+              valueFormatter={formatPercentageMetric}
+              totalFormatter={formatPercentageMetric}
+            />
+          </div>
+
+          <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
+            <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-x-4 border-b border-gray-200 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 sm:grid-cols-[minmax(0,1fr)_140px]">
+              <span>Age / Gender</span>
+              <span className="text-right">Viewers</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {matrix.map((row) => (
+                <div key={row.value} className="grid grid-cols-[minmax(0,1fr)_110px] gap-x-4 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_140px]">
+                  <span className="truncate font-medium text-gray-700">{row.age_group_label} / {row.gender_label}</span>
+                  <span className="text-right text-gray-700">{formatPercentageMetric(row.viewer_percentage)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        chartEmptyState('Viewer demographics are not available for this YouTube account right now.')
+      )}
+    </ReportCard>
+  );
+};
+
+const YoutubeContentBreakdownCard = ({ title, rows, emptyLabel }) => (
+  <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
+    <div className="border-b border-gray-200 px-4 py-3">
+      <h4 className="text-sm font-semibold text-gray-700">{title}</h4>
+    </div>
+    {(rows || []).length > 0 ? (
+      <div className="overflow-x-auto">
+        <div className="min-w-[760px]">
+          <div className="grid grid-cols-[minmax(0,1fr)_92px_146px_116px_126px_98px] gap-x-4 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
+            <span>Type</span>
+            <span className="text-right">Views</span>
+            <span className="text-right">Minutes Watched</span>
+            <span className="text-right">Engaged Views</span>
+            <span className="text-right">Avg Duration</span>
+            <span className="text-right">Avg View %</span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {(rows || []).map((row) => (
+              <div key={row.value || row.label} className="grid grid-cols-[minmax(0,1fr)_92px_146px_116px_126px_98px] gap-x-4 px-4 py-3 text-sm">
+                <span className="truncate font-medium text-gray-700">{row.label}</span>
+                <span className="text-right text-gray-700">{fmt(row.views)}</span>
+                <span className="text-right text-gray-700">{formatPreciseMetric(row.estimated_minutes_watched)}</span>
+                <span className="text-right text-gray-700">{fmt(row.engaged_views)}</span>
+                <span className="text-right text-gray-700">{formatDurationSeconds(row.average_view_duration_seconds)}</span>
+                <span className="text-right text-gray-700">{formatPercentageMetric(row.average_view_percentage)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    ) : (
+      chartEmptyState(emptyLabel)
+    )}
+  </div>
+);
+
+const YoutubeSharingServicesCard = ({ items }) => {
+  const hasRows = (items || []).length > 0;
+  const showViews = (items || []).some((item) => Number(item?.views) > 0);
+  const showMinutes = (items || []).some((item) => Number(item?.estimated_minutes_watched) > 0);
+  const columns = showViews && showMinutes
+    ? 'grid-cols-[minmax(0,1fr)_90px_90px_170px]'
+    : showViews
+      ? 'grid-cols-[minmax(0,1fr)_90px_110px]'
+      : showMinutes
+        ? 'grid-cols-[minmax(0,1fr)_90px_170px]'
+        : 'grid-cols-[minmax(0,1fr)_90px]';
+
+  return (
+    <ReportCard title="Sharing Services">
+      {hasRows ? (
+        <div className="overflow-x-auto">
+          <div className={`min-w-[560px]`}>
+            <div className={`grid gap-x-4 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 ${columns}`}>
+              <span>Service</span>
+              <span className="text-right">Shares</span>
+              {showViews && <span className="text-right">Views</span>}
+              {showMinutes && <span className="text-right">Estimated Minutes Watched</span>}
+            </div>
+            <div className="divide-y divide-gray-100">
+              {(items || []).map((item) => (
+                <div key={item.value || item.label} className={`grid gap-x-4 py-3 text-sm ${columns}`}>
+                  <span className="truncate font-medium text-gray-700">{item.label}</span>
+                  <span className="text-right text-gray-700">{fmt(item.shares)}</span>
+                  {showViews && <span className="text-right text-gray-700">{fmt(item.views)}</span>}
+                  {showMinutes && <span className="text-right text-gray-700">{formatPreciseMetric(item.estimated_minutes_watched)}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        chartEmptyState('Sharing-service data is not available for this period.')
+      )}
+    </ReportCard>
+  );
+};
+
+const YoutubeRetentionCard = ({ retention, selectedVideoId, onSelectVideo }) => {
+  const videos = retention?.videos || [];
+  const currentVideo = videos.find((video) => video.video_id === selectedVideoId) || videos[0];
+  const hasSeries = (currentVideo?.series || []).length > 0;
+
+  return (
+    <ReportCard
+      title="Audience Retention"
+      action={videos.length > 0 ? (
+        <select
+          value={currentVideo?.video_id || ''}
+          onChange={(event) => onSelectVideo(event.target.value)}
+          className="max-w-[320px] rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+        >
+          {videos.map((video) => (
+            <option key={video.video_id} value={video.video_id}>
+              {video.title || 'Untitled video'}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    >
+      {currentVideo ? (
+        <div className="space-y-5">
+          <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-white p-4 lg:flex-row">
+            {currentVideo.thumbnail_url ? (
+              <img src={currentVideo.thumbnail_url} alt="" className="h-32 w-full rounded-xl object-cover lg:w-56" />
+            ) : (
+              <div className="flex h-32 w-full items-center justify-center rounded-xl bg-gray-100 text-sm text-gray-400 lg:w-56">No thumbnail</div>
+            )}
+            <div className="min-w-0 space-y-2">
+              <p className="text-lg font-semibold text-gray-900">{currentVideo.title || '(untitled)'}</p>
+              <p className="text-sm text-gray-500">
+                {currentVideo.published_at ? formatAnalyticsDate(currentVideo.published_at, true) : 'Published date unavailable'}
+              </p>
+              <div className="flex flex-wrap gap-3 text-sm text-gray-600">
+                <span>Source: {currentVideo.source_metric === 'estimated_minutes_watched' ? 'Top Minutes Watched' : 'Top Views'}</span>
+                <span>Views: {fmt(currentVideo.views)}</span>
+                <span>Minutes Watched: {formatPreciseMetric(currentVideo.estimated_minutes_watched)}</span>
+              </div>
+            </div>
+          </div>
+
+          {hasSeries ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={currentVideo.series}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis
+                  dataKey="elapsed_video_time_ratio"
+                  tick={{ fontSize: 11, fill: '#9ca3af' }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => `${Math.round((Number(value) || 0) * 100)}%`}
+                />
+                <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  formatter={(value, name) => (
+                    name === 'Relative Retention Performance'
+                      ? formatPreciseMetric(value)
+                      : formatPercentageMetric(value)
+                  )}
+                  labelFormatter={(value) => `${Math.round((Number(value) || 0) * 100)}% watched`}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                <Line yAxisId="left" type="monotone" dataKey="audience_watch_ratio" name="Audience Watch Ratio" stroke="#2f6690" strokeWidth={2.5} dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="relative_retention_performance" name="Relative Retention Performance" stroke="#f59e0b" strokeWidth={2.5} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            chartEmptyState('Audience retention is not available for the selected video.')
+          )}
+        </div>
+      ) : (
+        chartEmptyState('Audience retention is not available for this period.')
       )}
     </ReportCard>
   );
@@ -1396,6 +1719,7 @@ const Analytics = () => {
   const [loadingYoutubeReport, setLoadingYoutubeReport] = useState(false);
   const [youtubeChartGranularity, setYoutubeChartGranularity] = useState('day');
   const [youtubeTopVideoMetric, setYoutubeTopVideoMetric] = useState('views');
+  const [youtubeRetentionVideoId, setYoutubeRetentionVideoId] = useState('');
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
@@ -1937,6 +2261,7 @@ const Analytics = () => {
   const youtubeSummary = youtubeReport?.summary || {};
   const youtubeAudience = youtubeReport?.audience || {};
   const youtubeVideoPerformance = youtubeReport?.video_performance || {};
+  const youtubeWatchQualitySummary = youtubeSummary.watch_quality_summary || {};
   const youtubeViewsByGeographyCard = normalizeYoutubeGeographyCard(
     youtubeVideoPerformance.views_by_geography,
     'Views',
@@ -1959,16 +2284,40 @@ const Analytics = () => {
     days,
     youtubeChartGranularity,
   );
+  const youtubeWatchQualityTimeline = bucketYoutubeWatchQualitySeries(
+    youtubeWatchQualitySummary.series || [],
+    days,
+    youtubeChartGranularity,
+  );
   const youtubeSubscriberGrowthHasData = chartHasData(youtubeSubscriberGrowthTimeline, ['gained', 'lost', 'net']);
   const youtubeViewsMinutesHasData = chartHasData(youtubeViewsMinutesTimeline, ['views', 'estimated_minutes_watched']);
+  const youtubeWatchQualityHasData = chartHasData(
+    youtubeWatchQualityTimeline,
+    ['engaged_views', 'average_view_duration_seconds', 'average_view_percentage'],
+  );
   const youtubeTopVideos = youtubeTopVideoMetric === 'estimated_minutes_watched'
     ? (youtubeVideoPerformance.top_videos?.top5_minutes_watched || [])
     : (youtubeVideoPerformance.top_videos?.top5_views || []);
+  const youtubeRetention = useMemo(() => youtubeVideoPerformance.retention || {}, [youtubeVideoPerformance.retention]);
   const youtubeAutoRefreshSeconds = Number(
     youtubeViewsByGeographyCard.meta?.auto_refresh_seconds
     || youtubeMinutesByGeographyCard.meta?.auto_refresh_seconds
     || 15 * 60
   );
+  useEffect(() => {
+    const availableIds = (youtubeRetention.videos || []).map((video) => video.video_id).filter(Boolean);
+    if (!availableIds.length) {
+      if (youtubeRetentionVideoId) setYoutubeRetentionVideoId('');
+      return;
+    }
+    if (youtubeRetention.selected_video_id && !availableIds.includes(youtubeRetentionVideoId)) {
+      setYoutubeRetentionVideoId(youtubeRetention.selected_video_id);
+      return;
+    }
+    if (!youtubeRetentionVideoId || !availableIds.includes(youtubeRetentionVideoId)) {
+      setYoutubeRetentionVideoId(availableIds[0]);
+    }
+  }, [youtubeRetention, youtubeRetentionVideoId]);
   useEffect(() => {
     if (
       selectedPlatform !== 'youtube'
@@ -3051,6 +3400,13 @@ const Analytics = () => {
                     chartEmptyState('Card metrics are not available for this YouTube account right now.')
                   )}
                 </ReportCard>
+
+                <YoutubeWatchQualityCard
+                  summary={youtubeWatchQualitySummary}
+                  timeline={youtubeWatchQualityTimeline}
+                  hasData={youtubeReport?.supports?.watch_quality && youtubeWatchQualityHasData}
+                  action={youtubeChartSelector}
+                />
               </div>
             ) : activeTab === 'youtube-audience' ? (
               <div className="space-y-6">
@@ -3098,6 +3454,8 @@ const Analytics = () => {
                   metricLabel="Subscribers"
                   action={null}
                 />
+
+                <YoutubeDemographicsCard demographics={youtubeAudience.viewer_demographics} />
               </div>
             ) : (
               <div className="space-y-6">
@@ -3172,6 +3530,21 @@ const Analytics = () => {
                   />
                 </div>
 
+                <ReportCard title="Content Type Breakdown">
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    <YoutubeContentBreakdownCard
+                      title="By Content Format"
+                      rows={youtubeVideoPerformance.content_type_breakdown?.creator_content_type || []}
+                      emptyLabel="Content-format data is not available for this period."
+                    />
+                    <YoutubeContentBreakdownCard
+                      title="By Live / On Demand"
+                      rows={youtubeVideoPerformance.content_type_breakdown?.live_or_on_demand || []}
+                      emptyLabel="Live/on-demand data is not available for this period."
+                    />
+                  </div>
+                </ReportCard>
+
                 <ReportCard title="YouTube Search Terms">
                   {(youtubeVideoPerformance.youtube_search_terms || []).length > 0 ? (
                     <div className="divide-y divide-gray-100">
@@ -3198,6 +3571,28 @@ const Analytics = () => {
 
                   <YoutubeSubscribedStatusCard items={youtubeVideoPerformance.views_minutes_by_subscribed_status || []} />
                 </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Operating System Breakdown">
+                    <ReportDonutBreakdown
+                      items={(youtubeVideoPerformance.operating_system || []).map((item) => ({
+                        ...item,
+                        engagement: Number(item.views) || 0,
+                      }))}
+                      valueKey="engagement"
+                      totalValue={(youtubeVideoPerformance.operating_system || []).reduce((sum, item) => sum + (Number(item.views) || 0), 0)}
+                      valueHeader="Views"
+                    />
+                  </ReportCard>
+
+                  <YoutubeSharingServicesCard items={youtubeVideoPerformance.sharing_services || []} />
+                </div>
+
+                <YoutubeRetentionCard
+                  retention={youtubeRetention}
+                  selectedVideoId={youtubeRetentionVideoId}
+                  onSelectVideo={setYoutubeRetentionVideoId}
+                />
               </div>
             )}
           </div>
