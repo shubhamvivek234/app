@@ -25,13 +25,15 @@ Completed:
   Files: `api/routes/posts.py`
 - Backend: pre-upload status lookup no longer falls back from an empty per-target state to a stale aggregate `pre_upload_status`, which fixes retry loops for pre-upload platforms after state resets.
   Files: `celery_workers/tasks/publish.py`
+- Backend: YouTube geography analytics now falls back from an empty lag-adjusted settled window to the selected current window, so recent country data visible in YouTube Studio can appear in-app.
+  Files: `api/routes/analytics.py`
 - Tests: added token refresh regressions and kept publish-dispatch regressions passing.
-  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`, `tests/test_published_post_retention.py`
+  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`, `tests/test_published_post_retention.py`, `tests/test_youtube_analytics_expansion.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify EC2 deploy for the card-hydration + pre-upload-state fixes on a fresh YouTube video post and confirm thumbnails reappear in Content Library.
+- Verify EC2 deploy for the card-hydration, pre-upload-state, and YouTube geography fallback fixes.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes

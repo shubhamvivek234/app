@@ -158,6 +158,8 @@ async def test_analytics_youtube_report_includes_expansion_blocks(monkeypatch):
                     {"video": "vid_a", "views": 220, "estimatedMinutesWatched": 50, "likes": 12, "comments": 3, "shares": 2},
                     {"video": "vid_b", "views": 180, "estimatedMinutesWatched": 70, "likes": 8, "comments": 2, "shares": 1},
                 ]
+            if dimensions == ["country"] and start_date != date(2026, 5, 1):
+                return []
             if dimensions == ["country"] and metrics == ["subscribersGained"]:
                 return [{"country": "IN", "subscribersGained": 4}]
             if dimensions == ["country"] and metrics == ["views"]:
@@ -255,6 +257,13 @@ async def test_analytics_youtube_report_includes_expansion_blocks(monkeypatch):
     assert report["video_performance"]["operating_system"][0]["label"] == "Android"
     assert report["video_performance"]["content_type_breakdown"]["creator_content_type"][0]["label"] == "Shorts"
     assert report["video_performance"]["sharing_services"][0]["label"] == "WhatsApp"
+    assert report["summary"]["post_summary"]["top_geography_by_views"] == {"country_code": "IN", "count": 320}
+    assert report["video_performance"]["views_by_geography"]["effective_end_date"] == "2026-05-30"
+    assert report["video_performance"]["views_by_geography"]["is_lag_adjusted"] is False
+    assert report["video_performance"]["views_by_geography"]["rows"] == [
+        {"country_code": "IN", "count": 320},
+        {"country_code": "US", "count": 180},
+    ]
     assert report["video_performance"]["retention"]["selected_video_id"] == "vid_a"
     assert len(report["video_performance"]["retention"]["videos"]) == 2
     assert report["supports"]["watch_quality"] is True

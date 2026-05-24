@@ -1837,6 +1837,58 @@ async def analytics_youtube_report(
         except Exception:
             return {}
 
+    async def resolve_geography_payload_with_recent_fallback(
+        access_token: str,
+        *,
+        account: dict[str, Any],
+        metric: str,
+        metric_label: str,
+        label: str,
+    ) -> dict[str, Any]:
+        rows = await safe_query(
+            access_token,
+            [metric],
+            dimensions=["country"],
+            sort=[f"-{metric}"],
+            max_results=25,
+            label=label,
+            start_date_override=geography_start_date,
+            end_date_override=geography_end_date,
+            query_kind="dimension_breakdown",
+        )
+        effective_start_date = geography_start_date
+        effective_end_date = geography_end_date
+        is_lag_adjusted = geography_is_lag_adjusted
+
+        if geography_is_lag_adjusted and not normalize_youtube_geography_rows(rows, value_key=metric):
+            recent_rows = await safe_query(
+                access_token,
+                [metric],
+                dimensions=["country"],
+                sort=[f"-{metric}"],
+                max_results=25,
+                label=f"{label}_current_window",
+                start_date_override=start_date,
+                end_date_override=end_date,
+                query_kind="dimension_breakdown",
+            )
+            if normalize_youtube_geography_rows(recent_rows, value_key=metric):
+                rows = recent_rows
+                effective_start_date = start_date
+                effective_end_date = end_date
+                is_lag_adjusted = False
+
+        return await _resolve_youtube_geography_payload(
+            db,
+            account=account,
+            metric=metric,
+            metric_label=metric_label,
+            query_rows=rows,
+            effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date,
+            is_lag_adjusted=is_lag_adjusted,
+        )
+
     for account in accounts:
         account["_youtube_window_days"] = days
         label = _account_error_label(account)
@@ -2114,51 +2166,23 @@ async def analytics_youtube_report(
             ]
         )
 
-        views_geo_rows = await safe_query(
-            access_token,
-            ["views"],
-            dimensions=["country"],
-            sort=["-views"],
-            max_results=25,
-            label="views_geography",
-            start_date_override=geography_start_date,
-            end_date_override=geography_end_date,
-            query_kind="dimension_breakdown",
-        )
         views_geo_payloads.append(
-            await _resolve_youtube_geography_payload(
-                db,
+            await resolve_geography_payload_with_recent_fallback(
+                access_token,
                 account=account,
                 metric="views",
                 metric_label="Views",
-                query_rows=views_geo_rows,
-                effective_start_date=geography_start_date,
-                effective_end_date=geography_end_date,
-                is_lag_adjusted=geography_is_lag_adjusted,
+                label="views_geography",
             )
         )
 
-        minutes_geo_rows = await safe_query(
-            access_token,
-            ["estimatedMinutesWatched"],
-            dimensions=["country"],
-            sort=["-estimatedMinutesWatched"],
-            max_results=25,
-            label="minutes_geography",
-            start_date_override=geography_start_date,
-            end_date_override=geography_end_date,
-            query_kind="dimension_breakdown",
-        )
         minutes_geo_payloads.append(
-            await _resolve_youtube_geography_payload(
-                db,
+            await resolve_geography_payload_with_recent_fallback(
+                access_token,
                 account=account,
                 metric="estimatedMinutesWatched",
                 metric_label="Minutes Watched",
-                query_rows=minutes_geo_rows,
-                effective_start_date=geography_start_date,
-                effective_end_date=geography_end_date,
-                is_lag_adjusted=geography_is_lag_adjusted,
+                label="minutes_geography",
             )
         )
 
