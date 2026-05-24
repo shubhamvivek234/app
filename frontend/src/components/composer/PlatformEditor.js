@@ -897,13 +897,13 @@ const PlatformEditor = ({
                           </svg>
                           <p className="text-xs text-gray-500">
                             Drag & drop or{' '}
-                            <label
-                              htmlFor={fileInputId}
+                            <button
+                              type="button"
                               className="text-blue-600 cursor-pointer font-medium"
-                              onClick={(e) => e.stopPropagation()}
+                              onClick={triggerFilePicker}
                             >
                               select files
-                            </label>
+                            </button>
                           </p>
                           <p className="text-[10px] text-gray-300 mt-0.5">Supports multiple images</p>
                         </div>
@@ -949,13 +949,13 @@ const PlatformEditor = ({
                         </svg>
                         <p className="text-xs text-gray-500">
                           Drag & drop or{' '}
-                          <label
-                            htmlFor={fileInputId}
+                          <button
+                            type="button"
                             className="text-blue-600 cursor-pointer font-medium"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={triggerFilePicker}
                           >
                             select video
-                          </label>
+                          </button>
                         </p>
                       </div>
                     )}
