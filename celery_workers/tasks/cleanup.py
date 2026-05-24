@@ -372,7 +372,7 @@ async def _async_cleanup_expired_published_card_thumbnails() -> dict:
 
     if cleaned:
         logger.info(
-            "Expired published card thumbnail cleanup removed %d thumbnails (scanned=%d, errors=%d)",
+            "Expired published card thumbnail cleanup removed %s thumbnails (scanned=%s, errors=%s)",
             cleaned,
             scanned,
             errors,
@@ -514,7 +514,7 @@ async def _async_scan_stale_direct_uploads() -> dict:
             errors += 1
 
     logger.info(
-        "stale_upload_scan: scanned=%d recovered=%d failed=%d errors=%d",
+        "stale_upload_scan: scanned=%s recovered=%s failed=%s errors=%s",
         scanned,
         recovered,
         failed,
@@ -700,7 +700,7 @@ async def _async_scan_orphans() -> dict:
                         errors += 1
 
     logger.info(
-        "orphan_scan: scanned=%d orphaned=%d bytes_freed=%d errors=%d",
+        "orphan_scan: scanned=%s orphaned=%s bytes_freed=%s errors=%s",
         files_scanned, orphaned_found, bytes_freed, errors,
     )
     return {

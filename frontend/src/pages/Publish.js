@@ -7,11 +7,10 @@ import {
   getPublishFeed,
   getInbox,
   updateInboxMessage,
-  createInboxMessage,
   getPostComments,
   replyToComment,
-  getConversations,
   sendDmReply,
+  syncInboxConversations,
 } from '@/lib/api';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
@@ -33,24 +32,15 @@ const PLATFORM_META = {
   threads:   { icon: SiThreads,   color: 'text-gray-900',  ring: '#101010', label: 'Threads' },
 };
 
-const PLATFORM_OPTIONS = [
-  { value: 'instagram', label: 'Instagram' },
-  { value: 'facebook',  label: 'Facebook' },
-  { value: 'twitter',   label: 'X (Twitter)' },
-  { value: 'linkedin',  label: 'LinkedIn' },
-  { value: 'youtube',   label: 'YouTube' },
-  { value: 'tiktok',    label: 'TikTok' },
-  { value: 'bluesky',   label: 'Bluesky' },
-  { value: 'threads',   label: 'Threads' },
-  { value: 'pinterest', label: 'Pinterest' },
-];
-
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
   'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500',
 ];
 const avatarColor = (name = '') =>
   AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length];
+
+const DM_REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'bluesky']);
+const COMMENT_REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'reddit', 'youtube', 'bluesky']);
 
 // ── Group posts by calendar date ──────────────────────────────────────────────
 const groupByDate = (posts) => {
@@ -178,6 +168,7 @@ const Publish = () => {
   const [inboxPlatform, setInboxPlatform]   = useState('');
   const [inboxType, setInboxType]           = useState(''); // '' | 'comment' | 'dm'
   const [inboxMessages, setInboxMessages]   = useState([]);
+  const [inboxCapabilities, setInboxCapabilities] = useState({});
   const [inboxSelected, setInboxSelected]   = useState(null);
   const [inboxReply, setInboxReply]         = useState('');
   const [inboxLoading, setInboxLoading]     = useState(false);
@@ -224,9 +215,10 @@ const Publish = () => {
         platform: inboxPlatform || undefined,
         type: inboxType || undefined,
       });
-      // API may return array or { messages: [] }
       setInboxMessages(Array.isArray(data) ? data : (data.messages || []));
+      setInboxCapabilities(Array.isArray(data) ? {} : (data.capabilities || {}));
     } catch {
+      setInboxCapabilities({});
       toast.error('Failed to load messages');
     } finally {
       setInboxLoading(false);
@@ -237,44 +229,64 @@ const Publish = () => {
     if (activeTab === 'inbox') fetchInbox();
   }, [activeTab, fetchInbox]);
 
-  // ── Sync DM conversations from platforms into inbox ──
+  useEffect(() => {
+    if (!inboxSelected) return;
+    const freshSelected = inboxMessages.find((message) => message.id === inboxSelected.id);
+    if (!freshSelected) {
+      setInboxSelected(null);
+      return;
+    }
+    if (freshSelected !== inboxSelected) {
+      setInboxSelected(freshSelected);
+    }
+  }, [inboxMessages, inboxSelected]);
+
+  useEffect(() => {
+    if (!inboxPlatform) return;
+    const caps = inboxCapabilities[inboxPlatform];
+    if (!caps) {
+      setInboxPlatform('');
+      setInboxSelected(null);
+      return;
+    }
+    if (inboxType === 'dm' && !caps.supports_dm_inbox) {
+      setInboxPlatform('');
+      setInboxSelected(null);
+      return;
+    }
+    if (inboxType === 'comment' && !caps.supports_comment_inbox) {
+      setInboxPlatform('');
+      setInboxSelected(null);
+    }
+  }, [inboxCapabilities, inboxPlatform, inboxType]);
+
+  // ── Sync supported inbox items from platforms into cache ──
   const handleSyncDMs = async () => {
     setSyncing(true);
-    const DM_PLATFORMS = ['instagram', 'facebook'];
-    let synced = 0;
     try {
-      for (const plat of DM_PLATFORMS) {
-        const platAccounts = accounts.filter((a) => a.platform === plat);
-        if (platAccounts.length === 0) continue;
-        try {
-          const data = await getConversations(plat, platAccounts[0]?.id);
-          if (data.conversations) {
-            for (const conv of data.conversations) {
-              for (const msg of (conv.messages || []).slice(0, 5)) {
-                try {
-                  await createInboxMessage({
-                    platform: plat,
-                    type: 'dm',
-                    author_name: msg.from || conv.participants?.[0] || 'Unknown',
-                    content: msg.content || '',
-                    platform_message_id: msg.id || conv.id,
-                    received_at: msg.timestamp,
-                  });
-                  synced++;
-                } catch { /* duplicate or error, skip */ }
-              }
-            }
-          }
-        } catch { /* platform not available */ }
-      }
-      if (synced > 0) {
-        toast.success(`Synced ${synced} message(s)`);
-        fetchInbox();
+      const selectedInboxAccountId = (
+        inboxPlatform &&
+        activePlatform === inboxPlatform &&
+        selectedAccounts.length === 1
+      ) ? selectedAccounts[0] : undefined;
+
+      const result = await syncInboxConversations({
+        ...(inboxPlatform ? { platform: inboxPlatform } : {}),
+        ...(inboxType ? { type: inboxType } : {}),
+        ...(selectedInboxAccountId ? { accountId: selectedInboxAccountId } : {}),
+      });
+
+      const syncedTotal = Number(result?.synced_dms || 0) + Number(result?.synced_comments || 0);
+      if (syncedTotal > 0) {
+        toast.success(`Synced ${syncedTotal} inbox item${syncedTotal !== 1 ? 's' : ''}`);
+      } else if (result?.errors?.length) {
+        toast.error('Inbox sync completed with errors');
       } else {
-        toast.info('No new messages to sync');
+        toast.info('No new inbox items to sync');
       }
-    } catch {
-      toast.error('Sync failed');
+      await fetchInbox();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Inbox sync failed');
     } finally {
       setSyncing(false);
     }
@@ -298,32 +310,6 @@ const Publish = () => {
     );
   };
 
-  // ── Add comment to a post (posts to platform) ──
-  const handleAddComment = async (post, text) => {
-    const REPLY_PLATFORMS = ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'];
-    if (REPLY_PLATFORMS.includes(post.platform)) {
-      try {
-        await replyToComment(post.platform, post.platform_post_id, {
-          text,
-          account_id: post.account_id,
-          post_id: post.platform_post_id,
-        });
-        toast.success('Comment posted to ' + (post.platform || 'platform') + '!');
-      } catch (err) {
-        toast.error('Failed to post comment: ' + (err?.response?.data?.detail || err.message));
-      }
-    } else {
-      await createInboxMessage({
-        platform: post.platform,
-        type: 'comment',
-        author_name: 'Me',
-        content: text,
-        post_id: post.platform_post_id || post.id,
-      });
-      toast.success('Comment saved to inbox!');
-    }
-  };
-
   // ── Fetch comments for a post ──
   const handleFetchComments = async (post) => {
     try {
@@ -344,11 +330,11 @@ const Publish = () => {
       };
       // For Bluesky, pass extra threading info
       if (post.platform === 'bluesky' && comment) {
-        data.parent_cid = comment.cid;
+        data.parent_cid = comment.cid || comment.comment_cid;
         data.root_uri = comment.root_uri;
         data.root_cid = comment.root_cid;
       }
-      await replyToComment(post.platform, comment.id, data);
+      await replyToComment(post.platform, post.platform_post_id, comment.id, data);
       toast.success('Reply posted!');
     } catch (err) {
       toast.error('Failed to post reply: ' + (err?.response?.data?.detail || err.message));
@@ -359,47 +345,72 @@ const Publish = () => {
   const handleInboxReply = async () => {
     if (!inboxReply.trim() || !inboxSelected || inboxSending) return;
     setInboxSending(true);
+    const trimmedReply = inboxReply.trim();
+    const caps = inboxCapabilities[inboxSelected.platform] || {};
+    const canReplyOnPlatform = inboxSelected.type === 'dm'
+      ? DM_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(caps.supports_dm_reply)
+      : COMMENT_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(caps.supports_comment_reply);
+
+    if (!canReplyOnPlatform) {
+      toast.error('Replies are not supported for this platform in Publish right now.');
+      setInboxSending(false);
+      return;
+    }
+
     try {
-      const REPLY_PLATFORMS = ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'];
-      const isPlatformMsg = inboxSelected.platform_message_id && REPLY_PLATFORMS.includes(inboxSelected.platform);
-
-      // If this is a real platform message, try to reply on the platform
-      if (isPlatformMsg && inboxSelected.type === 'comment') {
-        try {
-          await replyToComment(inboxSelected.platform, inboxSelected.platform_message_id, {
-            text: inboxReply.trim(),
+      if (inboxSelected.type === 'comment') {
+        await replyToComment(
+          inboxSelected.platform,
+          inboxSelected.post_id,
+          inboxSelected.platform_message_id,
+          {
+            text: trimmedReply,
+            account_id: inboxSelected.account_id,
             post_id: inboxSelected.post_id,
-          });
-        } catch (err) {
-          toast.error('Platform reply failed: ' + (err?.response?.data?.detail || err.message));
-        }
-      }
-
-      if (isPlatformMsg && inboxSelected.type === 'dm') {
-        try {
-          const DM_PLATFORMS = ['instagram', 'facebook'];
-          if (DM_PLATFORMS.includes(inboxSelected.platform)) {
-            await sendDmReply(inboxSelected.platform, inboxSelected.platform_message_id, {
-              text: inboxReply.trim(),
-              recipient_id: inboxSelected.author_id,
-            });
+            parent_cid: inboxSelected.comment_cid,
+            root_uri: inboxSelected.root_uri,
+            root_cid: inboxSelected.root_cid,
           }
-        } catch (err) {
-          toast.error('DM reply failed: ' + (err?.response?.data?.detail || err.message));
-        }
+        );
+      } else if (inboxSelected.type === 'dm') {
+        await sendDmReply(inboxSelected.platform, inboxSelected.conversation_id, {
+          text: trimmedReply,
+          account_id: inboxSelected.account_id,
+          recipient_id: inboxSelected.recipient_id || inboxSelected.author_id,
+        });
       }
 
-      // Always save to inbox
-      await updateInboxMessage(inboxSelected.id, { reply: inboxReply.trim() });
-      const updated = { ...inboxSelected, reply: inboxReply.trim(), status: 'replied' };
+      const repliedAt = new Date().toISOString();
+      const updated = await updateInboxMessage(inboxSelected.id, {
+        reply: trimmedReply,
+        reply_status: 'sent',
+        replied_at: repliedAt,
+        platform_reply_error: null,
+        status: 'replied',
+      });
       setInboxSelected(updated);
       setInboxMessages((prev) =>
         prev.map((m) => (m.id === inboxSelected.id ? updated : m))
       );
       setInboxReply('');
-      toast.success(isPlatformMsg ? 'Reply posted to platform!' : 'Reply saved!');
-    } catch {
-      toast.error('Failed to send reply');
+      toast.success('Reply posted to platform!');
+    } catch (err) {
+      const failureMessage = err?.response?.data?.detail || err.message || 'Failed to send reply';
+      try {
+        const failed = await updateInboxMessage(inboxSelected.id, {
+          reply: trimmedReply,
+          reply_status: 'failed',
+          platform_reply_error: failureMessage,
+          status: inboxSelected.status === 'unread' ? 'read' : inboxSelected.status,
+        });
+        setInboxSelected(failed);
+        setInboxMessages((prev) =>
+          prev.map((m) => (m.id === inboxSelected.id ? failed : m))
+        );
+      } catch {
+        // Best-effort persistence only.
+      }
+      toast.error(failureMessage);
     } finally {
       setInboxSending(false);
     }
@@ -410,6 +421,18 @@ const Publish = () => {
   const dateGroups = groupByDate(posts);
 
   const unreadCount = inboxMessages.filter((m) => m.status === 'unread').length;
+  const inboxPlatformOptions = Object.values(inboxCapabilities)
+    .filter((entry) => {
+      if (inboxType === 'dm') return entry.supports_dm_inbox;
+      if (inboxType === 'comment') return entry.supports_comment_inbox;
+      return entry.supports_dm_inbox || entry.supports_comment_inbox;
+    })
+    .sort((a, b) => (a.label || a.platform).localeCompare(b.label || b.platform));
+  const selectedInboxSupportsReply = inboxSelected
+    ? (inboxSelected.type === 'dm'
+      ? DM_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(inboxCapabilities[inboxSelected.platform]?.supports_dm_reply)
+      : COMMENT_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(inboxCapabilities[inboxSelected.platform]?.supports_comment_reply))
+    : false;
 
   return (
     <DashboardLayout>
@@ -636,7 +659,6 @@ const Publish = () => {
                         <PostCard
                           key={post.platform_post_id || idx}
                           post={post}
-                          onAddComment={handleAddComment}
                           onFetchComments={handleFetchComments}
                           onReplyToComment={handleReplyToComment}
                         />
@@ -663,8 +685,8 @@ const Publish = () => {
                 className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 <option value="">All platforms</option>
-                {PLATFORM_OPTIONS.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
+                {inboxPlatformOptions.map((entry) => (
+                  <option key={entry.platform} value={entry.platform}>{entry.label}</option>
                 ))}
               </select>
               <select
@@ -682,7 +704,7 @@ const Publish = () => {
                 className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ml-auto"
               >
                 <FaSync className={`text-[10px] ${syncing ? 'animate-spin' : ''}`} />
-                {syncing ? 'Syncing…' : 'Sync DMs'}
+                {syncing ? 'Syncing…' : 'Sync Inbox'}
               </button>
               <span className="text-xs text-gray-400">
                 {inboxMessages.length} message{inboxMessages.length !== 1 ? 's' : ''}
@@ -827,14 +849,14 @@ const Publish = () => {
                       />
                       <div className="flex items-center justify-between mt-2">
                         <p className="text-[11px] text-gray-400">
-                          {inboxSelected?.platform_message_id && ['instagram', 'facebook', 'threads', 'reddit', 'bluesky'].includes(inboxSelected?.platform)
-                            ? '💡 Reply will be posted directly to ' + (PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform)
-                            : '💡 Reply will be saved in your inbox'
+                          {selectedInboxSupportsReply
+                            ? `Reply will be posted directly to ${PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform}`
+                            : 'Replies are not supported for this platform in Publish right now.'
                           }
                         </p>
                         <button
                           onClick={handleInboxReply}
-                          disabled={!inboxReply.trim() || inboxSending}
+                          disabled={!inboxReply.trim() || inboxSending || !selectedInboxSupportsReply}
                           className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {inboxSending ? (

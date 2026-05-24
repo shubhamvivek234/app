@@ -20,8 +20,8 @@ const PLATFORM_META = {
   threads:   { icon: SiThreads,   color: 'text-gray-900',  ring: '#101010', label: 'Threads' },
 };
 
-const COMMENT_PLATFORMS = new Set(['instagram', 'facebook', 'youtube', 'threads', 'reddit', 'bluesky']);
-const REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'threads', 'reddit', 'bluesky']);
+const COMMENT_PLATFORMS = new Set(['instagram', 'facebook', 'youtube', 'reddit', 'bluesky']);
+const REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'youtube', 'reddit', 'bluesky']);
 
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',

@@ -658,15 +658,36 @@ class GoogleAuth:
                 return []
             comments = []
             for item in response.json().get("items", []):
-                snippet = item.get("snippet", {}).get("topLevelComment", {}).get("snippet", {})
+                top_level_comment = item.get("snippet", {}).get("topLevelComment", {}) or {}
+                snippet = top_level_comment.get("snippet", {}) or {}
                 comments.append({
-                    "id": item.get("id"),
+                    "id": top_level_comment.get("id") or item.get("id"),
+                    "thread_id": item.get("id"),
                     "author_name": snippet.get("authorDisplayName", "Unknown"),
                     "author_avatar": snippet.get("authorProfileImageUrl"),
                     "content": snippet.get("textDisplay", ""),
                     "timestamp": snippet.get("publishedAt"),
                     "likes": snippet.get("likeCount", 0),
-                    "can_reply": False,
+                    "can_reply": True,
                     "platform": "youtube",
                 })
             return comments
+
+    async def reply_to_youtube_comment(self, access_token: str, comment_id: str, text: str) -> dict:
+        """Reply to a YouTube top-level comment."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.YOUTUBE_URL}/comments",
+                params={"part": "snippet"},
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={
+                    "snippet": {
+                        "parentId": comment_id,
+                        "textOriginal": text,
+                    }
+                },
+            )
+            if response.status_code not in (200, 201):
+                logging.warning(f"[YouTube] Comment reply failed: {response.text}")
+                raise Exception(f"Failed to reply to YouTube comment: {response.text}")
+            return response.json()

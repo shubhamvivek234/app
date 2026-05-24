@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getInbox, updateInboxMessage, deleteInboxMessage, getInboxStats } from '@/lib/api';
+import { getInbox, updateInboxMessage, deleteInboxMessage, getInboxStats, replyToComment, sendDmReply } from '@/lib/api';
 import { toast } from 'sonner';
 import { format, parseISO } from 'date-fns';
 import {
@@ -31,6 +31,9 @@ const FILTER_TABS = [
   { key: 'replied',  label: 'Replied' },
 ];
 
+const DM_REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'bluesky']);
+const COMMENT_REPLY_PLATFORMS = new Set(['instagram', 'facebook', 'reddit', 'youtube', 'bluesky']);
+
 const AvatarPlaceholder = ({ name, className = '' }) => {
   const colors = ['bg-pink-400','bg-blue-400','bg-green-400','bg-purple-400','bg-orange-400','bg-teal-400'];
   const bg = colors[(name?.charCodeAt(0) || 0) % colors.length];
@@ -44,6 +47,7 @@ const AvatarPlaceholder = ({ name, className = '' }) => {
 const Inbox = () => {
   const [messages, setMessages]     = useState([]);
   const [stats, setStats]           = useState({ total: 0, unread: 0, replied: 0 });
+  const [capabilities, setCapabilities] = useState({});
   const [loading, setLoading]       = useState(true);
   const [activeTab, setActiveTab]   = useState('all');
   const [selectedId, setSelectedId] = useState(null);
@@ -65,9 +69,12 @@ const Inbox = () => {
       else if (activeTab !== 'all') params.status = activeTab;
 
       const [msgs, st] = await Promise.all([getInbox(params), getInboxStats()]);
-      setMessages(msgs);
+      const normalizedMessages = Array.isArray(msgs) ? msgs : (msgs.messages || []);
+      setMessages(normalizedMessages);
+      setCapabilities(Array.isArray(msgs) ? {} : (msgs.capabilities || {}));
       setStats(st);
     } catch {
+      setCapabilities({});
       toast.error('Failed to load inbox');
     } finally {
       setLoading(false);
@@ -90,22 +97,64 @@ const Inbox = () => {
     if (msg.status === 'unread') markRead(msg.id);
   };
 
+  const selectedSupportsReply = selected
+    ? (selected.type === 'dm'
+      ? DM_REPLY_PLATFORMS.has(selected.platform) && Boolean(capabilities[selected.platform]?.supports_dm_reply)
+      : COMMENT_REPLY_PLATFORMS.has(selected.platform) && Boolean(capabilities[selected.platform]?.supports_comment_reply))
+    : false;
+
   const handleReply = async () => {
     if (!replyText.trim() || !selectedId) return;
+    if (!selectedSupportsReply || !selected) {
+      toast.error('Replies are not supported for this platform in Inbox right now.');
+      return;
+    }
+
     setReplying(true);
+    const trimmedReply = replyText.trim();
     try {
-      await updateInboxMessage(selectedId, { reply: replyText.trim() });
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === selectedId
-            ? { ...m, reply: replyText.trim(), status: 'replied', replied_at: new Date().toISOString() }
-            : m
-        )
-      );
+      if (selected.type === 'dm') {
+        await sendDmReply(selected.platform, selected.conversation_id, {
+          text: trimmedReply,
+          account_id: selected.account_id,
+          recipient_id: selected.recipient_id || selected.author_id,
+        });
+      } else {
+        await replyToComment(selected.platform, selected.post_id, selected.platform_message_id, {
+          text: trimmedReply,
+          account_id: selected.account_id,
+          post_id: selected.post_id,
+          parent_cid: selected.comment_cid,
+          root_uri: selected.root_uri,
+          root_cid: selected.root_cid,
+        });
+      }
+
+      const updated = await updateInboxMessage(selectedId, {
+        reply: trimmedReply,
+        reply_status: 'sent',
+        replied_at: new Date().toISOString(),
+        platform_reply_error: null,
+        status: 'replied',
+      });
+      setMessages((prev) => prev.map((m) => m.id === selectedId ? updated : m));
       setReplyText('');
-      toast.success('Reply saved');
-    } catch {
-      toast.error('Failed to save reply');
+      setStats((prev) => ({ ...prev, replied: selected?.status === 'replied' ? prev.replied : prev.replied + 1 }));
+      toast.success('Reply posted');
+    } catch (err) {
+      const failureMessage = err?.response?.data?.detail || err.message || 'Failed to send reply';
+      try {
+        const failed = await updateInboxMessage(selectedId, {
+          reply: trimmedReply,
+          reply_status: 'failed',
+          platform_reply_error: failureMessage,
+          status: selected?.status === 'unread' ? 'read' : selected?.status,
+        });
+        setMessages((prev) => prev.map((m) => m.id === selectedId ? failed : m));
+      } catch {
+        // Best-effort persistence only.
+      }
+      toast.error(failureMessage);
     } finally {
       setReplying(false);
     }
@@ -279,6 +328,13 @@ const Inbox = () => {
                     </div>
                   </div>
                 )}
+
+                {selected.platform_reply_error && (
+                  <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-red-600 mb-1">Reply failed</p>
+                    <p className="text-sm text-red-700">{selected.platform_reply_error}</p>
+                  </div>
+                )}
               </div>
 
               {/* Reply box */}
@@ -297,7 +353,7 @@ const Inbox = () => {
                   />
                   <button
                     onClick={handleReply}
-                    disabled={replying || !replyText.trim()}
+                    disabled={replying || !replyText.trim() || !selectedSupportsReply}
                     className="p-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-40 transition-colors flex-shrink-0"
                     title="Send reply (⌘+Enter)"
                   >
@@ -305,7 +361,9 @@ const Inbox = () => {
                   </button>
                 </div>
                 <p className="text-[10px] text-gray-300 mt-1.5">
-                  Note: replies are saved locally. To publish to {selected.platform}, you'll need platform API credentials.
+                  {selectedSupportsReply
+                    ? `Reply will be posted directly to ${selected.platform}.`
+                    : 'Replies are not supported for this platform in Inbox right now.'}
                 </p>
               </div>
             </>

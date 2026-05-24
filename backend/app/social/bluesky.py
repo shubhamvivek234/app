@@ -330,6 +330,29 @@ class BlueskyAuth:
                 return {"messages": [], "cursor": None}
             return proxy_response.json()
 
+    async def send_message(self, access_token: str, convo_id: str, text: str) -> dict:
+        """Send a text DM in an existing Bluesky conversation."""
+        payload = {
+            "convoId": convo_id,
+            "message": {
+                "text": text[:10000],
+            },
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.CHAT_URL}/chat.bsky.convo.sendMessage",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "atproto-proxy": self.CHAT_PROXY_DID,
+                },
+                json=payload,
+            )
+            logging.info(f"[Bluesky] send_message status: {response.status_code}")
+            if response.status_code != 200:
+                logging.warning(f"[Bluesky] send_message failed: {response.text}")
+                raise Exception(f"Failed to send Bluesky message: {response.text}")
+            return response.json()
+
     async def fetch_replies(self, access_token: str, post_uri: str, depth: int = 1) -> list:
         """Fetch replies to a Bluesky post"""
         async with httpx.AsyncClient() as client:

@@ -419,13 +419,36 @@ class FacebookAuth:
                 return []
             conversations = []
             for conv in response.json().get("data", []):
-                messages = conv.get("messages", {}).get("data", [])
+                participants = [
+                    {
+                        "id": participant.get("id"),
+                        "name": participant.get("name", "Unknown"),
+                    }
+                    for participant in conv.get("participants", {}).get("data", [])
+                ]
+                messages = []
+                for message in conv.get("messages", {}).get("data", []):
+                    sender = message.get("from", {}) or {}
+                    messages.append({
+                        "id": message.get("id"),
+                        "message": message.get("message", ""),
+                        "created_time": message.get("created_time"),
+                        "from": {
+                            "id": sender.get("id"),
+                            "name": sender.get("name", "Unknown"),
+                        },
+                    })
                 latest = messages[0] if messages else {}
+                latest_sender = latest.get("from", {}) or {}
                 conversations.append({
                     "id": conv.get("id"),
-                    "participants": [p.get("name", "Unknown") for p in conv.get("participants", {}).get("data", [])],
+                    "participants": participants,
+                    "messages": messages,
                     "last_message": latest.get("message", ""),
                     "last_message_time": latest.get("created_time"),
+                    "last_message_id": latest.get("id"),
+                    "last_message_sender_id": latest_sender.get("id"),
+                    "last_message_sender_name": latest_sender.get("name"),
                     "platform": "facebook",
                 })
             return conversations

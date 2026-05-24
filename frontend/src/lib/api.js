@@ -114,6 +114,17 @@ const emitUploadProgress = (onProgress, loaded, total) => {
   });
 };
 
+const encodePathSegment = (value) => {
+  const stringValue = String(value ?? '');
+  const bytes = new TextEncoder().encode(stringValue);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  const base64Value = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return `b64.${base64Value}`;
+};
+
 const uploadSinglePartToCloud = async (file, upload, onProgress) => {
   await axios.put(upload.url, file, {
     headers: upload.headers || { 'Content-Type': file.type || 'application/octet-stream' },
@@ -417,10 +428,11 @@ export const deleteHashtagGroup = async (groupId) => {
   return response.data;
 };
 
-// ── Inbox Messages (Stub - to be implemented) ──
-export const getInbox = async () => {
+// ── Inbox Messages ──
+export const getInbox = async (params = {}) => {
   const response = await axios.get(`${API}/inbox`, {
     headers: getAuthHeaders(),
+    params,
   });
   return response.data;
 };
@@ -495,34 +507,51 @@ export const getPublishFeed = async (params = {}) => {
   return response.data;
 };
 
-export const getConversations = async () => {
+export const getConversations = async (platform, accountId = null, params = {}) => {
   const response = await axios.get(`${API}/conversations`, {
     headers: getAuthHeaders(),
+    params: {
+      platform,
+      ...(accountId ? { accountId } : {}),
+      ...params,
+    },
   });
   return response.data;
 };
 
-// ── Comments (Stub - to be implemented) ──
-export const getPostComments = async (postId) => {
-  const response = await axios.get(`${API}/posts/${postId}/comments`, {
+export const syncInboxConversations = async (data = {}) => {
+  const response = await axios.post(`${API}/conversations/sync`, data, {
     headers: getAuthHeaders(),
   });
   return response.data;
 };
 
-export const replyToComment = async (postId, commentId, data) => {
+// ── Comments ──
+export const getPostComments = async (platform, postId, accountId = null, params = {}) => {
+  const response = await axios.get(`${API}/posts/${encodePathSegment(postId)}/comments`, {
+    headers: getAuthHeaders(),
+    params: {
+      platform,
+      ...(accountId ? { accountId } : {}),
+      ...params,
+    },
+  });
+  return response.data;
+};
+
+export const replyToComment = async (platform, postId, commentId, data) => {
   const response = await axios.post(
-    `${API}/posts/${postId}/comments/${commentId}/reply`,
-    data,
+    `${API}/posts/${encodePathSegment(postId)}/comments/${encodePathSegment(commentId)}/reply`,
+    { platform, ...data },
     { headers: getAuthHeaders() }
   );
   return response.data;
 };
 
-export const sendDmReply = async (conversationId, data) => {
+export const sendDmReply = async (platform, conversationId, data) => {
   const response = await axios.post(
-    `${API}/conversations/${conversationId}/reply`,
-    data,
+    `${API}/conversations/${encodeURIComponent(conversationId)}/reply`,
+    { platform, ...data },
     { headers: getAuthHeaders() }
   );
   return response.data;

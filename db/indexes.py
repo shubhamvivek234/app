@@ -81,6 +81,18 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.media_assets, [("user_id", 1), ("media_id", 1)])
     await _safe_create_index(db.media_assets, [("post_id", 1)])
 
+    # inbox_messages
+    await _safe_create_index(db.inbox_messages, [("id", 1)], unique=True)
+    await _safe_create_index(
+        db.inbox_messages,
+        [("user_id", 1), ("platform", 1), ("account_id", 1), ("type", 1), ("platform_message_id", 1)],
+        unique=True,
+        sparse=True,
+    )
+    await _safe_create_index(db.inbox_messages, [("workspace_id", 1), ("user_id", 1), ("received_at", -1)])
+    await _safe_create_index(db.inbox_messages, [("workspace_id", 1), ("user_id", 1), ("status", 1), ("received_at", -1)])
+    await _safe_create_index(db.inbox_messages, [("workspace_id", 1), ("user_id", 1), ("platform", 1), ("type", 1), ("received_at", -1)])
+
     # api_keys
     await _safe_create_index(db.api_keys, [("key_hash", 1)], unique=True)
     await _safe_create_index(db.api_keys, [("workspace_id", 1), ("revoked", 1), ("created_at", -1)])

@@ -121,7 +121,7 @@ async def handle_ghost_account(
     })
 
     logger.info(
-        "Ghost cascade complete: account=%s platform=%s paused=%d reason=%s",
+        "Ghost cascade complete: account=%s platform=%s paused=%s reason=%s",
         social_account_id,
         platform,
         paused_count,
@@ -200,7 +200,7 @@ async def handle_account_reconnect_required(
     })
 
     logger.info(
-        "Reconnect-required flow complete: account=%s platform=%s paused=%d",
+        "Reconnect-required flow complete: account=%s platform=%s paused=%s",
         social_account_id,
         platform,
         paused_count,
