@@ -14,7 +14,6 @@ import asyncio
 import io
 from datetime import datetime, timedelta, timezone
 
-from celery import group
 from redis.exceptions import RedisError
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
@@ -476,37 +475,70 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     post_type = post.get("post_type", "image")
     jitter = _jitter_seconds(post_type)
 
+    processing_started_at = datetime.now(timezone.utc)
+
     # Update post with jitter info + processing status
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {
-            "status": "processing",
-            "jitter_seconds": jitter,
-            "processing_started_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {
+            "$set": {
+                "status": "processing",
+                "jitter_seconds": jitter,
+                "processing_started_at": processing_started_at.isoformat(),
+                "updated_at": processing_started_at,
+            },
+            "$push": {
+                "status_history": {
+                    "status": "processing",
+                    "timestamp": processing_started_at,
+                    "actor": "celery_publish_parent",
+                }
+            },
+        },
     )
 
-    # Spawn per-platform tasks in parallel (Phase 1.6.2)
-    # countdown=jitter delays children without blocking the worker thread
+    # Spawn per-platform tasks explicitly instead of relying on a Celery group.
+    # This gives us child task IDs for observability and avoids silent handoff
+    # gaps where the parent ran but no platform task ever left a trace.
     targets = _get_publish_targets(post)
-    platform_tasks = group(
-        publish_to_platform.s(
-            post_id=post_id,
-            platform=target["platform"],
-            account_id=target["account_id"],
-            attempt=0,
-        ).set(
-            queue=_publish_queue_for(target["platform"], post)
+    dispatch_updates: dict[str, object] = {}
+    dispatched_children: list[dict[str, str | None]] = []
+    for target in targets:
+        queue_name = _publish_queue_for(target["platform"], post)
+        async_result = publish_to_platform.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "platform": target["platform"],
+                "account_id": target["account_id"],
+                "attempt": 0,
+            },
+            countdown=jitter,
+            queue=queue_name,
         )
-        for target in targets
-    )
-    platform_tasks.apply_async(countdown=jitter)
+        dispatch_updates[f"account_results.{target['target_key']}.dispatch_task_id"] = async_result.id
+        dispatch_updates[f"account_results.{target['target_key']}.dispatch_enqueued_at"] = processing_started_at
+        dispatch_updates[f"platform_results.{target['platform']}.dispatch_task_id"] = async_result.id
+        dispatch_updates[f"platform_results.{target['platform']}.dispatch_enqueued_at"] = processing_started_at
+        dispatched_children.append(
+            {
+                "target_key": target["target_key"],
+                "platform": target["platform"],
+                "account_id": target["account_id"],
+                "queue": queue_name,
+                "task_id": async_result.id,
+            }
+        )
+
+    if dispatch_updates:
+        dispatch_updates["updated_at"] = processing_started_at
+        await db.posts.update_one({"id": post_id}, {"$set": dispatch_updates})
 
     return {
         "status": "dispatched",
         "platforms": post.get("platforms", []),
         "targets": [target["target_key"] for target in targets],
         "jitter_seconds": jitter,
+        "child_tasks": dispatched_children,
     }
 
 
