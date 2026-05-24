@@ -121,6 +121,18 @@ const deriveCardMediaKind = (post) => {
   return 'text';
 };
 
+const getPostAccountIds = (post) => {
+  if (Array.isArray(post?.account_ids) && post.account_ids.length > 0) return post.account_ids;
+  if (Array.isArray(post?.social_account_ids) && post.social_account_ids.length > 0) return post.social_account_ids;
+  if (Array.isArray(post?.accounts) && post.accounts.length > 0) return post.accounts;
+  if (Array.isArray(post?.publish_targets) && post.publish_targets.length > 0) {
+    return post.publish_targets
+      .map((target) => target?.account_id)
+      .filter(Boolean);
+  }
+  return [];
+};
+
 const ContentLibrary = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -300,7 +312,7 @@ const ContentLibrary = () => {
 
     // Filter by Account
     if (selectedAccount !== 'all') {
-      result = result.filter(p => p.accounts && p.accounts.includes(selectedAccount));
+      result = result.filter((post) => getPostAccountIds(post).includes(selectedAccount));
     }
 
     // Filter by Time
@@ -448,7 +460,7 @@ const ContentLibrary = () => {
           ) : (
             filteredPosts.map((post) => {
               const videoTitle = post.youtube_title || post.video_title || null;
-              const postAccounts = (post.accounts || []).map((id) => accountMap[id]).filter(Boolean);
+              const postAccounts = getPostAccountIds(post).map((id) => accountMap[id]).filter(Boolean);
               const postDate = initialStatus === 'published'
                 ? new Date(post.published_at || post.updated_at || post.created_at)
                 : (post.scheduled_time ? new Date(post.scheduled_time) : new Date(post.created_at));

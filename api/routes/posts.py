@@ -135,6 +135,14 @@ def _doc_to_response(doc: dict) -> PostResponse:
     return PostResponse(**doc)
 
 
+def _post_workspace_id(current_user: dict) -> str:
+    return (
+        current_user.get("default_workspace_id")
+        or current_user.get("workspace_id")
+        or current_user["user_id"]
+    )
+
+
 def _social_account_identifier(account_doc: dict) -> str | None:
     return account_doc.get("account_id") or account_doc.get("id")
 
@@ -907,7 +915,7 @@ async def list_posts(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[PostResponse]:
     user_id = current_user["user_id"]
-    ws_id = workspace_id or current_user.get("default_workspace_id")
+    ws_id = workspace_id or _post_workspace_id(current_user)
 
     query: dict = {
         "workspace_id": ws_id,
@@ -922,8 +930,20 @@ async def list_posts(
         query["$or"] = [
             {"published_at": {"$gte": cutoff}},
             {"published_at": {"$gte": cutoff_iso}},
+            {"published_at": None, "updated_at": {"$gte": cutoff}},
+            {"published_at": None, "updated_at": {"$gte": cutoff_iso}},
             {"published_at": {"$exists": False}, "updated_at": {"$gte": cutoff}},
             {"published_at": {"$exists": False}, "updated_at": {"$gte": cutoff_iso}},
+            {
+                "published_at": None,
+                "updated_at": None,
+                "created_at": {"$gte": cutoff},
+            },
+            {
+                "published_at": None,
+                "updated_at": None,
+                "created_at": {"$gte": cutoff_iso},
+            },
             {
                 "published_at": {"$exists": False},
                 "updated_at": {"$exists": False},
@@ -954,7 +974,7 @@ async def list_recent_published_posts(
     limit: Annotated[int, Query(ge=1, le=25)] = 25,
 ) -> list[PostResponse]:
     user_id = current_user["user_id"]
-    ws_id = workspace_id or current_user.get("default_workspace_id")
+    ws_id = workspace_id or _post_workspace_id(current_user)
 
     query: dict = {
         "workspace_id": ws_id,
@@ -980,7 +1000,7 @@ async def get_post(
     db: DB,
 ) -> PostResponse:
     user_id = current_user["user_id"]
-    ws_id = current_user.get("default_workspace_id")
+    ws_id = _post_workspace_id(current_user)
 
     doc = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
