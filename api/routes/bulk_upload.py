@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.deps import CurrentUser, DB
+from utils.timeslots import DEFAULT_TIMESLOT_CATEGORY, normalize_timeslot_category, resolve_next_timeslot_for_account
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["bulk-upload"])
@@ -22,7 +23,7 @@ router = APIRouter(tags=["bulk-upload"])
 VALID_PLATFORMS = {"instagram", "youtube", "twitter", "tiktok", "linkedin", "facebook", "bluesky"}
 VALID_POST_TYPES = {"text", "image", "video", "carousel", "reel", "story"}
 CSV_TEMPLATE_COLUMNS = [
-    "content", "platforms", "accounts", "scheduled_time", "timezone",
+    "content", "platforms", "accounts", "scheduled_time", "timeslot_category", "timezone",
     "image_urls", "video_url", "title", "tags", "post_type",
 ]
 
@@ -33,6 +34,7 @@ class BulkPost(BaseModel):
     platforms: list[str] = []
     accounts: str = "all"          # display name(s) or "all"
     scheduled_time: str | None = None  # ISO string from client
+    timeslot_category: str | None = DEFAULT_TIMESLOT_CATEGORY
     timezone: str = "UTC"
     image_urls: list[str] = []
     video_url: str | None = None
@@ -60,11 +62,14 @@ async def download_csv_template():
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(CSV_TEMPLATE_COLUMNS)
+    future = datetime.now(timezone.utc) + timedelta(days=7)
+    future_str = future.strftime("%d/%b/%Y 10:00")
     writer.writerow([
         "Hello world! First post via CSV",
         "instagram,twitter",
         "all",
-        "2025-06-01 10:00",
+        future_str,
+        "Category 1",
         "Asia/Kolkata",
         "",
         "",
@@ -112,6 +117,7 @@ async def _layer7_validate(db, user_id: str, workspace_id: str, posts: list[Bulk
                 dt = datetime.fromisoformat(st) if isinstance(st, str) else st
                 scheduled_index.setdefault(acc_id, []).append(dt)
 
+    reserved_keys: dict[tuple[str, str], set[str]] = {}
     errors = []
     for post in posts:
         post_errors = {}
@@ -149,6 +155,41 @@ async def _layer7_validate(db, user_id: str, workspace_id: str, posts: list[Bulk
                         break
             except ValueError:
                 post_errors["scheduled_time"] = "Could not parse scheduled_time for conflict check"
+        elif post.status == "scheduled":
+            acc_ids = (
+                [a["id"] for a in all_accounts]
+                if post.accounts.lower() == "all"
+                else [
+                    account_names[n.strip().lower()]["id"]
+                    for n in post.accounts.split(",")
+                    if n.strip().lower() in account_names
+                ]
+            )
+            if len(acc_ids) != 1:
+                post_errors["scheduled_time"] = (
+                    "Leave scheduled_time blank only when the row targets exactly one account with timeslots configured"
+                )
+            else:
+                try:
+                    category = normalize_timeslot_category(post.timeslot_category)
+                except ValueError as exc:
+                    post_errors["timeslot_category"] = str(exc)
+                else:
+                    reserved = reserved_keys.setdefault((acc_ids[0], category), set())
+                    next_slot, message, normalized_category = await resolve_next_timeslot_for_account(
+                        db,
+                        workspace_id,
+                        acc_ids[0],
+                        category,
+                        now=datetime.now(timezone.utc),
+                        reserved_keys=reserved,
+                    )
+                    if next_slot is None:
+                        post_errors["scheduled_time"] = message or "No available timeslot found"
+                    else:
+                        reserved.add(next_slot.replace(second=0, microsecond=0, tzinfo=timezone.utc).isoformat())
+                        post.scheduled_time = next_slot.isoformat()
+                        post.timeslot_category = normalized_category
 
         errors.append(post_errors)
 
@@ -223,7 +264,6 @@ async def bulk_csv_schedule(
                 ).isoformat()
             except ValueError:
                 scheduled_time = None
-
         now = datetime.now(timezone.utc).isoformat()
         docs_to_insert.append({
             "post_id": str(uuid.uuid4()),
@@ -233,6 +273,7 @@ async def bulk_csv_schedule(
             "platforms": [p.lower().strip() for p in post.platforms],
             "account_ids": account_ids,
             "scheduled_time": scheduled_time,
+            "timeslot_category": post.timeslot_category if post.status == "scheduled" else None,
             "timezone": post.timezone or "UTC",
             "media_urls": post.image_urls,
             "video_url": post.video_url,

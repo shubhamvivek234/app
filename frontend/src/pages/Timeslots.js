@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { getSocialAccounts } from '@/lib/api';
 import { toast } from 'sonner';
-import { FaQuestionCircle, FaTrash, FaPlus, FaLightbulb } from 'react-icons/fa';
+import { FaQuestionCircle, FaTrash, FaPlus, FaLightbulb, FaCopy } from 'react-icons/fa';
 
 const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -52,8 +52,46 @@ const Timeslots = () => {
   const [minute, setMinute] = useState('00');
   const [ampm, setAmpm] = useState('PM');
   const [copyFrom, setCopyFrom] = useState(false);
+  const [copySourceAccountId, setCopySourceAccountId] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const loadTimeslots = useCallback(async (accountId, category) => {
+    if (!accountId) return;
+    setLoading(true);
+    try {
+      const response = await fetch(
+        `${API}/timeslots?account_id=${accountId}&category=${encodeURIComponent(category)}`,
+        { headers: authHeaders() },
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to load timeslots');
+      }
+      const grouped = {};
+      DAYS_OF_WEEK.forEach((day) => {
+        grouped[day] = [];
+      });
+      (data.timeslots || []).forEach((slot) => {
+        if (grouped[slot.day_of_week]) {
+          grouped[slot.day_of_week].push(slot);
+        }
+      });
+      DAYS_OF_WEEK.forEach((day) => {
+        grouped[day].sort((a, b) => {
+          const aHour = Number(a.hour) % 12 + (a.ampm === 'PM' ? 12 : 0);
+          const bHour = Number(b.hour) % 12 + (b.ampm === 'PM' ? 12 : 0);
+          if (aHour !== bHour) return aHour - bHour;
+          return Number(a.minute) - Number(b.minute);
+        });
+      });
+      setSlots(grouped);
+    } catch (error) {
+      toast.error(error.message || 'Failed to load timeslots');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Load accounts
   useEffect(() => {
@@ -61,7 +99,12 @@ const Timeslots = () => {
       .then((res) => {
         const accs = res.accounts || res || [];
         setAccounts(accs);
-        if (accs.length) setSelectedAccountId(accs[0].id);
+        if (accs.length) {
+          setSelectedAccountId(accs[0].id);
+          if (accs.length > 1) {
+            setCopySourceAccountId(accs[1].id);
+          }
+        }
       })
       .catch(() => {});
   }, []);
@@ -69,24 +112,16 @@ const Timeslots = () => {
   // Load timeslots when account/category changes
   useEffect(() => {
     if (!selectedAccountId) return;
-    setLoading(true);
-    fetch(`${API}/timeslots?account_id=${selectedAccountId}&category=${encodeURIComponent(selectedCategory)}`, {
-      headers: authHeaders(),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const grouped = {};
-        DAYS_OF_WEEK.forEach((d) => { grouped[d] = []; });
-        (data.timeslots || []).forEach((slot) => {
-          if (grouped[slot.day_of_week]) {
-            grouped[slot.day_of_week].push(slot);
-          }
-        });
-        setSlots(grouped);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [selectedAccountId, selectedCategory]);
+    loadTimeslots(selectedAccountId, selectedCategory);
+  }, [loadTimeslots, selectedAccountId, selectedCategory]);
+
+  useEffect(() => {
+    if (!copyFrom) return;
+    if (!selectedAccountId) return;
+    if (copySourceAccountId && copySourceAccountId !== selectedAccountId) return;
+    const fallbackSource = accounts.find((account) => account.id !== selectedAccountId);
+    setCopySourceAccountId(fallbackSource?.id || '');
+  }, [accounts, copyFrom, copySourceAccountId, selectedAccountId]);
 
   const selectedDayObj = DAY_OPTIONS.find((d) => d.value === dayOption) || DAY_OPTIONS[0];
 
@@ -108,19 +143,20 @@ const Timeslots = () => {
               minute,
               ampm,
             }),
-          }).then((r) => r.json())
+          }).then(async (response) => {
+            const data = await response.json();
+            return { ok: response.ok, data };
+          })
         )
       );
-      const newSlots = { ...slots };
-      results.forEach((slot, i) => {
-        if (slot.id) {
-          newSlots[targetDays[i]] = [...(newSlots[targetDays[i]] || []), slot];
-        }
-      });
-      setSlots(newSlots);
+      const failures = results.filter((result) => !result.ok);
+      if (failures.length) {
+        throw new Error(failures[0]?.data?.detail || 'Failed to save timeslot');
+      }
+      await loadTimeslots(selectedAccountId, selectedCategory);
       toast.success(`Timeslot added for ${selectedDayObj.label}`);
-    } catch {
-      toast.error('Failed to save timeslot');
+    } catch (error) {
+      toast.error(error.message || 'Failed to save timeslot');
     } finally {
       setSaving(false);
     }
@@ -128,13 +164,16 @@ const Timeslots = () => {
 
   const handleDeleteSlot = async (day, slotId) => {
     try {
-      await fetch(`${API}/timeslots/${slotId}`, { method: 'DELETE', headers: authHeaders() });
+      const response = await fetch(`${API}/timeslots/${slotId}`, { method: 'DELETE', headers: authHeaders() });
+      if (!response.ok) {
+        throw new Error('Failed to delete timeslot');
+      }
       setSlots((prev) => ({
         ...prev,
         [day]: prev[day].filter((s) => s.id !== slotId),
       }));
-    } catch {
-      toast.error('Failed to delete timeslot');
+    } catch (error) {
+      toast.error(error.message || 'Failed to delete timeslot');
     }
   };
 
@@ -142,31 +181,117 @@ const Timeslots = () => {
     if (!selectedAccountId) return;
     if (!window.confirm('Clear all timeslots for this account?')) return;
     try {
-      await fetch(
+      const response = await fetch(
         `${API}/timeslots?account_id=${selectedAccountId}&category=${encodeURIComponent(selectedCategory)}`,
         { method: 'DELETE', headers: authHeaders() }
       );
+      if (!response.ok) {
+        throw new Error('Failed to clear timeslots');
+      }
       const empty = {};
       DAYS_OF_WEEK.forEach((d) => { empty[d] = []; });
       setSlots(empty);
       toast.success('All timeslots cleared');
-    } catch {
-      toast.error('Failed to clear timeslots');
+    } catch (error) {
+      toast.error(error.message || 'Failed to clear timeslots');
     }
   };
 
   const handleSuggestIdeal = () => {
-    const suggested = { ...slots };
-    DAYS_OF_WEEK.forEach((d) => { suggested[d] = []; });
-    // Insert suggested times (would call AI endpoint in production)
-    IDEAL_TIMES.forEach((t) => {
-      suggested[t.day] = [{ id: `suggested-${t.day}`, hour: t.hour, minute: t.minute, ampm: t.ampm, _suggested: true }];
-    });
-    setSlots(suggested);
-    toast.success('Ideal posting times loaded — click Save to apply');
+    if (!selectedAccountId) {
+      toast.error('Select an account first');
+      return;
+    }
+    setSaving(true);
+    Promise.all(
+      IDEAL_TIMES.map((slot) =>
+        fetch(`${API}/timeslots`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            account_id: selectedAccountId,
+            category: selectedCategory,
+            day_of_week: slot.day,
+            hour: slot.hour,
+            minute: slot.minute,
+            ampm: slot.ampm,
+          }),
+        }).then(async (response) => ({
+          ok: response.ok,
+          data: await response.json(),
+        }))
+      ),
+    )
+      .then(async (results) => {
+        const failures = results.filter((result) => !result.ok && result.data?.detail !== 'An identical timeslot already exists for this account');
+        if (failures.length) {
+          throw new Error(failures[0]?.data?.detail || 'Failed to apply suggested schedule');
+        }
+        await loadTimeslots(selectedAccountId, selectedCategory);
+        toast.success('Suggested schedule applied');
+      })
+      .catch((error) => {
+        toast.error(error.message || 'Failed to apply suggested schedule');
+      })
+      .finally(() => setSaving(false));
   };
 
-  const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+  const handleCopySlots = async () => {
+    if (!selectedAccountId || !copySourceAccountId) {
+      toast.error('Select both source and target accounts');
+      return;
+    }
+    if (selectedAccountId === copySourceAccountId) {
+      toast.error('Choose a different source account');
+      return;
+    }
+    setSaving(true);
+    try {
+      const sourceResponse = await fetch(
+        `${API}/timeslots?account_id=${copySourceAccountId}&category=${encodeURIComponent(selectedCategory)}`,
+        { headers: authHeaders() },
+      );
+      const sourceData = await sourceResponse.json();
+      if (!sourceResponse.ok) {
+        throw new Error(sourceData.detail || 'Failed to load source timeslots');
+      }
+      const sourceSlots = sourceData.timeslots || [];
+      if (sourceSlots.length === 0) {
+        throw new Error('No timeslots found on the source account for this category');
+      }
+
+      const copyResults = await Promise.all(
+        sourceSlots.map((slot) =>
+          fetch(`${API}/timeslots`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+              account_id: selectedAccountId,
+              category: selectedCategory,
+              day_of_week: slot.day_of_week,
+              hour: slot.hour,
+              minute: slot.minute,
+              ampm: slot.ampm,
+            }),
+          }).then(async (response) => ({
+            ok: response.ok,
+            data: await response.json(),
+          }))
+        ),
+      );
+      const failures = copyResults.filter((result) => !result.ok && result.data?.detail !== 'An identical timeslot already exists for this account');
+      if (failures.length) {
+        throw new Error(failures[0]?.data?.detail || 'Failed to copy timeslots');
+      }
+      await loadTimeslots(selectedAccountId, selectedCategory);
+      toast.success('Timeslots copied');
+    } catch (error) {
+      toast.error(error.message || 'Failed to copy timeslots');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const totalSlots = Object.values(slots).reduce((acc, arr) => acc + arr.length, 0);
 
   return (
@@ -220,6 +345,33 @@ const Timeslots = () => {
               Copy timeslots from another account
             </label>
           </div>
+
+          {copyFrom && (
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <select
+                value={copySourceAccountId}
+                onChange={(e) => setCopySourceAccountId(e.target.value)}
+                className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white text-gray-700 focus:outline-none focus:border-green-400 shadow-sm min-w-[200px]"
+              >
+                <option value="">Select source account</option>
+                {accounts
+                  .filter((account) => account.id !== selectedAccountId)
+                  .map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.username || account.display_name || account.platform}
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={handleCopySlots}
+                disabled={saving || !copySourceAccountId}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+              >
+                <FaCopy className="text-xs" />
+                Copy Slots
+              </button>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Day picker */}
@@ -291,10 +443,11 @@ const Timeslots = () => {
           {/* Suggest ideal times */}
           <button
             onClick={handleSuggestIdeal}
-            className="mt-4 flex items-center gap-2 px-4 py-2 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm"
+            disabled={saving || !selectedAccountId}
+            className="mt-4 flex items-center gap-2 px-4 py-2 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm disabled:opacity-50"
           >
             <FaLightbulb />
-            Suggest ideal posting times
+            {saving ? 'Applying…' : 'Apply suggested schedule'}
           </button>
         </div>
 
@@ -336,21 +489,15 @@ const Timeslots = () => {
                       {(slots[day] || []).map((slot) => (
                         <div
                           key={slot.id}
-                          className={`group flex items-center justify-between px-2 py-1.5 rounded-lg text-[11px] font-semibold ${
-                            slot._suggested
-                              ? 'bg-green-100 text-green-700 border border-green-200'
-                              : 'bg-gray-100 text-gray-700 border border-gray-200'
-                          }`}
+                          className="group flex items-center justify-between px-2 py-1.5 rounded-lg text-[11px] font-semibold bg-gray-100 text-gray-700 border border-gray-200"
                         >
                           <span>{slot.hour}:{slot.minute} {slot.ampm}</span>
-                          {!slot._suggested && (
-                            <button
-                              onClick={() => handleDeleteSlot(day, slot.id)}
-                              className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all ml-1"
-                            >
-                              ×
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleDeleteSlot(day, slot.id)}
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all ml-1"
+                          >
+                            ×
+                          </button>
                         </div>
                       ))}
                       {!(slots[day] || []).length && (

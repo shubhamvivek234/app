@@ -325,6 +325,8 @@ const platformIcons = {
   discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
 };
 
+const TIMESLOT_CATEGORIES = ['Category 1', 'Category 2', 'Category 3', 'Custom'];
+
 const COMMON_POST_SECTION = '__common_post__';
 
 const PLATFORM_CROP_CONFIG = {
@@ -567,8 +569,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [platformOrder,         setPlatformOrder]         = useState([]);
   const [createAnother,         setCreateAnother]         = useState(false);
   const [showSchedulePicker,    setShowSchedulePicker]    = useState(false);
+  const [showTimeslotPicker,    setShowTimeslotPicker]    = useState(false);
   const [scheduledDate,         setScheduledDate]         = useState('');
   const [scheduledTime,         setScheduledTime]         = useState('14:00');
+  const [selectedTimeslotCategory, setSelectedTimeslotCategory] = useState('Category 1');
   const [selectedTimezone,      setSelectedTimezone]      = useState(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
   );
@@ -1361,6 +1365,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         }
         scheduledDateTime = localToUTC(scheduledDate, scheduledTime, selectedTimezone);
         if (!scheduledDateTime) { toast.error('Invalid date / time'); setLoading(false); return; }
+      } else if (mode === 'timeslot') {
+        if (selectedAccounts.length !== 1) {
+          toast.error('Add to Timeslot works with exactly one selected account');
+          setLoading(false);
+          return;
+        }
       }
 
       const topLevelMedia = uploadedMedia;
@@ -1432,6 +1442,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         account_ids: selectedAccounts,
         publish_now: publishNow,
         scheduled_time: scheduledDateTime,
+        timeslot_category: mode === 'timeslot' ? selectedTimeslotCategory : null,
         video_title: fallbackTitle || null,
         youtube_privacy: youtubePrivacy,
         tiktok_privacy: tiktokPrivacy,
@@ -1449,6 +1460,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       toast.success(
         mode === 'draft' ? 'Draft saved!' :
         mode === 'now'   ? 'Post published!' :
+        mode === 'timeslot' ? 'Post added to timeslot!' :
         'Post scheduled!'
       );
 
@@ -1460,7 +1472,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       }
     } catch (err) {
       console.error(err);
-      toast.error('Failed to create post');
+      const detail = err?.response?.data?.detail;
+      const message = typeof detail === 'string'
+        ? detail
+        : detail?.message || 'Failed to create post';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -2030,6 +2046,18 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         {/* Schedule */}
         <Button
           variant="outline" size="sm"
+          onClick={() => setShowTimeslotPicker(true)}
+          disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
+          className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
+          title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
+        >
+          <FaClock className="text-xs" />
+          Add to Timeslot
+        </Button>
+
+        {/* Schedule */}
+        <Button
+          variant="outline" size="sm"
           onClick={() => setShowSchedulePicker(true)}
           disabled={loading || hasBlockingErrors}
           className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
@@ -2046,6 +2074,60 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     <>
       {/* Hidden file inputs */}
       <input ref={coverImageInputRef} type="file" accept="image/*" onChange={handleCoverImageChange} className="hidden" />
+
+      {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
+      <Dialog open={showTimeslotPicker} onOpenChange={setShowTimeslotPicker}>
+        <DialogContent className="max-w-[360px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold text-gray-900">Add to Timeslot</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 leading-relaxed">
+              This will schedule the post into the next unfilled timeslot for the selected account.
+            </p>
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-gray-600">Timeslot category</Label>
+              <select
+                value={selectedTimeslotCategory}
+                onChange={(event) => setSelectedTimeslotCategory(event.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 bg-offwhite focus:outline-none focus:border-green-400 focus:ring-1 focus:ring-green-200"
+              >
+                {TIMESLOT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+            {selectedAccounts.length === 1 ? (
+              <p className="text-xs text-gray-500">
+                The post will use the next open slot in <span className="font-semibold text-gray-700">{selectedTimeslotCategory}</span>.
+              </p>
+            ) : (
+              <p className="text-xs text-red-500">
+                Select exactly one account to use timeslot scheduling.
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowTimeslotPicker(false)}
+              className="h-9 text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowTimeslotPicker(false);
+                handleSubmit('timeslot');
+              }}
+              disabled={loading || selectedAccounts.length !== 1}
+              className="h-9 bg-green-600 hover:bg-green-700 text-white font-semibold text-xs"
+            >
+              {loading ? 'Scheduling…' : 'Add to Timeslot'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
       {(() => {

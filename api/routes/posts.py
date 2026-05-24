@@ -33,6 +33,7 @@ from utils.content_policy import check_content_policy, validate_platform_content
 from utils.observability import event_log, shorten_provider_error
 from utils.schedule_density import check_schedule_density
 from utils.ssrf_guard import assert_safe_url
+from utils.timeslots import normalize_timeslot_category, resolve_next_timeslot_for_account
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -571,7 +572,42 @@ async def create_post(
 
         normalized_account_overrides[account_id] = normalized_override
 
-    if body.publish_now:
+    timeslot_category: str | None = None
+    if body.timeslot_category:
+        if body.publish_now:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="publish_now cannot be combined with timeslot scheduling",
+            )
+        if body.scheduled_time:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="scheduled_time cannot be combined with timeslot scheduling",
+            )
+        if len(selected_accounts) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Add to Timeslot currently supports exactly one selected account",
+            )
+        try:
+            timeslot_category = normalize_timeslot_category(body.timeslot_category)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        next_slot, message, _ = await resolve_next_timeslot_for_account(
+            db,
+            workspace_id,
+            selected_accounts[0]["account_id"],
+            timeslot_category,
+            now=now,
+        )
+        if next_slot is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=message or "No available timeslot found",
+            )
+        post_status = PostStatus.SCHEDULED
+        scheduled_time = next_slot
+    elif body.publish_now:
         post_status = PostStatus.QUEUED
         scheduled_time = now
     elif body.scheduled_time:
@@ -621,6 +657,7 @@ async def create_post(
         "disable_comment": body.disable_comment,
         "disable_stitch": body.disable_stitch,
         "timezone": body.timezone,
+        "timeslot_category": timeslot_category,
         "scheduled_time": scheduled_time,
         "status": post_status,
         "platform_results": {

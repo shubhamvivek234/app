@@ -505,7 +505,7 @@ class InstagramAuth:
             response = await client.get(
                 f"{self.GRAPH_URL}/{user_id}/conversations",
                 params={
-                    "fields": "id,participants,messages{id,message,from,created_time}",
+                    "fields": "id,participants{id,name,username,profile_picture_url},messages{id,message,from{id,name,username,profile_picture_url},created_time}",
                     "limit": limit,
                     "access_token": access_token,
                 },
@@ -518,7 +518,9 @@ class InstagramAuth:
                 participants = [
                     {
                         "id": participant.get("id"),
-                        "name": participant.get("name", "Unknown"),
+                        "name": participant.get("name"),
+                        "username": participant.get("username"),
+                        "avatar": participant.get("profile_picture_url"),
                     }
                     for participant in conv.get("participants", {}).get("data", [])
                 ]
@@ -531,7 +533,9 @@ class InstagramAuth:
                         "created_time": message.get("created_time"),
                         "from": {
                             "id": sender.get("id"),
-                            "name": sender.get("name", "Unknown"),
+                            "name": sender.get("name"),
+                            "username": sender.get("username"),
+                            "avatar": sender.get("profile_picture_url"),
                         },
                     })
                 latest = messages[0] if messages else {}
@@ -544,7 +548,7 @@ class InstagramAuth:
                     "last_message_time": latest.get("created_time"),
                     "last_message_id": latest.get("id"),
                     "last_message_sender_id": latest_sender.get("id"),
-                    "last_message_sender_name": latest_sender.get("name"),
+                    "last_message_sender_name": latest_sender.get("name") or latest_sender.get("username") or "Unknown",
                     "platform": "instagram",
                 })
             return conversations

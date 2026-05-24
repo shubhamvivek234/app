@@ -100,6 +100,7 @@ class CreatePostRequest(BaseModel):
     account_ids: list[str] = Field(default_factory=list, max_length=20)
     publish_now: bool = False
     scheduled_time: datetime | None = None
+    timeslot_category: str | None = Field(None, max_length=100)
     media_ids: list[str] = Field(default_factory=list, max_length=10)
     media_urls: list[str] = Field(default_factory=list, max_length=10)
     post_type: str = Field(default="text", max_length=50)

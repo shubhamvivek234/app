@@ -11,11 +11,15 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from api.deps import CurrentUser, DB
+from utils.timeslots import (
+    normalize_timeslot_category,
+    normalize_timeslot_clock,
+    resolve_next_timeslot_for_account,
+    sort_timeslot_docs,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["timeslots"])
-
-VALID_DAYS = {"MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"}
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +62,25 @@ def _doc_to_response(doc: dict) -> TimeslotResponse:
     )
 
 
+async def _ensure_owned_account(db, current_user: CurrentUser, account_id: str) -> str:
+    user_id = current_user.user_id
+    workspace_id = current_user.workspace_id or user_id
+    account = await db.social_accounts.find_one(
+        {
+            "workspace_id": workspace_id,
+            "is_active": True,
+            "$or": [
+                {"account_id": account_id},
+                {"id": account_id},
+            ],
+        },
+        {"_id": 0, "account_id": 1, "id": 1},
+    )
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social account not found")
+    return account.get("account_id") or account.get("id") or account_id
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/timeslots", response_model=TimeslotsListResponse)
@@ -68,18 +91,22 @@ async def list_timeslots(
     category: str = Query("Category 1"),
 ):
     """Return all timeslots for a given account + category."""
-    user_id = current_user.user_id
-    workspace_id = current_user.workspace_id or user_id
+    workspace_id = current_user.workspace_id or current_user.user_id
+    canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
+    try:
+        normalized_category = normalize_timeslot_category(category)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     cursor = db.timeslots.find(
         {
             "workspace_id": workspace_id,
-            "account_id": account_id,
-            "category": category,
+            "account_id": canonical_account_id,
+            "category": normalized_category,
         },
         {"_id": 0},
-    ).sort("day_of_week", 1)
-    docs = await cursor.to_list(None)
+    )
+    docs = sort_timeslot_docs(await cursor.to_list(None))
     return TimeslotsListResponse(timeslots=[_doc_to_response(d) for d in docs])
 
 
@@ -92,24 +119,27 @@ async def create_timeslot(
     """Create a single timeslot."""
     user_id = current_user.user_id
     workspace_id = current_user.workspace_id or user_id
-
-    if body.day_of_week.upper() not in VALID_DAYS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid day_of_week: {body.day_of_week}. Must be one of {sorted(VALID_DAYS)}",
+    canonical_account_id = await _ensure_owned_account(db, current_user, body.account_id)
+    try:
+        normalized_day, normalized_hour, normalized_minute, normalized_ampm = normalize_timeslot_clock(
+            body.day_of_week,
+            body.hour,
+            body.minute,
+            body.ampm,
         )
-    if body.ampm not in ("AM", "PM"):
-        raise HTTPException(status_code=422, detail="ampm must be 'AM' or 'PM'")
+        normalized_category = normalize_timeslot_category(body.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     # Prevent exact duplicate
     existing = await db.timeslots.find_one({
         "workspace_id": workspace_id,
-        "account_id": body.account_id,
-        "category": body.category,
-        "day_of_week": body.day_of_week.upper(),
-        "hour": body.hour,
-        "minute": body.minute,
-        "ampm": body.ampm,
+        "account_id": canonical_account_id,
+        "category": normalized_category,
+        "day_of_week": normalized_day,
+        "hour": normalized_hour,
+        "minute": normalized_minute,
+        "ampm": normalized_ampm,
     })
     if existing:
         raise HTTPException(
@@ -122,18 +152,18 @@ async def create_timeslot(
         "timeslot_id": str(uuid.uuid4()),
         "user_id": user_id,
         "workspace_id": workspace_id,
-        "account_id": body.account_id,
-        "category": body.category,
-        "day_of_week": body.day_of_week.upper(),
-        "hour": body.hour,
-        "minute": body.minute,
-        "ampm": body.ampm,
+        "account_id": canonical_account_id,
+        "category": normalized_category,
+        "day_of_week": normalized_day,
+        "hour": normalized_hour,
+        "minute": normalized_minute,
+        "ampm": normalized_ampm,
         "created_at": now,
         "updated_at": now,
     }
     await db.timeslots.insert_one(doc)
     logger.info("Timeslot created: user=%s account=%s day=%s time=%s:%s%s",
-                user_id, body.account_id, body.day_of_week, body.hour, body.minute, body.ampm)
+                user_id, canonical_account_id, normalized_day, normalized_hour, normalized_minute, normalized_ampm)
     return _doc_to_response(doc)
 
 
@@ -144,8 +174,7 @@ async def delete_timeslot(
     db: DB,
 ):
     """Delete a single timeslot by ID."""
-    user_id = current_user.user_id
-    workspace_id = current_user.workspace_id or user_id
+    workspace_id = current_user.workspace_id or current_user.user_id
 
     result = await db.timeslots.delete_one({
         "timeslot_id": timeslot_id,
@@ -164,10 +193,15 @@ async def clear_timeslots(
 ):
     """Delete all timeslots for an account + category."""
     workspace_id = current_user.workspace_id or current_user.user_id
+    canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
+    try:
+        normalized_category = normalize_timeslot_category(category)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     await db.timeslots.delete_many({
         "workspace_id": workspace_id,
-        "account_id": account_id,
-        "category": category,
+        "account_id": canonical_account_id,
+        "category": normalized_category,
     })
 
 
@@ -182,70 +216,29 @@ async def get_next_slot(
     Return the next unfilled timeslot datetime for 'Add to Timeslot' post creation.
     Scans forward from now through the weekly schedule until an empty slot is found.
     """
-    from datetime import date
-    import calendar
-
     workspace_id = current_user.workspace_id or current_user.user_id
-    cursor = db.timeslots.find(
-        {"workspace_id": workspace_id, "account_id": account_id, "category": category},
-        {"_id": 0},
-    )
-    all_slots = await cursor.to_list(None)
-    if not all_slots:
-        return {"next_slot": None, "message": "No timeslots configured for this account"}
+    canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
+    try:
+        next_slot, message, normalized_category = await resolve_next_timeslot_for_account(
+            db,
+            workspace_id,
+            canonical_account_id,
+            category,
+            now=datetime.now(timezone.utc),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if next_slot is None:
+        return {
+            "next_slot": None,
+            "message": message,
+            "category": normalized_category,
+        }
 
-    # Build a dict: day_of_week → sorted list of (hour24, minute)
-    day_map: dict[str, list[tuple[int, int]]] = {}
-    for s in all_slots:
-        h = int(s["hour"])
-        m = int(s["minute"])
-        if s["ampm"] == "PM" and h != 12:
-            h += 12
-        if s["ampm"] == "AM" and h == 12:
-            h = 0
-        day_map.setdefault(s["day_of_week"], []).append((h, m))
-    for day in day_map:
-        day_map[day].sort()
-
-    # Fetch scheduled posts for this account in the next 60 days
-    now = datetime.now(timezone.utc)
-    future = (now + timedelta(days=60)).isoformat()
-    taken_cursor = db.posts.find(
-        {
-            "workspace_id": workspace_id,
-            "account_ids": account_id,
-            "status": "scheduled",
-            "scheduled_time": {"$gte": now.isoformat(), "$lte": future},
-        },
-        {"_id": 0, "scheduled_time": 1},
-    )
-    taken_posts = await taken_cursor.to_list(None)
-    taken_minutes = set()
-    for p in taken_posts:
-        if p.get("scheduled_time"):
-            try:
-                dt = datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00"))
-                # Round to nearest minute for comparison
-                taken_minutes.add(dt.replace(second=0, microsecond=0).isoformat())
-            except ValueError:
-                pass
-
-    # Scan forward
-    from datetime import timedelta
-    check_date = now.date()
-    for _ in range(60):
-        day_name = check_date.strftime("%A").upper()
-        times = day_map.get(day_name, [])
-        for (h, m) in times:
-            candidate = datetime(
-                check_date.year, check_date.month, check_date.day, h, m,
-                tzinfo=timezone.utc,
-            )
-            if candidate <= now:
-                continue
-            key = candidate.replace(second=0, microsecond=0).isoformat()
-            if key not in taken_minutes:
-                return {"next_slot": candidate.isoformat(), "day": day_name, "time": f"{h:02d}:{m:02d}"}
-        check_date = date.fromordinal(check_date.toordinal() + 1)
-
-    return {"next_slot": None, "message": "No available slot found in the next 60 days"}
+    day_name = next_slot.strftime("%A").upper()
+    return {
+        "next_slot": next_slot.isoformat(),
+        "day": day_name,
+        "time": next_slot.strftime("%H:%M"),
+        "category": normalized_category,
+    }

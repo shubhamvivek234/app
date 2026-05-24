@@ -238,7 +238,7 @@ const BulkCSVModal = ({ onClose }) => {
       const token = localStorage.getItem('token');
       const postsPayload = validRows.map((row) => {
         let scheduledTime = null;
-        if (row.scheduled_time) {
+        if (!asDraft && row.scheduled_time) {
           const dt = parseDateTime(row.scheduled_time);
           if (dt) scheduledTime = dt.toISOString();
         }
@@ -247,6 +247,7 @@ const BulkCSVModal = ({ onClose }) => {
           platforms: row.platforms.toLowerCase().split(',').map((p) => p.trim()),
           accounts: row.accounts || 'all',
           scheduled_time: scheduledTime,
+          timeslot_category: asDraft ? null : (row.timeslot_category || 'Category 1'),
           image_urls: row.image_urls ? row.image_urls.split('||').map((u) => u.trim()) : [],
           video_url: row.video_url || null,
           title: row.title || null,
@@ -282,13 +283,13 @@ const BulkCSVModal = ({ onClose }) => {
   };
 
   const downloadTemplate = () => {
-    const cols = 'content,platforms,accounts,scheduled_time,image_urls,video_url,title,tags,post_type';
+    const cols = 'content,platforms,accounts,scheduled_time,timeslot_category,timezone,image_urls,video_url,title,tags,post_type';
     // Use a date 7 days from now so the template is always valid on download
     const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
-    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","Category 1","Asia/Kolkata","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

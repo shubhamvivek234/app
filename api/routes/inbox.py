@@ -210,17 +210,18 @@ def _peer_from_participants(account: dict[str, Any], participants: list[dict[str
         return (
             participant_id or None,
             participant.get("name")
+            or participant.get("username")
             or participant.get("displayName")
             or participant.get("handle")
             or "Unknown",
-            participant.get("avatar"),
+            participant.get("avatar") or participant.get("profile_picture_url"),
         )
 
     first = participants[0] if participants else {}
     return (
         str(first.get("id") or first.get("did") or "") or None,
-        first.get("name") or first.get("displayName") or first.get("handle") or "Unknown",
-        first.get("avatar"),
+        first.get("name") or first.get("username") or first.get("displayName") or first.get("handle") or "Unknown",
+        first.get("avatar") or first.get("profile_picture_url"),
     )
 
 
@@ -488,6 +489,8 @@ async def _sync_account_conversations(
         latest_sender_id = str(conversation.get("last_message_sender_id") or "")
         direction = "outgoing" if own_id and latest_sender_id == own_id else "incoming"
         status_value = "read" if direction == "outgoing" else "unread"
+        if peer_name == "Unknown":
+            peer_name = conversation.get("last_message_sender_name") or peer_name
         platform_message_id = str(conversation.get("last_message_id") or conversation.get("id"))
         await _upsert_inbox_message(
             db,

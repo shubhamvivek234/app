@@ -615,7 +615,12 @@ async def _fetch_db_published_posts(
         {
             "user_id": user_id,
             "platforms": platform,
-            "$or": [{"social_account_ids": account_identifier}, {"account_ids": account_identifier}],
+            "$or": [
+                {"social_account_ids": account_identifier},
+                {"account_ids": account_identifier},
+                {"platform_account_ids": account_identifier},
+                {"social_account_id": account_identifier},
+            ],
             "status": {"$in": ["published", "partial"]},
         },
         {
@@ -3546,7 +3551,16 @@ async def publish_feed(
     account_id: str | None = Query(None, alias="accountId"),
     limit: int = Query(50, ge=1, le=100),
 ):
-    accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
+    fallback_used = False
+    if platform:
+        accounts, fallback_used = await _load_social_accounts_for_report(
+            db,
+            current_user["user_id"],
+            platform,
+            account_id,
+        )
+    else:
+        accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
     if not accounts:
         return {
             "posts": [],
@@ -3608,4 +3622,5 @@ async def publish_feed(
         "posts": posts[:limit],
         "connected_accounts": connected_accounts,
         "errors": errors,
+        "account_fallback_used": fallback_used,
     }

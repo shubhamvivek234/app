@@ -40,6 +40,22 @@ const COLUMNS = [
     warnings: 'Within 2 min of now',
   },
   {
+    name: 'timeslot_category',
+    required: 'No',
+    default: 'Category 1',
+    format: 'Used only when scheduled_time is blank. Category 1 · Category 2 · Category 3 · Custom.',
+    errors: 'Invalid category name',
+    warnings: 'Ignored when scheduled_time is provided',
+  },
+  {
+    name: 'timezone',
+    required: 'No',
+    default: 'UTC',
+    format: 'IANA timezone name such as Asia/Kolkata or America/New_York. Used when scheduled_time is provided.',
+    errors: 'Unrecognised timezone may be normalised server-side',
+    warnings: 'Ignored for auto-queued timeslot rows',
+  },
+  {
     name: 'image_urls',
     required: 'No',
     default: '—',
@@ -266,7 +282,8 @@ const BulkUploadGuide = () => (
           {[
             'Use Google Sheets to build your CSV — it handles commas and special characters automatically',
             'Wrap any field containing commas or quotes in double-quotes: "Hello, world!"',
-            'Leave scheduled_time blank to auto-queue posts to your next available timeslot',
+            'Leave scheduled_time blank to auto-queue to the next available timeslot for exactly one account on the row',
+            'When auto-queueing from CSV, timeslot_category defaults to Category 1 unless you set it explicitly',
             'Use || to separate multiple image URLs in a single row: https://img1.jpg||https://img2.jpg',
             'Test with a small CSV (5 rows) first to verify your format before uploading hundreds of rows',
             'Rows with errors are skipped — rows with only warnings are imported normally',
