@@ -823,6 +823,7 @@ async def _handle_pre_upload_permanent_error(
     target_key: str,
     publish_queue: str,
     attempt: int,
+    dispatch_source: str,
     exc: PlatformError,
 ) -> dict:
     error_code = getattr(exc, "code", None)
@@ -851,16 +852,16 @@ async def _handle_pre_upload_permanent_error(
                 {"id": post_id},
                 {
                     "$unset": {
+                        _pre_upload_result_path(target_key, "status"): "",
                         f"platform_container_ids.{target_key}": "",
                         f"container_expiry_at.{target_key}": "",
                         _pre_upload_result_path(target_key, "error"): "",
+                        _pre_upload_result_path(target_key, "started_at"): "",
                         _pre_upload_result_path(target_key, "completed_at"): "",
                         _pre_upload_result_path(target_key, "actual_duration_secs"): "",
                         _pre_upload_result_path(target_key, "next_retry_at"): "",
                     },
                     "$set": {
-                        _pre_upload_result_path(target_key, "status"): "pending",
-                        _pre_upload_result_path(target_key, "started_at"): None,
                         "updated_at": datetime.now(timezone.utc),
                     },
                 },
@@ -872,6 +873,7 @@ async def _handle_pre_upload_permanent_error(
                     "platform": platform,
                     "account_id": resolved_account_id,
                     "attempt": attempt + 1,
+                    "dispatch_source": dispatch_source,
                 },
                 countdown=5,
                 queue=publish_queue,
@@ -1224,7 +1226,17 @@ async def _async_publish_to_platform(
                 "error": f"Platform {platform} circuit breaker OPEN — requeued",
                 "next_retry_at": datetime.utcnow() + timedelta(seconds=300),
             }, account_id=account_id)
-            raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN for {platform}"))
+            raise task.retry(
+                countdown=300,
+                exc=Exception(f"Circuit OPEN for {platform}"),
+                kwargs={
+                    "post_id": post_id,
+                    "platform": platform,
+                    "account_id": account_id,
+                    "attempt": attempt,
+                    "dispatch_source": dispatch_source,
+                },
+            )
     except ImportError:
         pass
 
@@ -1373,7 +1385,13 @@ async def _async_publish_to_platform(
                 raise task.retry(
                     countdown=retry_after,
                     exc=Exception(f"{platform} pre_upload retry scheduled"),
-                    kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
+                    kwargs={
+                        "post_id": post_id,
+                        "platform": platform,
+                        "account_id": account_id,
+                        "attempt": attempt,
+                        "dispatch_source": dispatch_source,
+                    },
                 )
 
             if pre_status in ("", None) or (pre_status == "ready" and not has_container):
@@ -1409,6 +1427,7 @@ async def _async_publish_to_platform(
                         target_key=target_key,
                         publish_queue=publish_queue,
                         attempt=attempt,
+                        dispatch_source=dispatch_source,
                         exc=exc,
                     )
                 if pre_result.get("status") == "polling":
@@ -1420,7 +1439,13 @@ async def _async_publish_to_platform(
                     raise task.retry(
                         countdown=_PRE_UPLOAD_POLL_INTERVAL,
                         exc=Exception(f"{platform} pre_upload still processing"),
-                        kwargs={"post_id": post_id, "platform": platform, "account_id": account_id, "attempt": attempt},
+                        kwargs={
+                            "post_id": post_id,
+                            "platform": platform,
+                            "account_id": account_id,
+                            "attempt": attempt,
+                            "dispatch_source": dispatch_source,
+                        },
                     )
 
                 post = await db.posts.find_one({"id": post_id}, {"_id": 0})
@@ -1565,7 +1590,17 @@ async def _async_publish_to_platform(
                     "error": f"Circuit breaker OPEN for {platform} — will retry when circuit closes",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(minutes=5),
                 }, account_id=resolved_account_id)
-                raise task.retry(countdown=300, exc=Exception(f"Circuit OPEN: {platform}"))
+                raise task.retry(
+                    countdown=300,
+                    exc=Exception(f"Circuit OPEN: {platform}"),
+                    kwargs={
+                        "post_id": post_id,
+                        "platform": platform,
+                        "account_id": resolved_account_id,
+                        "attempt": attempt,
+                        "dispatch_source": dispatch_source,
+                    },
+                )
 
             _override = (
                 (post.get("account_overrides") or {}).get(resolved_account_id or target_key)
@@ -1622,7 +1657,13 @@ async def _async_publish_to_platform(
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=_backoff),
                 }, account_id=resolved_account_id)
                 publish_to_platform.apply_async(
-                    kwargs={"post_id": post_id, "platform": platform, "account_id": resolved_account_id, "attempt": attempt},
+                    kwargs={
+                        "post_id": post_id,
+                        "platform": platform,
+                        "account_id": resolved_account_id,
+                        "attempt": attempt,
+                        "dispatch_source": dispatch_source,
+                    },
                     countdown=_backoff,
                     queue=publish_queue,
                 )
@@ -1800,7 +1841,13 @@ async def _async_publish_to_platform(
                                 await _refresh_with_lock(db, _acct_id, platform)
                                 logger.info("Token refreshed for %s — re-enqueuing post %s", _acct_id, post_id)
                                 publish_to_platform.apply_async(
-                                    kwargs={"post_id": post_id, "platform": platform, "account_id": _acct_id, "attempt": attempt + 1},
+                                    kwargs={
+                                        "post_id": post_id,
+                                        "platform": platform,
+                                        "account_id": _acct_id,
+                                        "attempt": attempt + 1,
+                                        "dispatch_source": dispatch_source,
+                                    },
                                     countdown=5,
                                     queue=publish_queue,
                                 )
@@ -1853,7 +1900,17 @@ async def _async_publish_to_platform(
                     "status": "retrying",
                     "next_retry_at": datetime.now(timezone.utc) + timedelta(seconds=retry_after),
                 }, account_id=resolved_account_id)
-                raise task.retry(countdown=retry_after, exc=exc)
+                raise task.retry(
+                    countdown=retry_after,
+                    exc=exc,
+                    kwargs={
+                        "post_id": post_id,
+                        "platform": platform,
+                        "account_id": resolved_account_id,
+                        "attempt": attempt,
+                        "dispatch_source": dispatch_source,
+                    },
+                )
 
             countdown_map = {0: 60, 1: 300, 2: 900}
             jitter = random.randint(0, [30, 60, 120][min(attempt, 2)])
@@ -1901,7 +1958,11 @@ async def _async_publish_to_platform(
                 "error": str(exc),
             }, account_id=resolved_account_id)
             raise task.retry(countdown=countdown, exc=exc, kwargs={
-                "post_id": post_id, "platform": platform, "account_id": resolved_account_id, "attempt": attempt + 1
+                "post_id": post_id,
+                "platform": platform,
+                "account_id": resolved_account_id,
+                "attempt": attempt + 1,
+                "dispatch_source": dispatch_source,
             })
     finally:
         await _release_publish_lock(r_cache, post_id, target_key, lock_owner)

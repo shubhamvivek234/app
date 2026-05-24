@@ -19,6 +19,8 @@ Completed:
   Files: `celery_workers/async_runner.py`, `celery_workers/tasks/*`, `db/mongo.py`, `db/redis_client.py`
 - Backend: fixed token refresh comparisons for naive `token_expiry` values so refresh no longer crashes with `can't compare offset-naive and offset-aware datetimes`.
   Files: `celery_workers/tasks/tokens.py`
+- Backend: fixed YouTube pre-upload refresh requeue state so a successful token refresh clears stale pre-upload state instead of leaving the publish worker in an infinite `pending` retry loop; publish-task retries now preserve `dispatch_source`.
+  Files: `celery_workers/tasks/publish.py`
 - Tests: added token refresh regressions and kept publish-dispatch regressions passing.
   Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`
 

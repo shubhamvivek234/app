@@ -385,6 +385,10 @@ async def test_publish_to_platform_refreshes_token_when_pre_upload_auth_fails(mo
     requeue_kwargs = apply_async_mock.call_args.kwargs["kwargs"]
     assert requeue_kwargs["attempt"] == 1
     assert requeue_kwargs["account_id"] == "youtube-account-1"
+    assert requeue_kwargs["dispatch_source"] == "primary"
     reset_update = fake_db.posts.update_calls[-1][1]
-    assert reset_update["$set"]["pre_upload_results.youtube-account-1.status"] == "pending"
+    assert reset_update["$set"]["updated_at"] is not None
+    assert "pre_upload_results.youtube-account-1.status" not in reset_update["$set"]
+    assert "pre_upload_results.youtube-account-1.status" in reset_update["$unset"]
+    assert "pre_upload_results.youtube-account-1.started_at" in reset_update["$unset"]
     assert "pre_upload_results.youtube-account-1.next_retry_at" in reset_update["$unset"]
