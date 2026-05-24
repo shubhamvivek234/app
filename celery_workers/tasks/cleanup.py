@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,7 @@ def _subtract_months(reference: datetime, months: int) -> datetime:
     acks_late=True,
 )
 def schedule_media_cleanup(self, post_id: str) -> dict:
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_cleanup(post_id))
+    return run_async(_async_cleanup(post_id))
 
 
 async def _async_cleanup(post_id: str) -> dict:
@@ -309,8 +309,7 @@ async def prune_recent_published_posts(
     bind=True,
 )
 def cleanup_expired_published_card_thumbnails(self) -> dict:
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_cleanup_expired_published_card_thumbnails())
+    return run_async(_async_cleanup_expired_published_card_thumbnails())
 
 
 async def _async_cleanup_expired_published_card_thumbnails() -> dict:
@@ -398,9 +397,7 @@ def scan_stale_direct_uploads(self) -> dict:
     - if the raw object exists, promote to processing and enqueue the worker
     - otherwise best-effort abort multipart uploads and mark the asset failed
     """
-    import asyncio
-
-    return asyncio.get_event_loop().run_until_complete(_async_scan_stale_direct_uploads())
+    return run_async(_async_scan_stale_direct_uploads())
 
 
 async def _async_scan_stale_direct_uploads() -> dict:
@@ -555,8 +552,7 @@ def scan_orphaned_files(self) -> dict:
     Lists files in /media/ and /quarantine/ GCS paths, checks if
     corresponding post exists in MongoDB, deletes orphaned files.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_scan_orphans())
+    return run_async(_async_scan_orphans())
 
 
 async def _async_scan_orphans() -> dict:

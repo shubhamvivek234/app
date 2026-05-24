@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -42,7 +43,7 @@ celery_app.conf.beat_schedule["poll-processing-posts"] = {
 @celery_app.task(name="celery_workers.tasks.poll_status.poll_processing_posts")
 def poll_processing_posts() -> dict:
     """Find PROCESSING posts with no recent update and check platform status."""
-    return asyncio.get_event_loop().run_until_complete(_async_poll())
+    return run_async(_async_poll())
 
 
 async def _async_poll() -> dict:

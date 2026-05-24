@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ SENDER_EMAIL   = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
     soft_time_limit=7200,  # 2h — soft limit triggers graceful abort
 )
 def process_media(self, media_job_id: str, user_id: str) -> dict:
-    return asyncio.run(_async_process_media(self, media_job_id, user_id))
+    return run_async(_async_process_media(self, media_job_id, user_id))
 
 
 async def _get_db():
@@ -278,7 +279,7 @@ def send_notification(
       publish_permanently_failed — all retries exhausted, moved to DLQ
       publish_partial_recovery   — last previously-failed platform now succeeded
     """
-    asyncio.run(_async_send_notification(
+    run_async(_async_send_notification(
         post_id=post_id,
         notification_type=type,
         platform=platform,

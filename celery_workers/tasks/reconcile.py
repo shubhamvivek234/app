@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -17,8 +18,7 @@ logger = logging.getLogger(__name__)
     bind=True,
 )
 def reconcile_confirmations(self) -> dict:
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_reconcile())
+    return run_async(_async_reconcile())
 
 
 async def _async_reconcile() -> dict:

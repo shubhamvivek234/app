@@ -10,6 +10,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from calendar import monthrange
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -73,7 +74,7 @@ def next_occurrence(
 @celery_app.task(name="celery_workers.tasks.recurring.spawn_recurring_instances")
 def spawn_recurring_instances() -> dict:
     """Spawn scheduled post instances for active recurrence templates."""
-    return asyncio.get_event_loop().run_until_complete(_async_spawn())
+    return run_async(_async_spawn())
 
 
 async def _async_spawn() -> dict:

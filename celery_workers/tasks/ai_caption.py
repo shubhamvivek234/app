@@ -11,6 +11,7 @@ import os
 
 import httpx
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.redis_client import get_cache_redis
 
@@ -41,9 +42,7 @@ def generate_caption(
     Returns {"caption": str, "hashtags": list[str], "cached": bool}.
     Result is cached in Redis by content hash for 1 hour.
     """
-    return asyncio.get_event_loop().run_until_complete(
-        _async_generate(content_brief, platform, tone, language)
-    )
+    return run_async(_async_generate(content_brief, platform, tone, language))
 
 
 async def _async_generate(

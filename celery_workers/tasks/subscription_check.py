@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -23,7 +24,7 @@ _WARNING_DAYS_BEFORE = 7
 )
 def check_expiring_subscriptions() -> dict:
     """Daily Beat task: warn users about expiring subscriptions, pause expired posts."""
-    return asyncio.run(_async_check())
+    return run_async(_async_check())
 
 
 async def _async_check() -> dict:

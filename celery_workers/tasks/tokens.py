@@ -6,6 +6,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from utils.encryption import decrypt, encrypt
 from utils.redis_resilience import best_effort_lock
@@ -19,8 +20,19 @@ logger = logging.getLogger(__name__)
     acks_late=True,
 )
 def refresh_expiring_tokens(self) -> dict:
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_refresh_tokens())
+    return run_async(_async_refresh_tokens())
+
+
+def _coerce_utc_datetime(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 async def _async_refresh_tokens() -> dict:
@@ -78,7 +90,8 @@ async def _refresh_with_lock(db, account_id: str, platform: str) -> None:
             return
 
         # Still expired? If another worker refreshed, we skip
-        if account.get("token_expiry") and account["token_expiry"] > datetime.now(timezone.utc) + timedelta(hours=72):
+        token_expiry = _coerce_utc_datetime(account.get("token_expiry"))
+        if token_expiry and token_expiry > datetime.now(timezone.utc) + timedelta(hours=72):
             logger.debug("Token for %s already refreshed by another worker", account_id)
             return
 

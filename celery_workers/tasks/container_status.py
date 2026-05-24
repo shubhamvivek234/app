@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from utils.encryption import decrypt
@@ -23,17 +24,7 @@ _POLL_COUNTDOWN_SECONDS = 10
 
 
 def _run_async(coro):
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    if loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    return loop.run_until_complete(coro)
+    return run_async(coro)
 
 
 @celery_app.task(

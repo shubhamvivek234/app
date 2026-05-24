@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient | None = None
+_client_pid: int | None = None
 
 
 def get_mongo_settings() -> dict:
@@ -23,12 +24,18 @@ def get_mongo_settings() -> dict:
 
 
 async def get_client() -> AsyncIOMotorClient:
-    global _client
+    global _client, _client_pid
+    current_pid = os.getpid()
+    if _client is not None and _client_pid != current_pid:
+        _client.close()
+        _client = None
+        _client_pid = None
     if _client is None:
         uri = os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL")
         if not uri:
             raise KeyError("MONGODB_URI")
         _client = AsyncIOMotorClient(uri, **get_mongo_settings())
+        _client_pid = current_pid
         # Ping to validate connection
         await _client.admin.command("ping")
         logger.info("MongoDB connection established")
@@ -43,8 +50,9 @@ async def get_db():
 
 
 async def close_client() -> None:
-    global _client
+    global _client, _client_pid
     if _client is not None:
         _client.close()
         _client = None
+        _client_pid = None
         logger.info("MongoDB connection closed")

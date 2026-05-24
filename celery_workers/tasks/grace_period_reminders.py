@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_cache_redis
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 )
 def send_grace_period_reminders() -> dict:
     """Beat task that runs every 2 days to send grace period reminder emails."""
-    return asyncio.run(_async_send_reminders())
+    return run_async(_async_send_reminders())
 
 
 async def _async_send_reminders() -> dict:

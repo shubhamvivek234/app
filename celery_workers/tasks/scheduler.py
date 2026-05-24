@@ -12,6 +12,7 @@ from celery import shared_task
 from celery.signals import beat_init
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -106,8 +107,7 @@ def scan_and_enqueue() -> dict:
     Runs every 30 seconds. Atomically claims posts that are due to be published.
     Passes only post_id in Celery payload — never the full document.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_scan_and_enqueue())
+    return run_async(_async_scan_and_enqueue())
 
 
 async def _async_scan_and_enqueue() -> dict:
@@ -291,8 +291,7 @@ def scan_pre_upload_timeouts() -> dict:
     17.4 Scenario D — Detect pre_upload tasks stuck > 30 min.
     Moves timed-out posts to DLQ and notifies the user with a reschedule option.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_async_scan_pre_upload_timeouts())
+    return run_async(_async_scan_pre_upload_timeouts())
 
 
 async def _async_scan_pre_upload_timeouts() -> dict:

@@ -13,6 +13,7 @@ import os
 import zipfile
 from datetime import datetime, timedelta, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -40,9 +41,7 @@ def process_erasure_request(user_id: str, workspace_id: str) -> dict:
     GDPR Article 17 — Right to erasure.
     Deletes or anonymises all user data across all collections.
     """
-    return asyncio.get_event_loop().run_until_complete(
-        _async_erase(user_id, workspace_id)
-    )
+    return run_async(_async_erase(user_id, workspace_id))
 
 
 async def _async_erase(user_id: str, workspace_id: str) -> dict:
@@ -101,9 +100,7 @@ def generate_data_export(user_id: str, workspace_id: str, export_id: str) -> dic
     Generates a ZIP file with all user data in CSV/JSON format.
     Stores in the active storage backend and emails the download link.
     """
-    return asyncio.get_event_loop().run_until_complete(
-        _async_export(user_id, workspace_id, export_id)
-    )
+    return run_async(_async_export(user_id, workspace_id, export_id))
 
 
 async def _async_export(user_id: str, workspace_id: str, export_id: str) -> dict:

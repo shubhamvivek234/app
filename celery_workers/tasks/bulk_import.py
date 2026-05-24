@@ -11,6 +11,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 
@@ -37,7 +38,7 @@ def process_csv_import(
     csv_content: raw CSV text (decoded from uploaded file).
     Returns summary of imported / failed rows.
     """
-    return asyncio.get_event_loop().run_until_complete(
+    return run_async(
         _async_process(csv_content, workspace_id, user_id, import_id)
     )
 

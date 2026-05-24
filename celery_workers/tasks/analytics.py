@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from utils.encryption import decrypt, encrypt
@@ -47,13 +48,13 @@ celery_app.conf.beat_schedule.update({
 @celery_app.task(name="celery_workers.tasks.analytics.collect_analytics")
 def collect_analytics(window: str = "24h") -> dict:
     """Collect engagement metrics for recently-published posts."""
-    return asyncio.get_event_loop().run_until_complete(_async_collect(window))
+    return run_async(_async_collect(window))
 
 
 @celery_app.task(name="celery_workers.tasks.analytics.refresh_youtube_geography_snapshots")
 def refresh_youtube_geography_snapshots() -> dict:
     """Refresh lag-adjusted YouTube geography snapshots for active accounts."""
-    return asyncio.get_event_loop().run_until_complete(_async_refresh_youtube_geography_snapshots())
+    return run_async(_async_refresh_youtube_geography_snapshots())
 
 
 async def _async_collect(window: str) -> dict:

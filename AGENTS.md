@@ -11,19 +11,21 @@ Date: 2026-05-25
 Completed:
 - Backend: fixed YouTube/video publishes stuck in `processing` by delaying fallback child dispatch behind the primary queue, classifying `PlatformAPIError(code=429)` correctly, and preserving retryable pre-upload states as `retrying` instead of `failed`.
   Files: `celery_workers/tasks/publish.py`, `platform_adapters/base.py`
-- Backend: versioned the local publish limiter for platforms that still use it, and removed the false per-account YouTube local limiter so uploads rely on real Google API responses plus the circuit breaker instead of an inaccurate internal token bucket.
+- Backend: removed the false local YouTube publish limiter and now rely on real Google API responses plus the circuit breaker for upload flow.
   Files: `utils/rate_limit.py`, `platform_adapters/youtube.py`
-- Backend: propagated precise local rate-limit retry windows to all platform adapters that use `check_rate_limit`.
-  Files: `platform_adapters/facebook.py`, `platform_adapters/instagram.py`, `platform_adapters/linkedin.py`, `platform_adapters/threads.py`, `platform_adapters/tiktok.py`, `platform_adapters/twitter.py`
-- Backend: pre-upload auth failures (for example YouTube `401 Invalid Credentials` during resumable-upload init) now go through token refresh / reconnect handling instead of escaping as an unexpected task crash and leaving the post in `processing`.
+- Backend: pre-upload auth failures (for example YouTube `401 Invalid Credentials` during resumable-upload init) now attempt on-demand token refresh before reconnect/fail handling.
   Files: `celery_workers/tasks/publish.py`
-- Tests: added regressions for fallback timing, 429 classification, retryable pre-upload state handling, and waiting on an existing pre-upload retry.
-  Files: `tests/test_publish_dispatch.py`
+- Backend: fixed async event-loop reuse across Celery worker tasks by introducing a shared per-process async runner and removing ad-hoc `asyncio.run(...)` / `run_until_complete(...)` wrappers.
+  Files: `celery_workers/async_runner.py`, `celery_workers/tasks/*`, `db/mongo.py`, `db/redis_client.py`
+- Backend: fixed token refresh comparisons for naive `token_expiry` values so refresh no longer crashes with `can't compare offset-naive and offset-aware datetimes`.
+  Files: `celery_workers/tasks/tokens.py`
+- Tests: added token refresh regressions and kept publish-dispatch regressions passing.
+  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify EC2 deploy for the new pre-upload auth refresh fix on a fresh YouTube video post.
+- Verify EC2 deploy for the shared async-runner + token-refresh fixes on a fresh YouTube video post.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
@@ -36,5 +38,5 @@ Next:
 git status --short
 CI=true npm run build --prefix frontend
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests --ignore=tests/sandbox -q
-python3 -m compileall celery_workers/tasks/publish.py
+python3 -m compileall celery_workers/tasks/publish.py celery_workers/tasks/tokens.py celery_workers/async_runner.py
 ```
