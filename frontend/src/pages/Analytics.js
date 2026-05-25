@@ -14,14 +14,14 @@ import {
 import { toast } from 'sonner';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, Legend, PieChart, Pie, Line, ComposedChart,
+  Tooltip, ResponsiveContainer, Cell, Legend, PieChart, Pie, Line, ComposedChart, Sector,
 } from 'recharts';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
-  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight,
+  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight, FaInfoCircle,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import worldGeo from 'world-atlas/countries-110m.json';
@@ -580,10 +580,90 @@ const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky
   </div>
 );
 
-const ReportCard = ({ title, children, action }) => (
+const InfoHint = ({ text }) => (
+  <div className="group relative inline-flex">
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors group-hover:text-sky-600">
+      <FaInfoCircle className="h-4 w-4" />
+    </span>
+    <div className="pointer-events-none absolute left-1/2 top-[calc(100%+10px)] z-20 w-64 -translate-x-1/2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium leading-5 text-gray-600 opacity-0 shadow-xl transition-all duration-150 group-hover:opacity-100">
+      {text}
+    </div>
+  </div>
+);
+
+const renderActiveDonutShape = (props) => (
+  <Sector
+    {...props}
+    outerRadius={(props.outerRadius || 0) + 10}
+    stroke="#ffffff"
+    strokeWidth={3}
+  />
+);
+
+const InteractiveDonutChart = ({
+  data,
+  dataKey,
+  nameKey = 'label',
+  colors,
+  innerRadius,
+  outerRadius,
+  paddingAngle = 2,
+  centerContent,
+  getItemKey = (item) => item.value || item.type || item.label,
+  emptyRing,
+}) => {
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  if (!data.length) {
+    return emptyRing || null;
+  }
+
+  return (
+    <div className="relative h-full w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            activeIndex={activeIndex >= 0 ? activeIndex : undefined}
+            activeShape={renderActiveDonutShape}
+            data={data}
+            dataKey={dataKey}
+            nameKey={nameKey}
+            cx="50%"
+            cy="50%"
+            innerRadius={innerRadius}
+            outerRadius={outerRadius}
+            paddingAngle={paddingAngle}
+            onMouseEnter={(_, index) => setActiveIndex(index)}
+            onMouseLeave={() => setActiveIndex(-1)}
+          >
+            {data.map((item, index) => (
+              <Cell
+                key={getItemKey(item)}
+                fill={colors[index % colors.length]}
+                fillOpacity={activeIndex === -1 || activeIndex === index ? 1 : 0.32}
+                style={{ cursor: 'pointer', transition: 'fill-opacity 160ms ease' }}
+              />
+            ))}
+          </Pie>
+          <Tooltip />
+        </PieChart>
+      </ResponsiveContainer>
+      {centerContent ? (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+          {centerContent}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const ReportCard = ({ title, children, action, info }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
     <div className="flex items-center justify-between gap-3 mb-4">
-      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        {info ? <InfoHint text={info} /> : null}
+      </div>
       {action || null}
     </div>
     {children}
@@ -613,34 +693,26 @@ const ReportDonutBreakdown = ({
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-[240px_minmax(0,1fr)] xl:items-center">
       <div className="flex flex-col items-center justify-center gap-4">
         <div className="relative h-[220px] w-[220px]">
-          {positiveItems.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={positiveItems}
-                  dataKey={valueKey}
-                  nameKey="label"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={88}
-                  paddingAngle={2}
-                >
-                  {positiveItems.map((entry, index) => (
-                    <Cell key={entry.type || entry.label} fill={palette[index % palette.length]} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <div className="h-[176px] w-[176px] rounded-full border-[24px] border-gray-200 bg-white" />
-            </div>
-          )}
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <span className="text-3xl font-semibold leading-none text-gray-700">{totalFormatter(computedTotal)}</span>
-            <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
-          </div>
+          <InteractiveDonutChart
+            data={positiveItems}
+            dataKey={valueKey}
+            colors={palette}
+            innerRadius={60}
+            outerRadius={88}
+            paddingAngle={2}
+            getItemKey={(item) => item.type || item.label}
+            emptyRing={(
+              <div className="flex h-full w-full items-center justify-center">
+                <div className="h-[176px] w-[176px] rounded-full border-[24px] border-gray-200 bg-white" />
+              </div>
+            )}
+            centerContent={(
+              <>
+                <span className="text-3xl font-semibold leading-none text-gray-700">{totalFormatter(computedTotal)}</span>
+                <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
+              </>
+            )}
+          />
         </div>
 
         {showLegend && (
@@ -692,7 +764,7 @@ const ReportDonutBreakdown = ({
   );
 };
 
-const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data available currently for this report.' }) => {
+const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data available currently for this report.', info }) => {
   const normalizedItems = (items || []).map((item) => ({
     ...item,
     views: Number(item?.views) || 0,
@@ -707,7 +779,7 @@ const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data availa
   }));
 
   return (
-    <ReportCard title={title}>
+    <ReportCard title={title} info={info}>
       {hasRows ? (
         <div className="space-y-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -777,34 +849,26 @@ const YoutubeDeviceTypeCard = ({ items }) => {
   const totalViews = positiveItems.reduce((sum, item) => sum + (Number(item?.views) || 0), 0);
 
   return (
-    <ReportCard title="Views by Device Type">
+    <ReportCard title="Views by Device Type" info="Shows which devices your audience used to watch, ranked by share of total views.">
       {positiveItems.length > 0 ? (
         <div className="grid grid-cols-1 gap-6 2xl:grid-cols-[280px_minmax(0,1fr)] 2xl:items-center">
           <div className="flex justify-center">
             <div className="relative h-[220px] w-[220px] lg:h-[240px] lg:w-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={positiveItems}
-                    dataKey="views"
-                    nameKey="label"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={64}
-                    outerRadius={104}
-                    strokeWidth={0}
-                    paddingAngle={1.5}
-                  >
-                    {positiveItems.map((item, index) => (
-                      <Cell key={item.value || item.label} fill={palette[index % palette.length]} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-                <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{fmt(totalViews)}</span>
-                <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
-              </div>
+              <InteractiveDonutChart
+                data={positiveItems}
+                dataKey="views"
+                colors={palette}
+                innerRadius={64}
+                outerRadius={104}
+                paddingAngle={1.5}
+                getItemKey={(item) => item.value || item.label}
+                centerContent={(
+                  <>
+                    <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{fmt(totalViews)}</span>
+                    <span className="mt-2 text-sm font-medium text-gray-500">Total</span>
+                  </>
+                )}
+              />
             </div>
           </div>
 
@@ -856,40 +920,31 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
 
   const renderDonut = (data, dataKey, total, centerValue, centerLabel) => (
     <div className="relative h-[210px] w-[210px] lg:h-[230px] lg:w-[230px]">
-      {data.length > 0 ? (
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey={dataKey}
-              nameKey="label"
-              cx="50%"
-              cy="50%"
-              innerRadius={62}
-              outerRadius={102}
-              strokeWidth={0}
-              paddingAngle={1.5}
-            >
-              {data.map((item) => (
-                <Cell key={item.value} fill={palette[item.value]} />
-              ))}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-      ) : (
-        <div className="flex h-full w-full items-center justify-center">
-          <div className="h-[190px] w-[190px] rounded-full border-[28px] border-gray-200 bg-white lg:h-[210px] lg:w-[210px]" />
-        </div>
-      )}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{centerValue}</span>
-        <span className="mt-2 text-sm font-medium text-gray-500">{centerLabel}</span>
-      </div>
+      <InteractiveDonutChart
+        data={data}
+        dataKey={dataKey}
+        colors={data.map((item) => palette[item.value])}
+        innerRadius={62}
+        outerRadius={102}
+        paddingAngle={1.5}
+        getItemKey={(item) => item.value}
+        emptyRing={(
+          <div className="flex h-full w-full items-center justify-center">
+            <div className="h-[190px] w-[190px] rounded-full border-[28px] border-gray-200 bg-white lg:h-[210px] lg:w-[210px]" />
+          </div>
+        )}
+        centerContent={(
+          <>
+            <span className="text-3xl font-semibold leading-none text-gray-700 lg:text-4xl">{centerValue}</span>
+            <span className="mt-2 text-sm font-medium text-gray-500">{centerLabel}</span>
+          </>
+        )}
+      />
     </div>
   );
 
   return (
-    <ReportCard title="Views and Estimated Minutes Watched by Subscribed Status of Users">
+    <ReportCard title="Views and Estimated Minutes Watched by Subscribed Status of Users" info="Compares watch volume from subscribed viewers versus non-subscribed viewers across views and minutes watched.">
       {normalized.length > 0 ? (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
@@ -941,7 +996,11 @@ const YoutubeSubscribedStatusCard = ({ items }) => {
 };
 
 const YoutubeWatchQualityCard = ({ summary, timeline, hasData, action }) => (
-  <ReportCard title="Watch Quality Summary" action={action}>
+  <ReportCard
+    title="Watch Quality Summary"
+    action={action}
+    info="Summarizes how well videos hold attention with engaged views, average watch duration, and average percentage viewed over time."
+  >
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
       <ReportMetricTile
         title="Engaged Views"
@@ -1000,7 +1059,7 @@ const YoutubeDemographicsCard = ({ demographics }) => {
   const hasData = ageGroups.length > 0 || genderDistribution.length > 0 || matrix.length > 0;
 
   return (
-    <ReportCard title="Viewer Demographics">
+    <ReportCard title="Viewer Demographics" info="Breaks down who is watching by age group, gender distribution, and combined age-gender audience mix.">
       {hasData ? (
         <div className="space-y-6">
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_380px] gap-5">
@@ -1105,7 +1164,7 @@ const YoutubeSharingServicesCard = ({ items }) => {
         : 'grid-cols-[minmax(0,1fr)_90px]';
 
   return (
-    <ReportCard title="Sharing Services">
+    <ReportCard title="Sharing Services" info="Lists the services viewers used when sharing your videos, along with resulting shares, views, and watch time where available.">
       {hasRows ? (
         <div className="overflow-x-auto">
           <div className={`min-w-[560px]`}>
@@ -1142,18 +1201,22 @@ const YoutubeRetentionCard = ({ retention, selectedVideoId, onSelectVideo }) => 
   return (
     <ReportCard
       title="Audience Retention"
+      info="Shows how much of a selected video's runtime viewers keep watching, plus how that video performs against YouTube's retention benchmark."
       action={videos.length > 0 ? (
-        <select
-          value={currentVideo?.video_id || ''}
-          onChange={(event) => onSelectVideo(event.target.value)}
-          className="max-w-[320px] rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
-        >
-          {videos.map((video) => (
-            <option key={video.video_id} value={video.video_id}>
-              {video.title || 'Untitled video'}
-            </option>
-          ))}
-        </select>
+        <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
+          <span>Video Compared</span>
+          <select
+            value={currentVideo?.video_id || ''}
+            onChange={(event) => onSelectVideo(event.target.value)}
+            className="max-w-[320px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold normal-case tracking-normal text-gray-700 shadow-sm"
+          >
+            {videos.map((video) => (
+              <option key={video.video_id} value={video.video_id}>
+                {video.title || 'Untitled video'}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
     >
       {currentVideo ? (
@@ -1166,11 +1229,12 @@ const YoutubeRetentionCard = ({ retention, selectedVideoId, onSelectVideo }) => 
             )}
             <div className="min-w-0 space-y-2">
               <p className="text-lg font-semibold text-gray-900">{currentVideo.title || '(untitled)'}</p>
+              <p className="text-sm text-gray-500">Select any top video from the dropdown to inspect where viewers drop off during playback.</p>
               <p className="text-sm text-gray-500">
                 {currentVideo.published_at ? formatAnalyticsDate(currentVideo.published_at, true) : 'Published date unavailable'}
               </p>
               <div className="flex flex-wrap gap-3 text-sm text-gray-600">
-                <span>Source: {currentVideo.source_metric === 'estimated_minutes_watched' ? 'Top Minutes Watched' : 'Top Views'}</span>
+                <span className="rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700">Source: {currentVideo.source_metric === 'estimated_minutes_watched' ? 'Top Minutes Watched' : 'Top Views'}</span>
                 <span>Views: {fmt(currentVideo.views)}</span>
                 <span>Minutes Watched: {formatPreciseMetric(currentVideo.estimated_minutes_watched)}</span>
               </div>
@@ -1221,8 +1285,10 @@ const YoutubeCountryMapCard = ({
   meta,
   valueFormatter = formatPreciseMetric,
   action,
+  info,
   emptyLabel = 'No data available currently for this report.',
 }) => {
+  const [hoveredCountryCode, setHoveredCountryCode] = useState(null);
   const positiveRows = (rows || [])
     .filter((row) => Number(row?.count) > 0)
     .map((row) => ({
@@ -1233,7 +1299,10 @@ const YoutubeCountryMapCard = ({
   const topRows = positiveRows.slice(0, 5);
   const topRowsTotal = topRows.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
   const valueByCountry = Object.fromEntries(positiveRows.map((row) => [row.countryName, Number(row.count) || 0]));
+  const countryCodeByName = Object.fromEntries(positiveRows.map((row) => [row.countryName, row.country_code]));
   const maxValue = Math.max(...Object.values(valueByCountry), 0);
+  const totalValue = positiveRows.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
+  const leadRow = topRows[0] || null;
   const effectiveEndLabel = formatAnalyticsDate(meta?.effective_end_date, false);
   const lastRefreshedLabel = formatAnalyticsDate(meta?.last_refreshed_at, true);
   const autoRefreshLabel = formatAutoRefreshInterval(meta?.auto_refresh_seconds);
@@ -1244,7 +1313,7 @@ const YoutubeCountryMapCard = ({
   const showMeta = Boolean(freshnessLabel || settledLabel || lastRefreshedLabel || autoRefreshLabel);
 
   return (
-    <ReportCard title={title} action={action}>
+    <ReportCard title={title} action={action} info={info}>
       {showMeta && (
         <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
           {freshnessLabel && <span>{freshnessLabel}</span>}
@@ -1256,14 +1325,45 @@ const YoutubeCountryMapCard = ({
       {topRows.length === 0 ? (
         chartEmptyState(emptyLabel)
       ) : (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.3fr)_360px] xl:items-center">
-          <div className="rounded-xl border border-gray-100 bg-white p-2">
-            <ComposableMap projectionConfig={{ scale: 145 }} width={800} height={420} style={{ width: '100%', height: 'auto' }}>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.45fr)_380px]">
+          <div className="space-y-4 rounded-2xl border border-gray-200 bg-gradient-to-br from-slate-50 via-white to-sky-50 p-4 shadow-sm">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/80 bg-white/90 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Top Market</p>
+                <p className="mt-2 text-xl font-semibold text-gray-900">{leadRow?.countryName || '—'}</p>
+                <p className="mt-2 text-sm text-gray-500">{leadRow ? `${valueFormatter(leadRow.count)} ${metricLabel.toLowerCase()}` : 'No data'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/80 bg-white/90 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Countries in Report</p>
+                <p className="mt-2 text-3xl font-semibold text-gray-900">{positiveRows.length}</p>
+                <p className="mt-2 text-sm text-gray-500">Markets with measurable activity</p>
+              </div>
+              <div className="rounded-2xl border border-white/80 bg-white/90 p-4">
+                <p className="text-[11px] font-bold uppercase tracking-widest text-gray-400">Total {metricLabel}</p>
+                <p className="mt-2 text-3xl font-semibold text-gray-900">{valueFormatter(totalValue)}</p>
+                <p className="mt-2 text-sm text-gray-500">Across the current geography window</p>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/80 bg-white/95 p-3 shadow-inner">
+              <div className="mb-3 flex items-center justify-between gap-3 px-2">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Geographic concentration</p>
+                  <p className="text-xs text-gray-500">Hover the map or country list to spotlight a market.</p>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] font-medium text-gray-500">
+                  <span>Low</span>
+                  <span className="h-2.5 w-20 rounded-full bg-gradient-to-r from-slate-200 via-sky-300 to-[#2f6690]" />
+                  <span>High</span>
+                </div>
+              </div>
+              <ComposableMap projectionConfig={{ scale: 152 }} width={800} height={420} style={{ width: '100%', height: 'auto' }}>
               <Geographies geography={worldGeo}>
                 {({ geographies }) =>
                   geographies.map((geo) => {
                     const value = valueByCountry[geo.properties?.name] || 0;
                     const intensity = maxValue > 0 ? value / maxValue : 0;
+                    const geoCountryCode = countryCodeByName[geo.properties?.name] || null;
+                    const isHovered = hoveredCountryCode && geoCountryCode === hoveredCountryCode;
                     const fill = value > 0
                       ? `rgba(47, 102, 144, ${0.2 + (0.65 * intensity)})`
                       : '#f8fafc';
@@ -1272,12 +1372,16 @@ const YoutubeCountryMapCard = ({
                         key={geo.rsmKey}
                         geography={geo}
                         fill={fill}
-                        stroke="#cbd5d1"
-                        strokeWidth={0.55}
+                        stroke={isHovered ? '#0f172a' : '#cbd5d1'}
+                        strokeWidth={isHovered ? 1.1 : 0.55}
+                        onMouseEnter={() => {
+                          if (geoCountryCode) setHoveredCountryCode(geoCountryCode);
+                        }}
+                        onMouseLeave={() => setHoveredCountryCode(null)}
                         style={{
                           default: { outline: 'none' },
-                          hover: { outline: 'none', fill },
-                          pressed: { outline: 'none', fill },
+                          hover: { outline: 'none', fill: value > 0 ? '#2f6690' : '#e2e8f0' },
+                          pressed: { outline: 'none', fill: value > 0 ? '#2f6690' : '#e2e8f0' },
                         }}
                       />
                     );
@@ -1286,16 +1390,32 @@ const YoutubeCountryMapCard = ({
               </Geographies>
             </ComposableMap>
           </div>
-          <div className="rounded-xl border border-gray-200 bg-white p-5">
-            <h4 className="text-2xl font-semibold text-gray-900">Top 5 Countries</h4>
-            <div className="mt-8 grid grid-cols-[minmax(0,1fr)_140px_100px] gap-x-4 border-b border-gray-200 pb-3 text-xs font-bold uppercase tracking-widest text-gray-400">
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-2xl font-semibold text-gray-900">Top 5 Countries</h4>
+                <p className="mt-2 text-sm text-gray-500">The strongest markets for this metric in the selected period.</p>
+              </div>
+              {leadRow ? (
+                <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                  Leader: {leadRow.countryName}
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-6 grid grid-cols-[minmax(0,1fr)_140px_100px] gap-x-4 border-b border-gray-200 pb-3 text-xs font-bold uppercase tracking-widest text-gray-400">
               <span>Country</span>
               <span className="text-right">{metricLabel}</span>
               <span className="text-right">%</span>
             </div>
             <div className="divide-y divide-gray-100">
               {topRows.map((row) => (
-                <div key={row.country_code} className="grid grid-cols-[minmax(0,1fr)_140px_100px] items-center gap-x-4 py-4">
+                <div
+                  key={row.country_code}
+                  className={`grid grid-cols-[minmax(0,1fr)_140px_100px] items-center gap-x-4 rounded-xl px-3 py-4 transition-colors ${hoveredCountryCode === row.country_code ? 'bg-sky-50' : ''}`}
+                  onMouseEnter={() => setHoveredCountryCode(row.country_code)}
+                  onMouseLeave={() => setHoveredCountryCode(null)}
+                >
                   <span className="truncate text-lg font-medium text-gray-800">{row.countryName}</span>
                   <span className="text-right text-lg text-gray-700">{valueFormatter(row.count)}</span>
                   <div className="flex items-center justify-end gap-3">
@@ -1319,8 +1439,8 @@ const YoutubeCountryMapCard = ({
   );
 };
 
-const YoutubeTopVideoCard = ({ title, video, metricLabel, primaryMetric, action }) => (
-  <ReportCard title={title} action={action}>
+const YoutubeTopVideoCard = ({ title, video, metricLabel, primaryMetric, action, info }) => (
+  <ReportCard title={title} action={action} info={info}>
     {video ? (
       <div className="max-w-sm rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="px-4 pt-4">
@@ -1360,8 +1480,8 @@ const YoutubeTopVideoCard = ({ title, video, metricLabel, primaryMetric, action 
   </ReportCard>
 );
 
-const YoutubeTopVideosStrip = ({ title, videos, metricLabel, primaryMetric, action }) => (
-  <ReportCard title={title} action={action}>
+const YoutubeTopVideosStrip = ({ title, videos, metricLabel, primaryMetric, action, info }) => (
+  <ReportCard title={title} action={action} info={info}>
     {(videos || []).length > 0 ? (
       <div className="-mx-1 flex gap-4 overflow-x-auto px-1 pb-2">
         {videos.map((video, index) => (
@@ -3078,23 +3198,23 @@ const Analytics = () => {
                       <ReportCard title="Posts by Type">
                         {(blueskyPostsEngagement.posts_by_type || []).some((item) => item.posts > 0) ? (
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-center">
-                            <ResponsiveContainer width="100%" height={220}>
-                              <PieChart>
-                                <Pie
-                                  data={(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0)}
-                                  dataKey="posts"
-                                  nameKey="label"
-                                  innerRadius={55}
-                                  outerRadius={85}
-                                  paddingAngle={2}
-                                >
-                                  {(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0).map((entry, index) => (
-                                    <Cell key={entry.type} fill={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b'][index % 5]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip />
-                              </PieChart>
-                            </ResponsiveContainer>
+                            <div className="h-[220px]">
+                              <InteractiveDonutChart
+                                data={(blueskyPostsEngagement.posts_by_type || []).filter((item) => item.posts > 0)}
+                                dataKey="posts"
+                                colors={['#2f6690', '#9ca3af', '#8b5cf6', '#22c55e', '#f59e0b']}
+                                innerRadius={55}
+                                outerRadius={85}
+                                paddingAngle={2}
+                                getItemKey={(item) => item.type}
+                                centerContent={(
+                                  <>
+                                    <span className="text-3xl font-semibold leading-none text-gray-700">{fmt(blueskySummary.post_summary?.total_posts || 0)}</span>
+                                    <span className="mt-2 text-sm font-medium text-gray-500">Posts</span>
+                                  </>
+                                )}
+                              />
+                            </div>
                             <div className="space-y-3">
                               {(blueskyPostsEngagement.posts_by_type || []).map((item) => {
                                 const total = (blueskySummary.post_summary?.total_posts || 1);
@@ -3308,7 +3428,7 @@ const Analytics = () => {
               </div>
             ) : activeTab === 'youtube-summary' ? (
               <div className="space-y-6">
-                <ReportCard title="Audience Summary">
+                <ReportCard title="Audience Summary" info="A quick snapshot of current subscribers, subscribers gained, and subscribers lost during the selected date range.">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <ReportMetricTile
                       title="Subscribers Count"
@@ -3330,7 +3450,7 @@ const Analytics = () => {
                   </div>
                 </ReportCard>
 
-                <ReportCard title="Post & Engagement Summary">
+                <ReportCard title="Post & Engagement Summary" info="Summarizes how many videos were published, the engagement they generated, and which geography contributed the most views.">
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
                     <div className="space-y-4">
                       <ReportMetricTile
@@ -3351,17 +3471,22 @@ const Analytics = () => {
                       video={youtubeSummary.post_summary?.top_video}
                       metricLabel="Engagement"
                       primaryMetric="engagement"
+                      info="Highlights the single best-performing video in the selected period based on engagement."
                     />
                     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">Top Geography by Views</p>
                       {youtubeSummary.post_summary?.top_geography_by_views ? (
-                        <div className="rounded-2xl border border-gray-200 bg-white p-5">
-                          <p className="text-4xl font-semibold text-gray-900">
+                        <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-white to-sky-50 p-5 shadow-sm">
+                          <p className="text-xs font-bold uppercase tracking-[0.24em] text-sky-600">Leading Market</p>
+                          <p className="mt-3 text-4xl font-semibold text-gray-900">
                             {countryNameForCode(youtubeSummary.post_summary.top_geography_by_views.country_code)}
                           </p>
                           <p className="mt-4 text-lg text-gray-500">
                             {fmt(youtubeSummary.post_summary.top_geography_by_views.count)} views in the selected period
                           </p>
+                          <div className="mt-5 h-2 overflow-hidden rounded-full bg-sky-100">
+                            <div className="h-full w-2/3 rounded-full bg-[#2f6690]" />
+                          </div>
                         </div>
                       ) : (
                         chartEmptyState('No geography data is available for this period.')
@@ -3370,7 +3495,7 @@ const Analytics = () => {
                   </div>
                 </ReportCard>
 
-                <ReportCard title="Cards Summary">
+                <ReportCard title="Cards Summary" info="Shows how often YouTube cards and teasers were shown and clicked across the selected reporting window.">
                   {youtubeReport?.supports?.cards ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                       <ReportMetricTile
@@ -3410,7 +3535,7 @@ const Analytics = () => {
               </div>
             ) : activeTab === 'youtube-audience' ? (
               <div className="space-y-6">
-                <ReportCard title="Subscriber Growth" action={youtubeChartSelector}>
+                <ReportCard title="Subscriber Growth" action={youtubeChartSelector} info="Tracks subscribers gained, lost, and net growth over time for the connected YouTube channel.">
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Subscribers</p>
@@ -3453,13 +3578,14 @@ const Analytics = () => {
                   rows={youtubeAudience.subscriber_by_geography || []}
                   metricLabel="Subscribers"
                   action={null}
+                  info="Shows where your subscribers are located and how strongly each country contributes to your audience base."
                 />
 
                 <YoutubeDemographicsCard demographics={youtubeAudience.viewer_demographics} />
               </div>
             ) : (
               <div className="space-y-6">
-                <ReportCard title="Views & Estimated Minutes Watched" action={youtubeChartSelector}>
+                <ReportCard title="Views & Estimated Minutes Watched" action={youtubeChartSelector} info="Compares video view volume with estimated minutes watched so you can see reach versus watch-time quality together.">
                   {youtubeViewsMinutesHasData ? (
                     <div className="space-y-4">
                       <div className="flex flex-wrap justify-end gap-6 text-sm text-gray-500">
@@ -3489,6 +3615,7 @@ const Analytics = () => {
                   videos={youtubeTopVideos}
                   metricLabel={youtubeTopVideoMetric === 'estimated_minutes_watched' ? 'Minutes Watched' : 'Views'}
                   primaryMetric={youtubeTopVideoMetric}
+                  info="Ranks the channel's strongest videos in the selected period by views or minutes watched."
                   action={(
                     <select
                       value={youtubeTopVideoMetric}
@@ -3506,6 +3633,7 @@ const Analytics = () => {
                   rows={youtubeViewsByGeographyCard.rows}
                   metricLabel={youtubeViewsByGeographyCard.metricLabel}
                   meta={youtubeViewsByGeographyCard.meta}
+                  info="Maps which countries generated the most YouTube views in the selected time window."
                   emptyLabel={youtubeViewsByGeographyCard.emptyLabel}
                 />
                 <YoutubeCountryMapCard
@@ -3513,6 +3641,7 @@ const Analytics = () => {
                   rows={youtubeMinutesByGeographyCard.rows}
                   metricLabel={youtubeMinutesByGeographyCard.metricLabel}
                   meta={youtubeMinutesByGeographyCard.meta}
+                  info="Maps where watch time came from, helping you compare high-view markets against high-retention markets."
                   emptyLabel={youtubeMinutesByGeographyCard.emptyLabel}
                   valueFormatter={formatPreciseMetric}
                 />
@@ -3521,16 +3650,18 @@ const Analytics = () => {
                   <YoutubeMetricBreakdownCard
                     title="Playback Location"
                     items={youtubeVideoPerformance.playback_location || []}
+                    info="Breaks down where viewers watched your videos, such as watch pages, channel pages, and embedded players."
                     emptyLabel="Playback-location data is not available for this period."
                   />
                   <YoutubeMetricBreakdownCard
                     title="Traffic Source"
                     items={youtubeVideoPerformance.traffic_source || []}
+                    info="Shows how viewers discovered your videos across YouTube search, suggested videos, external sources, and more."
                     emptyLabel="Traffic-source data is not available for this period."
                   />
                 </div>
 
-                <ReportCard title="Content Type Breakdown">
+                <ReportCard title="Content Type Breakdown" info="Compares results across content formats and live versus on-demand viewing to reveal which content styles perform best.">
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                     <YoutubeContentBreakdownCard
                       title="By Content Format"
@@ -3545,7 +3676,7 @@ const Analytics = () => {
                   </div>
                 </ReportCard>
 
-                <ReportCard title="YouTube Search Terms">
+                <ReportCard title="YouTube Search Terms" info="Lists the search queries that brought viewers to your content, with accompanying views and estimated watch time.">
                   {(youtubeVideoPerformance.youtube_search_terms || []).length > 0 ? (
                     <div className="divide-y divide-gray-100">
                       <div className="grid grid-cols-[minmax(0,1fr)_120px_180px] gap-x-4 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400">
@@ -3573,7 +3704,7 @@ const Analytics = () => {
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <ReportCard title="Operating System Breakdown">
+                  <ReportCard title="Operating System Breakdown" info="Shows which operating systems your viewers used, ranked by share of total views.">
                     <ReportDonutBreakdown
                       items={(youtubeVideoPerformance.operating_system || []).map((item) => ({
                         ...item,
