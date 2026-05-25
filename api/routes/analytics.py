@@ -1473,6 +1473,9 @@ async def analytics_instagram_report(
     accounts_used: list[str] = []
     errors: list[dict[str, str]] = []
     demographics_errors: list[dict[str, str]] = []
+    report_demographics_metric: str | None = None
+    report_demographics_timeframe: str | None = None
+    report_demographics_source_label: str | None = None
 
     from backend.app.social.instagram import InstagramAuth
 
@@ -1515,24 +1518,44 @@ async def analytics_instagram_report(
             follower_series.append(growth["growth_series"])
 
         engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
-        demographics = await auth.fetch_demographics(
-            access_token,
-            platform_user_id,
-            metric="engaged_audience_demographics",
-            timeframe=engagement_demographic_timeframe,
-        )
-        if demographics.get("supported"):
+        demographics = None
+        demographics_source_label = None
+        for metric_name, timeframe, source_label in (
+            ("engaged_audience_demographics", engagement_demographic_timeframe, "engaged audience"),
+            ("reached_audience_demographics", engagement_demographic_timeframe, "reached audience"),
+            ("follower_demographics", None, "follower demographics"),
+        ):
+            candidate = await auth.fetch_demographics(
+                access_token,
+                platform_user_id,
+                metric=metric_name,
+                timeframe=timeframe,
+            )
+            if candidate.get("supported"):
+                demographics = candidate
+                demographics_source_label = source_label
+                break
+
+        if demographics and demographics.get("supported"):
             accounts_used.append(label)
             demographics_bucket["age"].extend(demographics.get("age", []))
             demographics_bucket["gender"].extend(demographics.get("gender", []))
             demographics_bucket["cities"].extend(demographics.get("cities", []))
             demographics_bucket["countries"].extend(demographics.get("countries", []))
+            if report_demographics_metric is None:
+                report_demographics_metric = demographics.get("metric")
+                report_demographics_timeframe = demographics.get("timeframe")
+                report_demographics_source_label = demographics_source_label
         else:
             demographics_errors.append(
                 {
                     "account": label,
-                    "error": demographics.get("error")
-                    or "Engaged audience demographics are not available for this Instagram account yet.",
+                    "error": (
+                        demographics.get("error")
+                        if demographics
+                        else "Instagram did not return engaged, reached, or follower demographic insights for this account."
+                    )
+                    or "Instagram demographic insights are not available for this account yet.",
                 }
             )
 
@@ -1602,11 +1625,12 @@ async def analytics_instagram_report(
             "demographics_message": (
                 None
                 if any(merged_demographics.values())
-                else "Engaged audience demographics are only available when Instagram returns insights for this Business/Creator account. Instagram currently exposes these segments for recent weekly or monthly windows, not arbitrary historical ranges."
+                else "Instagram did not return engaged, reached, or follower demographic insights for the connected account during this request."
             ),
             "accounts_used": accounts_used,
-            "demographics_metric": "engaged_audience_demographics",
-            "demographics_timeframe": "this_week" if days <= 7 else "this_month",
+            "demographics_metric": report_demographics_metric,
+            "demographics_timeframe": report_demographics_timeframe,
+            "demographics_source_label": report_demographics_source_label,
             "demographics": merged_demographics,
         },
         "errors": errors,

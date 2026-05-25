@@ -386,73 +386,125 @@ class InstagramAuth:
                 "city": "cities",
                 "country": "countries",
             }
+            request_variants = [
+                {"period": "lifetime", "metric_type": "total_value"},
+                {"metric_type": "total_value"},
+                {"period": "lifetime"},
+                {},
+            ]
+
+            def _append_dimension_values(target_result: dict, breakdown: str, values: list[dict]) -> bool:
+                if not values:
+                    return False
+                target_key = dimension_to_key[breakdown]
+                if breakdown == "age":
+                    target_result[target_key].extend(
+                        {"range": item["label"], "count": item["count"]}
+                        for item in values
+                    )
+                elif breakdown == "gender":
+                    target_result[target_key].extend(
+                        {"label": item["label"], "count": item["count"]}
+                        for item in values
+                    )
+                elif breakdown == "city":
+                    target_result[target_key].extend(
+                        {"name": item["label"], "count": item["count"]}
+                        for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
+                    )
+                elif breakdown == "country":
+                    target_result[target_key].extend(
+                        {"name": item["label"], "count": item["count"]}
+                        for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
+                    )
+                return True
 
             for breakdown in ("age", "gender", "city", "country"):
-                params = {
-                    "metric": metric,
-                    "period": "lifetime",
-                    "metric_type": "total_value",
-                    "breakdown": breakdown,
-                    "access_token": access_token,
-                }
-                if timeframe:
-                    params["timeframe"] = timeframe
+                for extra_params in request_variants:
+                    params = {
+                        "metric": metric,
+                        "breakdown": breakdown,
+                        "access_token": access_token,
+                        **extra_params,
+                    }
+                    if timeframe:
+                        params["timeframe"] = timeframe
 
-                response = await client.get(
-                    f"{self.GRAPH_URL}/{user_id}/insights",
-                    params=params,
-                )
-                if response.status_code != 200:
-                    logging.warning(
-                        "[Instagram] Demographics fetch failed for %s/%s: %s",
-                        metric,
-                        breakdown,
-                        response.text,
+                    response = await client.get(
+                        f"{self.GRAPH_URL}/{user_id}/insights",
+                        params=params,
                     )
-                    continue
+                    if response.status_code != 200:
+                        logging.warning(
+                            "[Instagram] Demographics fetch failed for %s/%s with params %s: %s",
+                            metric,
+                            breakdown,
+                            {key: value for key, value in params.items() if key != "access_token"},
+                            response.text,
+                        )
+                        continue
 
-                data = response.json().get("data", [])
-                for metric_row in data:
-                    breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
-                    for breakdown_row in breakdowns:
-                        dimension_keys = breakdown_row.get("dimension_keys", [])
-                        if breakdown not in dimension_keys:
-                            continue
-                        dimension_index = dimension_keys.index(breakdown)
-                        values = []
-                        for row in breakdown_row.get("results", []):
-                            dimension_values = row.get("dimension_values", [])
-                            if len(dimension_values) <= dimension_index:
+                    data = response.json().get("data", [])
+                    matched_values = []
+                    for metric_row in data:
+                        breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
+                        for breakdown_row in breakdowns:
+                            dimension_keys = breakdown_row.get("dimension_keys", [])
+                            if breakdown not in dimension_keys:
                                 continue
-                            values.append(
-                                {
-                                    "label": dimension_values[dimension_index],
-                                    "count": row.get("value", 0),
-                                }
-                            )
-                        if not values:
-                            continue
-                        target_key = dimension_to_key[breakdown]
-                        if breakdown == "age":
-                            result[target_key].extend(
-                                {"range": item["label"], "count": item["count"]}
-                                for item in values
-                            )
-                        elif breakdown == "gender":
-                            result[target_key].extend(
-                                {"label": item["label"], "count": item["count"]}
-                                for item in values
-                            )
-                        elif breakdown == "city":
-                            result[target_key].extend(
-                                {"name": item["label"], "count": item["count"]}
-                                for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
-                            )
-                        elif breakdown == "country":
-                            result[target_key].extend(
-                                {"name": item["label"], "count": item["count"]}
-                                for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
-                            )
+                            dimension_index = dimension_keys.index(breakdown)
+                            for row in breakdown_row.get("results", []):
+                                dimension_values = row.get("dimension_values", [])
+                                if len(dimension_values) <= dimension_index:
+                                    continue
+                                matched_values.append(
+                                    {
+                                        "label": dimension_values[dimension_index],
+                                        "count": row.get("value", 0),
+                                    }
+                                )
+
+                    if _append_dimension_values(result, breakdown, matched_values):
+                        break
+
+            if not any(result[key] for key in ("age", "gender", "cities", "countries")) and metric == "follower_demographics":
+                legacy_response = await client.get(
+                    f"{self.GRAPH_URL}/{user_id}/insights",
+                    params={
+                        "metric": "follower_demographics",
+                        "period": "lifetime",
+                        "metric_type": "total_value",
+                        "access_token": access_token,
+                    },
+                )
+                if legacy_response.status_code == 200:
+                    data = legacy_response.json().get("data", [])
+                    for metric_row in data:
+                        breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
+                        for breakdown_row in breakdowns:
+                            dimension_keys = breakdown_row.get("dimension_keys", [])
+                            if not dimension_keys:
+                                continue
+                            breakdown = dimension_keys[0]
+                            if breakdown not in dimension_to_key:
+                                continue
+                            matched_values = []
+                            for row in breakdown_row.get("results", []):
+                                dimension_values = row.get("dimension_values", [])
+                                if not dimension_values:
+                                    continue
+                                matched_values.append(
+                                    {
+                                        "label": dimension_values[0],
+                                        "count": row.get("value", 0),
+                                    }
+                                )
+                            _append_dimension_values(result, breakdown, matched_values)
+                else:
+                    logging.warning(
+                        "[Instagram] Legacy follower demographics fetch failed: %s",
+                        legacy_response.text,
+                    )
 
             result["supported"] = any(result[key] for key in ("age", "gender", "cities", "countries"))
             if not result["supported"]:

@@ -42,6 +42,33 @@ class _FakeClient:
         return self._db
 
 
+def test_doc_to_response_preserves_account_identifiers_for_calendar_views():
+    response = posts_route._doc_to_response(
+        {
+            "_id": "mongo-id",
+            "id": "post-1",
+            "user_id": "user-1",
+            "workspace_id": "ws-1",
+            "content": "Caption",
+            "platforms": ["instagram"],
+            "status": "scheduled",
+            "title": "My title",
+            "account_ids": ["acct-1", "acct-2"],
+            "social_account_ids": ["acct-1", "acct-2"],
+            "platform_account_ids": ["acct-1"],
+            "social_account_id": "acct-1",
+            "scheduled_time": datetime.now(timezone.utc),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+        }
+    )
+
+    assert response.account_ids == ["acct-1", "acct-2"]
+    assert response.social_account_ids == ["acct-1", "acct-2"]
+    assert response.platform_account_ids == ["acct-1"]
+    assert response.social_account_id == "acct-1"
+
+
 @pytest.mark.asyncio
 async def test_delete_processing_post_revokes_parent_and_child_tasks(monkeypatch):
     existing = {

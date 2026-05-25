@@ -164,8 +164,19 @@ const CalendarView = () => {
 
   const fetchPosts = async () => {
     try {
-      const data = await getPosts();
-      setPosts(data.filter((p) => p.scheduled_time));
+      const pageSize = 100;
+      const collected = [];
+      let page = 1;
+
+      while (true) {
+        const batch = await getPosts(null, { page, limit: pageSize });
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        collected.push(...batch);
+        if (batch.length < pageSize) break;
+        page += 1;
+      }
+
+      setPosts(collected.filter((p) => p.scheduled_time));
     } catch (error) {
       toast.error('Failed to load posts');
     } finally {

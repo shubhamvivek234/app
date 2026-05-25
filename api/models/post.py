@@ -207,6 +207,10 @@ class PostResponse(BaseModel):
     status: PostStatus
     title: str | None = None
     post_type: str | None = None
+    account_ids: list[str] = Field(default_factory=list)
+    social_account_ids: list[str] = Field(default_factory=list)
+    platform_account_ids: list[str] = Field(default_factory=list)
+    social_account_id: str | None = None
     scheduled_time: datetime | None = None
     published_at: datetime | None = None
     created_at: datetime

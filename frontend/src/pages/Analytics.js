@@ -4051,7 +4051,12 @@ const Analytics = () => {
             ) : (
               <div className="space-y-6">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-                  <strong>Note:</strong> These cards use Instagram engaged-audience demographics as the closest available proxy for likes and other interactions. Instagram returns this data only for recent windows, so this section reflects the latest {instagramAudience?.demographics_timeframe === 'this_week' ? 'weekly' : 'monthly'} engagement breakdown rather than the full selected date range.
+                  <strong>Note:</strong> These cards use Instagram {instagramAudience?.demographics_source_label || 'audience'} demographics as the closest available proxy for likes and other interactions.
+                  {instagramAudience?.demographics_timeframe && (
+                    <span className="ml-1">
+                      Instagram returns this data only for recent windows, so this section reflects the latest {instagramAudience.demographics_timeframe === 'this_week' ? 'weekly' : 'monthly'} breakdown rather than the full selected date range.
+                    </span>
+                  )}
                   {instagramAudience?.accounts_used?.length > 0 && (
                     <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
                   )}

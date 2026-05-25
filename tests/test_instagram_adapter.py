@@ -185,3 +185,50 @@ async def test_fetch_demographics_uses_engaged_metric_with_per_breakdown_request
     assert [call["breakdown"] for call in client.calls] == ["age", "gender", "city", "country"]
     assert all(call["metric"] == "engaged_audience_demographics" for call in client.calls)
     assert all(call["timeframe"] == "this_month" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_fetch_demographics_falls_back_to_legacy_follower_response(monkeypatch):
+    client = _QueuedAsyncClient(
+        ([_FakeResponse(200, {"data": []})] * 16)
+        + [
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "total_value": {
+                                "breakdowns": [
+                                    {
+                                        "dimension_keys": ["age"],
+                                        "results": [
+                                            {"dimension_values": ["25-34"], "value": 5},
+                                        ],
+                                    },
+                                    {
+                                        "dimension_keys": ["country"],
+                                        "results": [
+                                            {"dimension_values": ["US"], "value": 8},
+                                        ],
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_demographics("token", "ig-user")
+
+    assert result["supported"] is True
+    assert result["metric"] == "follower_demographics"
+    assert result["age"] == [{"range": "25-34", "count": 5}]
+    assert result["countries"] == [{"name": "US", "count": 8}]
