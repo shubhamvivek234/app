@@ -317,7 +317,9 @@ const mergeBucketedSeries = (seriesMap, days, granularity) => {
   });
 };
 
-const chartHasData = (rows, keys) => (rows || []).some((row) => keys.some((key) => (Number(row?.[key]) || 0) > 0));
+const chartHasData = (rows, keys) => (
+  (rows || []).some((row) => keys.some((key) => Math.abs(Number(row?.[key]) || 0) > 0))
+);
 
 const formatReportDate = (date, days) => {
   try { return format(parseISO(date), days <= 7 ? 'EEE' : 'MMM d'); }
@@ -532,33 +534,50 @@ const EngagementTooltip = ({ active, payload, label }) => {
 
 const AudienceGrowthTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
+  const value = Number(payload[0]?.value) || 0;
+  const isNegative = value < 0;
   return (
     <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
       <p className="font-semibold text-gray-700">{label}</p>
-      <p className="text-indigo-600">{fmt(payload[0]?.value)} new followers</p>
+      <p className={isNegative ? 'text-rose-600' : 'text-indigo-600'}>
+        {fmt(value)} net followers
+      </p>
     </div>
   );
 };
 
-const InstagramMetricTile = ({ title, value, subtitle, deltaPct }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
-    <div className="mt-3 flex items-end gap-3">
-      <p className="text-5xl font-bold tracking-tight text-sky-600">{fmt(value)}</p>
-      {deltaPct != null && (
-        <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-          {pctLabel(deltaPct)}
-        </span>
-      )}
-    </div>
-    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
-  </div>
-);
+const InstagramMetricTile = ({ title, value, subtitle, deltaPct, info }) => {
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  const isNegativeValue = Number.isFinite(numericValue) && numericValue < 0;
 
-const InstagramDetailCard = ({ title, children, action }) => (
+  return (
+    <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+        {info ? <InfoHint text={info} /> : null}
+      </div>
+      <div className="mt-3 flex items-end gap-3">
+        <p className={`text-5xl font-bold tracking-tight ${isNegativeValue ? 'text-rose-600' : 'text-sky-600'}`}>
+          {fmt(value)}
+        </p>
+        {deltaPct != null && (
+          <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {pctLabel(deltaPct)}
+          </span>
+        )}
+      </div>
+      {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+    </div>
+  );
+};
+
+const InstagramDetailCard = ({ title, children, action, info }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
     <div className="flex items-center justify-between gap-3 mb-4">
-      <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        {info ? <InfoHint text={info} /> : null}
+      </div>
       {action || null}
     </div>
     {children}
@@ -1810,7 +1829,6 @@ const PlatformSidebar = ({
 // ── Main Analytics component ───────────────────────────────────────────────────
 const Analytics = () => {
   const [activeTab, setActiveTab]           = useState('overview');
-  const [instagramReportTab, setInstagramReportTab] = useState('summary');
   const [days, setDays]                     = useState(30);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [selectedAccount, setSelectedAccount]   = useState(null);
@@ -2017,7 +2035,7 @@ const Analytics = () => {
   }, [days, selectedPlatform, selectedAccount]);
 
   useEffect(() => {
-    if (activeTab === 'summary' && selectedPlatform === 'instagram') {
+    if (['summary', 'instagram-audience'].includes(activeTab) && selectedPlatform === 'instagram') {
       fetchInstagramReport();
     }
   }, [activeTab, selectedPlatform, fetchInstagramReport]);
@@ -2219,7 +2237,10 @@ const Analytics = () => {
   const tabs = useMemo(() => ([
     { id: 'overview', label: 'Overview' },
     { id: 'posts',    label: 'Posts'    },
-    ...(showInstagramReportTab ? [{ id: 'summary', label: 'Summary' }] : []),
+    ...(showInstagramReportTab ? [
+      { id: 'summary', label: 'Summary' },
+      { id: 'instagram-audience', label: 'Audience' },
+    ] : []),
     ...(showBlueskyReportTabs ? [
       { id: 'bluesky-summary', label: 'Summary' },
       { id: 'bluesky-audience', label: 'Audience' },
@@ -2337,6 +2358,7 @@ const Analytics = () => {
     label: formatReportDate(point.date, days),
   }));
   const instagramDemographics = instagramAudience.demographics || {};
+  const instagramFollowerGrowthHasData = chartHasData(instagramFollowerTimeline, ['count']);
   const blueskySummary = blueskyReport?.summary || {};
   const blueskyAudience = blueskyReport?.audience || {};
   const blueskyPostsEngagement = blueskyReport?.posts_engagement || {};
@@ -3745,25 +3767,6 @@ const Analytics = () => {
         {/* ━━━━━━━━━━━━━━━━━ INSTAGRAM SUMMARY TAB ━━━━━━━━━━━━━━━━━━━━ */}
         {activeTab === 'summary' && selectedPlatform === 'instagram' && (
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-3">
-              {[
-                { id: 'summary', label: 'Summary' },
-                { id: 'audience', label: 'Audience' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setInstagramReportTab(tab.id)}
-                  className={`px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
-                    instagramReportTab === tab.id
-                      ? 'border-indigo-500 text-indigo-600 bg-indigo-50'
-                      : 'border-gray-300 text-gray-600 bg-offwhite hover:border-gray-400'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
             {!!instagramReport?.errors?.length && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {instagramReport.errors.map((item, idx) => (
@@ -3787,22 +3790,27 @@ const Analytics = () => {
                   {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
                 </p>
               </div>
-            ) : instagramReportTab === 'summary' ? (
+            ) : (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <InstagramMetricTile
                     title="Total Followers"
                     value={instagramSummary.followers_total}
                     subtitle="Current Instagram followers"
+                    info="Shows the latest follower total returned for the connected Instagram account."
                   />
                   <InstagramMetricTile
                     title="New Followers"
                     value={instagramSummary.new_followers}
                     subtitle={`Avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
+                    info="Shows net follower change for the selected period. Negative values mean the account lost followers overall."
                   />
                 </div>
 
-                <InstagramDetailCard title="Performance Summary">
+                <InstagramDetailCard
+                  title="Performance Summary"
+                  info="Summarizes profile visits, posting volume, and total engagement generated during the selected date range."
+                >
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Profile Views</p>
@@ -3822,22 +3830,30 @@ const Analytics = () => {
                   </div>
                 </InstagramDetailCard>
 
-                <InstagramDetailCard title="Reach Summary">
+                <InstagramDetailCard
+                  title="Reach Summary"
+                  info="Compares how many accounts saw your content with the total number of impressions those posts generated."
+                >
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <InstagramMetricTile
                       title="Reach"
                       value={instagramSummary.reach}
                       subtitle="Accounts reached in the selected period"
+                      info="Unique accounts reached by your content in the selected window."
                     />
                     <InstagramMetricTile
                       title="Impressions"
                       value={instagramSummary.impressions}
                       subtitle="Total content impressions in the selected period"
+                      info="Total times your content was displayed, including repeated views from the same accounts."
                     />
                   </div>
                 </InstagramDetailCard>
 
-                <InstagramDetailCard title="Post & Engagement Summary">
+                <InstagramDetailCard
+                  title="Post & Engagement Summary"
+                  info="Highlights how many posts went out, how much engagement they earned, which post performed best, and which post formats drove results."
+                >
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
                     <div className="space-y-4">
                       <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -3933,7 +3949,10 @@ const Analytics = () => {
                   </div>
                 </InstagramDetailCard>
 
-                <InstagramDetailCard title="Reels & Engagement Summary">
+                <InstagramDetailCard
+                  title="Reels & Engagement Summary"
+                  info="Shows how many reels were published, how much engagement they generated, and which reel led performance for the selected period."
+                >
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
                     <div className="space-y-4">
                       <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -4000,10 +4019,39 @@ const Analytics = () => {
                   </div>
                 </InstagramDetailCard>
               </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'instagram-audience' && selectedPlatform === 'instagram' && (
+          <div className="space-y-6">
+            {!!instagramReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {instagramReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingInstagramReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !instagramReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">Instagram audience report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
+                </p>
+              </div>
             ) : (
               <div className="space-y-6">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-                  <strong>Note:</strong> Instagram audience charts reflect follower demographics returned by Instagram, not likes. Audience demographics are typically available for Business/Creator accounts once enough audience data exists.
+                  <strong>Note:</strong> These audience charts use Instagram audience demographics returned for the connected account. The current report does not expose likes by country, gender, age, or city.
                   {instagramAudience?.accounts_used?.length > 0 && (
                     <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
                   )}
@@ -4019,8 +4067,11 @@ const Analytics = () => {
                   </div>
                 )}
 
-                <InstagramDetailCard title="Follower Growth">
-                  {instagramFollowerTimeline.length > 0 ? (
+                <InstagramDetailCard
+                  title="Follower Growth"
+                  info="Shows daily net follower change across the selected period. Negative values indicate days when the account lost followers."
+                >
+                  {instagramFollowerGrowthHasData ? (
                     <ResponsiveContainer width="100%" height={220}>
                       <AreaChart data={instagramFollowerTimeline} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
                         <defs>
@@ -4033,7 +4084,7 @@ const Analytics = () => {
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
                         <Tooltip content={<AudienceGrowthTooltip />} />
-                        <Area type="monotone" dataKey="count" name="Followers" stroke="#2563eb" strokeWidth={2} fill="url(#colorFollowers)" dot={false} />
+                        <Area type="monotone" dataKey="count" name="Net followers" stroke="#2563eb" strokeWidth={2} fill="url(#colorFollowers)" dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   ) : (
@@ -4048,7 +4099,10 @@ const Analytics = () => {
                 )}
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  <InstagramDetailCard title="Followers by Country">
+                  <InstagramDetailCard
+                    title="Audience by Country"
+                    info="Ranks the countries where the connected account's audience is concentrated, based on Instagram audience demographics."
+                  >
                     {instagramDemographics.countries?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.countries} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 50 }}>
@@ -4056,7 +4110,7 @@ const Analytics = () => {
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
                           <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="count" name="Audience" fill="#f59e0b" radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -4064,7 +4118,10 @@ const Analytics = () => {
                     )}
                   </InstagramDetailCard>
 
-                  <InstagramDetailCard title="Followers by Gender">
+                  <InstagramDetailCard
+                    title="Audience by Gender"
+                    info="Shows the gender split of the audience returned by Instagram for the selected account."
+                  >
                     {instagramDemographics.gender?.length > 0 ? (
                       <div className="space-y-4">
                         {instagramDemographics.gender.map((item) => {
@@ -4088,7 +4145,10 @@ const Analytics = () => {
                     )}
                   </InstagramDetailCard>
 
-                  <InstagramDetailCard title="Followers by Age Group">
+                  <InstagramDetailCard
+                    title="Audience by Age Group"
+                    info="Breaks the audience into Instagram-provided age ranges for the connected account."
+                  >
                     {instagramDemographics.age?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
@@ -4096,7 +4156,7 @@ const Analytics = () => {
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
                           <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="count" name="Audience" fill="#6366f1" radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -4104,7 +4164,10 @@ const Analytics = () => {
                     )}
                   </InstagramDetailCard>
 
-                  <InstagramDetailCard title="Followers by City">
+                  <InstagramDetailCard
+                    title="Audience by City"
+                    info="Shows the top cities represented in the connected account's audience data returned by Instagram."
+                  >
                     {instagramDemographics.cities?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.cities} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 90 }}>
@@ -4112,7 +4175,7 @@ const Analytics = () => {
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={90} />
                           <Tooltip />
-                          <Bar dataKey="count" name="Followers" fill="#22c55e" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="count" name="Audience" fill="#22c55e" radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
