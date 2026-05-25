@@ -149,12 +149,43 @@ const Timeslots = () => {
           })
         )
       );
-      const failures = results.filter((result) => !result.ok);
-      if (failures.length) {
-        throw new Error(failures[0]?.data?.detail || 'Failed to save timeslot');
+      const successfulResults = results.filter((result) => result.ok);
+      const duplicateResults = results.filter(
+        (result) => !result.ok && result.data?.detail === 'An identical timeslot already exists for this account'
+      );
+      const hardFailures = results.filter(
+        (result) => !result.ok && result.data?.detail !== 'An identical timeslot already exists for this account'
+      );
+
+      if (hardFailures.length) {
+        throw new Error(hardFailures[0]?.data?.detail || 'Failed to save timeslot');
       }
+
       await loadTimeslots(selectedAccountId, selectedCategory);
-      toast.success(`Timeslot added for ${selectedDayObj.label}`);
+
+      if (successfulResults.length && duplicateResults.length) {
+        toast.success(
+          `Added ${successfulResults.length} slot${successfulResults.length !== 1 ? 's' : ''} for ${selectedDayObj.label}. ` +
+          `Skipped ${duplicateResults.length} duplicate${duplicateResults.length !== 1 ? 's' : ''}.`
+        );
+        return;
+      }
+
+      if (successfulResults.length) {
+        toast.success(`Timeslot added for ${selectedDayObj.label}`);
+        return;
+      }
+
+      if (duplicateResults.length) {
+        toast.error(
+          duplicateResults.length === 1
+            ? 'That timeslot already exists for the selected account'
+            : 'Those timeslots already exist for the selected account'
+        );
+        return;
+      }
+
+      throw new Error('Failed to save timeslot');
     } catch (error) {
       toast.error(error.message || 'Failed to save timeslot');
     } finally {
