@@ -4051,7 +4051,7 @@ const Analytics = () => {
             ) : (
               <div className="space-y-6">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-                  <strong>Note:</strong> These audience charts use Instagram audience demographics returned for the connected account. The current report does not expose likes by country, gender, age, or city.
+                  <strong>Note:</strong> These cards use Instagram engaged-audience demographics as the closest available proxy for likes and other interactions. Instagram returns this data only for recent windows, so this section reflects the latest {instagramAudience?.demographics_timeframe === 'this_week' ? 'weekly' : 'monthly'} engagement breakdown rather than the full selected date range.
                   {instagramAudience?.accounts_used?.length > 0 && (
                     <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
                   )}
@@ -4100,8 +4100,8 @@ const Analytics = () => {
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <InstagramDetailCard
-                    title="Audience by Country"
-                    info="Ranks the countries where the connected account's audience is concentrated, based on Instagram audience demographics."
+                    title="Likes by Country"
+                    info="Uses Instagram engaged-audience demographics as a proxy for where the accounts interacting with your content came from. Instagram does not expose raw like events split by country."
                   >
                     {instagramDemographics.countries?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
@@ -4119,8 +4119,8 @@ const Analytics = () => {
                   </InstagramDetailCard>
 
                   <InstagramDetailCard
-                    title="Audience by Gender"
-                    info="Shows the gender split of the audience returned by Instagram for the selected account."
+                    title="Likes by Gender"
+                    info="Uses Instagram engaged-audience demographics as a proxy for the gender breakdown of accounts interacting with your content. Instagram does not expose raw likes by gender."
                   >
                     {instagramDemographics.gender?.length > 0 ? (
                       <div className="space-y-4">
@@ -4146,8 +4146,8 @@ const Analytics = () => {
                   </InstagramDetailCard>
 
                   <InstagramDetailCard
-                    title="Audience by Age Group"
-                    info="Breaks the audience into Instagram-provided age ranges for the connected account."
+                    title="Likes by Age Group"
+                    info="Uses Instagram engaged-audience demographics as a proxy for which age groups interacted with your content. Instagram does not expose raw likes by age group."
                   >
                     {instagramDemographics.age?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
@@ -4165,8 +4165,8 @@ const Analytics = () => {
                   </InstagramDetailCard>
 
                   <InstagramDetailCard
-                    title="Audience by City"
-                    info="Shows the top cities represented in the connected account's audience data returned by Instagram."
+                    title="Likes by City"
+                    info="Uses Instagram engaged-audience demographics as a proxy for the cities of accounts interacting with your content. Instagram does not expose raw likes by city."
                   >
                     {instagramDemographics.cities?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>

@@ -362,48 +362,105 @@ class InstagramAuth:
                 "platform": "instagram",
             }
 
-    async def fetch_demographics(self, access_token: str, user_id: str) -> dict:
-        """Fetch follower demographics (requires 100+ followers)"""
+    async def fetch_demographics(
+        self,
+        access_token: str,
+        user_id: str,
+        metric: str = "follower_demographics",
+        timeframe: str | None = None,
+    ) -> dict:
+        """Fetch Instagram demographic breakdowns for a selected audience metric."""
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.GRAPH_URL}/{user_id}/insights",
-                params={
-                    "metric": "follower_demographics",
+            result = {
+                "age": [],
+                "gender": [],
+                "cities": [],
+                "countries": [],
+                "supported": False,
+                "metric": metric,
+                "timeframe": timeframe,
+            }
+            dimension_to_key = {
+                "age": "age",
+                "gender": "gender",
+                "city": "cities",
+                "country": "countries",
+            }
+
+            for breakdown in ("age", "gender", "city", "country"):
+                params = {
+                    "metric": metric,
                     "period": "lifetime",
                     "metric_type": "total_value",
+                    "breakdown": breakdown,
                     "access_token": access_token,
-                },
-            )
-            if response.status_code != 200:
-                logging.warning(f"[Instagram] Demographics fetch failed: {response.text}")
-                return {"supported": False, "error": "Could not fetch demographics"}
+                }
+                if timeframe:
+                    params["timeframe"] = timeframe
 
-            data = response.json().get("data", [])
-            result = {"age": [], "gender": [], "cities": [], "countries": [], "supported": True}
+                response = await client.get(
+                    f"{self.GRAPH_URL}/{user_id}/insights",
+                    params=params,
+                )
+                if response.status_code != 200:
+                    logging.warning(
+                        "[Instagram] Demographics fetch failed for %s/%s: %s",
+                        metric,
+                        breakdown,
+                        response.text,
+                    )
+                    continue
 
-            for metric in data:
-                breakdowns = metric.get("total_value", {}).get("breakdowns", [])
-                for breakdown in breakdowns:
-                    dimension = breakdown.get("dimension_keys", [""])[0]
-                    results = breakdown.get("results", [])
+                data = response.json().get("data", [])
+                for metric_row in data:
+                    breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
+                    for breakdown_row in breakdowns:
+                        dimension_keys = breakdown_row.get("dimension_keys", [])
+                        if breakdown not in dimension_keys:
+                            continue
+                        dimension_index = dimension_keys.index(breakdown)
+                        values = []
+                        for row in breakdown_row.get("results", []):
+                            dimension_values = row.get("dimension_values", [])
+                            if len(dimension_values) <= dimension_index:
+                                continue
+                            values.append(
+                                {
+                                    "label": dimension_values[dimension_index],
+                                    "count": row.get("value", 0),
+                                }
+                            )
+                        if not values:
+                            continue
+                        target_key = dimension_to_key[breakdown]
+                        if breakdown == "age":
+                            result[target_key].extend(
+                                {"range": item["label"], "count": item["count"]}
+                                for item in values
+                            )
+                        elif breakdown == "gender":
+                            result[target_key].extend(
+                                {"label": item["label"], "count": item["count"]}
+                                for item in values
+                            )
+                        elif breakdown == "city":
+                            result[target_key].extend(
+                                {"name": item["label"], "count": item["count"]}
+                                for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
+                            )
+                        elif breakdown == "country":
+                            result[target_key].extend(
+                                {"name": item["label"], "count": item["count"]}
+                                for item in sorted(values, key=lambda item: item["count"], reverse=True)[:10]
+                            )
 
-                    if dimension == "age":
-                        for r in results:
-                            result["age"].append({"range": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
-                    elif dimension == "city":
-                        for r in sorted(results, key=lambda x: x.get("value", 0), reverse=True)[:10]:
-                            result["cities"].append({"name": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
-                    elif dimension == "country":
-                        for r in sorted(results, key=lambda x: x.get("value", 0), reverse=True)[:10]:
-                            result["countries"].append({"name": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
-                    elif dimension == "gender":
-                        for r in results:
-                            result["gender"].append({"label": r.get("dimension_values", [""])[0], "count": r.get("value", 0)})
-
+            result["supported"] = any(result[key] for key in ("age", "gender", "cities", "countries"))
+            if not result["supported"]:
+                result["error"] = "Could not fetch demographics"
             return result
 
     async def fetch_follower_growth(self, access_token: str, user_id: str, days: int | None = None) -> dict:
-        """Fetch daily follower counts for the selected period."""
+        """Fetch daily net follower movement for the selected period."""
         async with httpx.AsyncClient() as client:
             range_days = max(int(days or 30), 1)
             until_dt = datetime.now(timezone.utc)
@@ -435,24 +492,12 @@ class InstagramAuth:
                     })
 
             series.sort(key=lambda point: point["date"])
-            growth = 0
-            if len(series) >= 2:
-                growth = int(series[-1]["count"]) - int(series[0]["count"])
-
-            growth_series = []
-            previous_count = None
-            for point in series:
-                count = int(point["count"])
-                growth_series.append({
-                    "date": point["date"],
-                    "count": 0 if previous_count is None else count - previous_count,
-                })
-                previous_count = count
+            growth = sum(int(point["count"]) for point in series)
 
             return {
                 "supported": True,
                 "series": series,
-                "growth_series": growth_series,
+                "growth_series": series,
                 "growth": growth,
             }
 

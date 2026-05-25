@@ -1514,7 +1514,13 @@ async def analytics_instagram_report(
         if growth.get("growth_series"):
             follower_series.append(growth["growth_series"])
 
-        demographics = await auth.fetch_demographics(access_token, platform_user_id)
+        engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
+        demographics = await auth.fetch_demographics(
+            access_token,
+            platform_user_id,
+            metric="engaged_audience_demographics",
+            timeframe=engagement_demographic_timeframe,
+        )
         if demographics.get("supported"):
             accounts_used.append(label)
             demographics_bucket["age"].extend(demographics.get("age", []))
@@ -1526,7 +1532,7 @@ async def analytics_instagram_report(
                 {
                     "account": label,
                     "error": demographics.get("error")
-                    or "Demographics are not available for this Instagram account yet.",
+                    or "Engaged audience demographics are not available for this Instagram account yet.",
                 }
             )
 
@@ -1596,9 +1602,11 @@ async def analytics_instagram_report(
             "demographics_message": (
                 None
                 if any(merged_demographics.values())
-                else "Follower demographics are only available when Instagram returns insights for this Business/Creator account, typically after the account has enough audience data."
+                else "Engaged audience demographics are only available when Instagram returns insights for this Business/Creator account. Instagram currently exposes these segments for recent weekly or monthly windows, not arbitrary historical ranges."
             ),
             "accounts_used": accounts_used,
+            "demographics_metric": "engaged_audience_demographics",
+            "demographics_timeframe": "this_week" if days <= 7 else "this_month",
             "demographics": merged_demographics,
         },
         "errors": errors,
