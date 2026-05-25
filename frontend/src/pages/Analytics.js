@@ -1983,6 +1983,19 @@ const Analytics = () => {
     }
   }, [activeTab, fetchDemographics]);
 
+  const handleTabClick = useCallback((tabId) => {
+    setActiveTab(tabId);
+
+    // The YouTube overview uses the shared overview/timeline payload, which does
+    // not automatically refetch when returning from YouTube-specific report tabs.
+    // Force a refresh whenever Overview is selected so the cards are rebuilt from
+    // fresh data on every click.
+    if (selectedPlatform === 'youtube' && tabId === 'overview') {
+      fetchOverview();
+      fetchEngagement();
+    }
+  }, [selectedPlatform, fetchOverview, fetchEngagement]);
+
   const fetchInstagramReport = useCallback(async () => {
     if (selectedPlatform !== 'instagram') {
       setInstagramReport(null);
@@ -2588,7 +2601,7 @@ const Analytics = () => {
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px
                 ${activeTab === tab.id
                   ? 'border-indigo-600 text-indigo-600'
