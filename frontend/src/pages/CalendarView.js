@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getPosts, getCalendarNotes, createCalendarNote, deleteCalendarNote, createCalendarShare } from '@/lib/api';
+import { getPosts, getCalendarNotes, createCalendarNote, deleteCalendarNote, createCalendarShare, getSocialAccounts } from '@/lib/api';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfWeek, endOfWeek, addMonths, subMonths, addWeeks, subWeeks } from 'date-fns';
-import { FaChevronLeft, FaChevronRight, FaInfoCircle, FaShare, FaLink, FaTimes } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaInfoCircle, FaShare, FaLink, FaTimes, FaRegClock } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import BrandMarkLoader from '@/components/BrandMarkLoader';
@@ -17,8 +17,115 @@ const noteColorClasses = {
   red:    { chip: 'bg-red-100 text-red-700',      form: 'bg-red-50 text-red-800',      dot: 'bg-red-400'    },
 };
 
+const statusBadgeClasses = {
+  draft: 'bg-gray-100 text-gray-600',
+  scheduled: 'bg-blue-100 text-blue-700',
+  queued: 'bg-amber-100 text-amber-700',
+  processing: 'bg-violet-100 text-violet-700',
+  published: 'bg-emerald-100 text-emerald-700',
+  failed: 'bg-red-100 text-red-700',
+  partial: 'bg-orange-100 text-orange-700',
+  cancelled: 'bg-slate-100 text-slate-600',
+};
+
+const accountAvatarTone = [
+  'bg-sky-100 text-sky-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+  'bg-fuchsia-100 text-fuchsia-700',
+];
+
+const getAccountInitials = (account) => {
+  const label = account?.platform_username || account?.display_name || account?.platform_user_id || account?.platform || '?';
+  return String(label).slice(0, 2).toUpperCase();
+};
+
+const formatPostLabel = (post) => {
+  const raw = post?.title || post?.content || 'Scheduled post';
+  return String(raw).replace(/\s+/g, ' ').trim() || 'Scheduled post';
+};
+
+const getPostAccountIds = (post) => {
+  if (Array.isArray(post?.account_ids) && post.account_ids.length > 0) return post.account_ids;
+  if (Array.isArray(post?.social_account_ids) && post.social_account_ids.length > 0) return post.social_account_ids;
+  if (Array.isArray(post?.platform_account_ids) && post.platform_account_ids.length > 0) return post.platform_account_ids;
+  if (post?.social_account_id) return [post.social_account_id];
+  if (Array.isArray(post?.publish_targets) && post.publish_targets.length > 0) {
+    return post.publish_targets.map((target) => target?.account_id).filter(Boolean);
+  }
+  return [];
+};
+
+const AccountAvatar = ({ account, size = 'sm' }) => {
+  const sizeClass = size === 'xs' ? 'h-5 w-5 text-[9px]' : 'h-6 w-6 text-[10px]';
+
+  if (account?.picture_url) {
+    return (
+      <img
+        src={account.picture_url}
+        alt=""
+        className={`${sizeClass} rounded-full border border-white object-cover shadow-sm`}
+      />
+    );
+  }
+
+  const tone = accountAvatarTone[(account?.id || account?.account_id || '').length % accountAvatarTone.length];
+  return (
+    <div className={`${sizeClass} ${tone} flex items-center justify-center rounded-full border border-white font-bold shadow-sm`}>
+      {getAccountInitials(account)}
+    </div>
+  );
+};
+
+const CalendarPostChip = ({ post, accounts, compact = true, today = false }) => {
+  const visibleAccounts = accounts.slice(0, 2);
+  const extraAccounts = Math.max(accounts.length - visibleAccounts.length, 0);
+  const status = String(post?.status || 'scheduled').toLowerCase();
+  const statusClass = statusBadgeClasses[status] || statusBadgeClasses.scheduled;
+  const label = formatPostLabel(post);
+  const textClass = today ? 'text-white/95' : 'text-gray-700';
+  const chipClass = today
+    ? 'bg-green-400/90 border border-green-300 text-white'
+    : 'bg-white border border-gray-200 text-gray-700 shadow-sm';
+  const timeValue = post?.scheduled_time ? format(new Date(post.scheduled_time), 'h:mm a') : 'No time';
+
+  return (
+    <div
+      className={`${chipClass} rounded-lg px-2 py-1.5`}
+      title={label}
+      data-testid={`post-${post.id}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className={`flex min-w-0 items-center gap-1 text-[10px] font-semibold ${today ? 'text-white/90' : 'text-gray-500'}`}>
+          <FaRegClock className="shrink-0" />
+          <span className="truncate">{timeValue}</span>
+        </div>
+        <div className="flex shrink-0 items-center -space-x-1">
+          {visibleAccounts.map((account) => (
+            <AccountAvatar key={account.account_id || account.id} account={account} size="xs" />
+          ))}
+          {extraAccounts > 0 && (
+            <div className={`ml-1 flex h-5 min-w-[20px] items-center justify-center rounded-full border border-white px-1 text-[9px] font-bold shadow-sm ${today ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>
+              +{extraAccounts}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className={`mt-1 flex items-center gap-1.5 ${compact ? '' : 'gap-2'}`}>
+        <span className={`inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${today ? 'bg-white/15 text-white' : statusClass}`}>
+          {status}
+        </span>
+        <span className={`min-w-0 truncate text-[11px] font-medium ${textClass}`}>
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const CalendarView = () => {
   const [posts, setPosts] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('month'); // 'month' or 'week'
@@ -26,6 +133,7 @@ const CalendarView = () => {
   // Calendar Notes
   const [notes, setNotes] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [selectedPostsDay, setSelectedPostsDay] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteColor, setNoteColor] = useState('green');
   const [savingNote, setSavingNote] = useState(false);
@@ -37,6 +145,7 @@ const CalendarView = () => {
 
   useEffect(() => {
     fetchPosts();
+    loadAccounts();
   }, []);
 
   // Reload notes whenever the visible month/week changes
@@ -64,6 +173,15 @@ const CalendarView = () => {
     }
   };
 
+  const loadAccounts = async () => {
+    try {
+      const data = await getSocialAccounts();
+      setAccounts(Array.isArray(data) ? data : []);
+    } catch {
+      setAccounts([]);
+    }
+  };
+
   let calendarStart, calendarEnd;
   if (viewMode === 'month') {
     const monthStart = startOfMonth(currentDate);
@@ -76,8 +194,34 @@ const CalendarView = () => {
   }
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
 
+  const accountLookup = useMemo(() => {
+    const lookup = {};
+    accounts.forEach((account) => {
+      if (account?.id) lookup[account.id] = account;
+      if (account?.account_id) lookup[account.account_id] = account;
+    });
+    return lookup;
+  }, [accounts]);
+
+  const getPostDisplayAccounts = (post) => {
+    const resolved = getPostAccountIds(post)
+      .map((accountId) => accountLookup[accountId])
+      .filter(Boolean);
+    const deduped = [];
+    const seen = new Set();
+    resolved.forEach((account) => {
+      const key = account.account_id || account.id;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      deduped.push(account);
+    });
+    return deduped;
+  };
+
   const getPostsForDay = (day) =>
-    posts.filter((post) => isSameDay(new Date(post.scheduled_time), day));
+    posts
+      .filter((post) => isSameDay(new Date(post.scheduled_time), day))
+      .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time));
 
   const getNotesForDay = (day) =>
     notes.filter((n) => n.date === format(day, 'yyyy-MM-dd'));
@@ -128,6 +272,10 @@ const CalendarView = () => {
     setSelectedDay(null);
     setNoteText('');
     setNoteColor('green');
+  };
+
+  const closePostsDialog = () => {
+    setSelectedPostsDay(null);
   };
 
   // ── Share handler ──────────────────────────────────────────────────────────
@@ -269,24 +417,27 @@ const CalendarView = () => {
                   </div>
 
                   {/* Posts */}
-                  <div className="px-1 pb-1 space-y-0.5">
-                    {dayPosts.slice(0, 3).map((post) => (
-                      <div
-                        key={post.id}
-                        className={`text-xs px-2 py-1 rounded truncate hover:opacity-80 ${
-                          today ? 'bg-green-400 text-white' : 'bg-offwhite border border-gray-200 text-gray-700'
-                        }`}
-                        title={post.content}
-                        data-testid={`post-${post.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {post.content?.substring(0, 30) || 'Scheduled post'}
+                  <div className="px-1 pb-1 space-y-1">
+                    {dayPosts.slice(0, 2).map((post) => (
+                      <div key={post.id} onClick={(e) => e.stopPropagation()}>
+                        <CalendarPostChip
+                          post={post}
+                          accounts={getPostDisplayAccounts(post)}
+                          today={today}
+                        />
                       </div>
                     ))}
-                    {dayPosts.length > 3 && (
-                      <div className={`text-xs px-2 ${today ? 'text-green-100' : 'text-gray-500'}`}>
-                        +{dayPosts.length - 3} more
-                      </div>
+                    {dayPosts.length > 2 && (
+                      <button
+                        type="button"
+                        className={`px-2 text-[11px] font-semibold transition-colors ${today ? 'text-white/90 hover:text-white' : 'text-gray-500 hover:text-gray-700'}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedPostsDay(day);
+                        }}
+                      >
+                        +{dayPosts.length - 2} more
+                      </button>
                     )}
                     {dayPosts.length === 0 && isCurrentMonth && !today && (
                       <div className="text-xs px-2 text-gray-400">No posts</div>
@@ -310,6 +461,44 @@ const CalendarView = () => {
           </div>
         </div>
       </div>
+
+      {/* ── Posts Dialog ─────────────────────────────────────────────────────── */}
+      <Dialog open={!!selectedPostsDay} onOpenChange={(open) => { if (!open) closePostsDialog(); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold text-gray-900">
+              {selectedPostsDay ? `Scheduled posts for ${format(selectedPostsDay, 'MMMM d, yyyy')}` : ''}
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedPostsDay && (
+            <div className="max-h-[420px] space-y-3 overflow-y-auto">
+              {getPostsForDay(selectedPostsDay).map((post) => {
+                const postAccounts = getPostDisplayAccounts(post);
+                const fullAccountLabel = postAccounts.length
+                  ? postAccounts.map((account) => account.platform_username || account.display_name || account.platform_user_id || account.platform).join(', ')
+                  : 'No account info';
+
+                return (
+                  <div key={post.id} className="rounded-xl border border-gray-200 bg-offwhite p-3">
+                    <CalendarPostChip post={post} accounts={postAccounts} compact={false} />
+                    <div className="mt-3 grid gap-2 text-xs text-gray-500">
+                      <div>
+                        <span className="font-semibold text-gray-700">Scheduled:</span>{' '}
+                        {post?.scheduled_time ? format(new Date(post.scheduled_time), 'MMMM d, yyyy h:mm a') : 'No scheduled time'}
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-700">Accounts:</span>{' '}
+                        {fullAccountLabel}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Note Dialog ──────────────────────────────────────────────────────── */}
       <Dialog open={!!selectedDay} onOpenChange={(open) => { if (!open) closeNoteDialog(); }}>
