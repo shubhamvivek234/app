@@ -36,6 +36,14 @@ const IDEAL_TIMES = [
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/v1`;
 const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
+const getAccountValue = (account) => account?.account_id || account?.id || '';
+const getAccountLabel = (account) =>
+  account?.platform_username
+  || account?.username
+  || account?.display_name
+  || account?.platform_user_id
+  || account?.platform
+  || 'Unknown account';
 
 const Timeslots = () => {
   const { user } = useAuth();
@@ -100,9 +108,9 @@ const Timeslots = () => {
         const accs = res.accounts || res || [];
         setAccounts(accs);
         if (accs.length) {
-          setSelectedAccountId(accs[0].id);
+          setSelectedAccountId(getAccountValue(accs[0]));
           if (accs.length > 1) {
-            setCopySourceAccountId(accs[1].id);
+            setCopySourceAccountId(getAccountValue(accs[1]));
           }
         }
       })
@@ -119,8 +127,8 @@ const Timeslots = () => {
     if (!copyFrom) return;
     if (!selectedAccountId) return;
     if (copySourceAccountId && copySourceAccountId !== selectedAccountId) return;
-    const fallbackSource = accounts.find((account) => account.id !== selectedAccountId);
-    setCopySourceAccountId(fallbackSource?.id || '');
+    const fallbackSource = accounts.find((account) => getAccountValue(account) !== selectedAccountId);
+    setCopySourceAccountId(getAccountValue(fallbackSource));
   }, [accounts, copyFrom, copySourceAccountId, selectedAccountId]);
 
   const selectedDayObj = DAY_OPTIONS.find((d) => d.value === dayOption) || DAY_OPTIONS[0];
@@ -355,8 +363,8 @@ const Timeslots = () => {
           >
             {accounts.length === 0 && <option value="">No accounts connected</option>}
             {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.username || a.display_name || a.platform}
+              <option key={getAccountValue(a)} value={getAccountValue(a)}>
+                {getAccountLabel(a)}
               </option>
             ))}
           </select>
@@ -386,10 +394,10 @@ const Timeslots = () => {
               >
                 <option value="">Select source account</option>
                 {accounts
-                  .filter((account) => account.id !== selectedAccountId)
+                  .filter((account) => getAccountValue(account) !== selectedAccountId)
                   .map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.username || account.display_name || account.platform}
+                    <option key={getAccountValue(account)} value={getAccountValue(account)}>
+                      {getAccountLabel(account)}
                     </option>
                   ))}
               </select>
