@@ -62,22 +62,64 @@ def _doc_to_response(doc: dict) -> TimeslotResponse:
     )
 
 
+def _timeslot_user_id(current_user: CurrentUser) -> str:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing user context")
+    return user_id
+
+
+def _timeslot_workspace_id(current_user: CurrentUser) -> str:
+    return (
+        current_user.get("default_workspace_id")
+        or current_user.get("workspace_id")
+        or _timeslot_user_id(current_user)
+    )
+
+
 async def _ensure_owned_account(db, current_user: CurrentUser, account_id: str) -> str:
-    user_id = current_user.user_id
-    workspace_id = current_user.workspace_id or user_id
+    user_id = _timeslot_user_id(current_user)
+    workspace_id = _timeslot_workspace_id(current_user)
     account = await db.social_accounts.find_one(
         {
-            "workspace_id": workspace_id,
             "is_active": True,
-            "$or": [
-                {"account_id": account_id},
-                {"id": account_id},
+            "$and": [
+                {
+                    "$or": [
+                        {"account_id": account_id},
+                        {"id": account_id},
+                    ],
+                },
+                {
+                    "$or": [
+                        {"workspace_id": workspace_id},
+                        {"user_id": user_id},
+                    ],
+                },
             ],
         },
-        {"_id": 0, "account_id": 1, "id": 1},
+        {"_id": 0, "account_id": 1, "id": 1, "workspace_id": 1},
     )
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social account not found")
+    if not account.get("workspace_id"):
+        await db.social_accounts.update_one(
+            {
+                "is_active": True,
+                "$or": [
+                    {"account_id": account_id},
+                    {"id": account_id},
+                ],
+                "user_id": user_id,
+            },
+            {"$set": {"workspace_id": workspace_id}},
+        )
+        logger.info(
+            "Backfilled workspace_id for timeslot account: user=%s workspace=%s account=%s",
+            user_id,
+            workspace_id,
+            account_id,
+        )
     return account.get("account_id") or account.get("id") or account_id
 
 
@@ -91,7 +133,7 @@ async def list_timeslots(
     category: str = Query("Category 1"),
 ):
     """Return all timeslots for a given account + category."""
-    workspace_id = current_user.workspace_id or current_user.user_id
+    workspace_id = _timeslot_workspace_id(current_user)
     canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
     try:
         normalized_category = normalize_timeslot_category(category)
@@ -117,8 +159,8 @@ async def create_timeslot(
     db: DB,
 ):
     """Create a single timeslot."""
-    user_id = current_user.user_id
-    workspace_id = current_user.workspace_id or user_id
+    user_id = _timeslot_user_id(current_user)
+    workspace_id = _timeslot_workspace_id(current_user)
     canonical_account_id = await _ensure_owned_account(db, current_user, body.account_id)
     try:
         normalized_day, normalized_hour, normalized_minute, normalized_ampm = normalize_timeslot_clock(
@@ -174,7 +216,7 @@ async def delete_timeslot(
     db: DB,
 ):
     """Delete a single timeslot by ID."""
-    workspace_id = current_user.workspace_id or current_user.user_id
+    workspace_id = _timeslot_workspace_id(current_user)
 
     result = await db.timeslots.delete_one({
         "timeslot_id": timeslot_id,
@@ -192,7 +234,7 @@ async def clear_timeslots(
     category: str = Query("Category 1"),
 ):
     """Delete all timeslots for an account + category."""
-    workspace_id = current_user.workspace_id or current_user.user_id
+    workspace_id = _timeslot_workspace_id(current_user)
     canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
     try:
         normalized_category = normalize_timeslot_category(category)
@@ -216,7 +258,7 @@ async def get_next_slot(
     Return the next unfilled timeslot datetime for 'Add to Timeslot' post creation.
     Scans forward from now through the weekly schedule until an empty slot is found.
     """
-    workspace_id = current_user.workspace_id or current_user.user_id
+    workspace_id = _timeslot_workspace_id(current_user)
     canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
     try:
         next_slot, message, normalized_category = await resolve_next_timeslot_for_account(
