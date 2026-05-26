@@ -34,6 +34,25 @@ class InstagramAuth:
         else:
             self.redirect_uri = raw_uri
 
+    @staticmethod
+    def _normalize_daily_insight_series(values: list[dict] | None) -> list[dict]:
+        normalized = []
+        for point in values or []:
+            value = point.get("value")
+            end_time = point.get("end_time")
+            if value is None or not end_time:
+                continue
+            try:
+                count = int(value or 0)
+            except (TypeError, ValueError):
+                continue
+            normalized.append({
+                "date": str(end_time)[:10],
+                "count": count,
+            })
+        normalized.sort(key=lambda point: point["date"])
+        return normalized
+
     def get_auth_url(self, state: str) -> str:
         """Generate Instagram Business Login authorization URL"""
         if not self.app_id or not self.redirect_uri:
@@ -295,6 +314,11 @@ class InstagramAuth:
 
             # Get insights
             insights = {}
+            insight_series = {
+                "impressions": [],
+                "reach": [],
+                "profile_views": [],
+            }
             followers_growth = None
             try:
                 range_days = max(int(days or 30), 1)
@@ -319,16 +343,14 @@ class InstagramAuth:
                         name = item.get("name")
                         if not name:
                             continue
+                        normalized_series = self._normalize_daily_insight_series(item.get("values", []))
+                        if normalized_series:
+                            insight_series[name] = normalized_series
                         if item.get("total_value", {}).get("value") is not None:
                             insights[name] = int(item.get("total_value", {}).get("value", 0) or 0)
                             continue
-                        values = item.get("values", [])
-                        if values:
-                            insights[name] = sum(
-                                int(point.get("value", 0) or 0)
-                                for point in values
-                                if point.get("value") is not None
-                            )
+                        if normalized_series:
+                            insights[name] = sum(point["count"] for point in normalized_series)
                 growth_resp = await client.get(
                     f"{self.GRAPH_URL}/{user_id}/insights",
                     params={
@@ -359,6 +381,9 @@ class InstagramAuth:
                 "impressions": insights.get("impressions", 0),
                 "reach": insights.get("reach", 0),
                 "profile_views": insights.get("profile_views", 0),
+                "impressions_series": insight_series.get("impressions", []),
+                "reach_series": insight_series.get("reach", []),
+                "profile_views_series": insight_series.get("profile_views", []),
                 "platform": "instagram",
             }
 

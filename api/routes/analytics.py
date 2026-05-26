@@ -1462,6 +1462,9 @@ async def analytics_instagram_report(
     previous_since = current_since - timedelta(days=days)
     all_current_feed: list[dict[str, Any]] = []
     follower_series: list[list[dict[str, Any]]] = []
+    reach_series: list[list[dict[str, Any]]] = []
+    impressions_series: list[list[dict[str, Any]]] = []
+    profile_views_series: list[list[dict[str, Any]]] = []
     summary_totals = {
         "followers_total": 0,
         "new_followers": 0,
@@ -1516,6 +1519,12 @@ async def analytics_instagram_report(
         summary_totals["profile_views"] += _metric_int(engagement.get("profile_views"))
         if growth.get("growth_series"):
             follower_series.append(growth["growth_series"])
+        if engagement.get("reach_series"):
+            reach_series.append(engagement["reach_series"])
+        if engagement.get("impressions_series"):
+            impressions_series.append(engagement["impressions_series"])
+        if engagement.get("profile_views_series"):
+            profile_views_series.append(engagement["profile_views_series"])
 
         engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
         demographics = None
@@ -1632,6 +1641,11 @@ async def analytics_instagram_report(
             "demographics_timeframe": report_demographics_timeframe,
             "demographics_source_label": report_demographics_source_label,
             "demographics": merged_demographics,
+        },
+        "reach": {
+            "reach_series": _merge_date_counts(reach_series),
+            "impressions_series": _merge_date_counts(impressions_series),
+            "profile_views_series": _merge_date_counts(profile_views_series),
         },
         "errors": errors,
         "demographics_errors": demographics_errors,

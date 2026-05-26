@@ -1849,6 +1849,7 @@ const Analytics = () => {
   const [loadingDemos, setLoadingDemos]             = useState(false);
   const [instagramReport, setInstagramReport]       = useState(null);
   const [loadingInstagramReport, setLoadingInstagramReport] = useState(false);
+  const [instagramReachGranularity, setInstagramReachGranularity] = useState('day');
   const [blueskyReport, setBlueskyReport]           = useState(null);
   const [loadingBlueskyReport, setLoadingBlueskyReport] = useState(false);
   const [blueskyTopMetric, setBlueskyTopMetric]     = useState('engagement');
@@ -2035,7 +2036,7 @@ const Analytics = () => {
   }, [days, selectedPlatform, selectedAccount]);
 
   useEffect(() => {
-    if (['summary', 'instagram-audience'].includes(activeTab) && selectedPlatform === 'instagram') {
+    if (['summary', 'instagram-audience', 'instagram-reach'].includes(activeTab) && selectedPlatform === 'instagram') {
       fetchInstagramReport();
     }
   }, [activeTab, selectedPlatform, fetchInstagramReport]);
@@ -2240,6 +2241,7 @@ const Analytics = () => {
     ...(showInstagramReportTab ? [
       { id: 'summary', label: 'Summary' },
       { id: 'instagram-audience', label: 'Audience' },
+      { id: 'instagram-reach', label: 'Reach' },
     ] : []),
     ...(showBlueskyReportTabs ? [
       { id: 'bluesky-summary', label: 'Summary' },
@@ -2353,12 +2355,19 @@ const Analytics = () => {
 
   const instagramSummary = instagramReport?.summary || {};
   const instagramAudience = instagramReport?.audience || {};
+  const instagramReach = instagramReport?.reach || {};
   const instagramFollowerTimeline = (instagramAudience.follower_growth || []).map((point) => ({
     ...point,
     label: formatReportDate(point.date, days),
   }));
   const instagramDemographics = instagramAudience.demographics || {};
   const instagramFollowerGrowthHasData = chartHasData(instagramFollowerTimeline, ['count']);
+  const instagramReachTimeline = bucketSeriesByGranularity(
+    instagramReach.reach_series || [],
+    days,
+    instagramReachGranularity,
+  );
+  const instagramReachHasData = chartHasData(instagramReachTimeline, ['count']);
   const blueskySummary = blueskyReport?.summary || {};
   const blueskyAudience = blueskyReport?.audience || {};
   const blueskyPostsEngagement = blueskyReport?.posts_engagement || {};
@@ -2406,6 +2415,17 @@ const Analytics = () => {
     <select
       value={blueskyChartGranularity}
       onChange={(event) => setBlueskyChartGranularity(event.target.value)}
+      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+    >
+      {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  );
+  const instagramReachSelector = (
+    <select
+      value={instagramReachGranularity}
+      onChange={(event) => setInstagramReachGranularity(event.target.value)}
       className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
     >
       {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
@@ -4188,6 +4208,79 @@ const Analytics = () => {
                     )}
                   </InstagramDetailCard>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'instagram-reach' && selectedPlatform === 'instagram' && (
+          <div className="space-y-6">
+            {!!instagramReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {instagramReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingInstagramReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !instagramReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">Instagram reach report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <InstagramMetricTile
+                    title="Reach"
+                    value={instagramSummary.reach}
+                    subtitle="Unique accounts reached during the selected period"
+                    info="Shows how many unique Instagram accounts saw your content across the selected date range."
+                  />
+                  <InstagramMetricTile
+                    title="Impressions"
+                    value={instagramSummary.impressions}
+                    subtitle="Total content impressions during the selected period"
+                    info="Shows how many total times your Instagram content was displayed, including repeat views from the same accounts."
+                  />
+                  <InstagramMetricTile
+                    title="Profile Views"
+                    value={instagramSummary.profile_views}
+                    subtitle="Instagram profile visits during the selected period"
+                    info="Shows how many times people visited your Instagram profile during the selected date range."
+                  />
+                </div>
+
+                <InstagramDetailCard
+                  title="Reach"
+                  action={instagramReachSelector}
+                  info="Tracks unique accounts reached over time. Change the grouping to compare daily reach with weekly, monthly, or quarterly patterns."
+                >
+                  {instagramReachHasData ? (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={instagramReachTimeline} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={50} />
+                        <Tooltip />
+                        <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                        <Bar dataKey="count" name="Reach" fill="#2f6690" radius={[6, 6, 0, 0]} maxBarSize={44} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    chartEmptyState('Reach data is not available for this Instagram account right now.')
+                  )}
+                </InstagramDetailCard>
               </div>
             )}
           </div>

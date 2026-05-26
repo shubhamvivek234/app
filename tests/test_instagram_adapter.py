@@ -44,6 +44,94 @@ class _QueuedAsyncClient:
 
 
 @pytest.mark.asyncio
+async def test_fetch_engagement_returns_totals_and_daily_series(monkeypatch):
+    client = _QueuedAsyncClient(
+        [
+            _FakeResponse(
+                200,
+                {
+                    "id": "ig-user",
+                    "username": "creator",
+                    "followers_count": 120,
+                    "follows_count": 12,
+                    "media_count": 8,
+                },
+            ),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "impressions",
+                            "values": [
+                                {"value": 10, "end_time": "2026-05-20T07:00:00+0000"},
+                                {"value": 15, "end_time": "2026-05-21T07:00:00+0000"},
+                            ],
+                        }
+                    ]
+                },
+            ),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "reach",
+                            "values": [
+                                {"value": 7, "end_time": "2026-05-20T07:00:00+0000"},
+                                {"value": 11, "end_time": "2026-05-21T07:00:00+0000"},
+                            ],
+                        }
+                    ]
+                },
+            ),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "profile_views",
+                            "values": [
+                                {"value": 2, "end_time": "2026-05-20T07:00:00+0000"},
+                                {"value": 4, "end_time": "2026-05-21T07:00:00+0000"},
+                            ],
+                        }
+                    ]
+                },
+            ),
+            _FakeResponse(200, {"data": []}),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_engagement("token", "ig-user", days=30)
+
+    assert result["followers"] == 120
+    assert result["following"] == 12
+    assert result["posts_count"] == 8
+    assert result["impressions"] == 25
+    assert result["reach"] == 18
+    assert result["profile_views"] == 6
+    assert result["impressions_series"] == [
+        {"date": "2026-05-20", "count": 10},
+        {"date": "2026-05-21", "count": 15},
+    ]
+    assert result["reach_series"] == [
+        {"date": "2026-05-20", "count": 7},
+        {"date": "2026-05-21", "count": 11},
+    ]
+    assert result["profile_views_series"] == [
+        {"date": "2026-05-20", "count": 2},
+        {"date": "2026-05-21", "count": 4},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_fetch_follower_growth_preserves_daily_net_series(monkeypatch):
     response = _FakeResponse(
         200,
