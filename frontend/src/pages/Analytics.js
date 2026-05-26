@@ -2361,6 +2361,26 @@ const Analytics = () => {
     label: formatReportDate(point.date, days),
   }));
   const instagramDemographics = instagramAudience.demographics || {};
+  const instagramFollowerGrowthUnavailableMessage = (
+    instagramAudience.follower_growth_error
+    || 'Follower growth data is not available for this Instagram account right now.'
+  );
+  const instagramDemographicsErrorDetails = (
+    instagramAudience.demographics_error_details
+    || instagramReport?.demographics_errors
+    || []
+  );
+  const instagramDemographicsUnavailableMessage = (
+    instagramAudience.demographics_message
+    || (
+      instagramDemographicsErrorDetails.length
+        ? instagramDemographicsErrorDetails.map((item) => (
+          item.metric ? `${item.account} (${item.metric}): ${item.error}` : `${item.account}: ${item.error}`
+        )).join(' ')
+        : null
+    )
+    || 'Audience demographics are not available for this Instagram account yet.'
+  );
   const instagramFollowerGrowthHasData = chartHasData(instagramFollowerTimeline, ['count']);
   const instagramReachTimeline = bucketSeriesByGranularity(
     instagramReach.reach_series || [],
@@ -4082,11 +4102,11 @@ const Analytics = () => {
                   )}
                 </div>
 
-                {!!instagramReport?.demographics_errors?.length && (
+                {!!instagramDemographicsErrorDetails?.length && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    {instagramReport.demographics_errors.map((item, idx) => (
+                    {instagramDemographicsErrorDetails.map((item, idx) => (
                       <div key={`${item.account}-${idx}`}>
-                        <span className="font-semibold">{item.account}:</span> {item.error}
+                        <span className="font-semibold">{item.account}:</span> {item.metric ? ` [${item.metric}] ` : ' '}{item.error}
                       </div>
                     ))}
                   </div>
@@ -4113,7 +4133,7 @@ const Analytics = () => {
                       </AreaChart>
                     </ResponsiveContainer>
                   ) : (
-                    chartEmptyState('Follower growth data is not available for this Instagram account right now.')
+                    chartEmptyState(instagramFollowerGrowthUnavailableMessage)
                   )}
                 </InstagramDetailCard>
 
@@ -4139,7 +4159,7 @@ const Analytics = () => {
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
-                      chartEmptyState()
+                      chartEmptyState(instagramDemographicsUnavailableMessage)
                     )}
                   </InstagramDetailCard>
 
@@ -4166,7 +4186,7 @@ const Analytics = () => {
                         })}
                       </div>
                     ) : (
-                      chartEmptyState()
+                      chartEmptyState(instagramDemographicsUnavailableMessage)
                     )}
                   </InstagramDetailCard>
 
@@ -4185,7 +4205,7 @@ const Analytics = () => {
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
-                      chartEmptyState()
+                      chartEmptyState(instagramDemographicsUnavailableMessage)
                     )}
                   </InstagramDetailCard>
 
@@ -4204,7 +4224,7 @@ const Analytics = () => {
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
-                      chartEmptyState()
+                      chartEmptyState(instagramDemographicsUnavailableMessage)
                     )}
                   </InstagramDetailCard>
                 </div>

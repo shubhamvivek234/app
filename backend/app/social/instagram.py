@@ -53,6 +53,98 @@ class InstagramAuth:
         normalized.sort(key=lambda point: point["date"])
         return normalized
 
+    @staticmethod
+    def _response_error(response_json: dict | None) -> str | None:
+        error = (response_json or {}).get("error") or {}
+        if isinstance(error, dict):
+            return error.get("message") or error.get("error_user_msg") or error.get("type")
+        if error:
+            return str(error)
+        return None
+
+    @staticmethod
+    def _extract_breakdowns(metric_row: dict) -> list[dict]:
+        breakdown_sets = []
+        total_value = metric_row.get("total_value")
+        if isinstance(total_value, dict):
+            breakdowns = total_value.get("breakdowns")
+            if isinstance(breakdowns, list):
+                breakdown_sets.extend(breakdowns)
+
+        direct_value = metric_row.get("value")
+        if isinstance(direct_value, dict):
+            breakdowns = direct_value.get("breakdowns")
+            if isinstance(breakdowns, list):
+                breakdown_sets.extend(breakdowns)
+
+        for point in metric_row.get("values", []) or []:
+            point_value = point.get("value")
+            if isinstance(point_value, dict):
+                breakdowns = point_value.get("breakdowns")
+                if isinstance(breakdowns, list):
+                    breakdown_sets.extend(breakdowns)
+
+        return breakdown_sets
+
+    @staticmethod
+    def _extract_signed_follower_count(raw_value) -> int | None:
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, (int, float)):
+            return int(raw_value)
+        if not isinstance(raw_value, dict):
+            return None
+
+        normalized = {str(key).lower(): value for key, value in raw_value.items()}
+        follows = 0
+        unfollows = 0
+        has_follows = False
+        has_unfollows = False
+
+        for key in (
+            "follows",
+            "followed",
+            "followers",
+            "new_followers",
+            "accounts_followed",
+            "followers_count",
+        ):
+            if key in normalized and normalized[key] is not None:
+                try:
+                    follows = int(normalized[key])
+                    has_follows = True
+                    break
+                except (TypeError, ValueError):
+                    pass
+
+        for key in (
+            "unfollows",
+            "unfollowed",
+            "nonfollowers",
+            "unfollowers",
+            "accounts_unfollowed",
+            "followers_lost",
+        ):
+            if key in normalized and normalized[key] is not None:
+                try:
+                    unfollows = int(normalized[key])
+                    has_unfollows = True
+                    break
+                except (TypeError, ValueError):
+                    pass
+
+        if has_follows or has_unfollows:
+            return follows - unfollows
+
+        for key in ("net", "net_followers", "total", "value"):
+            if key in normalized and normalized[key] is not None:
+                try:
+                    return int(normalized[key])
+                except (TypeError, ValueError):
+                    pass
+
+        return None
+
     def get_auth_url(self, state: str) -> str:
         """Generate Instagram Business Login authorization URL"""
         if not self.app_id or not self.redirect_uri:
@@ -404,6 +496,7 @@ class InstagramAuth:
                 "supported": False,
                 "metric": metric,
                 "timeframe": timeframe,
+                "attempted_requests": [],
             }
             dimension_to_key = {
                 "age": "age",
@@ -411,12 +504,28 @@ class InstagramAuth:
                 "city": "cities",
                 "country": "countries",
             }
-            request_variants = [
+            request_variants = []
+            base_variants = [
                 {"period": "lifetime", "metric_type": "total_value"},
                 {"metric_type": "total_value"},
                 {"period": "lifetime"},
                 {},
             ]
+            if timeframe:
+                request_variants.extend(
+                    [{**variant, "timeframe": timeframe} for variant in base_variants]
+                )
+            request_variants.extend(base_variants)
+
+            deduped_variants = []
+            seen_variants = set()
+            for variant in request_variants:
+                marker = tuple(sorted(variant.items()))
+                if marker in seen_variants:
+                    continue
+                seen_variants.add(marker)
+                deduped_variants.append(variant)
+            request_variants = deduped_variants
 
             def _append_dimension_values(target_result: dict, breakdown: str, values: list[dict]) -> bool:
                 if not values:
@@ -452,27 +561,38 @@ class InstagramAuth:
                         "access_token": access_token,
                         **extra_params,
                     }
-                    if timeframe:
-                        params["timeframe"] = timeframe
+                    safe_params = {key: value for key, value in params.items() if key != "access_token"}
+                    result["attempted_requests"].append({"breakdown": breakdown, **safe_params})
 
                     response = await client.get(
                         f"{self.GRAPH_URL}/{user_id}/insights",
                         params=params,
                     )
+                    response_json = response.json() if response.text else {}
+                    response_error = self._response_error(response_json)
                     if response.status_code != 200:
                         logging.warning(
                             "[Instagram] Demographics fetch failed for %s/%s with params %s: %s",
                             metric,
                             breakdown,
-                            {key: value for key, value in params.items() if key != "access_token"},
+                            safe_params,
                             response.text,
                         )
                         continue
+                    if response_error:
+                        logging.warning(
+                            "[Instagram] Demographics API returned error for %s/%s with params %s: %s",
+                            metric,
+                            breakdown,
+                            safe_params,
+                            response_error,
+                        )
+                        continue
 
-                    data = response.json().get("data", [])
+                    data = response_json.get("data", [])
                     matched_values = []
                     for metric_row in data:
-                        breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
+                        breakdowns = self._extract_breakdowns(metric_row)
                         for breakdown_row in breakdowns:
                             dimension_keys = breakdown_row.get("dimension_keys", [])
                             if breakdown not in dimension_keys:
@@ -502,10 +622,12 @@ class InstagramAuth:
                         "access_token": access_token,
                     },
                 )
-                if legacy_response.status_code == 200:
-                    data = legacy_response.json().get("data", [])
+                legacy_json = legacy_response.json() if legacy_response.text else {}
+                legacy_error = self._response_error(legacy_json)
+                if legacy_response.status_code == 200 and not legacy_error:
+                    data = legacy_json.get("data", [])
                     for metric_row in data:
-                        breakdowns = metric_row.get("total_value", {}).get("breakdowns", [])
+                        breakdowns = self._extract_breakdowns(metric_row)
                         for breakdown_row in breakdowns:
                             dimension_keys = breakdown_row.get("dimension_keys", [])
                             if not dimension_keys:
@@ -528,12 +650,12 @@ class InstagramAuth:
                 else:
                     logging.warning(
                         "[Instagram] Legacy follower demographics fetch failed: %s",
-                        legacy_response.text,
+                        legacy_error or legacy_response.text,
                     )
 
             result["supported"] = any(result[key] for key in ("age", "gender", "cities", "countries"))
             if not result["supported"]:
-                result["error"] = "Could not fetch demographics"
+                result["error"] = f"Instagram did not return usable {metric} breakdowns for this account."
             return result
 
     async def fetch_follower_growth(self, access_token: str, user_id: str, days: int | None = None) -> dict:
@@ -542,40 +664,81 @@ class InstagramAuth:
             range_days = max(int(days or 30), 1)
             until_dt = datetime.now(timezone.utc)
             since_dt = until_dt - timedelta(days=range_days)
-            response = await client.get(
-                f"{self.GRAPH_URL}/{user_id}/insights",
-                params={
-                    "metric": "follower_count",
-                    "period": "day",
-                    "since": since_dt.date().isoformat(),
-                    "until": until_dt.date().isoformat(),
-                    "access_token": access_token,
-                },
+            attempt_errors = []
+
+            async def _request_growth(metric_name: str) -> tuple[list[dict], str | None]:
+                response = await client.get(
+                    f"{self.GRAPH_URL}/{user_id}/insights",
+                    params={
+                        "metric": metric_name,
+                        "period": "day",
+                        "since": since_dt.date().isoformat(),
+                        "until": until_dt.date().isoformat(),
+                        "access_token": access_token,
+                    },
+                )
+                response_json = response.json() if response.text else {}
+                response_error = self._response_error(response_json)
+                if response.status_code != 200 or response_error:
+                    return [], response_error or response.text or f"Could not fetch {metric_name}"
+
+                series = []
+                for item in response_json.get("data", []):
+                    for point in item.get("values", []):
+                        signed_value = self._extract_signed_follower_count(point.get("value"))
+                        end_time = point.get("end_time")
+                        if signed_value is None or not end_time:
+                            continue
+                        series.append({
+                            "date": end_time[:10],
+                            "count": signed_value,
+                        })
+                series.sort(key=lambda point: point["date"])
+                if not series:
+                    return [], f"No usable {metric_name} data returned"
+                return series, None
+
+            series, primary_error = await _request_growth("follower_count")
+            if series:
+                growth = sum(int(point["count"]) for point in series)
+                return {
+                    "supported": True,
+                    "source": "follower_count",
+                    "series": series,
+                    "growth_series": series,
+                    "growth": growth,
+                    "error": None,
+                }
+            if primary_error:
+                attempt_errors.append(f"follower_count: {primary_error}")
+
+            fallback_series, fallback_error = await _request_growth("follows_and_unfollows")
+            if fallback_series:
+                growth = sum(int(point["count"]) for point in fallback_series)
+                return {
+                    "supported": True,
+                    "source": "follows_and_unfollows",
+                    "series": fallback_series,
+                    "growth_series": fallback_series,
+                    "growth": growth,
+                    "error": None,
+                }
+            if fallback_error:
+                attempt_errors.append(f"follows_and_unfollows: {fallback_error}")
+
+            error_message = (
+                "; ".join(attempt_errors)
+                if attempt_errors
+                else "Instagram did not return follower growth insights for this account."
             )
-            if response.status_code != 200:
-                logging.warning(f"[Instagram] Follower growth fetch failed: {response.text}")
-                return {"supported": False, "series": [], "error": "Could not fetch follower growth"}
-
-            series = []
-            for item in response.json().get("data", []):
-                for point in item.get("values", []):
-                    value = point.get("value")
-                    end_time = point.get("end_time")
-                    if value is None or not end_time:
-                        continue
-                    series.append({
-                        "date": end_time[:10],
-                        "count": int(value),
-                    })
-
-            series.sort(key=lambda point: point["date"])
-            growth = sum(int(point["count"]) for point in series)
-
+            logging.warning("[Instagram] Follower growth unavailable: %s", error_message)
             return {
-                "supported": True,
-                "series": series,
-                "growth_series": series,
-                "growth": growth,
+                "supported": False,
+                "source": None,
+                "series": [],
+                "growth_series": [],
+                "growth": 0,
+                "error": error_message,
             }
 
     async def fetch_comments(self, access_token: str, media_id: str, limit: int = 50) -> list:

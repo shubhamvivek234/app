@@ -1476,9 +1476,13 @@ async def analytics_instagram_report(
     accounts_used: list[str] = []
     errors: list[dict[str, str]] = []
     demographics_errors: list[dict[str, str]] = []
+    follower_growth_errors: list[dict[str, str]] = []
     report_demographics_metric: str | None = None
     report_demographics_timeframe: str | None = None
     report_demographics_source_label: str | None = None
+    follower_growth_source: str | None = None
+    follower_growth_supported = False
+    follower_growth_error: str | None = None
 
     from backend.app.social.instagram import InstagramAuth
 
@@ -1519,6 +1523,15 @@ async def analytics_instagram_report(
         summary_totals["profile_views"] += _metric_int(engagement.get("profile_views"))
         if growth.get("growth_series"):
             follower_series.append(growth["growth_series"])
+            follower_growth_supported = True
+            follower_growth_source = follower_growth_source or growth.get("source") or "follower_count"
+        elif growth.get("error"):
+            follower_growth_errors.append(
+                {
+                    "account": label,
+                    "error": growth["error"],
+                }
+            )
         if engagement.get("reach_series"):
             reach_series.append(engagement["reach_series"])
         if engagement.get("impressions_series"):
@@ -1529,6 +1542,7 @@ async def analytics_instagram_report(
         engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
         demographics = None
         demographics_source_label = None
+        last_demographics_attempt = None
         for metric_name, timeframe, source_label in (
             ("engaged_audience_demographics", engagement_demographic_timeframe, "engaged audience"),
             ("reached_audience_demographics", engagement_demographic_timeframe, "reached audience"),
@@ -1540,6 +1554,7 @@ async def analytics_instagram_report(
                 metric=metric_name,
                 timeframe=timeframe,
             )
+            last_demographics_attempt = candidate
             if candidate.get("supported"):
                 demographics = candidate
                 demographics_source_label = source_label
@@ -1559,14 +1574,23 @@ async def analytics_instagram_report(
             demographics_errors.append(
                 {
                     "account": label,
+                    "metric": (demographics or last_demographics_attempt or {}).get("metric", "demographics"),
                     "error": (
                         demographics.get("error")
                         if demographics
+                        else (last_demographics_attempt or {}).get("error")
+                        if last_demographics_attempt
                         else "Instagram did not return engaged, reached, or follower demographic insights for this account."
                     )
                     or "Instagram demographic insights are not available for this account yet.",
                 }
             )
+
+    merged_follower_growth = _merge_date_counts(follower_series)
+    if not follower_growth_supported and follower_growth_errors:
+        follower_growth_error = " | ".join(
+            f"{item['account']}: {item['error']}" for item in follower_growth_errors
+        )
 
     if not any(summary_totals.values()) and not all_current_feed and errors:
         return {
@@ -1629,7 +1653,10 @@ async def analytics_instagram_report(
             },
         },
         "audience": {
-            "follower_growth": _merge_date_counts(follower_series),
+            "follower_growth": merged_follower_growth,
+            "follower_growth_supported": follower_growth_supported,
+            "follower_growth_source": follower_growth_source,
+            "follower_growth_error": follower_growth_error,
             "demographics_supported": bool(any(merged_demographics.values())),
             "demographics_message": (
                 None
@@ -1640,6 +1667,7 @@ async def analytics_instagram_report(
             "demographics_metric": report_demographics_metric,
             "demographics_timeframe": report_demographics_timeframe,
             "demographics_source_label": report_demographics_source_label,
+            "demographics_error_details": demographics_errors,
             "demographics": merged_demographics,
         },
         "reach": {
@@ -1648,6 +1676,7 @@ async def analytics_instagram_report(
             "profile_views_series": _merge_date_counts(profile_views_series),
         },
         "errors": errors,
+        "follower_growth_errors": follower_growth_errors,
         "demographics_errors": demographics_errors,
     }
     return report

@@ -211,3 +211,82 @@ async def test_analytics_instagram_report_returns_empty_reach_series_when_no_dai
         "impressions_series": [],
         "profile_views_series": [],
     }
+    assert report["audience"]["follower_growth_supported"] is False
+    assert report["audience"]["demographics_supported"] is False
+
+
+@pytest.mark.asyncio
+async def test_analytics_instagram_report_includes_audience_diagnostics(monkeypatch):
+    async def fake_load_social_accounts(db, user_id, platform, account_id):
+        return [
+            {
+                "id": "ig_1",
+                "account_id": "ig_1",
+                "platform": "instagram",
+                "platform_user_id": "acct_a",
+                "platform_username": "alpha",
+                "display_name": "Alpha",
+                "access_token": "enc-a",
+                "user_id": user_id,
+            }
+        ]
+
+    async def fake_fetch_db_posts(db, user_id, account, limit=100):
+        return []
+
+    class FakeInstagramAuth:
+        async def fetch_feed(self, access_token, user_id, limit=100):
+            return []
+
+        async def fetch_engagement(self, access_token, user_id, days=None):
+            return {
+                "followers": 10,
+                "following": 2,
+                "posts_count": 1,
+                "followers_growth": 0,
+                "reach": 0,
+                "impressions": 0,
+                "profile_views": 0,
+                "reach_series": [],
+                "impressions_series": [],
+                "profile_views_series": [],
+            }
+
+        async def fetch_follower_growth(self, access_token, user_id, days=None):
+            return {
+                "supported": False,
+                "source": None,
+                "growth": 0,
+                "growth_series": [],
+                "error": "follower_count: unavailable; follows_and_unfollows: unavailable",
+            }
+
+        async def fetch_demographics(self, access_token, user_id, metric="follower_demographics", timeframe=None):
+            return {
+                "supported": False,
+                "metric": metric,
+                "timeframe": timeframe,
+                "age": [],
+                "gender": [],
+                "cities": [],
+                "countries": [],
+                "error": f"{metric} unavailable",
+            }
+
+    monkeypatch.setattr(analytics, "_load_social_accounts", fake_load_social_accounts)
+    monkeypatch.setattr(analytics, "_fetch_db_published_posts", fake_fetch_db_posts)
+    monkeypatch.setattr(analytics, "decrypt", lambda value: "access-token")
+    monkeypatch.setattr("backend.app.social.instagram.InstagramAuth", FakeInstagramAuth)
+
+    report = await analytics.analytics_instagram_report(
+        current_user={"user_id": "user_1"},
+        db=object(),
+        days=30,
+        account_id="ig_1",
+    )
+
+    assert report["supported"] is True
+    assert report["audience"]["follower_growth_supported"] is False
+    assert "follower_count" in report["audience"]["follower_growth_error"]
+    assert report["audience"]["demographics_supported"] is False
+    assert report["audience"]["demographics_error_details"][0]["metric"] == "follower_demographics"

@@ -320,3 +320,118 @@ async def test_fetch_demographics_falls_back_to_legacy_follower_response(monkeyp
     assert result["metric"] == "follower_demographics"
     assert result["age"] == [{"range": "25-34", "count": 5}]
     assert result["countries"] == [{"name": "US", "count": 8}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_demographics_parses_values_breakdowns_shape(monkeypatch):
+    client = _QueuedAsyncClient(
+        [
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "values": [
+                                {
+                                    "value": {
+                                        "breakdowns": [
+                                            {
+                                                "dimension_keys": ["timeframe", "age"],
+                                                "results": [
+                                                    {"dimension_values": ["THIS_WEEK", "35-44"], "value": 6},
+                                                ],
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+            ),
+        ] + ([_FakeResponse(200, {"data": []})] * 24)
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_demographics(
+        "token",
+        "ig-user",
+        metric="engaged_audience_demographics",
+        timeframe="this_week",
+    )
+
+    assert result["supported"] is True
+    assert result["age"] == [{"range": "35-44", "count": 6}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_follower_growth_falls_back_to_follows_and_unfollows(monkeypatch):
+    client = _QueuedAsyncClient(
+        [
+            _FakeResponse(200, {"data": []}),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "follows_and_unfollows",
+                            "values": [
+                                {
+                                    "value": {"follows": 5, "unfollows": 2},
+                                    "end_time": "2026-05-20T07:00:00+0000",
+                                },
+                                {
+                                    "value": {"follows": 1, "unfollows": 4},
+                                    "end_time": "2026-05-21T07:00:00+0000",
+                                },
+                            ],
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_follower_growth("token", "ig-user", days=30)
+
+    assert result["supported"] is True
+    assert result["source"] == "follows_and_unfollows"
+    assert result["growth_series"] == [
+        {"date": "2026-05-20", "count": 3},
+        {"date": "2026-05-21", "count": -3},
+    ]
+    assert result["growth"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_follower_growth_returns_explicit_error_when_unavailable(monkeypatch):
+    client = _QueuedAsyncClient(
+        [
+            _FakeResponse(200, {"data": []}),
+            _FakeResponse(200, {"data": []}),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_follower_growth("token", "ig-user", days=30)
+
+    assert result["supported"] is False
+    assert result["growth_series"] == []
+    assert "follower_count" in result["error"]
+    assert "follows_and_unfollows" in result["error"]
