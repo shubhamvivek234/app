@@ -101,10 +101,18 @@ class TikTokAdapter(PlatformAdapter):
                 total_bytes = len(full_resp.content)
 
             # Step 2: Initiate publish session
+            _PRIVACY_MAP = {
+                "public":  "PUBLIC_TO_EVERYONE",
+                "friends": "MUTUAL_FOLLOW_FRIENDS",
+                "private": "SELF_ONLY",
+            }
+            raw_privacy = post.get("tiktok_privacy", "PUBLIC_TO_EVERYONE")
+            privacy_level = _PRIVACY_MAP.get(str(raw_privacy).lower(), raw_privacy)
+
             init_body = {
                 "post_info": {
                     "title": (post.get("effective_title") or post.get("effective_content", post.get("content", "")))[:150],  # TikTok title max 150 chars
-                    "privacy_level": post.get("tiktok_privacy", "PUBLIC_TO_EVERYONE"),
+                    "privacy_level": privacy_level,
                     "disable_duet": post.get("disable_duet", False),
                     "disable_comment": post.get("disable_comment", False),
                     "disable_stitch": post.get("disable_stitch", False),
