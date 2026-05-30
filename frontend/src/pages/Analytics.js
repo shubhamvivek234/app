@@ -2317,7 +2317,7 @@ const Analytics = () => {
     },
     {
       key: 'followers_growth',
-      label: `New Followers (${days}d)`,
+      label: selectedPlatform === 'instagram' ? `Net Follower Change (${days}d)` : `New Followers (${days}d)`,
       icon: FaChartLine,
       value: audienceSource?.followers_growth,
       color: 'bg-emerald-600',
@@ -3840,10 +3840,10 @@ const Analytics = () => {
                     info="Shows the latest follower total returned for the connected Instagram account."
                   />
                   <InstagramMetricTile
-                    title="New Followers"
+                    title="Net Follower Change"
                     value={instagramSummary.new_followers}
-                    subtitle={`Avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
-                    info="Shows net follower change for the selected period. Negative values mean the account lost followers overall."
+                    subtitle={`Net avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
+                    info="Shows net follower change for the selected period. Positive values mean the account gained followers overall, and negative values mean it lost followers overall."
                   />
                 </div>
 
