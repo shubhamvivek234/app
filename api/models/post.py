@@ -17,7 +17,10 @@ class PostStatus(str, Enum):
     PUBLISHED = "published"
     PARTIAL = "partial"
     FAILED = "failed"
+    PAUSED = "paused"
     CANCELLED = "cancelled"
+    PENDING_APPROVAL = "pending_approval"
+    TEMPLATE = "template"
 
 
 class PreUploadStatus(str, Enum):
@@ -34,6 +37,9 @@ class PlatformStatus(str, Enum):
     PUBLISHED = "published"
     FAILED = "failed"
     RETRYING = "retrying"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+    PERMANENTLY_FAILED = "permanently_failed"
 
 
 class StatusHistoryEntry(BaseModel):

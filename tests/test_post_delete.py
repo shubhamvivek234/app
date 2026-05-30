@@ -69,6 +69,34 @@ def test_doc_to_response_preserves_account_identifiers_for_calendar_views():
     assert response.social_account_id == "acct-1"
 
 
+def test_doc_to_response_accepts_extended_runtime_statuses():
+    response = posts_route._doc_to_response(
+        {
+            "_id": "mongo-id",
+            "id": "post-2",
+            "user_id": "user-1",
+            "workspace_id": "ws-1",
+            "content": "Caption",
+            "platforms": ["tiktok"],
+            "status": "paused",
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+            "platform_results": {
+                "tiktok": {"status": "cancelled"},
+            },
+            "account_results": {
+                "tiktok-account-1": {"status": "paused"},
+                "youtube-account-1": {"status": "permanently_failed"},
+            },
+        }
+    )
+
+    assert response.status == "paused"
+    assert response.platform_results["tiktok"].status == "cancelled"
+    assert response.account_results["tiktok-account-1"].status == "paused"
+    assert response.account_results["youtube-account-1"].status == "permanently_failed"
+
+
 @pytest.mark.asyncio
 async def test_delete_processing_post_revokes_parent_and_child_tasks(monkeypatch):
     existing = {
