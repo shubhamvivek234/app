@@ -166,7 +166,7 @@ class PlatformAdapter(ABC):
         """
         return {}
 
-    async def check_status(self, platform_post_id: str) -> str:
+    async def check_status(self, platform_post_id: str, **kwargs) -> str:
         """
         Phase 5 — Polling fallback. Query platform API for current post status.
         Returns: "published" | "processing" | "failed" | "pending"

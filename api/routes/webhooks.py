@@ -364,21 +364,58 @@ async def _process_linkedin_webhook(payload: dict, db) -> None:
 
 async def _process_tiktok_webhook(payload: dict, db) -> None:
     """Handle TikTok webhook events (video publish result)."""
+    from celery_workers.tasks.publish import _finalize_post_status
+
     now = datetime.now(timezone.utc)
     event = payload.get("event", "")
     data = payload.get("data", {})
-    video_id = data.get("video_id") or payload.get("video_id")
-    if video_id:
+    publish_id = data.get("publish_id") or payload.get("publish_id")
+    if publish_id:
         status_map = {
-            "video.publish.success": "published",
-            "video.publish.failed": "failed",
+            "post.publish.complete": "published",
+            "post.publish.publicly_available": "published",
+            "post.publish.failed": "failed",
         }
         mapped = status_map.get(event)
         if mapped:
-            await db.posts.update_one(
-                {"platform_results.tiktok.platform_post_id": str(video_id)},
-                {"$set": {"platform_results.tiktok.status": mapped, "updated_at": now}},
+            post = await db.posts.find_one(
+                {"platform_results.tiktok.platform_post_id": str(publish_id)},
+                {"_id": 0, "id": 1, "account_results": 1},
             )
+            if not post:
+                return
+            account_results = post.get("account_results") or {}
+            update_fields = {
+                "updated_at": now,
+                "platform_results.tiktok.status": mapped,
+            }
+            if mapped == "published":
+                update_fields["platform_results.tiktok.confirmed_at"] = now
+                update_fields["platform_results.tiktok.published_at"] = now
+            else:
+                reason = data.get("reason") or payload.get("reason") or "TikTok reported publish failure"
+                update_fields["platform_results.tiktok.error"] = reason
+                update_fields["platform_results.tiktok.failed_at"] = now
+
+            for target_key, result in account_results.items():
+                if (result or {}).get("platform_post_id") != str(publish_id):
+                    continue
+                update_fields[f"account_results.{target_key}.status"] = mapped
+                if mapped == "published":
+                    update_fields[f"account_results.{target_key}.confirmed_at"] = now
+                    update_fields[f"account_results.{target_key}.published_at"] = now
+                    update_fields[f"account_results.{target_key}.error"] = None
+                else:
+                    update_fields[f"account_results.{target_key}.error"] = (
+                        data.get("reason") or payload.get("reason") or "TikTok reported publish failure"
+                    )
+                    update_fields[f"account_results.{target_key}.failed_at"] = now
+
+            await db.posts.update_one(
+                {"id": post["id"]},
+                {"$set": update_fields},
+            )
+            await _finalize_post_status(db, post["id"])
 
 
 # ── EC28 — Stripe webhook (idempotent) ──────────────────────────────────────

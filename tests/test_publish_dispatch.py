@@ -182,6 +182,8 @@ async def test_publish_to_platform_clears_stale_lock_before_retrying(monkeypatch
     monkeypatch.setattr("utils.circuit_breaker.record_success", AsyncMock(return_value=None))
     monkeypatch.setattr("utils.circuit_breaker.record_failure", AsyncMock(return_value=None))
     monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+    monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+    monkeypatch.setattr("utils.feature_flags.is_enabled", Mock(return_value=True))
 
     adapter = SimpleNamespace(publish=AsyncMock(return_value={"post_url": "https://youtube.example/post", "platform_post_id": "yt-post-1"}))
     monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=adapter))
@@ -218,6 +220,84 @@ def test_get_platform_pre_upload_status_does_not_fall_back_to_stale_aggregate_st
     }
 
     assert publish_tasks._get_platform_pre_upload_status(post, "youtube-account-1") is None
+
+
+@pytest.mark.asyncio
+async def test_publish_to_platform_preserves_async_processing_status(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    post = {
+        "id": "post-async-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["tiktok"],
+        "publish_targets": [
+            {"platform": "tiktok", "account_id": "tiktok-account-1"},
+        ],
+        "account_results": {
+            "tiktok-account-1": {"status": "pending"},
+        },
+        "platform_results": {
+            "tiktok": {"status": "pending"},
+        },
+        "media_ids": [],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-async"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "safe_setex", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_delete", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "_acquire_publish_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_publish_lock", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_requires_pre_upload", Mock(return_value=False))
+    monkeypatch.setattr(publish_tasks, "_resolve_post_account", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_acquire_platform_slot", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_platform_slot", AsyncMock(return_value=None))
+    finalize_mock = AsyncMock(return_value=("user-1", "processing", "processing"))
+    monkeypatch.setattr(publish_tasks, "_finalize_post_status", finalize_mock)
+    monkeypatch.setattr(publish_tasks, "_send_success_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_send_recovery_notification", AsyncMock(return_value=None))
+
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("utils.circuit_breaker.record_success", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.record_failure", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+    monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+
+    adapter = SimpleNamespace(
+        publish=AsyncMock(
+            return_value={
+                "status": "processing",
+                "post_url": "",
+                "platform_post_id": "tiktok-publish-1",
+            }
+        )
+    )
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=adapter))
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-async-1",
+        "tiktok",
+        "tiktok-account-1",
+        0,
+        "primary",
+    )
+
+    assert result["status"] == "processing"
+    finalize_mock.assert_awaited_once()
+    assert any(
+        "$set" in update and update["$set"].get("account_results.tiktok-account-1.provider_status") == "processing"
+        for _query, update in fake_db.posts.update_calls
+    )
 
 
 @pytest.mark.asyncio

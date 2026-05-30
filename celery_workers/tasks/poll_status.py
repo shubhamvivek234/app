@@ -47,10 +47,18 @@ def poll_processing_posts() -> dict:
 
 
 async def _async_poll() -> dict:
-    from celery_workers.tasks.publish import _get_publish_targets, _publish_queue_for, publish_to_platform
+    from celery_workers.tasks.publish import (
+        _get_publish_targets,
+        _publish_queue_for,
+        _resolve_post_account,
+        _update_platform_result,
+        _finalize_post_status,
+        publish_to_platform,
+    )
     from platform_adapters import get_adapter
     from utils.circuit_breaker import can_attempt
     from db.redis_client import get_cache_redis
+    from utils.encryption import decrypt
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -73,6 +81,7 @@ async def _async_poll() -> dict:
         {
             "_id": 0,
             "id": 1,
+            "user_id": 1,
             "platforms": 1,
             "platform_results": 1,
             "account_results": 1,
@@ -185,14 +194,47 @@ async def _async_poll() -> dict:
             # Query platform API for publish status
             try:
                 adapter = get_adapter(platform)
-                status = await adapter.check_status(platform_post_id)
+                account_doc = await _resolve_post_account(
+                    db,
+                    {**post, "user_id": post.get("user_id")},
+                    platform,
+                    account_id=target.get("account_id"),
+                )
+                access_token = ""
+                if account_doc and account_doc.get("access_token"):
+                    try:
+                        access_token = decrypt(account_doc["access_token"])
+                    except Exception:
+                        logger.warning(
+                            "poll_status: could not decrypt token for %s/%s",
+                            platform,
+                            post_id,
+                        )
+                status = await adapter.check_status(
+                    platform_post_id,
+                    access_token=access_token,
+                    account=account_doc,
+                    post=post,
+                )
                 polled += 1
 
                 if status == "published":
-                    await _mark_platform_published(db, post_id, platform, platform_post_id)
+                    await _mark_platform_published(
+                        db,
+                        post_id,
+                        platform,
+                        platform_post_id,
+                        account_id=target.get("account_id"),
+                    )
                     resolved += 1
                 elif status == "failed":
-                    await _mark_platform_failed(db, post_id, platform, "Platform reported failure")
+                    await _mark_platform_failed(
+                        db,
+                        post_id,
+                        platform,
+                        "Platform reported failure",
+                        account_id=target.get("account_id"),
+                    )
                     resolved += 1
                 else:
                     logger.debug(
@@ -216,32 +258,55 @@ async def _async_poll() -> dict:
 
 # ── Status update helpers ─────────────────────────────────────────────────────
 
-async def _mark_platform_published(db, post_id: str, platform: str, platform_post_id: str) -> None:
+async def _mark_platform_published(
+    db,
+    post_id: str,
+    platform: str,
+    platform_post_id: str,
+    *,
+    account_id: str | None = None,
+) -> None:
+    from celery_workers.tasks.publish import _update_platform_result, _finalize_post_status
+
     now = datetime.now(timezone.utc)
-    await db.posts.update_one(
-        {"id": post_id},
+    await _update_platform_result(
+        db,
+        post_id,
+        platform,
         {
-            "$set": {
-                f"platform_results.{platform}.status": "published",
-                f"platform_results.{platform}.confirmed_at": now,
-                "updated_at": now,
-            }
+            "status": "published",
+            "platform_post_id": platform_post_id,
+            "confirmed_at": now,
+            "published_at": now,
+            "error": None,
         },
+        account_id=account_id,
     )
+    await _finalize_post_status(db, post_id)
     logger.info("poll_status: confirmed %s published on %s", post_id, platform)
 
 
-async def _mark_platform_failed(db, post_id: str, platform: str, reason: str) -> None:
+async def _mark_platform_failed(
+    db,
+    post_id: str,
+    platform: str,
+    reason: str,
+    *,
+    account_id: str | None = None,
+) -> None:
+    from celery_workers.tasks.publish import _update_platform_result, _finalize_post_status
+
     now = datetime.now(timezone.utc)
-    await db.posts.update_one(
-        {"id": post_id},
+    await _update_platform_result(
+        db,
+        post_id,
+        platform,
         {
-            "$set": {
-                f"platform_results.{platform}.status": "failed",
-                f"platform_results.{platform}.error": reason,
-                f"platform_results.{platform}.failed_at": now,
-                "updated_at": now,
-            }
+            "status": "failed",
+            "error": reason,
+            "failed_at": now,
         },
+        account_id=account_id,
     )
+    await _finalize_post_status(db, post_id)
     logger.warning("poll_status: marked %s failed on %s — %s", post_id, platform, reason)

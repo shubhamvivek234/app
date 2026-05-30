@@ -1694,6 +1694,37 @@ async def _async_publish_to_platform(
 
             post_url = result.get("post_url")
             platform_post_id = result.get("platform_post_id")
+            result_status = str(result.get("status") or "published").lower()
+
+            if result_status in {"processing", "pending", "queued"}:
+                await _update_platform_result(db, post_id, platform, {
+                    "status": "processing",
+                    "post_url": post_url,
+                    "platform_post_id": platform_post_id,
+                    "provider_status": result_status,
+                    "accepted_at": datetime.now(timezone.utc),
+                    "last_attempt_at": datetime.now(timezone.utc),
+                    "error": None,
+                }, account_id=resolved_account_id)
+                await _finalize_post_status(db, post_id)
+                event_log(
+                    logger,
+                    "info",
+                    "publish.platform.accepted_async",
+                    task_name="publish_to_platform",
+                    post_id=post_id,
+                    platform=platform,
+                    account_id=resolved_account_id,
+                    platform_post_id=platform_post_id,
+                    provider_status=result_status,
+                    outcome="processing",
+                )
+                return {
+                    "status": "processing",
+                    "platform": platform,
+                    "account_id": resolved_account_id,
+                    "platform_post_id": platform_post_id,
+                }
 
             import json
             confirmation_payload = {

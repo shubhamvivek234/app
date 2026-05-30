@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 TIKTOK_API_BASE = "https://open.tiktokapis.com"
 TIKTOK_PUBLISH_INIT = f"{TIKTOK_API_BASE}/v2/post/publish/video/init/"
+TIKTOK_STATUS_FETCH = f"{TIKTOK_API_BASE}/v2/post/publish/status/fetch/"
 
 
 def _require_tiktok_enabled() -> None:
@@ -172,8 +173,49 @@ class TikTokAdapter(PlatformAdapter):
         if redis:
             await record_success(redis, self.platform)
 
-        # TikTok does not return a public URL immediately — post goes through review
+        # TikTok completes posting asynchronously. publish_id must be polled or
+        # matched against content-posting webhooks before the post is terminal.
         return {
             "post_url": "",   # Available after TikTok review completes
             "platform_post_id": publish_id,
+            "status": "processing",
         }
+
+    async def check_status(self, platform_post_id: str, *, access_token: str = "", **kwargs) -> str:
+        """
+        Poll TikTok Content Posting status using publish_id.
+        Returns: "published" | "processing" | "failed" | "pending"
+        """
+        if not access_token:
+            return "processing"
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                TIKTOK_STATUS_FETCH,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json; charset=UTF-8",
+                },
+                json={"publish_id": platform_post_id},
+            )
+        if resp.status_code != 200:
+            logger.warning("TikTok status fetch failed for %s: %s", platform_post_id, resp.text)
+            return "processing"
+
+        resp_json = resp.json()
+        error = resp_json.get("error") or {}
+        error_code = error.get("code", "ok") if isinstance(error, dict) else "ok"
+        if error_code != "ok":
+            logger.warning("TikTok status fetch returned error for %s: %s", platform_post_id, resp.text)
+            if error_code in {"invalid_publish_id", "token_not_authorized_for_specified_publish_id", "access_token_invalid"}:
+                return "failed"
+            return "processing"
+
+        status = str((resp_json.get("data") or {}).get("status") or "").upper()
+        if status == "PUBLISH_COMPLETE":
+            return "published"
+        if status == "FAILED":
+            return "failed"
+        if status == "SEND_TO_USER_INBOX":
+            return "pending"
+        return "processing"

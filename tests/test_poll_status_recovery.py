@@ -34,6 +34,12 @@ class FakePostsCollection:
         self.find_calls.append((args, kwargs))
         return FakeCursor(self.docs)
 
+    async def find_one(self, query, *_args, **_kwargs):
+        for doc in self.docs:
+            if query.get("id") == doc.get("id"):
+                return doc
+        return None
+
     async def update_one(self, query, update):
         self.update_calls.append((query, update))
         return SimpleNamespace(modified_count=1)
@@ -42,6 +48,7 @@ class FakePostsCollection:
 class FakeDB:
     def __init__(self, docs):
         self.posts = FakePostsCollection(docs)
+        self.social_accounts = SimpleNamespace(find_one=AsyncMock(return_value=None))
 
 
 class FakeClient:
@@ -163,3 +170,69 @@ async def test_poll_status_requeues_retrying_orphaned_video_publish(monkeypatch)
     kwargs = apply_async_mock.call_args.kwargs["kwargs"]
     assert kwargs["dispatch_source"] == "recovery"
     assert kwargs["account_id"] == "youtube-account-2"
+
+
+@pytest.mark.asyncio
+async def test_poll_status_finalizes_tiktok_processing_publish(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "platforms": ["tiktok"],
+        "post_type": "video",
+        "updated_at": now - timedelta(minutes=20),
+        "publish_targets": [
+            {
+                "platform": "tiktok",
+                "account_id": "tiktok-account-1",
+            }
+        ],
+        "platform_results": {
+            "tiktok": {
+                "status": "processing",
+                "platform_post_id": "publish-123",
+                "last_attempt_at": now - timedelta(minutes=20),
+            }
+        },
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "processing",
+                "platform_post_id": "publish-123",
+                "last_attempt_at": now - timedelta(minutes=20),
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+    fake_db.social_accounts = SimpleNamespace(
+        find_one=AsyncMock(
+            return_value={
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "is_active": True,
+                "access_token": "encrypted-token",
+            }
+        )
+    )
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr("utils.encryption.decrypt", Mock(return_value="plain-token"))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=SimpleNamespace(check_status=AsyncMock(return_value="published"))))
+
+    finalize_mock = AsyncMock(return_value=("user-1", "processing", "published"))
+    monkeypatch.setattr("celery_workers.tasks.publish._finalize_post_status", finalize_mock)
+
+    result = await poll_status._async_poll()
+
+    assert result["polled"] == 1
+    assert result["resolved"] == 1
+    finalize_mock.assert_awaited_once()
+    assert any(
+        "$set" in update and update["$set"].get("account_results.tiktok-account-1.status") == "published"
+        for _query, update in fake_db.posts.update_calls
+    )
