@@ -222,6 +222,61 @@ def test_get_platform_pre_upload_status_does_not_fall_back_to_stale_aggregate_st
     assert publish_tasks._get_platform_pre_upload_status(post, "youtube-account-1") is None
 
 
+def test_is_auth_error_excludes_tiktok_unaudited_private_account_restriction():
+    exc = PlatformHTTPError(
+        403,
+        '{"error":{"code":"unaudited_client_can_only_post_to_private_accounts","message":"Please review our integration guidelines"}}',
+    )
+
+    assert publish_tasks._is_auth_error("tiktok", exc) is False
+
+
+@pytest.mark.asyncio
+async def test_finalize_post_status_updates_timestamp_and_history_on_terminal_transition(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-finalize-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["tiktok"],
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "failed",
+                "error": "provider rejected post",
+            }
+        },
+        "platform_results": {
+            "tiktok": {
+                "status": "processing",
+            }
+        },
+        "status_history": [
+            {"status": "processing", "timestamp": now - timedelta(minutes=1), "actor": "celery_publish_parent"}
+        ],
+        "updated_at": now - timedelta(minutes=1),
+    }
+    fake_db = FakeDB(post)
+
+    cleanup_apply_async = Mock()
+    monkeypatch.setattr(
+        "celery_workers.tasks.cleanup.schedule_media_cleanup",
+        SimpleNamespace(apply_async=cleanup_apply_async),
+    )
+
+    user_id, prev_status, agg_status = await publish_tasks._finalize_post_status(fake_db, "post-finalize-1")
+
+    assert (user_id, prev_status, agg_status) == ("user-1", "processing", "failed")
+    assert fake_db.posts.update_calls
+    update = fake_db.posts.update_calls[0][1]
+    assert "updated_at" in update["$set"]
+    assert update["$set"]["status"] == "failed"
+    assert update["$push"]["status_history"]["status"] == "failed"
+    assert update["$push"]["status_history"]["actor"] == "celery_finalize"
+    cleanup_apply_async.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_publish_to_platform_preserves_async_processing_status(monkeypatch):
     os.environ["DB_NAME"] = "testdb"

@@ -94,6 +94,41 @@ def _is_platform_suspension_error(platform: str, exc: Exception) -> bool:
     return any(token in text for token in patterns.get(platform, patterns["default"]))
 
 
+def _is_auth_error(platform: str, exc: Exception) -> bool:
+    text = str(exc).lower()
+
+    # TikTok app-review gating is a permanent policy limitation, not an auth failure.
+    if platform == "tiktok" and "unaudited_client_can_only_post_to_private_accounts" in text:
+        return False
+
+    error_code = getattr(exc, "code", None)
+    subcode = getattr(exc, "subcode", None)
+
+    if subcode in {458, 460} or error_code in (190, 261, 326):
+        return True
+
+    if _is_scope_insufficient_error(exc):
+        return True
+
+    if isinstance(exc, PlatformHTTPError):
+        if getattr(exc, "status_code", 0) == 401:
+            return True
+        if getattr(exc, "status_code", 0) == 403:
+            auth_markers = (
+                "invalid credentials",
+                "invalid access token",
+                "access token",
+                "oauth",
+                "unauthorized",
+                "access revoked",
+                "token expired",
+                "permission denied",
+            )
+            return any(marker in text for marker in auth_markers)
+
+    return False
+
+
 def _publish_queue_for(platform: str, post: dict) -> str:
     """
     Route heavy media publishes away from light text/image work so one burst of
@@ -388,6 +423,7 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
     set_updates = {
         "status": agg_status,
         "platform_results": aggregated_platform_results,
+        "updated_at": now,
     }
     if agg_status != "failed":
         set_updates["dlq_reason"] = None
@@ -401,7 +437,17 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
             except Exception as exc:
                 logger.warning("Published card thumbnail generation failed for post %s: %s", post_id, exc)
 
-    await db.posts.update_one({"id": post_id}, {"$set": set_updates})
+    update_doc: dict = {"$set": set_updates}
+    if agg_status != prev_agg_status:
+        update_doc["$push"] = {
+            "status_history": {
+                "status": agg_status,
+                "timestamp": now,
+                "actor": "celery_finalize",
+            }
+        }
+
+    await db.posts.update_one({"id": post_id}, update_doc)
 
     if should_cleanup_media(result_entries):
         schedule_media_cleanup.apply_async(
@@ -1845,14 +1891,9 @@ async def _async_publish_to_platform(
                 }, account_id=resolved_account_id)
 
                 error_code = getattr(exc, "code", None)
-                subcode = getattr(exc, "subcode", None)
                 is_scope_error = _is_scope_insufficient_error(exc)
                 is_suspension_error = _is_platform_suspension_error(platform, exc)
-                is_auth_error = (
-                    (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
-                    or subcode in {458, 460}
-                    or error_code in (190, 261, 326)
-                )
+                is_auth_error = _is_auth_error(platform, exc)
                 if is_auth_error:
                     _acct = post.get("account", {})
                     _acct_id = _acct.get("account_id", _acct.get("id", ""))
