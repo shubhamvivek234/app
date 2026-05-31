@@ -13,6 +13,8 @@ Completed:
   Files: `celery_workers/tasks/publish.py`, `api/models/post.py`, `api/routes/accounts.py`
 - Frontend: All Posts, Dashboard failed-post surfaces, Connected Accounts, and Create Post now read TikTok restriction state directly from account payloads and block repeat publishes with explicit guidance instead of generic failed/processing messaging.
   Files: `frontend/src/lib/publishFailures.js`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Dashboard.js`, `frontend/src/pages/ConnectedAccounts.js`, `frontend/src/pages/CreatePostForm.js`
+- Frontend: Create Post now refreshes connected accounts on TikTok submit so a stale open composer cannot post again after the account was newly marked blocked.
+  Files: `frontend/src/pages/CreatePostForm.js`
 - Ops: added TikTok public-posting restriction runbook for future triage.
   Files: `docs/docs/runbooks/TIKTOK_PUBLIC_POSTING.md`
 - Backend: fixed YouTube/video publishes stuck in `processing` by delaying fallback child dispatch behind the primary queue, classifying `PlatformAPIError(code=429)` correctly, and preserving retryable pre-upload states as `retrying` instead of `failed`.

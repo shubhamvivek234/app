@@ -1365,6 +1365,22 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       toast.error('Reconnect or change the restricted TikTok account before posting.');
       return;
     }
+    if (mode !== 'draft' && selectedTikTokAccounts.length > 0) {
+      try {
+        const liveAccounts = await getSocialAccounts();
+        setAvailableAccounts(liveAccounts);
+        const liveTikTokRestriction = liveAccounts
+          .filter((account) => selectedAccounts.includes(account.id) && account.platform === 'tiktok')
+          .map((account) => getTikTokRestrictionFromAccount(account))
+          .find(Boolean);
+        if (liveTikTokRestriction) {
+          toast.error('Reconnect or change the restricted TikTok account before posting.');
+          return;
+        }
+      } catch {
+        // Keep the existing form state if the refresh fails; backend restrictions still enforce the provider block.
+      }
+    }
 
     setLoading(true);
     try {
