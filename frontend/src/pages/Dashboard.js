@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getStats, getRecentPublishedPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
+import { getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
 import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -242,10 +243,10 @@ const Dashboard = () => {
               {failedPosts.slice(0, 3).map((post) => {
                 const platformResults = post.platform_results || {};
                 const failedPlatforms = Object.entries(platformResults).filter(
-                  ([, pr]) => pr.status === 'permanently_failed'
+                  ([, pr]) => pr.status === 'permanently_failed' || pr.status === 'failed'
                 );
                 const succeededPlatforms = Object.entries(platformResults).filter(
-                  ([, pr]) => pr.status === 'success'
+                  ([, pr]) => pr.status === 'success' || pr.status === 'published'
                 );
 
                 return (
@@ -272,11 +273,18 @@ const Dashboard = () => {
                         </div>
                       ))}
                       {failedPlatforms.map(([platform, pr]) => (
-                        <div key={platform} className="flex items-center justify-between gap-2 text-xs">
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div key={platform} className="flex items-start justify-between gap-2 text-xs">
+                          <div className="flex items-start gap-2 flex-1 min-w-0">
                             <span className="text-red-500">✗</span>
-                            <span className="text-slate-700 capitalize">{platform}</span>
-                            <span className="text-red-500 truncate">{pr.error || 'Failed'}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-700 capitalize">{platform}</span>
+                                <span className="text-red-500 truncate">{getPublishFailureMessage(pr)}</span>
+                              </div>
+                              {getPublishFailureAction(pr) && (
+                                <p className="text-[11px] text-amber-700 mt-1">{getPublishFailureAction(pr)}</p>
+                              )}
+                            </div>
                           </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleRetry(post.id, platform); }}

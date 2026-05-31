@@ -97,6 +97,48 @@ def test_doc_to_response_accepts_extended_runtime_statuses():
     assert response.account_results["youtube-account-1"].status == "permanently_failed"
 
 
+def test_doc_to_response_preserves_structured_platform_failure_metadata():
+    response = posts_route._doc_to_response(
+        {
+            "_id": "mongo-id",
+            "id": "post-3",
+            "user_id": "user-1",
+            "workspace_id": "ws-1",
+            "content": "Caption",
+            "platforms": ["tiktok"],
+            "status": "failed",
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+            "platform_results": {
+                "tiktok": {
+                    "status": "failed",
+                    "error": "TikTok rejected public posting",
+                    "error_code": "unaudited_client_can_only_post_to_private_accounts",
+                    "error_category": "provider_restriction",
+                    "action_required": "complete_tiktok_audit_or_use_private_account",
+                    "restriction_type": "tiktok_public_posting_not_approved",
+                },
+            },
+            "account_results": {
+                "tiktok-account-1": {
+                    "status": "failed",
+                    "error": "TikTok rejected public posting",
+                    "error_code": "unaudited_client_can_only_post_to_private_accounts",
+                    "error_category": "provider_restriction",
+                    "action_required": "complete_tiktok_audit_or_use_private_account",
+                    "restriction_type": "tiktok_public_posting_not_approved",
+                },
+            },
+        }
+    )
+
+    assert response.platform_results["tiktok"].error_code == "unaudited_client_can_only_post_to_private_accounts"
+    assert response.platform_results["tiktok"].error_category == "provider_restriction"
+    assert response.platform_results["tiktok"].action_required == "complete_tiktok_audit_or_use_private_account"
+    assert response.platform_results["tiktok"].restriction_type == "tiktok_public_posting_not_approved"
+    assert response.account_results["tiktok-account-1"].error_code == "unaudited_client_can_only_post_to_private_accounts"
+
+
 @pytest.mark.asyncio
 async def test_delete_processing_post_revokes_parent_and_child_tasks(monkeypatch):
     existing = {

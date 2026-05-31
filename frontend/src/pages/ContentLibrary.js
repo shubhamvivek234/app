@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote, retryFailedPost } from '@/lib/api';
+import { getPublishFailureAction, getPublishFailureMessage, isTikTokPublicPostingRestriction } from '@/lib/publishFailures';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -46,21 +47,30 @@ const PlatformStatusRows = ({ post, onRetry }) => {
         const statusStyle = PLATFORM_STATUS_STYLE[r.status] || 'text-gray-500 bg-gray-50';
         const canRetry = r.status === 'permanently_failed' || r.status === 'failed';
         const isPublished = r.status === 'published';
+        const failureMessage = getPublishFailureMessage(r);
+        const failureAction = getPublishFailureAction(r);
 
         return (
-          <div key={platform} className="flex items-center gap-2 text-[11px]">
-            <span className="flex items-center gap-1 w-20 flex-shrink-0 capitalize font-medium text-gray-700">
+          <div key={platform} className="flex items-start gap-2 text-[11px]">
+            <span className="flex items-center gap-1 w-20 flex-shrink-0 capitalize font-medium text-gray-700 pt-0.5">
               {PLATFORM_ICON_MAP[platform] || null}
               {platform}
             </span>
-            <span className={`px-2 py-0.5 rounded-full font-semibold capitalize ${statusStyle}`}>
+            <span className={`px-2 py-0.5 rounded-full font-semibold capitalize mt-0.5 ${statusStyle}`}>
               {r.status || 'pending'}
             </span>
-            {r.error && !isPublished && (
-              <span className="text-gray-400 truncate max-w-[140px]" title={r.error}>
-                — {r.error}
-              </span>
-            )}
+            <div className="min-w-0 flex-1">
+              {r.error && !isPublished && (
+                <div className="text-gray-500 max-w-[240px]" title={failureMessage}>
+                  <span className={`${isTikTokPublicPostingRestriction(r) ? 'text-red-600 font-medium' : 'text-gray-400'} line-clamp-2`}>
+                    {failureMessage}
+                  </span>
+                  {failureAction && (
+                    <p className="text-[10px] text-amber-700 mt-0.5 line-clamp-2">{failureAction}</p>
+                  )}
+                </div>
+              )}
+            </div>
             {isPublished && r.post_url && (
               <a
                 href={r.post_url}

@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
-  connectBluesky, connectDiscord, connectMastodon, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
+  connectBluesky, connectDiscord, connectMastodon, getFailedPosts, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
 } from '@/lib/api';
+import { getLatestTikTokRestriction, getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { toast } from 'sonner';
@@ -241,11 +242,11 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
               </div>
             )}
 
-            {extra}
           </div>
         ) : (
           <p className="text-xs text-gray-400 italic">No accounts connected</p>
         )}
+        {extra ? <div className="mt-3">{extra}</div> : null}
       </div>
 
       {/* Connect button */}
@@ -270,6 +271,7 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
 // ── Main page ─────────────────────────────────────────────────────────────────
 const ConnectedAccounts = () => {
   const [accounts, setAccounts] = useState([]);
+  const [failedPosts, setFailedPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
 
@@ -346,14 +348,23 @@ const ConnectedAccounts = () => {
 
   const fetchAccounts = async () => {
     try {
-      const data = await getSocialAccounts();
+      const [data, failed] = await Promise.all([
+        getSocialAccounts(),
+        getFailedPosts().catch(() => []),
+      ]);
       setAccounts(data);
+      setFailedPosts(Array.isArray(failed) ? failed : []);
     } catch {
       toast.error('Failed to load accounts');
     } finally {
       setLoading(false);
     }
   };
+
+  const latestTikTokRestriction = useMemo(
+    () => getLatestTikTokRestriction(failedPosts),
+    [failedPosts]
+  );
 
   const handleConnect = async (platformId) => {
     if (platformId === 'bluesky') { setBlueskyModal(true); return; }
@@ -530,13 +541,43 @@ const ConnectedAccounts = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {PLATFORMS.map((platform) => {
             const connected = getAccountsByPlatform(platform.id);
-            const extra = platform.id === 'linkedin' && connected.length > 0 ? (
-              <button
-                onClick={() => setLinkedinPageModal(true)}
-                className="flex items-center gap-1 text-[10px] text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-full transition-colors"
-              >
-                <FaLinkedin className="text-[9px]" /> + Company Page
-              </button>
+            const platformExtras = [];
+
+            if (platform.id === 'linkedin' && connected.length > 0) {
+              platformExtras.push(
+                <button
+                  key="linkedin-company-page"
+                  onClick={() => setLinkedinPageModal(true)}
+                  className="flex items-center gap-1 text-[10px] text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-full transition-colors"
+                >
+                  <FaLinkedin className="text-[9px]" /> + Company Page
+                </button>
+              );
+            }
+
+            if (platform.id === 'tiktok' && latestTikTokRestriction) {
+              platformExtras.push(
+                <div
+                  key="tiktok-public-posting-warning"
+                  className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
+                >
+                  <p className="text-xs font-semibold text-amber-800">
+                    TikTok public posting is currently blocked
+                  </p>
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    {getPublishFailureMessage(latestTikTokRestriction.result)}
+                  </p>
+                  <p className="text-[11px] text-amber-800 mt-1">
+                    {getPublishFailureAction(latestTikTokRestriction.result)}
+                  </p>
+                </div>
+              );
+            }
+
+            const extra = platformExtras.length > 0 ? (
+              <div className="space-y-2">
+                {platformExtras}
+              </div>
             ) : null;
 
             return (

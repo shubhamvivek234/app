@@ -60,6 +60,7 @@ _PLATFORM_CONCURRENCY: dict[str, int] = {
     "threads":   10,
 }
 _PLATFORM_SLOT_TTL = 60  # safety TTL in seconds — clears leaked slots on worker crash
+_TIKTOK_PUBLIC_POSTING_RESTRICTION = "unaudited_client_can_only_post_to_private_accounts"
 
 
 def _is_video_like(post_type: str | None) -> bool:
@@ -98,7 +99,7 @@ def _is_auth_error(platform: str, exc: Exception) -> bool:
     text = str(exc).lower()
 
     # TikTok app-review gating is a permanent policy limitation, not an auth failure.
-    if platform == "tiktok" and "unaudited_client_can_only_post_to_private_accounts" in text:
+    if platform == "tiktok" and _TIKTOK_PUBLIC_POSTING_RESTRICTION in text:
         return False
 
     error_code = getattr(exc, "code", None)
@@ -127,6 +128,22 @@ def _is_auth_error(platform: str, exc: Exception) -> bool:
             return any(marker in text for marker in auth_markers)
 
     return False
+
+
+def _get_provider_restriction_metadata(platform: str, exc: Exception) -> dict[str, str] | None:
+    error_code = str(getattr(exc, "code", "") or "")
+    error_text = str(exc)
+    combined = " ".join(part for part in (error_code, error_text) if part).lower()
+
+    if platform == "tiktok" and _TIKTOK_PUBLIC_POSTING_RESTRICTION in combined:
+        return {
+            "error_code": _TIKTOK_PUBLIC_POSTING_RESTRICTION,
+            "error_category": "provider_restriction",
+            "action_required": "complete_tiktok_audit_or_use_private_account",
+            "restriction_type": "tiktok_public_posting_not_approved",
+        }
+
+    return None
 
 
 def _publish_queue_for(platform: str, post: dict) -> str:
@@ -364,6 +381,10 @@ def _aggregate_platform_results(post: dict) -> dict:
         aggregated[platform] = {
             "status": recompute_aggregate_status(results),
             "error": next((result.get("error") for result in results.values() if result.get("error")), None),
+            "error_code": next((result.get("error_code") for result in results.values() if result.get("error_code")), None),
+            "error_category": next((result.get("error_category") for result in results.values() if result.get("error_category")), None),
+            "action_required": next((result.get("action_required") for result in results.values() if result.get("action_required")), None),
+            "restriction_type": next((result.get("restriction_type") for result in results.values() if result.get("restriction_type")), None),
             "retry_count": max((result.get("retry_count", 0) for result in results.values()), default=0),
             "last_attempt_at": next((result.get("last_attempt_at") for result in results.values() if result.get("last_attempt_at")), None),
             "next_retry_at": min(next_retry_values) if next_retry_values else None,
@@ -885,14 +906,10 @@ async def _handle_pre_upload_permanent_error(
     exc: PlatformError,
 ) -> dict:
     error_code = getattr(exc, "code", None)
-    subcode = getattr(exc, "subcode", None)
     is_scope_error = _is_scope_insufficient_error(exc)
     is_suspension_error = _is_platform_suspension_error(platform, exc)
-    is_auth_error = (
-        (isinstance(exc, PlatformHTTPError) and getattr(exc, "status_code", 0) in (401, 403))
-        or subcode in {458, 460}
-        or error_code in (190, 261, 326)
-    )
+    restriction_meta = _get_provider_restriction_metadata(platform, exc)
+    is_auth_error = _is_auth_error(platform, exc)
     resolved_account_id = account_id or target_key
 
     if is_auth_error and resolved_account_id and attempt == 0:
@@ -947,6 +964,7 @@ async def _handle_pre_upload_permanent_error(
         {
             "status": "failed",
             "error": str(exc),
+            **(restriction_meta or {}),
             "retry_count": attempt,
             "last_attempt_at": datetime.now(timezone.utc),
         },
@@ -1399,6 +1417,11 @@ async def _async_publish_to_platform(
             platform,
             {
                 "status": "processing",
+                "error": None,
+                "error_code": None,
+                "error_category": None,
+                "action_required": None,
+                "restriction_type": None,
                 "last_attempt_at": datetime.now(timezone.utc),
                 "dispatch_started_at": datetime.now(timezone.utc),
                 "dispatch_source": dispatch_source,
@@ -1751,6 +1774,10 @@ async def _async_publish_to_platform(
                     "accepted_at": datetime.now(timezone.utc),
                     "last_attempt_at": datetime.now(timezone.utc),
                     "error": None,
+                    "error_code": None,
+                    "error_category": None,
+                    "action_required": None,
+                    "restriction_type": None,
                 }, account_id=resolved_account_id)
                 await _finalize_post_status(db, post_id)
                 event_log(
@@ -1794,12 +1821,21 @@ async def _async_publish_to_platform(
                 "post_url": post_url,
                 "platform_post_id": platform_post_id,
                 "published_at": datetime.now(timezone.utc),
+                "error": None,
+                "error_code": None,
+                "error_category": None,
+                "action_required": None,
+                "restriction_type": None,
             }, account_id=resolved_account_id)
             await db.posts.update_one(
                 {"id": post_id},
                 {
                     "$unset": {
                         f"account_results.{target_key}.error": "",
+                        f"account_results.{target_key}.error_code": "",
+                        f"account_results.{target_key}.error_category": "",
+                        f"account_results.{target_key}.action_required": "",
+                        f"account_results.{target_key}.restriction_type": "",
                         f"account_results.{target_key}.next_retry_at": "",
                         f"account_results.{target_key}.dlq_reason": "",
                     }
@@ -1883,9 +1919,11 @@ async def _async_publish_to_platform(
                     account_id=resolved_account_id,
                     failure_type="permanent",
                 )
+                restriction_meta = _get_provider_restriction_metadata(platform, exc)
                 await _update_platform_result(db, post_id, platform, {
                     "status": "failed",
                     "error": str(exc),
+                    **(restriction_meta or {}),
                     "retry_count": attempt,
                     "last_attempt_at": datetime.now(timezone.utc),
                 }, account_id=resolved_account_id)

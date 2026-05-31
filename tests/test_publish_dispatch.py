@@ -231,6 +231,23 @@ def test_is_auth_error_excludes_tiktok_unaudited_private_account_restriction():
     assert publish_tasks._is_auth_error("tiktok", exc) is False
 
 
+def test_provider_restriction_metadata_maps_tiktok_public_posting_gate():
+    exc = PlatformHTTPError(
+        403,
+        "TikTok rejected the post",
+        code="unaudited_client_can_only_post_to_private_accounts",
+    )
+
+    metadata = publish_tasks._get_provider_restriction_metadata("tiktok", exc)
+
+    assert metadata == {
+        "error_code": "unaudited_client_can_only_post_to_private_accounts",
+        "error_category": "provider_restriction",
+        "action_required": "complete_tiktok_audit_or_use_private_account",
+        "restriction_type": "tiktok_public_posting_not_approved",
+    }
+
+
 @pytest.mark.asyncio
 async def test_finalize_post_status_updates_timestamp_and_history_on_terminal_transition(monkeypatch):
     os.environ["DB_NAME"] = "testdb"
@@ -275,6 +292,94 @@ async def test_finalize_post_status_updates_timestamp_and_history_on_terminal_tr
     assert update["$push"]["status_history"]["status"] == "failed"
     assert update["$push"]["status_history"]["actor"] == "celery_finalize"
     cleanup_apply_async.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_tiktok_public_posting_restriction_marks_structured_failure_without_reauth(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-restriction-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["tiktok"],
+        "publish_targets": [{"platform": "tiktok", "account_id": "tiktok-account-1"}],
+        "account_results": {
+            "tiktok-account-1": {"status": "pending"},
+        },
+        "platform_results": {
+            "tiktok": {"status": "pending"},
+        },
+        "media_ids": [],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+        "created_at": now,
+        "updated_at": now,
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-tiktok-restriction"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "safe_setex", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_delete", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "_acquire_publish_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_publish_lock", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_requires_pre_upload", Mock(return_value=False))
+    monkeypatch.setattr(publish_tasks, "_resolve_post_account", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_acquire_platform_slot", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_platform_slot", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_finalize_post_status", AsyncMock(return_value=("user-1", "processing", "failed")))
+    monkeypatch.setattr(publish_tasks, "_send_failure_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_send_recovery_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_send_success_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("utils.circuit_breaker.record_success", AsyncMock(return_value=None))
+    record_failure_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(publish_tasks, "record_failure", record_failure_mock)
+    monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+    monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+    monkeypatch.setattr("utils.feature_flags.is_enabled", Mock(return_value=True))
+
+    apply_async_mock = Mock()
+    monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", apply_async_mock)
+
+    adapter = SimpleNamespace(
+        publish=AsyncMock(
+            side_effect=PlatformHTTPError(
+                403,
+                "TikTok rejected the post",
+                code="unaudited_client_can_only_post_to_private_accounts",
+            )
+        )
+    )
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=adapter))
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-tiktok-restriction-1",
+        "tiktok",
+        "tiktok-account-1",
+        0,
+        "primary",
+    )
+
+    assert result["status"] == "permanent_failure"
+    assert apply_async_mock.call_count == 0
+    record_failure_mock.assert_awaited_once()
+    assert any(
+        "$set" in update
+        and update["$set"].get("account_results.tiktok-account-1.error_code") == "unaudited_client_can_only_post_to_private_accounts"
+        and update["$set"].get("account_results.tiktok-account-1.error_category") == "provider_restriction"
+        and update["$set"].get("account_results.tiktok-account-1.action_required") == "complete_tiktok_audit_or_use_private_account"
+        and update["$set"].get("account_results.tiktok-account-1.restriction_type") == "tiktok_public_posting_not_approved"
+        for _query, update in fake_db.posts.update_calls
+    )
 
 
 @pytest.mark.asyncio

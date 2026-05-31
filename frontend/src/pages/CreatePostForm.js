@@ -13,12 +13,14 @@ import axios from 'axios';
 import Cropper from 'react-easy-crop';
 import {
   getCachedSocialAccounts,
+  getFailedPosts,
   getSocialAccounts,
   uploadMedia,
   waitForUploadReady,
   getHashtagGroups,
   generateContent,
 } from '@/lib/api';
+import { getLatestTikTokRestriction, getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
@@ -514,6 +516,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [selectedAccounts, setSelectedAccounts]   = useState([]);
   const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
+  const [failedPosts, setFailedPosts]             = useState([]);
 
   // ── Shared + per-platform content ────────────────────────────────────────
   const [commonCaption, setCommonCaption] = useState('');
@@ -593,8 +596,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const accounts = await getSocialAccounts();
+      const [accounts, failed] = await Promise.all([
+        getSocialAccounts(),
+        getFailedPosts().catch(() => []),
+      ]);
       setAvailableAccounts(accounts);
+      setFailedPosts(Array.isArray(failed) ? failed : []);
     } catch {
       if (!cachedAccounts) {
         setAvailableAccounts([]);
@@ -831,6 +838,17 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const blockingPlatforms = selectedPlatforms.filter((platform) =>
     selectedAccountsByPlatform(platform).some((account) => (accountValidation[account.id]?.errors || []).length > 0)
   );
+  const selectedTikTokAccounts = useMemo(
+    () => availableAccounts.filter((account) => selectedAccounts.includes(account.id) && account.platform === 'tiktok'),
+    [availableAccounts, selectedAccounts]
+  );
+  const latestSelectedTikTokRestriction = useMemo(() => {
+    for (const account of selectedTikTokAccounts) {
+      const restriction = getLatestTikTokRestriction(failedPosts, account.id);
+      if (restriction) return restriction;
+    }
+    return null;
+  }, [failedPosts, selectedTikTokAccounts]);
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -2012,59 +2030,71 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
   /** Fixed bottom action bar */
   const bottomBar = (
-    <div className="h-16 bg-white border-t-2 border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-lg">
-      <label className="flex items-center gap-2.5 cursor-pointer hover:opacity-70 transition-opacity">
-        <Checkbox
-          checked={createAnother}
-          onCheckedChange={(v) => setCreateAnother(!!v)}
-          className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-        />
-        <span className="text-sm font-medium text-gray-700">Create Another</span>
-      </label>
+    <div className="bg-white border-t-2 border-gray-200 px-5 py-3 flex-shrink-0 z-10 shadow-lg">
+      {latestSelectedTikTokRestriction && (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-800">
+            TikTok public posting warning
+          </p>
+          <p className="text-[11px] text-amber-700 mt-1">
+            {getPublishFailureMessage(latestSelectedTikTokRestriction.result)}
+          </p>
+          <p className="text-[11px] text-amber-800 mt-1">
+            {getPublishFailureAction(latestSelectedTikTokRestriction.result)}
+          </p>
+        </div>
+      )}
 
-      <div className="flex items-center gap-3">
-        {/* Save Drafts */}
-        <Button
-          variant="outline" size="sm"
-          onClick={() => handleSubmit('draft')}
-          disabled={loading}
-          className="text-gray-700 border-2 border-gray-300 h-9 font-semibold hover:border-gray-400 hover:bg-gray-50 transition-colors"
-        >
-          Save Drafts
-        </Button>
+      <div className="flex items-center justify-between gap-4">
+        <label className="flex items-center gap-2.5 cursor-pointer hover:opacity-70 transition-opacity">
+          <Checkbox
+            checked={createAnother}
+            onCheckedChange={(v) => setCreateAnother(!!v)}
+            className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+          />
+          <span className="text-sm font-medium text-gray-700">Create Another</span>
+        </label>
 
-        {/* Post Now */}
-        <Button
-          size="sm"
-          onClick={() => handleSubmit('now')}
-          disabled={loading || hasBlockingErrors}
-          className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
-        >
-          {loading ? 'Posting…' : 'Post Now'}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline" size="sm"
+            onClick={() => handleSubmit('draft')}
+            disabled={loading}
+            className="text-gray-700 border-2 border-gray-300 h-9 font-semibold hover:border-gray-400 hover:bg-gray-50 transition-colors"
+          >
+            Save Drafts
+          </Button>
 
-        {/* Schedule */}
-        <Button
-          variant="outline" size="sm"
-          onClick={() => setShowTimeslotPicker(true)}
-          disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
-          className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
-          title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
-        >
-          <FaClock className="text-xs" />
-          Add to Timeslot
-        </Button>
+          <Button
+            size="sm"
+            onClick={() => handleSubmit('now')}
+            disabled={loading || hasBlockingErrors}
+            className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+          >
+            {loading ? 'Posting…' : 'Post Now'}
+          </Button>
 
-        {/* Schedule */}
-        <Button
-          variant="outline" size="sm"
-          onClick={() => setShowSchedulePicker(true)}
-          disabled={loading || hasBlockingErrors}
-          className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
-        >
-          <FaClock className="text-xs" />
-          Schedule
-        </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowTimeslotPicker(true)}
+            disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
+            className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
+            title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
+          >
+            <FaClock className="text-xs" />
+            Add to Timeslot
+          </Button>
+
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setShowSchedulePicker(true)}
+            disabled={loading || hasBlockingErrors}
+            className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
+          >
+            <FaClock className="text-xs" />
+            Schedule
+          </Button>
+        </div>
       </div>
     </div>
   );

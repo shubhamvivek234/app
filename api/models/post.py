@@ -52,6 +52,10 @@ class StatusHistoryEntry(BaseModel):
 class PlatformResult(BaseModel):
     status: PlatformStatus = PlatformStatus.PENDING
     error: str | None = None
+    error_code: str | None = None
+    error_category: str | None = None
+    action_required: str | None = None
+    restriction_type: str | None = None
     retry_count: int = 0
     last_attempt_at: datetime | None = None
     next_retry_at: datetime | None = None

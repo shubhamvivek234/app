@@ -7,8 +7,14 @@ Branch: main
 Focus: R2 migration + composer reliability + onboarding reliability
 
 ## Last Session Completed
-Date: 2026-05-25
+Date: 2026-05-31
 Completed:
+- Backend: TikTok public-account posting failures are now classified as provider restrictions with structured `error_code` / `error_category` / `action_required` / `restriction_type` metadata, and pre-upload auth handling now excludes this restriction from reconnect/token-refresh flows.
+  Files: `celery_workers/tasks/publish.py`, `api/models/post.py`
+- Frontend: All Posts, Dashboard failed-post surfaces, Connected Accounts, and Create Post now show explicit TikTok public-posting guidance instead of generic failed/processing messaging when the app is not audited for public posting.
+  Files: `frontend/src/lib/publishFailures.js`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Dashboard.js`, `frontend/src/pages/ConnectedAccounts.js`, `frontend/src/pages/CreatePostForm.js`
+- Ops: added TikTok public-posting restriction runbook for future triage.
+  Files: `docs/docs/runbooks/TIKTOK_PUBLIC_POSTING.md`
 - Backend: fixed YouTube/video publishes stuck in `processing` by delaying fallback child dispatch behind the primary queue, classifying `PlatformAPIError(code=429)` correctly, and preserving retryable pre-upload states as `retrying` instead of `failed`.
   Files: `celery_workers/tasks/publish.py`, `platform_adapters/base.py`
 - Backend: removed the false local YouTube publish limiter and now rely on real Google API responses plus the circuit breaker for upload flow.
