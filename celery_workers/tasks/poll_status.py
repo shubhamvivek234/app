@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # confirmation window, so we poll its async publish ids sooner.
 _POLLING_THRESHOLD_MINUTES = 10
 _TIKTOK_POLLING_THRESHOLD_MINUTES = 3
+_TIKTOK_CONFIRMATION_RETRY_SECONDS = 60
 # Processing posts with no platform post id and no publish attempt after this
 # window are treated as orphaned child tasks and re-queued.
 _ORPHAN_CHILD_THRESHOLD_MINUTES = 3
@@ -44,6 +45,36 @@ def _polling_threshold_minutes(platform: str) -> int:
     return _TIKTOK_POLLING_THRESHOLD_MINUTES if platform == "tiktok" else _POLLING_THRESHOLD_MINUTES
 
 
+def _is_terminal_status(status: str | None) -> bool:
+    return str(status or "").lower() in {"published", "failed", "permanently_failed", "cancelled", "paused"}
+
+
+def _resolve_target_state(post: dict, platform: str, account_id: str | None) -> tuple[str, dict]:
+    target_key = account_id or platform
+    account_results = post.get("account_results") or {}
+    platform_results = post.get("platform_results") or {}
+    return target_key, account_results.get(target_key) or platform_results.get(platform) or {}
+
+
+def enqueue_tiktok_confirmation_check(
+    post_id: str,
+    platform_post_id: str,
+    account_id: str | None,
+    *,
+    attempt: int,
+):
+    return confirm_tiktok_publish_status.apply_async(
+        kwargs={
+            "post_id": post_id,
+            "platform_post_id": platform_post_id,
+            "account_id": account_id,
+            "attempt": attempt,
+        },
+        countdown=_TIKTOK_CONFIRMATION_RETRY_SECONDS,
+        queue="default",
+    )
+
+
 # ── Beat schedule registration ────────────────────────────────────────────────
 
 celery_app.conf.beat_schedule["poll-processing-posts"] = {
@@ -59,6 +90,200 @@ celery_app.conf.beat_schedule["poll-processing-posts"] = {
 def poll_processing_posts() -> dict:
     """Find PROCESSING posts with no recent update and check platform status."""
     return run_async(_async_poll())
+
+
+@celery_app.task(name="celery_workers.tasks.poll_status.confirm_tiktok_publish_status")
+def confirm_tiktok_publish_status(
+    post_id: str,
+    platform_post_id: str,
+    account_id: str | None,
+    attempt: int = 0,
+) -> dict:
+    """Per-post TikTok confirmation loop for async uploads."""
+    return run_async(
+        _async_confirm_tiktok_publish_status(
+            post_id=post_id,
+            platform_post_id=platform_post_id,
+            account_id=account_id,
+            attempt=attempt,
+        )
+    )
+
+
+async def _async_confirm_tiktok_publish_status(
+    *,
+    post_id: str,
+    platform_post_id: str,
+    account_id: str | None,
+    attempt: int,
+) -> dict:
+    from celery_workers.tasks.publish import _resolve_post_account, _update_platform_result
+    from platform_adapters import get_adapter
+    from utils.circuit_breaker import can_attempt
+    from db.redis_client import get_cache_redis
+    from utils.encryption import decrypt
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+    now = datetime.now(timezone.utc)
+    post = await db.posts.find_one(
+        {"id": post_id},
+        {
+            "_id": 0,
+            "id": 1,
+            "user_id": 1,
+            "status": 1,
+            "deleted_at": 1,
+            "updated_at": 1,
+            "platform_results": 1,
+            "account_results": 1,
+            "publish_targets": 1,
+        },
+    )
+    if not post:
+        return {"status": "noop", "reason": "post_deleted"}
+    if post.get("deleted_at") or post.get("status") == "cancelled":
+        return {"status": "noop", "reason": "post_cancelled"}
+
+    target_key, result = _resolve_target_state(post, "tiktok", account_id)
+    current_status = str(result.get("status") or "").lower()
+    current_platform_post_id = str(result.get("platform_post_id") or "")
+    if _is_terminal_status(current_status):
+        return {"status": "noop", "reason": "already_terminal", "current_status": current_status}
+    if not current_platform_post_id or current_platform_post_id != str(platform_post_id):
+        return {"status": "noop", "reason": "platform_post_id_mismatch", "current_status": current_status}
+    if current_status not in {"processing", "pending", "retrying"}:
+        return {"status": "noop", "reason": "not_processing", "current_status": current_status}
+
+    accepted_at = (
+        _coerce_utc_datetime(result.get("accepted_at"))
+        or _coerce_utc_datetime(post.get("updated_at"))
+        or now
+    )
+    stale_cutoff = now - timedelta(hours=_STALE_THRESHOLD_HOURS)
+    if accepted_at < stale_cutoff:
+        await _mark_platform_failed(
+            db,
+            post_id,
+            "tiktok",
+            "Exceeded polling timeout — no confirmation received",
+            account_id=account_id,
+        )
+        return {"status": "failed", "reason": "stale_timeout"}
+
+    cache_redis = get_cache_redis()
+    if not await can_attempt(cache_redis, "tiktok"):
+        follow_up = enqueue_tiktok_confirmation_check(
+            post_id,
+            str(platform_post_id),
+            account_id,
+            attempt=attempt + 1,
+        )
+        await _update_platform_result(
+            db,
+            post_id,
+            "tiktok",
+            {
+                "status": "processing",
+                "provider_status": str(result.get("provider_status") or "processing"),
+                "confirmation_task_id": getattr(follow_up, "id", None),
+                "confirmation_attempt_count": attempt + 1,
+                "last_confirmation_check_at": now,
+                "next_confirmation_check_at": now + timedelta(seconds=_TIKTOK_CONFIRMATION_RETRY_SECONDS),
+                "last_attempt_at": now,
+            },
+            account_id=account_id or target_key,
+        )
+        return {"status": "requeued", "reason": "circuit_open", "attempt": attempt + 1}
+
+    try:
+        account_doc = await _resolve_post_account(
+            db,
+            {**post, "user_id": post.get("user_id")},
+            "tiktok",
+            account_id=account_id,
+        )
+        access_token = ""
+        if account_doc and account_doc.get("access_token"):
+            try:
+                access_token = decrypt(account_doc["access_token"])
+            except Exception:
+                logger.warning("poll_status: could not decrypt token for tiktok/%s", post_id)
+
+        adapter = get_adapter("tiktok")
+        status = await adapter.check_status(
+            str(platform_post_id),
+            access_token=access_token,
+            account=account_doc,
+            post=post,
+        )
+    except Exception as exc:
+        logger.warning("poll_status: tiktok confirmation failed for %s: %s", post_id, exc)
+        follow_up = enqueue_tiktok_confirmation_check(
+            post_id,
+            str(platform_post_id),
+            account_id,
+            attempt=attempt + 1,
+        )
+        await _update_platform_result(
+            db,
+            post_id,
+            "tiktok",
+            {
+                "status": "processing",
+                "provider_status": str(result.get("provider_status") or "processing"),
+                "confirmation_task_id": getattr(follow_up, "id", None),
+                "confirmation_attempt_count": attempt + 1,
+                "last_confirmation_check_at": now,
+                "next_confirmation_check_at": now + timedelta(seconds=_TIKTOK_CONFIRMATION_RETRY_SECONDS),
+                "last_attempt_at": now,
+            },
+            account_id=account_id or target_key,
+        )
+        return {"status": "requeued", "reason": "check_failed", "attempt": attempt + 1}
+
+    if status == "published":
+        await _mark_platform_published(
+            db,
+            post_id,
+            "tiktok",
+            str(platform_post_id),
+            account_id=account_id,
+        )
+        return {"status": "published"}
+
+    if status == "failed":
+        await _mark_platform_failed(
+            db,
+            post_id,
+            "tiktok",
+            "Platform reported failure",
+            account_id=account_id,
+        )
+        return {"status": "failed"}
+
+    follow_up = enqueue_tiktok_confirmation_check(
+        post_id,
+        str(platform_post_id),
+        account_id,
+        attempt=attempt + 1,
+    )
+    await _update_platform_result(
+        db,
+        post_id,
+        "tiktok",
+        {
+            "status": "processing",
+            "provider_status": str(status or "processing"),
+            "confirmation_task_id": getattr(follow_up, "id", None),
+            "confirmation_attempt_count": attempt + 1,
+            "last_confirmation_check_at": now,
+            "next_confirmation_check_at": now + timedelta(seconds=_TIKTOK_CONFIRMATION_RETRY_SECONDS),
+            "last_attempt_at": now,
+        },
+        account_id=account_id or target_key,
+    )
+    return {"status": "processing", "attempt": attempt + 1}
 
 
 async def _async_poll() -> dict:

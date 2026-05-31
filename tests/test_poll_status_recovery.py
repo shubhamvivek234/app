@@ -360,3 +360,196 @@ async def test_poll_status_handles_naive_mongo_datetimes(monkeypatch):
     assert result["polled"] == 1
     assert result["resolved"] == 1
     finalize_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tiktok_confirmation_task_marks_post_published(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-confirm-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "platforms": ["tiktok"],
+        "updated_at": now - timedelta(minutes=2),
+        "publish_targets": [{"platform": "tiktok", "account_id": "tiktok-account-1"}],
+        "platform_results": {
+            "tiktok": {
+                "status": "processing",
+                "platform_post_id": "publish-789",
+                "accepted_at": now - timedelta(minutes=2),
+                "provider_status": "processing",
+            }
+        },
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "processing",
+                "platform_post_id": "publish-789",
+                "accepted_at": now - timedelta(minutes=2),
+                "provider_status": "processing",
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+    fake_db.social_accounts = SimpleNamespace(
+        find_one=AsyncMock(
+            return_value={
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "is_active": True,
+                "access_token": "encrypted-token",
+            }
+        )
+    )
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr("utils.encryption.decrypt", Mock(return_value="plain-token"))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "platform_adapters.get_adapter",
+        Mock(return_value=SimpleNamespace(check_status=AsyncMock(return_value="published"))),
+    )
+    finalize_mock = AsyncMock(return_value=("user-1", "processing", "published"))
+    monkeypatch.setattr("celery_workers.tasks.publish._finalize_post_status", finalize_mock)
+
+    result = await poll_status._async_confirm_tiktok_publish_status(
+        post_id="post-tiktok-confirm-1",
+        platform_post_id="publish-789",
+        account_id="tiktok-account-1",
+        attempt=0,
+    )
+
+    assert result["status"] == "published"
+    assert any(
+        "$set" in update and update["$set"].get("account_results.tiktok-account-1.status") == "published"
+        for _query, update in fake_db.posts.update_calls
+    )
+    finalize_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tiktok_confirmation_task_requeues_every_minute_while_processing(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-confirm-2",
+        "user_id": "user-1",
+        "status": "processing",
+        "platforms": ["tiktok"],
+        "updated_at": now - timedelta(minutes=2),
+        "publish_targets": [{"platform": "tiktok", "account_id": "tiktok-account-1"}],
+        "platform_results": {
+            "tiktok": {
+                "status": "processing",
+                "platform_post_id": "publish-790",
+                "accepted_at": now - timedelta(minutes=2),
+                "provider_status": "processing",
+            }
+        },
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "processing",
+                "platform_post_id": "publish-790",
+                "accepted_at": now - timedelta(minutes=2),
+                "provider_status": "processing",
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+    fake_db.social_accounts = SimpleNamespace(
+        find_one=AsyncMock(
+            return_value={
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "is_active": True,
+                "access_token": "encrypted-token",
+            }
+        )
+    )
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr("utils.encryption.decrypt", Mock(return_value="plain-token"))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "platform_adapters.get_adapter",
+        Mock(return_value=SimpleNamespace(check_status=AsyncMock(return_value="processing"))),
+    )
+    follow_up_mock = Mock(return_value=SimpleNamespace(id="follow-up-2"))
+    monkeypatch.setattr(poll_status, "enqueue_tiktok_confirmation_check", follow_up_mock)
+
+    result = await poll_status._async_confirm_tiktok_publish_status(
+        post_id="post-tiktok-confirm-2",
+        platform_post_id="publish-790",
+        account_id="tiktok-account-1",
+        attempt=1,
+    )
+
+    assert result == {"status": "processing", "attempt": 2}
+    follow_up_mock.assert_called_once_with(
+        "post-tiktok-confirm-2",
+        "publish-790",
+        "tiktok-account-1",
+        attempt=2,
+    )
+    assert any(
+        "$set" in update and update["$set"].get("account_results.tiktok-account-1.confirmation_attempt_count") == 2
+        and update["$set"].get("account_results.tiktok-account-1.confirmation_task_id") == "follow-up-2"
+        for _query, update in fake_db.posts.update_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_tiktok_confirmation_task_noops_when_target_already_terminal(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-confirm-3",
+        "user_id": "user-1",
+        "status": "published",
+        "platforms": ["tiktok"],
+        "updated_at": now - timedelta(minutes=2),
+        "publish_targets": [{"platform": "tiktok", "account_id": "tiktok-account-1"}],
+        "platform_results": {
+            "tiktok": {
+                "status": "published",
+                "platform_post_id": "publish-791",
+                "accepted_at": now - timedelta(minutes=2),
+            }
+        },
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "published",
+                "platform_post_id": "publish-791",
+                "accepted_at": now - timedelta(minutes=2),
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    check_status_mock = AsyncMock(return_value="published")
+    monkeypatch.setattr(
+        "platform_adapters.get_adapter",
+        Mock(return_value=SimpleNamespace(check_status=check_status_mock)),
+    )
+
+    result = await poll_status._async_confirm_tiktok_publish_status(
+        post_id="post-tiktok-confirm-3",
+        platform_post_id="publish-791",
+        account_id="tiktok-account-1",
+        attempt=0,
+    )
+
+    assert result == {
+        "status": "noop",
+        "reason": "already_terminal",
+        "current_status": "published",
+    }
+    check_status_mock.assert_not_awaited()
+    assert fake_db.posts.update_calls == []

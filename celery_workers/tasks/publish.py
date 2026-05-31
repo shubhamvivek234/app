@@ -1878,19 +1878,51 @@ async def _async_publish_to_platform(
             result_status = str(result.get("status") or "published").lower()
 
             if result_status in {"processing", "pending", "queued"}:
+                accepted_at = datetime.now(timezone.utc)
                 await _update_platform_result(db, post_id, platform, {
                     "status": "processing",
                     "post_url": post_url,
                     "platform_post_id": platform_post_id,
                     "provider_status": result_status,
-                    "accepted_at": datetime.now(timezone.utc),
-                    "last_attempt_at": datetime.now(timezone.utc),
+                    "accepted_at": accepted_at,
+                    "last_attempt_at": accepted_at,
                     "error": None,
                     "error_code": None,
                     "error_category": None,
                     "action_required": None,
                     "restriction_type": None,
                 }, account_id=resolved_account_id)
+                if platform == "tiktok" and platform_post_id:
+                    try:
+                        from celery_workers.tasks.poll_status import (
+                            _TIKTOK_CONFIRMATION_RETRY_SECONDS,
+                            enqueue_tiktok_confirmation_check,
+                        )
+
+                        follow_up = enqueue_tiktok_confirmation_check(
+                            post_id,
+                            str(platform_post_id),
+                            resolved_account_id,
+                            attempt=0,
+                        )
+                        await _update_platform_result(
+                            db,
+                            post_id,
+                            platform,
+                            {
+                                "confirmation_task_id": getattr(follow_up, "id", None),
+                                "confirmation_attempt_count": 0,
+                                "next_confirmation_check_at": accepted_at + timedelta(seconds=_TIKTOK_CONFIRMATION_RETRY_SECONDS),
+                            },
+                            account_id=resolved_account_id,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to schedule TikTok confirmation follow-up for %s/%s: %s",
+                            post_id,
+                            resolved_account_id,
+                            exc,
+                        )
                 await _finalize_post_status(db, post_id)
                 event_log(
                     logger,

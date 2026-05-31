@@ -553,6 +553,11 @@ async def test_publish_to_platform_preserves_async_processing_status(monkeypatch
     monkeypatch.setattr("utils.circuit_breaker.record_failure", AsyncMock(return_value=None))
     monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
     monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+    follow_up_mock = Mock(return_value=SimpleNamespace(id="tiktok-confirm-1"))
+    monkeypatch.setattr(
+        "celery_workers.tasks.poll_status.enqueue_tiktok_confirmation_check",
+        follow_up_mock,
+    )
 
     adapter = SimpleNamespace(
         publish=AsyncMock(
@@ -576,8 +581,18 @@ async def test_publish_to_platform_preserves_async_processing_status(monkeypatch
 
     assert result["status"] == "processing"
     finalize_mock.assert_awaited_once()
+    follow_up_mock.assert_called_once_with(
+        "post-async-1",
+        "tiktok-publish-1",
+        "tiktok-account-1",
+        attempt=0,
+    )
     assert any(
         "$set" in update and update["$set"].get("account_results.tiktok-account-1.provider_status") == "processing"
+        for _query, update in fake_db.posts.update_calls
+    )
+    assert any(
+        "$set" in update and update["$set"].get("account_results.tiktok-account-1.confirmation_task_id") == "tiktok-confirm-1"
         for _query, update in fake_db.posts.update_calls
     )
 
