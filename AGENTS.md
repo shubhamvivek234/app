@@ -15,6 +15,8 @@ Completed:
   Files: `frontend/src/lib/publishFailures.js`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Dashboard.js`, `frontend/src/pages/ConnectedAccounts.js`, `frontend/src/pages/CreatePostForm.js`
 - Frontend: Create Post now refreshes connected accounts on TikTok submit so a stale open composer cannot post again after the account was newly marked blocked.
   Files: `frontend/src/pages/CreatePostForm.js`
+- Backend: fallback publish tasks now skip when a target is already accepted asynchronously (`processing` with a provider post id), preventing duplicate TikTok uploads after the primary task succeeds.
+  Files: `celery_workers/tasks/publish.py`, `tests/test_publish_dispatch.py`
 - Ops: added TikTok public-posting restriction runbook for future triage.
   Files: `docs/docs/runbooks/TIKTOK_PUBLIC_POSTING.md`
 - Backend: fixed YouTube/video publishes stuck in `processing` by delaying fallback child dispatch behind the primary queue, classifying `PlatformAPIError(code=429)` correctly, and preserving retryable pre-upload states as `retrying` instead of `failed`.

@@ -462,6 +462,18 @@ def _is_terminal_target_state(state: dict | None) -> bool:
     return status in {"published", "failed", "permanently_failed", "cancelled", "paused"}
 
 
+def _is_async_accepted_target_state(state: dict | None) -> bool:
+    state = state or {}
+    status = str(state.get("status") or "").lower()
+    provider_status = str(state.get("provider_status") or "").lower()
+    return (
+        status == "processing"
+        and provider_status in {"processing", "pending", "queued"}
+        and bool(state.get("platform_post_id"))
+        and bool(state.get("accepted_at"))
+    )
+
+
 # ── Media cleanup gate (Phase 2.6.1 / Section 18.9) ──────────────────────────
 def should_cleanup_media(platform_results: dict) -> bool:
     """Only delete source media when ALL platforms are in terminal state."""
@@ -1328,6 +1340,27 @@ async def _async_publish_to_platform(
             "platform": platform,
             "account_id": account_id,
             "current_status": current_target_state.get("status"),
+        }
+    if dispatch_source == "fallback" and _is_async_accepted_target_state(current_target_state):
+        event_log(
+            logger,
+            "info",
+            "publish.platform.fallback_skipped_async_accepted",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            current_status=current_target_state.get("status"),
+            platform_post_id=current_target_state.get("platform_post_id"),
+            provider_status=current_target_state.get("provider_status"),
+            outcome="skipped",
+        )
+        return {
+            "status": "already_processing",
+            "platform": platform,
+            "account_id": account_id,
+            "current_status": current_target_state.get("status"),
+            "platform_post_id": current_target_state.get("platform_post_id"),
         }
 
     # 20.14: Feature flag kill-switch — bail out immediately if platform disabled
