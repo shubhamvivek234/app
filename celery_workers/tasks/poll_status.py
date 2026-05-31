@@ -29,6 +29,14 @@ _ORPHAN_CHILD_THRESHOLD_MINUTES = 3
 _STALE_THRESHOLD_HOURS = 2
 
 
+def _coerce_utc_datetime(value):
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return None
+
+
 # ── Beat schedule registration ────────────────────────────────────────────────
 
 celery_app.conf.beat_schedule["poll-processing-posts"] = {
@@ -102,8 +110,9 @@ async def _async_poll() -> dict:
         post_id = post["id"]
         platform_results = post.get("platform_results", {})
         account_results = post.get("account_results", {})
-        is_stale = post.get("updated_at", now) < stale_cutoff
-        is_orphaned = post.get("updated_at", now) < orphan_cutoff
+        post_updated_at = _coerce_utc_datetime(post.get("updated_at")) or now
+        is_stale = post_updated_at < stale_cutoff
+        is_orphaned = post_updated_at < orphan_cutoff
 
         for target in _get_publish_targets(post):
             platform = target["platform"]
@@ -113,7 +122,7 @@ async def _async_poll() -> dict:
                 continue
 
             platform_post_id = result.get("platform_post_id")
-            last_attempt_at = result.get("last_attempt_at")
+            last_attempt_at = _coerce_utc_datetime(result.get("last_attempt_at"))
 
             if (
                 not platform_post_id
@@ -173,7 +182,7 @@ async def _async_poll() -> dict:
             if not platform_post_id:
                 continue
 
-            if post.get("updated_at", now) >= polling_cutoff:
+            if post_updated_at >= polling_cutoff:
                 continue
 
             if not await can_attempt(cache_redis, platform):
