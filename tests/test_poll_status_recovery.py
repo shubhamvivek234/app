@@ -239,6 +239,66 @@ async def test_poll_status_finalizes_tiktok_processing_publish(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_poll_status_polls_tiktok_before_generic_threshold(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    now = datetime.now(timezone.utc)
+    post = {
+        "id": "post-tiktok-fast-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "platforms": ["tiktok"],
+        "post_type": "video",
+        "updated_at": now - timedelta(minutes=4),
+        "publish_targets": [
+            {
+                "platform": "tiktok",
+                "account_id": "tiktok-account-1",
+            }
+        ],
+        "platform_results": {
+            "tiktok": {
+                "status": "processing",
+                "platform_post_id": "publish-123",
+                "last_attempt_at": now - timedelta(minutes=4),
+            }
+        },
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "processing",
+                "platform_post_id": "publish-123",
+                "last_attempt_at": now - timedelta(minutes=4),
+            }
+        },
+    }
+    fake_db = FakeDB([post])
+    fake_db.social_accounts = SimpleNamespace(
+        find_one=AsyncMock(
+            return_value={
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "is_active": True,
+                "access_token": "encrypted-token",
+            }
+        )
+    )
+
+    monkeypatch.setattr(poll_status, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr("utils.encryption.decrypt", Mock(return_value="plain-token"))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    check_status_mock = AsyncMock(return_value="published")
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=SimpleNamespace(check_status=check_status_mock)))
+    monkeypatch.setattr("celery_workers.tasks.publish._finalize_post_status", AsyncMock(return_value=("user-1", "processing", "published")))
+
+    result = await poll_status._async_poll()
+
+    assert result["polled"] == 1
+    check_status_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_poll_status_handles_naive_mongo_datetimes(monkeypatch):
     os.environ["DB_NAME"] = "testdb"
     now = datetime.now(timezone.utc)

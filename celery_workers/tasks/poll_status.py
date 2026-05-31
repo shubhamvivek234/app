@@ -20,8 +20,11 @@ from db.mongo import get_client
 
 logger = logging.getLogger(__name__)
 
-# Posts stuck in PROCESSING for longer than this are eligible for polling
+# Posts stuck in PROCESSING for longer than this are eligible for polling.
+# TikTok private uploads often appear in-account before the generic 10-minute
+# confirmation window, so we poll its async publish ids sooner.
 _POLLING_THRESHOLD_MINUTES = 10
+_TIKTOK_POLLING_THRESHOLD_MINUTES = 3
 # Processing posts with no platform post id and no publish attempt after this
 # window are treated as orphaned child tasks and re-queued.
 _ORPHAN_CHILD_THRESHOLD_MINUTES = 3
@@ -35,6 +38,10 @@ def _coerce_utc_datetime(value):
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
     return None
+
+
+def _polling_threshold_minutes(platform: str) -> int:
+    return _TIKTOK_POLLING_THRESHOLD_MINUTES if platform == "tiktok" else _POLLING_THRESHOLD_MINUTES
 
 
 # ── Beat schedule registration ────────────────────────────────────────────────
@@ -182,7 +189,14 @@ async def _async_poll() -> dict:
             if not platform_post_id:
                 continue
 
-            if post_updated_at >= polling_cutoff:
+            effective_updated_at = max(
+                candidate
+                for candidate in [post_updated_at, last_attempt_at]
+                if isinstance(candidate, datetime)
+            )
+            target_polling_cutoff = now - timedelta(minutes=_polling_threshold_minutes(platform))
+
+            if effective_updated_at >= target_polling_cutoff:
                 continue
 
             if not await can_attempt(cache_redis, platform):
