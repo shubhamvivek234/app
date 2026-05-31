@@ -384,6 +384,11 @@ const createDefaultAccountOverrides = () => ({
 const getAccountDisplayName = (account) =>
   account?.display_name || account?.platform_username || account?.page_name || account?.name || account?.platform || 'Account';
 
+const isTikTokPrivateVisibility = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'private' || normalized === 'self_only';
+};
+
 // ── Scroll Time Picker ────────────────────────────────────────────────────────
 /** One drum-wheel column with ▲ / ▼ arrows and low-sensitivity scroll. */
 const DrumColumn = ({ items, selected, onSelect, fmt, wrap = true }) => {
@@ -836,13 +841,17 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     () => availableAccounts.filter((account) => selectedAccounts.includes(account.id) && account.platform === 'tiktok'),
     [availableAccounts, selectedAccounts]
   );
-  const latestSelectedTikTokRestriction = useMemo(() => {
+  const blockingSelectedTikTokRestriction = useMemo(() => {
     for (const account of selectedTikTokAccounts) {
       const restriction = getTikTokRestrictionFromAccount(account);
-      if (restriction) return restriction;
+      if (!restriction) continue;
+      const effectivePrivacy = getEffectiveValueForAccount(account.id, 'tiktokPrivacy', tiktokPrivacy);
+      if (!isTikTokPrivateVisibility(effectivePrivacy)) {
+        return restriction;
+      }
     }
     return null;
-  }, [selectedTikTokAccounts]);
+  }, [getEffectiveValueForAccount, selectedTikTokAccounts, tiktokPrivacy]);
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -1361,7 +1370,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       toast.error('Resolve all Common Post errors before posting or scheduling.');
       return;
     }
-    if (mode !== 'draft' && latestSelectedTikTokRestriction) {
+    if (mode !== 'draft' && blockingSelectedTikTokRestriction) {
       toast.error('Reconnect or change the restricted TikTok account before posting.');
       return;
     }
@@ -1371,7 +1380,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         setAvailableAccounts(liveAccounts);
         const liveTikTokRestriction = liveAccounts
           .filter((account) => selectedAccounts.includes(account.id) && account.platform === 'tiktok')
-          .map((account) => getTikTokRestrictionFromAccount(account))
+          .map((account) => {
+            const restriction = getTikTokRestrictionFromAccount(account);
+            if (!restriction) return null;
+            const effectivePrivacy = getEffectiveValueForAccount(account.id, 'tiktokPrivacy', tiktokPrivacy);
+            return isTikTokPrivateVisibility(effectivePrivacy) ? null : restriction;
+          })
           .find(Boolean);
         if (liveTikTokRestriction) {
           toast.error('Reconnect or change the restricted TikTok account before posting.');
@@ -2045,16 +2059,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   /** Fixed bottom action bar */
   const bottomBar = (
     <div className="bg-white border-t-2 border-gray-200 px-5 py-3 flex-shrink-0 z-10 shadow-lg">
-      {latestSelectedTikTokRestriction && (
+      {blockingSelectedTikTokRestriction && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
           <p className="text-xs font-semibold text-amber-800">
             TikTok public posting warning
           </p>
           <p className="text-[11px] text-amber-700 mt-1">
-            {getPublishFailureMessage(latestSelectedTikTokRestriction.result)}
+            {getPublishFailureMessage(blockingSelectedTikTokRestriction.result)}
           </p>
           <p className="text-[11px] text-amber-800 mt-1">
-            {getPublishFailureAction(latestSelectedTikTokRestriction.result)}
+            {getPublishFailureAction(blockingSelectedTikTokRestriction.result)}
           </p>
         </div>
       )}
@@ -2082,7 +2096,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           <Button
             size="sm"
             onClick={() => handleSubmit('now')}
-            disabled={loading || hasBlockingErrors || Boolean(latestSelectedTikTokRestriction)}
+            disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
             className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
           >
             {loading ? 'Posting…' : 'Post Now'}
@@ -2102,7 +2116,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           <Button
             variant="outline" size="sm"
             onClick={() => setShowSchedulePicker(true)}
-            disabled={loading || hasBlockingErrors || Boolean(latestSelectedTikTokRestriction)}
+            disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
             className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
           >
             <FaClock className="text-xs" />
