@@ -402,6 +402,11 @@ def _terminal_results(post: dict) -> dict:
     return post.get("platform_results") or {}
 
 
+def _is_terminal_target_state(state: dict | None) -> bool:
+    status = str((state or {}).get("status") or "").lower()
+    return status in {"published", "failed", "permanently_failed", "cancelled", "paused"}
+
+
 # ── Media cleanup gate (Phase 2.6.1 / Section 18.9) ──────────────────────────
 def should_cleanup_media(platform_results: dict) -> bool:
     """Only delete source media when ALL platforms are in terminal state."""
@@ -1234,6 +1239,41 @@ async def _async_publish_to_platform(
     db = client[os.environ["DB_NAME"]]
     r_cache = get_cache_redis()
     target_key = _result_target_key(platform, account_id)
+    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
+    if post is None:
+        return {"status": "post_deleted"}
+    if post.get("deleted_at") or post.get("status") == "cancelled":
+        event_log(
+            logger,
+            "info",
+            "publish.platform.cancelled_before_start",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            outcome="post_deleted_or_cancelled",
+        )
+        return {"status": "post_deleted", "platform": platform, "account_id": account_id}
+    post = await _hydrate_post_media(db, post)
+    current_target_state = _get_target_publish_state(post, platform, target_key)
+    if dispatch_source == "fallback" and _is_terminal_target_state(current_target_state):
+        event_log(
+            logger,
+            "info",
+            "publish.platform.fallback_skipped_terminal",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            current_status=current_target_state.get("status"),
+            outcome="skipped",
+        )
+        return {
+            "status": "already_terminal",
+            "platform": platform,
+            "account_id": account_id,
+            "current_status": current_target_state.get("status"),
+        }
 
     # 20.14: Feature flag kill-switch — bail out immediately if platform disabled
     try:
@@ -1332,22 +1372,6 @@ async def _async_publish_to_platform(
         )
         return {"status": "already_confirmed", "platform": platform, "account_id": account_id}
 
-    post = await db.posts.find_one({"id": post_id}, {"_id": 0})
-    if post is None:
-        return {"status": "post_deleted"}
-    if post.get("deleted_at") or post.get("status") == "cancelled":
-        event_log(
-            logger,
-            "info",
-            "publish.platform.cancelled_before_start",
-            task_name="publish_to_platform",
-            post_id=post_id,
-            platform=platform,
-            account_id=account_id,
-            outcome="post_deleted_or_cancelled",
-        )
-        return {"status": "post_deleted", "platform": platform, "account_id": account_id}
-    post = await _hydrate_post_media(db, post)
     event_log(
         logger,
         "info",

@@ -383,6 +383,68 @@ async def test_tiktok_public_posting_restriction_marks_structured_failure_withou
 
 
 @pytest.mark.asyncio
+async def test_publish_to_platform_skips_fallback_when_target_already_terminal(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    post = {
+        "id": "post-fallback-terminal-1",
+        "user_id": "user-1",
+        "status": "failed",
+        "post_type": "video",
+        "platforms": ["tiktok"],
+        "publish_targets": [{"platform": "tiktok", "account_id": "tiktok-account-1"}],
+        "account_results": {
+            "tiktok-account-1": {
+                "status": "failed",
+                "error": "Access token invalid",
+                "error_code": "access_token_invalid",
+            },
+        },
+        "platform_results": {
+            "tiktok": {
+                "status": "failed",
+                "error": "Access token invalid",
+            },
+        },
+        "media_ids": [],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-fallback-terminal"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_hydrate_post_media", AsyncMock(side_effect=lambda _db, current: current))
+    monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+    adapter = SimpleNamespace(publish=AsyncMock())
+    get_adapter_mock = Mock(return_value=adapter)
+    monkeypatch.setattr("platform_adapters.get_adapter", get_adapter_mock)
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-fallback-terminal-1",
+        "tiktok",
+        "tiktok-account-1",
+        0,
+        "fallback",
+    )
+
+    assert result == {
+        "status": "already_terminal",
+        "platform": "tiktok",
+        "account_id": "tiktok-account-1",
+        "current_status": "failed",
+    }
+    assert fake_db.posts.update_calls == []
+    get_adapter_mock.assert_not_called()
+    adapter.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_publish_to_platform_preserves_async_processing_status(monkeypatch):
     os.environ["DB_NAME"] = "testdb"
     post = {
