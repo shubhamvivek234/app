@@ -146,6 +146,61 @@ def _get_provider_restriction_metadata(platform: str, exc: Exception) -> dict[st
     return None
 
 
+async def _set_account_publish_restriction(
+    db,
+    account_id: str | None,
+    platform: str,
+    restriction_meta: dict[str, str] | None,
+) -> None:
+    if not account_id or not restriction_meta:
+        return
+    await db.social_accounts.update_one(
+        {
+            "platform": platform,
+            "$or": [
+                {"account_id": account_id},
+                {"id": account_id},
+            ],
+        },
+        {
+            "$set": {
+                "publish_error_code": restriction_meta.get("error_code"),
+                "publish_error_category": restriction_meta.get("error_category"),
+                "publish_action_required": restriction_meta.get("action_required"),
+                "publish_restriction_type": restriction_meta.get("restriction_type"),
+                "publish_blocked_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+
+async def _clear_account_publish_restriction(
+    db,
+    account_id: str | None,
+    platform: str,
+) -> None:
+    if not account_id:
+        return
+    await db.social_accounts.update_one(
+        {
+            "platform": platform,
+            "$or": [
+                {"account_id": account_id},
+                {"id": account_id},
+            ],
+        },
+        {
+            "$set": {
+                "publish_error_code": None,
+                "publish_error_category": None,
+                "publish_action_required": None,
+                "publish_restriction_type": None,
+                "publish_blocked_at": None,
+            }
+        },
+    )
+
+
 def _publish_queue_for(platform: str, post: dict) -> str:
     """
     Route heavy media publishes away from light text/image work so one burst of
@@ -1851,6 +1906,7 @@ async def _async_publish_to_platform(
                 "action_required": None,
                 "restriction_type": None,
             }, account_id=resolved_account_id)
+            await _clear_account_publish_restriction(db, resolved_account_id, platform)
             await db.posts.update_one(
                 {"id": post_id},
                 {
@@ -1951,6 +2007,12 @@ async def _async_publish_to_platform(
                     "retry_count": attempt,
                     "last_attempt_at": datetime.now(timezone.utc),
                 }, account_id=resolved_account_id)
+                await _set_account_publish_restriction(
+                    db,
+                    resolved_account_id,
+                    platform,
+                    restriction_meta,
+                )
 
                 error_code = getattr(exc, "code", None)
                 is_scope_error = _is_scope_insufficient_error(exc)

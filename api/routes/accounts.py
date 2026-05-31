@@ -50,6 +50,11 @@ class SocialAccountResponse(BaseModel):
     connected_at: datetime
     expires_at: datetime | None = None
     token_error: str | None = None
+    publish_error_code: str | None = None
+    publish_error_category: str | None = None
+    publish_action_required: str | None = None
+    publish_restriction_type: str | None = None
+    publish_blocked_at: datetime | None = None
 
 
 class DisconnectConflictResponse(BaseModel):
@@ -155,6 +160,11 @@ async def list_accounts(
                 connected_at=doc.get("connected_at"),
                 expires_at=doc.get("expires_at") or doc.get("token_expiry"),
                 token_error=doc.get("token_error"),
+                publish_error_code=doc.get("publish_error_code"),
+                publish_error_category=doc.get("publish_error_category"),
+                publish_action_required=doc.get("publish_action_required"),
+                publish_restriction_type=doc.get("publish_restriction_type"),
+                publish_blocked_at=doc.get("publish_blocked_at"),
             )
         )
     return response_docs
@@ -1347,6 +1357,11 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
                 "reconnect_required_at": None,
                 "suspension_reason": None,
                 "suspended_at": None,
+                "publish_error_code": None,
+                "publish_error_category": None,
+                "publish_action_required": None,
+                "publish_restriction_type": None,
+                "publish_blocked_at": None,
             }
         },
         upsert=True,

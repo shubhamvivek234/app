@@ -9,9 +9,9 @@ Focus: R2 migration + composer reliability + onboarding reliability
 ## Last Session Completed
 Date: 2026-05-31
 Completed:
-- Backend: TikTok public-account posting failures are now classified as provider restrictions with structured `error_code` / `error_category` / `action_required` / `restriction_type` metadata, and pre-upload auth handling now excludes this restriction from reconnect/token-refresh flows.
-  Files: `celery_workers/tasks/publish.py`, `api/models/post.py`
-- Frontend: All Posts, Dashboard failed-post surfaces, Connected Accounts, and Create Post now show explicit TikTok public-posting guidance instead of generic failed/processing messaging when the app is not audited for public posting.
+- Backend: TikTok public-account posting failures now persist structured provider-restriction metadata on both posts and `social_accounts`, and successful reconnects/publishes clear the sticky account block state.
+  Files: `celery_workers/tasks/publish.py`, `api/models/post.py`, `api/routes/accounts.py`
+- Frontend: All Posts, Dashboard failed-post surfaces, Connected Accounts, and Create Post now read TikTok restriction state directly from account payloads and block repeat publishes with explicit guidance instead of generic failed/processing messaging.
   Files: `frontend/src/lib/publishFailures.js`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Dashboard.js`, `frontend/src/pages/ConnectedAccounts.js`, `frontend/src/pages/CreatePostForm.js`
 - Ops: added TikTok public-posting restriction runbook for future triage.
   Files: `docs/docs/runbooks/TIKTOK_PUBLIC_POSTING.md`

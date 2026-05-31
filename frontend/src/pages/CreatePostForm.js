@@ -13,14 +13,13 @@ import axios from 'axios';
 import Cropper from 'react-easy-crop';
 import {
   getCachedSocialAccounts,
-  getFailedPosts,
   getSocialAccounts,
   uploadMedia,
   waitForUploadReady,
   getHashtagGroups,
   generateContent,
 } from '@/lib/api';
-import { getLatestTikTokRestriction, getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
+import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
@@ -516,7 +515,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const [selectedAccounts, setSelectedAccounts]   = useState([]);
   const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
-  const [failedPosts, setFailedPosts]             = useState([]);
 
   // ── Shared + per-platform content ────────────────────────────────────────
   const [commonCaption, setCommonCaption] = useState('');
@@ -596,12 +594,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const [accounts, failed] = await Promise.all([
-        getSocialAccounts(),
-        getFailedPosts().catch(() => []),
-      ]);
+      const accounts = await getSocialAccounts();
       setAvailableAccounts(accounts);
-      setFailedPosts(Array.isArray(failed) ? failed : []);
     } catch {
       if (!cachedAccounts) {
         setAvailableAccounts([]);
@@ -844,11 +838,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
   );
   const latestSelectedTikTokRestriction = useMemo(() => {
     for (const account of selectedTikTokAccounts) {
-      const restriction = getLatestTikTokRestriction(failedPosts, account.id);
+      const restriction = getTikTokRestrictionFromAccount(account);
       if (restriction) return restriction;
     }
     return null;
-  }, [failedPosts, selectedTikTokAccounts]);
+  }, [selectedTikTokAccounts]);
 
   // ── Accordion toggle ──────────────────────────────────────────────────────
   const handleToggleExpand = (platform) => {
@@ -1365,6 +1359,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     }
     if (mode !== 'draft' && hasBlockingErrors) {
       toast.error('Resolve all Common Post errors before posting or scheduling.');
+      return;
+    }
+    if (mode !== 'draft' && latestSelectedTikTokRestriction) {
+      toast.error('Reconnect or change the restricted TikTok account before posting.');
       return;
     }
 
@@ -2068,7 +2066,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           <Button
             size="sm"
             onClick={() => handleSubmit('now')}
-            disabled={loading || hasBlockingErrors}
+            disabled={loading || hasBlockingErrors || Boolean(latestSelectedTikTokRestriction)}
             className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
           >
             {loading ? 'Posting…' : 'Post Now'}
@@ -2088,7 +2086,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           <Button
             variant="outline" size="sm"
             onClick={() => setShowSchedulePicker(true)}
-            disabled={loading || hasBlockingErrors}
+            disabled={loading || hasBlockingErrors || Boolean(latestSelectedTikTokRestriction)}
             className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
           >
             <FaClock className="text-xs" />

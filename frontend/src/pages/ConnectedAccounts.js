@@ -3,9 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
-  connectBluesky, connectDiscord, connectMastodon, getFailedPosts, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
+  connectBluesky, connectDiscord, connectMastodon, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
 } from '@/lib/api';
-import { getLatestTikTokRestriction, getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
+import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { toast } from 'sonner';
@@ -271,7 +271,6 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
 // ── Main page ─────────────────────────────────────────────────────────────────
 const ConnectedAccounts = () => {
   const [accounts, setAccounts] = useState([]);
-  const [failedPosts, setFailedPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
 
@@ -348,12 +347,8 @@ const ConnectedAccounts = () => {
 
   const fetchAccounts = async () => {
     try {
-      const [data, failed] = await Promise.all([
-        getSocialAccounts(),
-        getFailedPosts().catch(() => []),
-      ]);
+      const data = await getSocialAccounts();
       setAccounts(data);
-      setFailedPosts(Array.isArray(failed) ? failed : []);
     } catch {
       toast.error('Failed to load accounts');
     } finally {
@@ -362,8 +357,8 @@ const ConnectedAccounts = () => {
   };
 
   const latestTikTokRestriction = useMemo(
-    () => getLatestTikTokRestriction(failedPosts),
-    [failedPosts]
+    () => accounts.find((account) => account.platform === 'tiktok' && getTikTokRestrictionFromAccount(account)) || null,
+    [accounts]
   );
 
   const handleConnect = async (platformId) => {
@@ -565,10 +560,10 @@ const ConnectedAccounts = () => {
                     TikTok public posting is currently blocked
                   </p>
                   <p className="text-[11px] text-amber-700 mt-1">
-                    {getPublishFailureMessage(latestTikTokRestriction.result)}
+                    {getPublishFailureMessage(latestTikTokRestriction)}
                   </p>
                   <p className="text-[11px] text-amber-800 mt-1">
-                    {getPublishFailureAction(latestTikTokRestriction.result)}
+                    {getPublishFailureAction(latestTikTokRestriction)}
                   </p>
                 </div>
               );

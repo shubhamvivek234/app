@@ -29,9 +29,45 @@ class FakePostsCollection:
         return SimpleNamespace(modified_count=1)
 
 
+class FakeSocialAccountsCollection:
+    def __init__(self, docs=None):
+        self.docs = [dict(doc) for doc in (docs or [])]
+        self.update_calls = []
+
+    async def find_one(self, query, *_args, **_kwargs):
+        for doc in self.docs:
+            if query.get("platform") and doc.get("platform") != query.get("platform"):
+                continue
+            or_conditions = query.get("$or") or []
+            if or_conditions:
+                if any(
+                    all(doc.get(key) == value for key, value in condition.items())
+                    for condition in or_conditions
+                ):
+                    return dict(doc)
+            elif all(doc.get(key) == value for key, value in query.items()):
+                return dict(doc)
+        return None
+
+    async def update_one(self, query, update):
+        self.update_calls.append((query, update))
+        target = await self.find_one(query)
+        if target is None:
+            return SimpleNamespace(modified_count=0)
+        for doc in self.docs:
+            if doc.get("platform") != target.get("platform"):
+                continue
+            if doc.get("account_id") == target.get("account_id") or doc.get("id") == target.get("id"):
+                if "$set" in update:
+                    doc.update(update["$set"])
+                break
+        return SimpleNamespace(modified_count=1)
+
+
 class FakeDB:
-    def __init__(self, post):
+    def __init__(self, post, social_accounts=None):
         self.posts = FakePostsCollection(post)
+        self.social_accounts = FakeSocialAccountsCollection(social_accounts)
 
 
 class FakeClient:
@@ -317,7 +353,22 @@ async def test_tiktok_public_posting_restriction_marks_structured_failure_withou
         "created_at": now,
         "updated_at": now,
     }
-    fake_db = FakeDB(post)
+    fake_db = FakeDB(
+        post,
+        social_accounts=[
+            {
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "publish_error_code": None,
+                "publish_error_category": None,
+                "publish_action_required": None,
+                "publish_restriction_type": None,
+                "publish_blocked_at": None,
+            }
+        ],
+    )
     fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-tiktok-restriction"))
 
     monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
@@ -379,6 +430,15 @@ async def test_tiktok_public_posting_restriction_marks_structured_failure_withou
         and update["$set"].get("account_results.tiktok-account-1.action_required") == "complete_tiktok_audit_or_use_private_account"
         and update["$set"].get("account_results.tiktok-account-1.restriction_type") == "tiktok_public_posting_not_approved"
         for _query, update in fake_db.posts.update_calls
+    )
+    assert any(
+        "$set" in update
+        and update["$set"].get("publish_error_code") == "unaudited_client_can_only_post_to_private_accounts"
+        and update["$set"].get("publish_error_category") == "provider_restriction"
+        and update["$set"].get("publish_action_required") == "complete_tiktok_audit_or_use_private_account"
+        and update["$set"].get("publish_restriction_type") == "tiktok_public_posting_not_approved"
+        and update["$set"].get("publish_blocked_at") is not None
+        for _query, update in fake_db.social_accounts.update_calls
     )
 
 
@@ -519,6 +579,102 @@ async def test_publish_to_platform_preserves_async_processing_status(monkeypatch
     assert any(
         "$set" in update and update["$set"].get("account_results.tiktok-account-1.provider_status") == "processing"
         for _query, update in fake_db.posts.update_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_publish_to_platform_clears_account_publish_restriction_after_success(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    post = {
+        "id": "post-tiktok-success-1",
+        "user_id": "user-1",
+        "status": "processing",
+        "post_type": "video",
+        "platforms": ["tiktok"],
+        "publish_targets": [
+            {"platform": "tiktok", "account_id": "tiktok-account-1"},
+        ],
+        "account_results": {
+            "tiktok-account-1": {"status": "pending"},
+        },
+        "platform_results": {
+            "tiktok": {"status": "pending"},
+        },
+        "media_ids": [],
+        "media_urls": ["https://example.com/video.mp4"],
+        "media_url": "https://example.com/video.mp4",
+    }
+    fake_db = FakeDB(
+        post,
+        social_accounts=[
+            {
+                "id": "tiktok-account-1",
+                "account_id": "tiktok-account-1",
+                "platform": "tiktok",
+                "user_id": "user-1",
+                "publish_error_code": "unaudited_client_can_only_post_to_private_accounts",
+                "publish_error_category": "provider_restriction",
+                "publish_action_required": "complete_tiktok_audit_or_use_private_account",
+                "publish_restriction_type": "tiktok_public_posting_not_approved",
+                "publish_blocked_at": datetime.now(timezone.utc),
+            }
+        ],
+    )
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-tiktok-success"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", Mock(return_value=object()))
+    monkeypatch.setattr(publish_tasks, "safe_incr", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "safe_expire", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_get", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "safe_setex", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "safe_delete", AsyncMock(return_value=1))
+    monkeypatch.setattr(publish_tasks, "_acquire_publish_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_publish_lock", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_requires_pre_upload", Mock(return_value=False))
+    monkeypatch.setattr(publish_tasks, "_resolve_post_account", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_acquire_platform_slot", AsyncMock(return_value=True))
+    monkeypatch.setattr(publish_tasks, "_release_platform_slot", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_finalize_post_status", AsyncMock(return_value=("user-1", "processing", "published")))
+    monkeypatch.setattr(publish_tasks, "_send_success_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr(publish_tasks, "_send_recovery_notification", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.can_attempt", AsyncMock(return_value=True))
+    monkeypatch.setattr("utils.circuit_breaker.record_success", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.circuit_breaker.record_failure", AsyncMock(return_value=None))
+    monkeypatch.setattr("utils.subscription.check_subscription_active", AsyncMock(return_value=(True, "active")))
+    monkeypatch.setitem(__import__("utils.feature_flags", fromlist=["_ENV_DEFAULTS"])._ENV_DEFAULTS, "tiktok_publishing", True)
+    monkeypatch.setattr("utils.feature_flags.is_enabled", Mock(return_value=True))
+
+    adapter = SimpleNamespace(
+        publish=AsyncMock(
+            return_value={
+                "status": "published",
+                "post_url": "https://tiktok.example/post/1",
+                "platform_post_id": "publish-1",
+            }
+        )
+    )
+    monkeypatch.setattr("platform_adapters.get_adapter", Mock(return_value=adapter))
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-tiktok-success-1",
+        "tiktok",
+        "tiktok-account-1",
+        0,
+        "primary",
+    )
+
+    assert result["status"] == "published"
+    assert any(
+        "$set" in update
+        and update["$set"].get("publish_error_code") is None
+        and update["$set"].get("publish_error_category") is None
+        and update["$set"].get("publish_action_required") is None
+        and update["$set"].get("publish_restriction_type") is None
+        and update["$set"].get("publish_blocked_at") is None
+        for _query, update in fake_db.social_accounts.update_calls
     )
 
 
