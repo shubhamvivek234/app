@@ -1,7 +1,6 @@
 """
 TikTok platform adapter.
 Content Posting API v2: /v2/post/publish/video/init/
-Aggressive rate limits (5 posts/day) — enforced via utils.rate_limit.
 Feature flag: TIKTOK_ENABLED env var must be "true" to allow publishing.
 """
 import logging
@@ -18,7 +17,6 @@ from platform_adapters.base import (
     PlatformResponseError,
 )
 from utils.encryption import decrypt
-from utils.rate_limit import check_rate_limit, get_retry_after_seconds
 from utils.circuit_breaker import can_attempt, record_success, record_failure
 
 logger = logging.getLogger(__name__)
@@ -45,11 +43,11 @@ class TikTokAdapter(PlatformAdapter):
         Publish a video to TikTok via Content Posting API v2.
         Steps:
           1. Feature-flag check (TIKTOK_ENABLED).
-          2. Rate limit + circuit breaker check.
+          2. Circuit breaker check.
           3. POST /v2/post/publish/video/init/ to get publish_id and upload_url.
           4. PUT video bytes to upload_url.
           5. Return publish_id as platform_post_id.
-        TikTok enforces a strict 5-posts/day limit; rate_limit.py reflects this.
+        Rely on TikTok's real provider responses for publish quota enforcement.
         """
         _require_tiktok_enabled()
 
@@ -63,12 +61,6 @@ class TikTokAdapter(PlatformAdapter):
             raise PlatformAPIError("TikTok publish requires a media_url (video)")
 
         if redis:
-            if not await check_rate_limit(redis, self.platform, str(social_account_id)):
-                raise PlatformAPIError(
-                    "TikTok rate limit reached (5 posts/day) — requeue for tomorrow",
-                    code=429,
-                    retry_after=await get_retry_after_seconds(redis, self.platform, str(social_account_id)),
-                )
             if not await can_attempt(redis, self.platform):
                 raise PlatformAPIError("Circuit open — requeue", code=503)
 
@@ -141,7 +133,6 @@ class TikTokAdapter(PlatformAdapter):
             msg = init_json.get("error", {}).get("message", str(error_code))
             raise PlatformAPIError(msg, code=error_code)
 
-        self._check_response_for_error(init_json, self.platform)
         data = init_json.get("data", {})
         publish_id = data.get("publish_id", "")
         upload_url = data.get("upload_url", "")
