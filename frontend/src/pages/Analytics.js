@@ -2793,6 +2793,7 @@ const Analytics = () => {
                   <ReportMetricTile title="Total Likes" value={tiktokSummary.likes_total} subtitle="Total likes shown by TikTok profile stats" accent="text-rose-600" />
                   <ReportMetricTile title="Total Videos" value={tiktokSummary.videos_total} subtitle="Current TikTok video count" accent="text-violet-600" />
                   <ReportMetricTile title={`Net Followers (${days}d)`} value={tiktokSummary.net_followers} subtitle={tiktokFollowers.history_message || 'Net follower change based on app snapshots in the selected period.'} accent={tiktokSummary.net_followers < 0 ? 'text-rose-600' : 'text-emerald-600'} />
+                  <ReportMetricTile title={`Post Views (${days}d)`} value={tiktokSummary.post_views_total} subtitle="Total TikTok video views returned for posts in the selected period" accent="text-purple-700" />
                   <ReportMetricTile title="Videos Published" value={tiktokSummary.videos_published_in_period} subtitle="Videos surfaced in the selected period" accent="text-sky-700" />
                 </div>
 
@@ -2821,7 +2822,10 @@ const Analytics = () => {
                   )}
                 </ReportCard>
 
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  <ReportCard title="Profile Views" info="TikTok’s app can show profile views, but the connected developer API does not expose that metric to Unravler today.">
+                    {chartEmptyState(tiktokOverview.profile_views_message)}
+                  </ReportCard>
                   <ReportCard title="Traffic Source" info="TikTok’s app can show where viewers discovered your posts, but the connected developer API does not expose this breakdown to Unravler today.">
                     {chartEmptyState(tiktokOverview.traffic_source_message)}
                   </ReportCard>

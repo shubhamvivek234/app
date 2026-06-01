@@ -3174,6 +3174,7 @@ async def analytics_tiktok_report(
             "likes_total": summary_totals["likes_total"],
             "videos_total": summary_totals["videos_total"],
             "net_followers": net_followers,
+            "post_views_total": sum(_metric_int(post.get("views")) for post in current_posts),
             "videos_published_in_period": len(current_posts),
         },
         "overview": {
@@ -3183,8 +3184,10 @@ async def analytics_tiktok_report(
             "history_message": history_message,
             "top_traffic_sources": [],
             "search_queries": [],
+            "profile_views_supported": False,
             "traffic_source_supported": False,
             "search_queries_supported": False,
+            "profile_views_message": "TikTok’s connected developer APIs do not expose profile-view analytics to Unravler today.",
             "traffic_source_message": "TikTok’s connected developer APIs do not expose traffic-source breakdowns for this account in Unravler today.",
             "search_queries_message": "TikTok’s connected developer APIs do not expose search-query analytics for this account in Unravler today.",
         },

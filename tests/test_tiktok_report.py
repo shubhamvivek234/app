@@ -100,10 +100,13 @@ async def test_analytics_tiktok_report_merges_snapshots_and_live_totals(monkeypa
     assert report["summary"]["likes_total"] == 310
     assert report["summary"]["videos_total"] == 6
     assert report["summary"]["net_followers"] == 25
+    assert report["summary"]["post_views_total"] == 320
     assert report["overview"]["followers_series"] == [
         {"date": earlier, "count": 100},
         {"date": today, "count": 125},
     ]
+    assert report["overview"]["profile_views_supported"] is False
+    assert "profile-view analytics" in report["overview"]["profile_views_message"]
     assert report["content"]["top_posts_by_views"][0]["id"] == "video-2"
     assert report["content"]["top_posts_by_likes"][0]["likes"] == 20
     assert report["viewers"]["viewer_metrics_supported"] is False
@@ -182,6 +185,7 @@ async def test_analytics_tiktok_report_uses_db_fallback_when_video_list_unavaila
 
     assert report["supported"] is True
     assert report["source_mode"] == "db_fallback"
+    assert report["summary"]["post_views_total"] == 0
     assert report["content"]["content_source_message"] is not None
     assert report["content"]["top_posts_by_views"][0]["id"] == "fallback-post-1"
     assert "fallback mode" in report["message"].lower()
