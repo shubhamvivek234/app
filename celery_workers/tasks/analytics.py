@@ -20,6 +20,10 @@ from utils.youtube_geography import (
     normalize_youtube_geography_rows,
     store_youtube_geography_snapshot,
 )
+from utils.tiktok_analytics import (
+    TIKTOK_ANALYTICS_BACKGROUND_REFRESH_SECONDS,
+    store_tiktok_analytics_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": YOUTUBE_GEOGRAPHY_BACKGROUND_REFRESH_SECONDS,
         "options": {"queue": "default"},
     },
+    "refresh-tiktok-analytics-snapshots": {
+        "task": "celery_workers.tasks.analytics.refresh_tiktok_analytics_snapshots",
+        "schedule": TIKTOK_ANALYTICS_BACKGROUND_REFRESH_SECONDS,
+        "options": {"queue": "default"},
+    },
 })
 
 
@@ -55,6 +64,12 @@ def collect_analytics(window: str = "24h") -> dict:
 def refresh_youtube_geography_snapshots() -> dict:
     """Refresh lag-adjusted YouTube geography snapshots for active accounts."""
     return run_async(_async_refresh_youtube_geography_snapshots())
+
+
+@celery_app.task(name="celery_workers.tasks.analytics.refresh_tiktok_analytics_snapshots")
+def refresh_tiktok_analytics_snapshots() -> dict:
+    """Refresh daily TikTok analytics snapshots for active accounts."""
+    return run_async(_async_refresh_tiktok_analytics_snapshots())
 
 
 async def _async_collect(window: str) -> dict:
@@ -269,6 +284,147 @@ async def _async_refresh_youtube_geography_snapshots() -> dict:
         "accounts_seen": accounts_seen,
         "snapshots_written": snapshots_written,
         "empty_queries": empty_queries,
+        "failed_queries": failed_queries,
+    }
+
+
+async def _fetch_tiktok_db_published_posts(db, user_id: str, account: dict, limit: int = 50) -> list[dict]:
+    account_identifier = account.get("account_id") or account.get("id")
+    if not account_identifier:
+        return []
+
+    cursor = db.posts.find(
+        {
+            "user_id": user_id,
+            "platforms": "tiktok",
+            "$or": [
+                {"social_account_ids": account_identifier},
+                {"account_ids": account_identifier},
+                {"platform_account_ids": account_identifier},
+                {"social_account_id": account_identifier},
+            ],
+            "status": {"$in": ["published", "partial"]},
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "content": 1,
+            "media_urls": 1,
+            "thumbnail_urls": 1,
+            "video_url": 1,
+            "updated_at": 1,
+            "published_at": 1,
+            "platform_results": 1,
+            "platform_post_urls": 1,
+        },
+    ).sort("updated_at", -1)
+
+    docs = await cursor.to_list(length=limit)
+    normalized: list[dict] = []
+    for post in docs:
+        platform_result = (post.get("platform_results") or {}).get("tiktok", {})
+        if post.get("status") == "partial" and platform_result.get("status") not in {"success", "published"}:
+            continue
+        normalized.append(
+            {
+                "platform_post_id": platform_result.get("platform_post_id") or post.get("id"),
+                "content": post.get("content", ""),
+                "media_url": ((post.get("thumbnail_urls") or [None])[0] or (post.get("media_urls") or [None])[0] or post.get("video_url")),
+                "post_url": platform_result.get("post_url") or (post.get("platform_post_urls") or {}).get("tiktok"),
+                "metrics": {
+                    "likes": 0,
+                    "comments": 0,
+                    "shares": 0,
+                    "views": 0,
+                },
+                "published_at": platform_result.get("published_at") or post.get("published_at") or post.get("updated_at"),
+            }
+        )
+    return normalized
+
+
+async def _async_refresh_tiktok_analytics_snapshots() -> dict:
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    from backend.app.social.tiktok import TikTokAuth
+
+    auth = TikTokAuth()
+    cursor = db.social_accounts.find(
+        {"platform": "tiktok", "is_active": True},
+        {
+            "_id": 0,
+            "account_id": 1,
+            "id": 1,
+            "user_id": 1,
+            "platform_user_id": 1,
+            "access_token": 1,
+        },
+    )
+
+    accounts_seen = 0
+    snapshots_written = 0
+    fallback_used = 0
+    failed_queries = 0
+    captured_at = datetime.now(timezone.utc)
+    snapshot_date = captured_at.date()
+
+    async for account in cursor:
+        accounts_seen += 1
+        account_id = account.get("account_id") or account.get("id")
+        encrypted_token = account.get("access_token")
+        if not encrypted_token:
+            failed_queries += 1
+            logger.warning("tiktok analytics refresh: missing token for %s", account_id)
+            continue
+
+        try:
+            access_token = decrypt(encrypted_token)
+            profile = await auth.get_user_profile(access_token)
+        except Exception as exc:
+            failed_queries += 1
+            logger.warning("tiktok analytics refresh: failed to fetch profile for %s: %s", account_id, exc)
+            continue
+
+        source_mode = "live"
+        try:
+            posts = await auth.fetch_posts(access_token, limit=50)
+        except Exception as exc:
+            logger.warning("tiktok analytics refresh: video.list failed for %s: %s", account_id, exc)
+            posts = []
+
+        if not posts:
+            source_mode = "db_fallback"
+            fallback_used += 1
+            posts = await _fetch_tiktok_db_published_posts(db, account.get("user_id"), account, limit=50)
+
+        await store_tiktok_analytics_snapshot(
+            db,
+            account_id=account_id,
+            user_id=account.get("user_id"),
+            platform_user_id=account.get("platform_user_id"),
+            snapshot_date=snapshot_date,
+            follower_count=profile.get("followers_count") or 0,
+            following_count=profile.get("following_count") or 0,
+            likes_count=profile.get("likes_count") or 0,
+            video_count=profile.get("video_count") or 0,
+            posts=posts,
+            source_mode=source_mode,
+            captured_at=captured_at,
+        )
+        snapshots_written += 1
+
+    logger.info(
+        "tiktok analytics refresh: accounts=%s snapshots_written=%s fallback_used=%s failed_queries=%s",
+        accounts_seen,
+        snapshots_written,
+        fallback_used,
+        failed_queries,
+    )
+    return {
+        "accounts_seen": accounts_seen,
+        "snapshots_written": snapshots_written,
+        "fallback_used": fallback_used,
         "failed_queries": failed_queries,
     }
 

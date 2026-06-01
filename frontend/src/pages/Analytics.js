@@ -8,6 +8,7 @@ import {
   getInstagramAnalyticsReport,
   getBlueskyAnalyticsReport,
   getYoutubeAnalyticsReport,
+  getTikTokAnalyticsReport,
   getSocialAccounts,
   getPublishFeed,
 } from '@/lib/api';
@@ -1859,6 +1860,9 @@ const Analytics = () => {
   const [youtubeChartGranularity, setYoutubeChartGranularity] = useState('day');
   const [youtubeTopVideoMetric, setYoutubeTopVideoMetric] = useState('views');
   const [youtubeRetentionVideoId, setYoutubeRetentionVideoId] = useState('');
+  const [tiktokReport, setTikTokReport]             = useState(null);
+  const [loadingTikTokReport, setLoadingTikTokReport] = useState(false);
+  const [tiktokTopMetric, setTikTokTopMetric]       = useState('views');
   const [platformOrder, setPlatformOrder] = useState(ALL_PLATFORMS);
   const [loadedPlatformOrder, setLoadedPlatformOrder] = useState(false);
   const [draggingPlatform, setDraggingPlatform] = useState(null);
@@ -2123,6 +2127,35 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchYoutubeReport]);
 
+  const fetchTikTokReport = useCallback(async () => {
+    if (selectedPlatform !== 'tiktok') {
+      setTikTokReport(null);
+      return;
+    }
+    setLoadingTikTokReport(true);
+    try {
+      const data = await getTikTokAnalyticsReport({
+        days,
+        accountId: selectedAccount,
+      });
+      setTikTokReport(data);
+    } catch {
+      toast.error('Failed to load TikTok report');
+      setTikTokReport(null);
+    } finally {
+      setLoadingTikTokReport(false);
+    }
+  }, [days, selectedPlatform, selectedAccount]);
+
+  useEffect(() => {
+    if (
+      selectedPlatform === 'tiktok'
+      && ['overview', 'tiktok-content', 'tiktok-viewers', 'tiktok-followers'].includes(activeTab)
+    ) {
+      fetchTikTokReport();
+    }
+  }, [activeTab, selectedPlatform, fetchTikTokReport]);
+
   useEffect(() => {
     if (selectedPlatform !== 'instagram' && activeTab === 'summary') {
       setActiveTab('overview');
@@ -2143,6 +2176,12 @@ const Analytics = () => {
 
   useEffect(() => {
     if (selectedPlatform !== 'youtube' && ['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)) {
+      setActiveTab('overview');
+    }
+  }, [selectedPlatform, activeTab]);
+
+  useEffect(() => {
+    if (selectedPlatform !== 'tiktok' && ['tiktok-content', 'tiktok-viewers', 'tiktok-followers'].includes(activeTab)) {
       setActiveTab('overview');
     }
   }, [selectedPlatform, activeTab]);
@@ -2234,10 +2273,16 @@ const Analytics = () => {
   const showInstagramReportTab = selectedPlatform === 'instagram';
   const showBlueskyReportTabs = selectedPlatform === 'bluesky';
   const showYoutubeReportTabs = selectedPlatform === 'youtube';
+  const showTikTokReportTabs = selectedPlatform === 'tiktok';
 
   const tabs = useMemo(() => ([
     { id: 'overview', label: 'Overview' },
-    { id: 'posts',    label: 'Posts'    },
+    ...(!showTikTokReportTabs ? [{ id: 'posts', label: 'Posts' }] : []),
+    ...(showTikTokReportTabs ? [
+      { id: 'tiktok-content', label: 'Content' },
+      { id: 'tiktok-viewers', label: 'Viewers' },
+      { id: 'tiktok-followers', label: 'Followers' },
+    ] : []),
     ...(showInstagramReportTab ? [
       { id: 'summary', label: 'Summary' },
       { id: 'instagram-audience', label: 'Audience' },
@@ -2254,7 +2299,7 @@ const Analytics = () => {
       { id: 'youtube-video-performance', label: 'Video Performance' },
     ] : []),
     ...(hasDemographics && selectedPlatform !== 'instagram' ? [{ id: 'demographics', label: 'Demographics' }] : []),
-  ]), [showInstagramReportTab, showBlueskyReportTabs, showYoutubeReportTabs, hasDemographics, selectedPlatform]);
+  ]), [showTikTokReportTabs, showInstagramReportTab, showBlueskyReportTabs, showYoutubeReportTabs, hasDemographics, selectedPlatform]);
 
   useEffect(() => {
     if (!tabs.some((tab) => tab.id === activeTab)) {
@@ -2543,6 +2588,39 @@ const Analytics = () => {
     </select>
   );
 
+  const tiktokSummary = tiktokReport?.summary || {};
+  const tiktokOverview = tiktokReport?.overview || {};
+  const tiktokContent = tiktokReport?.content || {};
+  const tiktokViewers = tiktokReport?.viewers || {};
+  const tiktokFollowers = tiktokReport?.followers || {};
+  const tiktokOverviewSeries = mergeBucketedSeries(
+    {
+      followers: tiktokOverview.followers_series || [],
+      likes: tiktokOverview.likes_series || [],
+      videos: tiktokOverview.videos_series || [],
+    },
+    days,
+    'day',
+  );
+  const tiktokFollowersSeries = bucketSeriesByGranularity(
+    tiktokFollowers.followers_series || tiktokOverview.followers_series || [],
+    days,
+    'day',
+  );
+  const tiktokViewsSeries = bucketSeriesByGranularity(tiktokContent.post_views_series || [], days, 'day');
+  const tiktokEngagementSeries = bucketSeriesByGranularity(tiktokContent.engagement_series || [], days, 'day');
+  const tiktokPublishedVideosSeries = bucketSeriesByGranularity(tiktokContent.videos_series || [], days, 'day');
+  const tiktokOverviewHasCharts = chartHasData(tiktokOverviewSeries, ['followers', 'likes', 'videos']);
+  const tiktokFollowersHasData = chartHasData(tiktokFollowersSeries, ['count']);
+  const tiktokContentHasCharts = chartHasData(tiktokViewsSeries, ['count']) || chartHasData(tiktokEngagementSeries, ['count']) || chartHasData(tiktokPublishedVideosSeries, ['count']);
+  const tiktokTopPostsByMetric = {
+    views: tiktokContent.top_posts_by_views || [],
+    likes: tiktokContent.top_posts_by_likes || [],
+    comments: tiktokContent.top_posts_by_comments || [],
+    shares: tiktokContent.top_posts_by_shares || [],
+  };
+  const tiktokTopPosts = tiktokTopPostsByMetric[tiktokTopMetric] || [];
+
   return (
     <DashboardLayout hideSidebar>
       {/* ── Two-column layout: platform sidebar + content ─────────────── */}
@@ -2674,8 +2752,89 @@ const Analytics = () => {
           ))}
         </div>
 
+        {/* ━━━━━━━━━━━━━━━━━ TIKTOK OVERVIEW TAB ━━━━━━━━━━━━━━━━━━━━━ */}
+        {activeTab === 'overview' && selectedPlatform === 'tiktok' && (
+          <div className="space-y-6">
+            {!!tiktokReport?.message && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {tiktokReport.message}
+              </div>
+            )}
+
+            {!!tiktokReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {tiktokReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingTikTokReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !tiktokReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">TikTok report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {tiktokReport?.message || 'Connect a TikTok account to see this report.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <ReportMetricTile title="Total Followers" value={tiktokSummary.followers_total} subtitle="Current TikTok followers" />
+                  <ReportMetricTile title="Following" value={tiktokSummary.following_total} subtitle="Accounts this TikTok profile follows" />
+                  <ReportMetricTile title="Total Likes" value={tiktokSummary.likes_total} subtitle="Total likes shown by TikTok profile stats" accent="text-rose-600" />
+                  <ReportMetricTile title="Total Videos" value={tiktokSummary.videos_total} subtitle="Current TikTok video count" accent="text-violet-600" />
+                  <ReportMetricTile title={`Net Followers (${days}d)`} value={tiktokSummary.net_followers} subtitle={tiktokFollowers.history_message || 'Net follower change based on app snapshots in the selected period.'} accent={tiktokSummary.net_followers < 0 ? 'text-rose-600' : 'text-emerald-600'} />
+                  <ReportMetricTile title="Videos Published" value={tiktokSummary.videos_published_in_period} subtitle="Videos surfaced in the selected period" accent="text-sky-700" />
+                </div>
+
+                <ReportCard title="Account Totals Over Time" info="Tracks TikTok follower totals, profile likes, and total videos across app-owned daily snapshots.">
+                  {tiktokOverview.history_message && (
+                    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                      {tiktokOverview.history_message}
+                    </div>
+                  )}
+                  {tiktokOverviewHasCharts ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                      <ComposedChart data={tiktokOverviewSeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                        <Line yAxisId="left" type="monotone" dataKey="followers" name="Followers" stroke="#2f6690" strokeWidth={2.5} dot={false} />
+                        <Line yAxisId="left" type="monotone" dataKey="likes" name="Total Likes" stroke="#ef4444" strokeWidth={2.5} dot={false} />
+                        <Bar yAxisId="right" dataKey="videos" name="Total Videos" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={18} minPointSize={2} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    chartEmptyState(tiktokOverview.history_message || 'TikTok historical trend lines will appear after app snapshots accumulate.')
+                  )}
+                </ReportCard>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Traffic Source" info="TikTok’s app can show where viewers discovered your posts, but the connected developer API does not expose this breakdown to Unravler today.">
+                    {chartEmptyState(tiktokOverview.traffic_source_message)}
+                  </ReportCard>
+                  <ReportCard title="Search Queries" info="TikTok’s app can show search queries that led viewers to your posts, but the connected developer API does not expose them to Unravler today.">
+                    {chartEmptyState(tiktokOverview.search_queries_message)}
+                  </ReportCard>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ━━━━━━━━━━━━━━━━━ OVERVIEW TAB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
-        {activeTab === 'overview' && (
+        {activeTab === 'overview' && selectedPlatform !== 'tiktok' && (
           <div className="space-y-6">
 
             {hasContentOutsideWindow && (
@@ -4302,6 +4461,239 @@ const Analytics = () => {
                   )}
                 </InstagramDetailCard>
               </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'tiktok-content' && selectedPlatform === 'tiktok' && (
+          <div className="space-y-6">
+            {!!tiktokReport?.message && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {tiktokReport.message}
+              </div>
+            )}
+
+            {!!tiktokReport?.errors?.length && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {tiktokReport.errors.map((item, idx) => (
+                  <div key={`${item.account}-${idx}`}>
+                    <span className="font-semibold">{item.account}:</span> {item.error}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {loadingTikTokReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : !tiktokReport?.supported ? (
+              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+                <p className="text-gray-500 font-medium">TikTok content report not available</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {tiktokReport?.message || 'Connect a TikTok account to see this report.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                {tiktokContent.content_source_message && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                    {tiktokContent.content_source_message}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Content Performance by Publish Date" info="Shows how many views and engagements your TikTok videos have accumulated, grouped by the date they were published.">
+                    {tiktokContentHasCharts ? (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <ComposedChart data={mergeBucketedSeries({ views: tiktokContent.post_views_series || [], engagement: tiktokContent.engagement_series || [] }, days, 'day')}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                          <Bar yAxisId="left" dataKey="views" name="Views" fill="#2f6690" radius={[4, 4, 0, 0]} barSize={22} minPointSize={2} />
+                          <Line yAxisId="right" type="monotone" dataKey="engagement" name="Engagement" stroke="#22c55e" strokeWidth={2.5} dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState('No TikTok post-performance data is available for the selected period.')
+                    )}
+                  </ReportCard>
+
+                  <ReportCard title="Videos Published Over Time" info="Shows how many TikTok videos in the selected period were published on each day.">
+                    {chartHasData(tiktokPublishedVideosSeries, ['count']) ? (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={tiktokPublishedVideosSeries}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                          <Tooltip />
+                          <Bar dataKey="count" name="Videos" fill="#8b5cf6" radius={[6, 6, 0, 0]} maxBarSize={40} minPointSize={2} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      chartEmptyState('No TikTok videos were returned for the selected period.')
+                    )}
+                  </ReportCard>
+                </div>
+
+                <ReportCard
+                  title="Your Top Posts"
+                  info="Ranks TikTok videos by the selected metric using the connected TikTok account feed when available, or Unravler fallback posts when TikTok video-list access is unavailable."
+                  action={(
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {[
+                        { key: 'views', label: 'Most Views' },
+                        { key: 'likes', label: 'Most Likes' },
+                        { key: 'comments', label: 'Most Comments' },
+                        { key: 'shares', label: 'Most Shares' },
+                      ].map((option) => (
+                        <button
+                          key={option.key}
+                          onClick={() => setTikTokTopMetric(option.key)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${tiktokTopMetric === option.key ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-gray-200 bg-offwhite text-gray-600 hover:border-gray-300'}`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                >
+                  {tiktokTopPosts.length > 0 ? (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      {tiktokTopPosts.slice(0, 8).map((post) => (
+                        <div key={post.id} className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
+                          {post.thumbnail_url ? (
+                            <img
+                              src={post.thumbnail_url}
+                              alt=""
+                              className="w-full h-40 rounded-xl object-cover"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div className="w-full h-40 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
+                              No media preview
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                            <span className="font-semibold">{post.source_mode === 'db_fallback' ? 'Unravler fallback' : 'TikTok feed'}</span>
+                            {post.timestamp && <span>{formatAnalyticsDate(post.timestamp)}</span>}
+                          </div>
+                          <p className="text-sm text-gray-700 line-clamp-3">{post.title || post.content || '(no caption)'}</p>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
+                            <span>Views</span><span className="text-right font-semibold">{fmt(post.views)}</span>
+                            <span>Likes</span><span className="text-right font-semibold">{fmt(post.likes)}</span>
+                            <span>Comments</span><span className="text-right font-semibold">{fmt(post.comments)}</span>
+                            <span>Shares</span><span className="text-right font-semibold">{fmt(post.shares)}</span>
+                            <span>Engagement</span><span className="text-right font-semibold">{fmt(post.engagement)}</span>
+                          </div>
+                          {post.permalink && (
+                            <a
+                              href={post.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                            >
+                              View on TikTok <FaExternalLinkAlt className="text-xs" />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    chartEmptyState('No top TikTok posts are available for this period yet.')
+                  )}
+                </ReportCard>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'tiktok-viewers' && selectedPlatform === 'tiktok' && (
+          <div className="space-y-6">
+            {loadingTikTokReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <>
+                <ReportCard title="Key Metrics" info="TikTok’s app can show total, new, and returning viewers, but the connected developer API does not expose those viewer metrics to Unravler today.">
+                  {chartEmptyState(tiktokViewers.viewer_metrics_message)}
+                </ReportCard>
+                <ReportCard title="Viewer Insights" info="TikTok’s app can show viewer gender, age, and locations, but the connected developer API does not expose those demographics to Unravler today.">
+                  {chartEmptyState(tiktokViewers.viewer_insights_message)}
+                </ReportCard>
+                <ReportCard title="Most Active Times" info="TikTok’s app can show when viewers are most active, but the connected developer API does not expose those active-time analytics to Unravler today.">
+                  {chartEmptyState(tiktokViewers.active_times_message)}
+                </ReportCard>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Creators Your Viewers Also Watched" info="TikTok’s app can show related creators, but the connected developer API does not expose this discovery graph to Unravler today.">
+                    {chartEmptyState(tiktokViewers.related_creators_message)}
+                  </ReportCard>
+                  <ReportCard title="Posts Your Viewers Also Viewed" info="TikTok’s app can show related posts, but the connected developer API does not expose this discovery graph to Unravler today.">
+                    {chartEmptyState(tiktokViewers.related_posts_message)}
+                  </ReportCard>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'tiktok-followers' && selectedPlatform === 'tiktok' && (
+          <div className="space-y-6">
+            {loadingTikTokReport ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <ReportMetricTile title="Total Followers" value={tiktokFollowers.followers_total} subtitle="Current TikTok followers" />
+                  <ReportMetricTile title={`Net Followers (${days}d)`} value={tiktokFollowers.net_followers} subtitle={tiktokFollowers.history_message || 'Net follower change based on app snapshots.'} accent={tiktokFollowers.net_followers < 0 ? 'text-rose-600' : 'text-emerald-600'} />
+                </div>
+                <ReportCard title="Follower Growth" info="Tracks TikTok follower totals across app-owned daily snapshots for the selected period.">
+                  {tiktokFollowers.history_message && (
+                    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                      {tiktokFollowers.history_message}
+                    </div>
+                  )}
+                  {tiktokFollowersHasData ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <AreaChart data={tiktokFollowersSeries}>
+                        <defs>
+                          <linearGradient id="colorTikTokFollowers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#2f6690" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#2f6690" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="count" name="Followers" stroke="#2f6690" strokeWidth={2.5} fill="url(#colorTikTokFollowers)" dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    chartEmptyState(tiktokFollowers.history_message || 'TikTok follower history will appear after app snapshots accumulate.')
+                  )}
+                </ReportCard>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <ReportCard title="Follower Insights" info="TikTok’s app can show follower gender, age, and locations, but the connected developer API does not expose those demographics to Unravler today.">
+                    {chartEmptyState(tiktokFollowers.demographics_message)}
+                  </ReportCard>
+                  <ReportCard title="Most Active Times" info="TikTok’s app can show when followers are most active, but the connected developer API does not expose those active-time analytics to Unravler today.">
+                    {chartEmptyState(tiktokFollowers.active_times_message)}
+                  </ReportCard>
+                </div>
+              </>
             )}
           </div>
         )}

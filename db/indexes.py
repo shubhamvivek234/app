@@ -108,6 +108,21 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
         [("platform", 1), ("report_type", 1), ("window_days", 1), ("last_refreshed_at", -1)],
     )
 
+    # tiktok_analytics_snapshots
+    await _safe_create_index(
+        db.tiktok_analytics_snapshots,
+        [("account_id", 1), ("platform", 1), ("report_type", 1), ("snapshot_date", -1)],
+        unique=True,
+    )
+    await _safe_create_index(
+        db.tiktok_analytics_snapshots,
+        [("platform", 1), ("report_type", 1), ("captured_at", -1)],
+    )
+    await _safe_create_index(
+        db.tiktok_analytics_snapshots,
+        [("user_id", 1), ("platform", 1), ("snapshot_date", -1)],
+    )
+
     # workspace_invites
     await _safe_create_index(db.workspace_invites, [("token", 1)], unique=True)
     await _safe_create_index(db.workspace_invites, [("workspace_id", 1), ("status", 1), ("created_at", -1)])

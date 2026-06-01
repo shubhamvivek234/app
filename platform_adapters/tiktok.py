@@ -5,6 +5,7 @@ Feature flag: TIKTOK_ENABLED env var must be "true" to allow publishing.
 """
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 TIKTOK_API_BASE = "https://open.tiktokapis.com"
 TIKTOK_PUBLISH_INIT = f"{TIKTOK_API_BASE}/v2/post/publish/video/init/"
 TIKTOK_STATUS_FETCH = f"{TIKTOK_API_BASE}/v2/post/publish/status/fetch/"
+TIKTOK_TOKEN_URL = f"{TIKTOK_API_BASE}/v2/oauth/token/"
 
 
 def _require_tiktok_enabled() -> None:
@@ -210,3 +212,43 @@ class TikTokAdapter(PlatformAdapter):
         if status == "SEND_TO_USER_INBOX":
             return "pending"
         return "processing"
+
+    async def refresh_token(self, refresh_token: str) -> dict:
+        client_key = os.environ.get("TIKTOK_CLIENT_ID", "")
+        client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "")
+        if not client_key or not client_secret:
+            raise PlatformAPIError("TikTok OAuth credentials are not configured.")
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                TIKTOK_TOKEN_URL,
+                data={
+                    "client_key": client_key,
+                    "client_secret": client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        if resp.status_code != 200:
+            raise PlatformHTTPError(resp.status_code, resp.text)
+
+        resp_json = resp.json()
+        token_payload = resp_json.get("data", resp_json)
+        error = resp_json.get("error") or {}
+        error_code = error.get("code", "ok") if isinstance(error, dict) else "ok"
+        if error_code and error_code != "ok":
+            raise PlatformAPIError(error.get("message", str(error_code)), code=error_code)
+
+        access_token = token_payload.get("access_token", "")
+        if not access_token:
+            raise PlatformResponseError("TikTok refresh response missing access_token")
+
+        expires_in = int(token_payload.get("expires_in", 0) or 0)
+        refreshed_refresh_token = token_payload.get("refresh_token") or refresh_token
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in) if expires_in else None
+        return {
+            "access_token": access_token,
+            "refresh_token": refreshed_refresh_token,
+            "expires_at": expires_at,
+        }

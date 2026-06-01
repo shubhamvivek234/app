@@ -881,3 +881,8 @@ export const getYoutubeAnalyticsReport = async (params) => {
   const response = await axios.get(`${API}/analytics/youtube-report`, { headers: getAuthHeaders(), params });
   return response.data;
 };
+
+export const getTikTokAnalyticsReport = async (params) => {
+  const response = await axios.get(`${API}/analytics/tiktok-report`, { headers: getAuthHeaders(), params });
+  return response.data;
+};

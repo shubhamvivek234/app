@@ -18,6 +18,10 @@ from utils.youtube_geography import (
     normalize_youtube_geography_rows,
     store_youtube_geography_snapshot,
 )
+from utils.tiktok_analytics import (
+    load_latest_tiktok_snapshot_before,
+    load_tiktok_analytics_snapshots,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
@@ -1361,6 +1365,98 @@ def _merge_date_counts(series_list: list[list[dict[str, Any]]]) -> list[dict[str
                 continue
             merged[date] = merged.get(date, 0) + _metric_int(point.get("count"))
     return [{"date": date, "count": merged[date]} for date in sorted(merged.keys())]
+
+
+def _tiktok_post_engagement(post: dict[str, Any]) -> int:
+    return (
+        _metric_int(post.get("likes"))
+        + _metric_int(post.get("comments_count"))
+        + _metric_int(post.get("shares"))
+    )
+
+
+def _tiktok_series_from_posts(
+    posts: list[dict[str, Any]],
+    current_since: datetime,
+    metric: str,
+) -> list[dict[str, int]]:
+    counts: dict[str, int] = {}
+    for post in posts:
+        ts = _parse_platform_timestamp(post.get("timestamp") or post.get("published_at"))
+        if not ts or ts < current_since:
+            continue
+        date_key = ts.date().isoformat()
+        if metric == "views":
+            value = _metric_int(post.get("views"))
+        elif metric == "engagement":
+            value = _tiktok_post_engagement(post)
+        elif metric == "videos":
+            value = 1
+        else:
+            value = 0
+        counts[date_key] = counts.get(date_key, 0) + value
+    return [{"date": date_key, "count": counts[date_key]} for date_key in sorted(counts.keys())]
+
+
+def _tiktok_post_card(post: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": post.get("id"),
+        "title": post.get("content") or "",
+        "content": post.get("content") or "",
+        "thumbnail_url": post.get("media_url") or post.get("thumbnail_url"),
+        "timestamp": post.get("timestamp") or post.get("published_at"),
+        "permalink": post.get("permalink") or post.get("post_url"),
+        "views": _metric_int(post.get("views")),
+        "likes": _metric_int(post.get("likes")),
+        "comments": _metric_int(post.get("comments_count")),
+        "shares": _metric_int(post.get("shares")),
+        "engagement": _tiktok_post_engagement(post),
+        "source_mode": post.get("source_mode") or "live",
+    }
+
+
+def _merge_tiktok_snapshot_series(
+    snapshots_by_account: dict[str, list[dict[str, Any]]],
+    live_totals: dict[str, dict[str, int]],
+) -> dict[str, list[dict[str, int]]]:
+    merged = {
+        "followers_series": {},
+        "likes_series": {},
+        "videos_series": {},
+    }
+
+    for account_id, snapshots in (snapshots_by_account or {}).items():
+        for snapshot in snapshots or []:
+            date_key = str(snapshot.get("snapshot_date") or "")
+            if not date_key:
+                continue
+            merged["followers_series"][date_key] = merged["followers_series"].get(date_key, 0) + _metric_int(snapshot.get("follower_count"))
+            merged["likes_series"][date_key] = merged["likes_series"].get(date_key, 0) + _metric_int(snapshot.get("likes_count"))
+            merged["videos_series"][date_key] = merged["videos_series"].get(date_key, 0) + _metric_int(snapshot.get("video_count"))
+
+        if account_id in live_totals:
+            today = datetime.now(timezone.utc).date().isoformat()
+            totals = live_totals[account_id]
+            merged["followers_series"][today] = merged["followers_series"].get(today, 0) + _metric_int(totals.get("followers"))
+            merged["likes_series"][today] = merged["likes_series"].get(today, 0) + _metric_int(totals.get("likes"))
+            merged["videos_series"][today] = merged["videos_series"].get(today, 0) + _metric_int(totals.get("videos"))
+
+    return {
+        key: [{"date": date_key, "count": value} for date_key, value in sorted(bucket.items())]
+        for key, bucket in merged.items()
+    }
+
+
+def _tiktok_history_message(
+    snapshots_by_account: dict[str, list[dict[str, Any]]],
+    days: int,
+) -> str | None:
+    if any(snapshots for snapshots in snapshots_by_account.values()):
+        return None
+    return (
+        f"TikTok historical trend lines start after app snapshots are collected. "
+        f"Current totals are shown now, and {days}-day history will populate as daily snapshots accumulate."
+    )
 
 
 def _summarize_instagram_period(
@@ -2892,6 +2988,240 @@ async def analytics_youtube_report(
         }
     )
 
+    return report
+
+
+@router.get("/analytics/tiktok-report")
+async def analytics_tiktok_report(
+    current_user: CurrentUser,
+    db: DB,
+    days: int = Query(30, ge=1, le=365),
+    account_id: str | None = Query(None, alias="accountId"),
+):
+    accounts, fallback_used = await _load_social_accounts_for_report(
+        db,
+        current_user["user_id"],
+        "tiktok",
+        account_id,
+    )
+    if not accounts:
+        return {
+            "supported": False,
+            "message": "Connect a TikTok account to view this report.",
+            "days": days,
+        }
+
+    from backend.app.social.tiktok import TikTokAuth
+
+    auth = TikTokAuth()
+    current_since = datetime.now(timezone.utc) - timedelta(days=days)
+    summary_totals = {
+        "followers_total": 0,
+        "following_total": 0,
+        "likes_total": 0,
+        "videos_total": 0,
+    }
+    all_posts: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    source_modes: list[str] = []
+    snapshots_by_account: dict[str, list[dict[str, Any]]] = {}
+    live_totals: dict[str, dict[str, int]] = {}
+    baseline_followers = 0
+    baseline_available = False
+
+    for account in accounts:
+        label = _account_error_label(account)
+        account_identifier = account.get("account_id") or account.get("id")
+        encrypted_token = account.get("access_token")
+        if not account_identifier or not encrypted_token:
+            _append_account_error(errors, account, "Account is missing TikTok credentials.")
+            continue
+
+        try:
+            access_token = decrypt(encrypted_token)
+            profile = await auth.get_user_profile(access_token)
+        except Exception as exc:
+            _append_account_error(errors, account, _analytics_error_message("tiktok", exc))
+            continue
+
+        summary_totals["followers_total"] += _metric_int(profile.get("followers_count"))
+        summary_totals["following_total"] += _metric_int(profile.get("following_count"))
+        summary_totals["likes_total"] += _metric_int(profile.get("likes_count"))
+        summary_totals["videos_total"] += _metric_int(profile.get("video_count"))
+        live_totals[account_identifier] = {
+            "followers": _metric_int(profile.get("followers_count")),
+            "likes": _metric_int(profile.get("likes_count")),
+            "videos": _metric_int(profile.get("video_count")),
+        }
+
+        try:
+            feed = await auth.fetch_posts(access_token, limit=100)
+        except Exception:
+            feed = []
+
+        source_mode = "live"
+        if not feed:
+            source_mode = "db_fallback"
+            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
+        if feed:
+            source_modes.append(source_mode)
+        elif source_mode == "db_fallback":
+            source_modes.append("db_fallback")
+
+        normalized_feed = []
+        for post in feed:
+            normalized = _standardize_feed_post(post)
+            normalized["source_mode"] = source_mode
+            normalized["account_label"] = label
+            normalized_feed.append(normalized)
+        all_posts.extend(normalized_feed)
+
+        snapshots = await load_tiktok_analytics_snapshots(
+            db,
+            account_id=account_identifier,
+            since_date=current_since.date(),
+        )
+        snapshots_by_account[account_identifier] = snapshots
+
+        baseline_snapshot = await load_latest_tiktok_snapshot_before(
+            db,
+            account_id=account_identifier,
+            before_date=current_since.date(),
+        )
+        if baseline_snapshot:
+            baseline_followers += _metric_int(baseline_snapshot.get("follower_count"))
+            baseline_available = True
+        elif snapshots:
+            baseline_followers += _metric_int((snapshots[0] or {}).get("follower_count"))
+            baseline_available = True
+
+    if not any(summary_totals.values()) and not all_posts and errors:
+        return {
+            "supported": False,
+            "message": "Unable to load TikTok analytics for the selected account.",
+            "days": days,
+            "errors": errors,
+        }
+
+    source_mode = "live"
+    unique_source_modes = set(source_modes)
+    if unique_source_modes == {"db_fallback"}:
+        source_mode = "db_fallback"
+    elif len(unique_source_modes) > 1:
+        source_mode = "mixed"
+
+    current_posts = []
+    for post in all_posts:
+        ts = _parse_platform_timestamp(post.get("timestamp"))
+        if not ts:
+            current_posts.append(post)
+            continue
+        if ts >= current_since:
+            current_posts.append(post)
+
+    current_posts.sort(
+        key=lambda post: _parse_platform_timestamp(post.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    snapshot_series = _merge_tiktok_snapshot_series(snapshots_by_account, live_totals)
+    history_message = _tiktok_history_message(snapshots_by_account, days)
+    net_followers = (
+        summary_totals["followers_total"] - baseline_followers
+        if baseline_available
+        else 0
+    )
+
+    def _sorted_tiktok_posts(metric_key: str) -> list[dict[str, Any]]:
+        metric_map = {
+            "views": lambda post: (_metric_int(post.get("views")), _tiktok_post_engagement(post)),
+            "likes": lambda post: (_metric_int(post.get("likes")), _metric_int(post.get("views"))),
+            "comments": lambda post: (_metric_int(post.get("comments_count")), _metric_int(post.get("views"))),
+            "shares": lambda post: (_metric_int(post.get("shares")), _metric_int(post.get("views"))),
+        }
+        sorter = metric_map[metric_key]
+        return [
+            _tiktok_post_card(post)
+            for post in sorted(current_posts, key=sorter, reverse=True)
+        ][:12]
+
+    content_source_message = None
+    if source_mode != "live":
+        content_source_message = (
+            "TikTok video-list access is unavailable for this connected account right now, so content cards are using posts published from Unravler. Live TikTok post metrics may be limited."
+        )
+
+    report_message = None
+    if source_mode == "db_fallback":
+        report_message = (
+            "TikTok analytics are in fallback mode for this account because TikTok did not return live video-list data. Account totals are live, but content cards use posts published from Unravler."
+        )
+    elif source_mode == "mixed":
+        report_message = (
+            "TikTok analytics are using a mix of live TikTok data and Unravler fallback content because one or more connected accounts did not return video-list data."
+        )
+    elif fallback_used:
+        report_message = "TikTok analytics were matched through a fallback account identifier for this request."
+
+    report = {
+        "supported": True,
+        "days": days,
+        "message": report_message,
+        "source_mode": source_mode,
+        "summary": {
+            "followers_total": summary_totals["followers_total"],
+            "following_total": summary_totals["following_total"],
+            "likes_total": summary_totals["likes_total"],
+            "videos_total": summary_totals["videos_total"],
+            "net_followers": net_followers,
+            "videos_published_in_period": len(current_posts),
+        },
+        "overview": {
+            "followers_series": snapshot_series["followers_series"],
+            "likes_series": snapshot_series["likes_series"],
+            "videos_series": snapshot_series["videos_series"],
+            "history_message": history_message,
+            "top_traffic_sources": [],
+            "search_queries": [],
+            "traffic_source_supported": False,
+            "search_queries_supported": False,
+            "traffic_source_message": "TikTok’s connected developer APIs do not expose traffic-source breakdowns for this account in Unravler today.",
+            "search_queries_message": "TikTok’s connected developer APIs do not expose search-query analytics for this account in Unravler today.",
+        },
+        "content": {
+            "top_posts_by_views": _sorted_tiktok_posts("views"),
+            "top_posts_by_likes": _sorted_tiktok_posts("likes"),
+            "top_posts_by_comments": _sorted_tiktok_posts("comments"),
+            "top_posts_by_shares": _sorted_tiktok_posts("shares"),
+            "post_views_series": _tiktok_series_from_posts(current_posts, current_since, "views"),
+            "engagement_series": _tiktok_series_from_posts(current_posts, current_since, "engagement"),
+            "videos_series": _tiktok_series_from_posts(current_posts, current_since, "videos"),
+            "content_source_message": content_source_message,
+        },
+        "viewers": {
+            "viewer_metrics_supported": False,
+            "viewer_insights_supported": False,
+            "active_times_supported": False,
+            "related_creators_supported": False,
+            "related_posts_supported": False,
+            "viewer_metrics_message": "TikTok’s connected developer APIs do not expose total viewers, new viewers, or returning viewers to Unravler today.",
+            "viewer_insights_message": "TikTok’s connected developer APIs do not expose viewer demographics like gender, age, or locations to Unravler today.",
+            "active_times_message": "TikTok’s connected developer APIs do not expose viewer active-time analytics to Unravler today.",
+            "related_creators_message": "TikTok’s connected developer APIs do not expose ‘creators your viewers also watched’ to Unravler today.",
+            "related_posts_message": "TikTok’s connected developer APIs do not expose ‘posts your viewers also viewed’ to Unravler today.",
+        },
+        "followers": {
+            "followers_total": summary_totals["followers_total"],
+            "net_followers": net_followers,
+            "followers_series": snapshot_series["followers_series"],
+            "history_message": history_message,
+            "demographics_supported": False,
+            "active_times_supported": False,
+            "demographics_message": "TikTok’s connected developer APIs do not expose follower demographics like gender, age, or locations to Unravler today.",
+            "active_times_message": "TikTok’s connected developer APIs do not expose follower active-time analytics to Unravler today.",
+        },
+        "errors": errors,
+    }
     return report
 
 

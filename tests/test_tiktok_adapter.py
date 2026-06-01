@@ -173,3 +173,30 @@ async def test_tiktok_publish_does_not_use_local_rate_limiter(monkeypatch):
         "status": "processing",
     }
     check_rate_limit_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tiktok_refresh_token_returns_new_expiry(monkeypatch):
+    monkeypatch.setenv("TIKTOK_CLIENT_ID", "client-key")
+    monkeypatch.setenv("TIKTOK_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(
+        "platform_adapters.tiktok.httpx.AsyncClient",
+        lambda timeout=30: _QueuedAsyncClient([
+            _FakeResponse(
+                200,
+                {
+                    "data": {
+                        "access_token": "new-access-token",
+                        "refresh_token": "new-refresh-token",
+                        "expires_in": 7200,
+                    }
+                },
+            )
+        ]),
+    )
+
+    tokens = await TikTokAdapter().refresh_token("old-refresh-token")
+
+    assert tokens["access_token"] == "new-access-token"
+    assert tokens["refresh_token"] == "new-refresh-token"
+    assert tokens["expires_at"] is not None
