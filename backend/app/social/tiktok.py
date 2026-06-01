@@ -14,8 +14,21 @@ class TikTokAuth:
     AUTH_URL   = "https://www.tiktok.com/v2/auth/authorize/"
     TOKEN_URL  = "https://open.tiktokapis.com/v2/oauth/token/"
     USER_URL   = "https://open.tiktokapis.com/v2/user/info/"
+    VIDEO_LIST_URL = "https://open.tiktokapis.com/v2/video/list/"
     VIDEO_INIT = "https://open.tiktokapis.com/v2/post/publish/video/init/"
     VIDEO_STATUS = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+    VIDEO_LIST_FIELDS = ",".join([
+        "id",
+        "title",
+        "video_description",
+        "create_time",
+        "cover_image_url",
+        "share_url",
+        "like_count",
+        "comment_count",
+        "share_count",
+        "view_count",
+    ])
 
     SCOPES = "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload"
 
@@ -165,7 +178,8 @@ class TikTokAuth:
         """
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://open.tiktokapis.com/v2/video/list/",
+                self.VIDEO_LIST_URL,
+                params={"fields": self.VIDEO_LIST_FIELDS},
                 json={"max_count": limit},
                 headers={
                     "Authorization": f"Bearer {access_token}",
@@ -177,11 +191,18 @@ class TikTokAuth:
                 logging.warning(f"[TikTok] fetch_posts unavailable: {response.text}")
                 return []
 
-            videos = response.json().get("data", {}).get("videos", [])
+            payload = response.json()
+            error = payload.get("error") or {}
+            error_code = error.get("code", "ok") if isinstance(error, dict) else "ok"
+            if error_code and error_code != "ok":
+                logging.warning(f"[TikTok] fetch_posts error: {payload}")
+                return []
+
+            videos = payload.get("data", {}).get("videos", [])
             return [
                 {
                     "platform_post_id": v.get("id", ""),
-                    "content":          v.get("title", ""),
+                    "content":          v.get("title") or v.get("video_description", ""),
                     "media_url":        v.get("cover_image_url"),
                     "media_type":       "VIDEO",
                     "post_url":         v.get("share_url"),
