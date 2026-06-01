@@ -347,7 +347,10 @@ async def _async_refresh_tiktok_analytics_snapshots() -> dict:
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
-    from backend.app.social.tiktok import TikTokAuth
+    try:
+        from backend.app.social.tiktok import TikTokAuth
+    except ModuleNotFoundError:
+        from app.social.tiktok import TikTokAuth
 
     auth = TikTokAuth()
     cursor = db.social_accounts.find(
