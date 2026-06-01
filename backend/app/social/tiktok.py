@@ -176,11 +176,12 @@ class TikTokAuth:
         Fetch user's TikTok videos (requires video.list scope).
         Returns empty list gracefully if scope not available.
         """
+        normalized_limit = max(1, min(int(limit or 20), 20))
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 self.VIDEO_LIST_URL,
                 params={"fields": self.VIDEO_LIST_FIELDS},
-                json={"max_count": limit},
+                json={"max_count": normalized_limit},
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type":  "application/json; charset=UTF-8",

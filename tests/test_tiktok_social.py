@@ -70,7 +70,7 @@ async def test_tiktok_fetch_posts_requests_required_fields_and_normalizes_respon
 
     _, kwargs = calls[0]
     assert kwargs["params"]["fields"] == TikTokAuth.VIDEO_LIST_FIELDS
-    assert kwargs["json"] == {"max_count": 25}
+    assert kwargs["json"] == {"max_count": 20}
 
 
 @pytest.mark.asyncio
