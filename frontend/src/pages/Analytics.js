@@ -2280,6 +2280,7 @@ const Analytics = () => {
     ...(!showTikTokReportTabs ? [{ id: 'posts', label: 'Posts' }] : []),
     ...(showTikTokReportTabs ? [
       { id: 'tiktok-content', label: 'Content' },
+      { id: 'posts', label: 'Posts' },
       { id: 'tiktok-viewers', label: 'Viewers' },
       { id: 'tiktok-followers', label: 'Followers' },
     ] : []),
