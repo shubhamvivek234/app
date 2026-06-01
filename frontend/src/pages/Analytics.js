@@ -2428,6 +2428,14 @@ const Analytics = () => {
     || 'Audience demographics are not available for this Instagram account yet.'
   );
   const instagramFollowerGrowthHasData = chartHasData(instagramFollowerTimeline, ['count']);
+  const instagramAudienceUnavailableBanner = (
+    (!instagramAudience.follower_growth_supported || !instagramAudience.demographics_supported)
+      ? (
+        instagramAudience.audience_unavailable_message
+        || 'Instagram did not return audience insights for this account yet. These cards usually require a Business or Creator account with enough eligible follower and audience data, and Meta may delay or withhold breakdowns even when the account is connected correctly.'
+      )
+      : null
+  );
   const instagramReachTimeline = bucketSeriesByGranularity(
     instagramReach.reach_series || [],
     days,
@@ -4265,6 +4273,12 @@ const Analytics = () => {
                     <span className="ml-1">Showing data from: <strong>{instagramAudience.accounts_used.join(', ')}</strong></span>
                   )}
                 </div>
+
+                {instagramAudienceUnavailableBanner && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <strong>Audience insights unavailable:</strong> {instagramAudienceUnavailableBanner}
+                  </div>
+                )}
 
                 {!!instagramDemographicsErrorDetails?.length && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

@@ -497,6 +497,7 @@ class InstagramAuth:
                 "metric": metric,
                 "timeframe": timeframe,
                 "attempted_requests": [],
+                "error_type": None,
             }
             dimension_to_key = {
                 "age": "age",
@@ -507,11 +508,9 @@ class InstagramAuth:
             request_variants = []
             base_variants = [
                 {"period": "lifetime", "metric_type": "total_value"},
-                {"metric_type": "total_value"},
                 {"period": "lifetime"},
-                {},
             ]
-            if timeframe:
+            if metric in {"engaged_audience_demographics", "reached_audience_demographics"} and timeframe:
                 request_variants.extend(
                     [{**variant, "timeframe": timeframe} for variant in base_variants]
                 )
@@ -553,6 +552,10 @@ class InstagramAuth:
                     )
                 return True
 
+            saw_rejected_request = False
+            saw_empty_success = False
+            last_api_error = None
+
             for breakdown in ("age", "gender", "city", "country"):
                 for extra_params in request_variants:
                     params = {
@@ -571,6 +574,8 @@ class InstagramAuth:
                     response_json = response.json() if response.text else {}
                     response_error = self._response_error(response_json)
                     if response.status_code != 200:
+                        saw_rejected_request = True
+                        last_api_error = response.text
                         logging.warning(
                             "[Instagram] Demographics fetch failed for %s/%s with params %s: %s",
                             metric,
@@ -580,6 +585,8 @@ class InstagramAuth:
                         )
                         continue
                     if response_error:
+                        saw_rejected_request = True
+                        last_api_error = response_error
                         logging.warning(
                             "[Instagram] Demographics API returned error for %s/%s with params %s: %s",
                             metric,
@@ -611,6 +618,8 @@ class InstagramAuth:
 
                     if _append_dimension_values(result, breakdown, matched_values):
                         break
+                    if response_json.get("data"):
+                        saw_empty_success = True
 
             if not any(result[key] for key in ("age", "gender", "cities", "countries")) and metric == "follower_demographics":
                 legacy_response = await client.get(
@@ -626,6 +635,8 @@ class InstagramAuth:
                 legacy_error = self._response_error(legacy_json)
                 if legacy_response.status_code == 200 and not legacy_error:
                     data = legacy_json.get("data", [])
+                    if data:
+                        saw_empty_success = True
                     for metric_row in data:
                         breakdowns = self._extract_breakdowns(metric_row)
                         for breakdown_row in breakdowns:
@@ -648,6 +659,8 @@ class InstagramAuth:
                                 )
                             _append_dimension_values(result, breakdown, matched_values)
                 else:
+                    saw_rejected_request = True
+                    last_api_error = legacy_error or legacy_response.text
                     logging.warning(
                         "[Instagram] Legacy follower demographics fetch failed: %s",
                         legacy_error or legacy_response.text,
@@ -655,7 +668,23 @@ class InstagramAuth:
 
             result["supported"] = any(result[key] for key in ("age", "gender", "cities", "countries"))
             if not result["supported"]:
-                result["error"] = f"Instagram did not return usable {metric} breakdowns for this account."
+                if saw_rejected_request and saw_empty_success:
+                    result["error_type"] = "mixed_failure"
+                    result["error"] = (
+                        f"Instagram rejected one or more {metric} request variants and still did not return usable audience breakdowns for this account."
+                    )
+                elif saw_rejected_request:
+                    result["error_type"] = "api_rejected"
+                    result["error"] = (
+                        f"Instagram rejected the {metric} audience request for this account. "
+                        f"{last_api_error or 'Meta did not accept the requested insight parameters.'}"
+                    )
+                else:
+                    result["error_type"] = "empty_response"
+                    result["error"] = (
+                        f"Instagram did not return usable {metric} breakdown rows for this account yet. "
+                        f"Meta may require a Business/Creator account plus enough eligible audience data."
+                    )
             return result
 
     async def fetch_follower_growth(self, access_token: str, user_id: str, days: int | None = None) -> dict:
@@ -666,7 +695,7 @@ class InstagramAuth:
             since_dt = until_dt - timedelta(days=range_days)
             attempt_errors = []
 
-            async def _request_growth(metric_name: str) -> tuple[list[dict], str | None]:
+            async def _request_growth(metric_name: str) -> tuple[list[dict], str | None, str | None]:
                 response = await client.get(
                     f"{self.GRAPH_URL}/{user_id}/insights",
                     params={
@@ -680,7 +709,7 @@ class InstagramAuth:
                 response_json = response.json() if response.text else {}
                 response_error = self._response_error(response_json)
                 if response.status_code != 200 or response_error:
-                    return [], response_error or response.text or f"Could not fetch {metric_name}"
+                    return [], response_error or response.text or f"Could not fetch {metric_name}", "api_rejected"
 
                 series = []
                 for item in response_json.get("data", []):
@@ -695,10 +724,10 @@ class InstagramAuth:
                         })
                 series.sort(key=lambda point: point["date"])
                 if not series:
-                    return [], f"No usable {metric_name} data returned"
-                return series, None
+                    return [], f"No usable {metric_name} data returned", "empty_response"
+                return series, None, None
 
-            series, primary_error = await _request_growth("follower_count")
+            series, primary_error, primary_error_type = await _request_growth("follower_count")
             if series:
                 growth = sum(int(point["count"]) for point in series)
                 return {
@@ -708,11 +737,12 @@ class InstagramAuth:
                     "growth_series": series,
                     "growth": growth,
                     "error": None,
+                    "error_type": None,
                 }
             if primary_error:
                 attempt_errors.append(f"follower_count: {primary_error}")
 
-            fallback_series, fallback_error = await _request_growth("follows_and_unfollows")
+            fallback_series, fallback_error, fallback_error_type = await _request_growth("follows_and_unfollows")
             if fallback_series:
                 growth = sum(int(point["count"]) for point in fallback_series)
                 return {
@@ -722,6 +752,7 @@ class InstagramAuth:
                     "growth_series": fallback_series,
                     "growth": growth,
                     "error": None,
+                    "error_type": None,
                 }
             if fallback_error:
                 attempt_errors.append(f"follows_and_unfollows: {fallback_error}")
@@ -731,6 +762,17 @@ class InstagramAuth:
                 if attempt_errors
                 else "Instagram did not return follower growth insights for this account."
             )
+            if primary_error_type == "api_rejected" or fallback_error_type == "api_rejected":
+                error_type = "api_rejected"
+            elif primary_error_type == "empty_response" or fallback_error_type == "empty_response":
+                error_type = "empty_response"
+                if not attempt_errors:
+                    error_message = (
+                        "Instagram did not return follower growth insight rows for this account yet. "
+                        "Meta may require enough recent eligible audience activity before these trends appear."
+                    )
+            else:
+                error_type = "unknown"
             logging.warning("[Instagram] Follower growth unavailable: %s", error_message)
             return {
                 "supported": False,
@@ -739,6 +781,7 @@ class InstagramAuth:
                 "growth_series": [],
                 "growth": 0,
                 "error": error_message,
+                "error_type": error_type,
             }
 
     async def fetch_comments(self, access_token: str, media_id: str, limit: int = 50) -> list:

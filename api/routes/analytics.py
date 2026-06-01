@@ -1626,6 +1626,7 @@ async def analytics_instagram_report(
                 {
                     "account": label,
                     "error": growth["error"],
+                    "error_type": growth.get("error_type"),
                 }
             )
         if engagement.get("reach_series"):
@@ -1671,6 +1672,11 @@ async def analytics_instagram_report(
                 {
                     "account": label,
                     "metric": (demographics or last_demographics_attempt or {}).get("metric", "demographics"),
+                    "error_type": (
+                        demographics.get("error_type")
+                        if demographics
+                        else (last_demographics_attempt or {}).get("error_type")
+                    ),
                     "error": (
                         demographics.get("error")
                         if demographics
@@ -1686,6 +1692,14 @@ async def analytics_instagram_report(
     if not follower_growth_supported and follower_growth_errors:
         follower_growth_error = " | ".join(
             f"{item['account']}: {item['error']}" for item in follower_growth_errors
+        )
+
+    audience_unavailable_message = None
+    if not follower_growth_supported or not any(merged_demographics.values()):
+        audience_unavailable_message = (
+            "Instagram did not return audience insights for this account yet. "
+            "These cards typically require a Business or Creator account plus enough eligible audience and follower data, "
+            "and Meta may delay or withhold breakdowns even when the account is connected correctly."
         )
 
     if not any(summary_totals.values()) and not all_current_feed and errors:
@@ -1759,6 +1773,7 @@ async def analytics_instagram_report(
                 if any(merged_demographics.values())
                 else "Instagram did not return engaged, reached, or follower demographic insights for the connected account during this request."
             ),
+            "audience_unavailable_message": audience_unavailable_message,
             "accounts_used": accounts_used,
             "demographics_metric": report_demographics_metric,
             "demographics_timeframe": report_demographics_timeframe,

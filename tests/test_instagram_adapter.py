@@ -273,12 +273,13 @@ async def test_fetch_demographics_uses_engaged_metric_with_per_breakdown_request
     assert [call["breakdown"] for call in client.calls] == ["age", "gender", "city", "country"]
     assert all(call["metric"] == "engaged_audience_demographics" for call in client.calls)
     assert all(call["timeframe"] == "this_month" for call in client.calls)
+    assert all(call["period"] == "lifetime" for call in client.calls)
 
 
 @pytest.mark.asyncio
 async def test_fetch_demographics_falls_back_to_legacy_follower_response(monkeypatch):
     client = _QueuedAsyncClient(
-        ([_FakeResponse(200, {"data": []})] * 16)
+        ([_FakeResponse(200, {"data": []})] * 8)
         + [
             _FakeResponse(
                 200,
@@ -320,6 +321,7 @@ async def test_fetch_demographics_falls_back_to_legacy_follower_response(monkeyp
     assert result["metric"] == "follower_demographics"
     assert result["age"] == [{"range": "25-34", "count": 5}]
     assert result["countries"] == [{"name": "US", "count": 8}]
+    assert all(call["period"] == "lifetime" for call in client.calls)
 
 
 @pytest.mark.asyncio
@@ -367,6 +369,7 @@ async def test_fetch_demographics_parses_values_breakdowns_shape(monkeypatch):
 
     assert result["supported"] is True
     assert result["age"] == [{"range": "35-44", "count": 6}]
+    assert client.calls[0]["period"] == "lifetime"
 
 
 @pytest.mark.asyncio
@@ -435,3 +438,28 @@ async def test_fetch_follower_growth_returns_explicit_error_when_unavailable(mon
     assert result["growth_series"] == []
     assert "follower_count" in result["error"]
     assert "follows_and_unfollows" in result["error"]
+    assert result["error_type"] == "empty_response"
+
+
+@pytest.mark.asyncio
+async def test_fetch_demographics_classifies_api_rejections(monkeypatch):
+    client = _QueuedAsyncClient(
+        [_FakeResponse(400, {"error": {"message": "The parameter period is required"}})] * 16
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_demographics(
+        "token",
+        "ig-user",
+        metric="engaged_audience_demographics",
+        timeframe="this_month",
+    )
+
+    assert result["supported"] is False
+    assert result["error_type"] == "api_rejected"
+    assert "rejected" in result["error"].lower()

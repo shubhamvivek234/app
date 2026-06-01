@@ -259,6 +259,7 @@ async def test_analytics_instagram_report_includes_audience_diagnostics(monkeypa
                 "growth": 0,
                 "growth_series": [],
                 "error": "follower_count: unavailable; follows_and_unfollows: unavailable",
+                "error_type": "empty_response",
             }
 
         async def fetch_demographics(self, access_token, user_id, metric="follower_demographics", timeframe=None):
@@ -271,6 +272,7 @@ async def test_analytics_instagram_report_includes_audience_diagnostics(monkeypa
                 "cities": [],
                 "countries": [],
                 "error": f"{metric} unavailable",
+                "error_type": "api_rejected" if metric != "follower_demographics" else "empty_response",
             }
 
     monkeypatch.setattr(analytics, "_load_social_accounts", fake_load_social_accounts)
@@ -288,5 +290,7 @@ async def test_analytics_instagram_report_includes_audience_diagnostics(monkeypa
     assert report["supported"] is True
     assert report["audience"]["follower_growth_supported"] is False
     assert "follower_count" in report["audience"]["follower_growth_error"]
+    assert report["audience"]["audience_unavailable_message"] is not None
     assert report["audience"]["demographics_supported"] is False
     assert report["audience"]["demographics_error_details"][0]["metric"] == "follower_demographics"
+    assert report["audience"]["demographics_error_details"][0]["error_type"] == "empty_response"
