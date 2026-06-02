@@ -450,6 +450,45 @@ const normalizeYoutubeGeographyCard = (payload, fallbackMetricLabel) => {
   };
 };
 
+const instagramSectionsForTab = (tabId) => {
+  if (tabId === 'instagram-audience') return ['audience'];
+  if (tabId === 'instagram-reach') return ['summary', 'reach'];
+  return ['summary'];
+};
+
+const mergeInstagramReportSections = (previousReport, nextReport) => {
+  if (!nextReport || typeof nextReport !== 'object') return nextReport;
+  if (nextReport.supported === false || !previousReport || typeof previousReport !== 'object') {
+    return nextReport;
+  }
+
+  const sectionsReturned = Array.isArray(nextReport.sections_returned) && nextReport.sections_returned.length > 0
+    ? nextReport.sections_returned
+    : ['summary', 'audience', 'reach'];
+
+  const merged = {
+    ...previousReport,
+    ...nextReport,
+    sections_returned: Array.from(new Set([
+      ...(previousReport.sections_returned || []),
+      ...sectionsReturned,
+    ])),
+  };
+
+  if (sectionsReturned.includes('summary')) {
+    merged.summary = nextReport.summary;
+    merged.summary_support = nextReport.summary_support;
+  }
+  if (sectionsReturned.includes('audience')) {
+    merged.audience = nextReport.audience;
+  }
+  if (sectionsReturned.includes('reach')) {
+    merged.reach = nextReport.reach;
+  }
+
+  return merged;
+};
+
 const pctPillColor = (value) => (
   value >= 0 ? 'text-emerald-600' : 'text-rose-600'
 );
@@ -547,7 +586,15 @@ const AudienceGrowthTooltip = ({ active, payload, label }) => {
   );
 };
 
-const InstagramMetricTile = ({ title, value, subtitle, deltaPct, info }) => {
+const InstagramMetricTile = ({
+  title,
+  value,
+  subtitle,
+  deltaPct,
+  info,
+  supported = true,
+  unavailableMessage = null,
+}) => {
   const numericValue = typeof value === 'number' ? value : Number(value);
   const isNegativeValue = Number.isFinite(numericValue) && numericValue < 0;
 
@@ -557,20 +604,60 @@ const InstagramMetricTile = ({ title, value, subtitle, deltaPct, info }) => {
         <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
         {info ? <InfoHint text={info} /> : null}
       </div>
-      <div className="mt-3 flex items-end gap-3">
-        <p className={`text-5xl font-bold tracking-tight ${isNegativeValue ? 'text-rose-600' : 'text-sky-600'}`}>
-          {fmt(value)}
-        </p>
-        {deltaPct != null && (
-          <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-            {pctLabel(deltaPct)}
-          </span>
-        )}
-      </div>
-      {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+      {supported ? (
+        <>
+          <div className="mt-3 flex items-end gap-3">
+            <p className={`text-5xl font-bold tracking-tight ${isNegativeValue ? 'text-rose-600' : 'text-sky-600'}`}>
+              {fmt(value)}
+            </p>
+            {deltaPct != null && (
+              <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {pctLabel(deltaPct)}
+              </span>
+            )}
+          </div>
+          {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+        </>
+      ) : (
+        <>
+          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-500">Unavailable</p>
+          <p className="mt-3 text-sm text-gray-500">
+            {unavailableMessage || 'This metric is not available for this account right now.'}
+          </p>
+        </>
+      )}
     </div>
   );
 };
+
+const InstagramSummaryStatCard = ({
+  title,
+  value,
+  subtitle,
+  info,
+  supported = true,
+  unavailableMessage = null,
+}) => (
+  <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+    <div className="flex items-center gap-2">
+      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+      {info ? <InfoHint text={info} /> : null}
+    </div>
+    {supported ? (
+      <>
+        <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(value)}</p>
+        {subtitle ? <p className="mt-2 text-sm text-gray-500">{subtitle}</p> : null}
+      </>
+    ) : (
+      <>
+        <p className="mt-2 text-2xl font-bold text-gray-500">Unavailable</p>
+        <p className="mt-2 text-sm text-gray-500">
+          {unavailableMessage || 'This metric is not available for this account right now.'}
+        </p>
+      </>
+    )}
+  </div>
+);
 
 const InstagramDetailCard = ({ title, children, action, info }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
@@ -2027,32 +2114,42 @@ const Analytics = () => {
     }
   }, [selectedPlatform, fetchOverview, fetchEngagement]);
 
-  const fetchInstagramReport = useCallback(async ({ refresh = false } = {}) => {
+  const fetchInstagramReport = useCallback(async ({ refresh = false, sections } = {}) => {
     if (selectedPlatform !== 'instagram') {
       setInstagramReport(null);
       return;
     }
     setLoadingInstagramReport(true);
     try {
+      const requestedSections = Array.isArray(sections) && sections.length > 0
+        ? sections
+        : instagramSectionsForTab(activeTab);
       const data = await getInstagramAnalyticsReport({
         days,
         accountId: selectedAccount,
+        sections: requestedSections.join(','),
         ...(refresh ? { refresh: true } : {}),
       });
-      setInstagramReport(data);
+      setInstagramReport((previousReport) => mergeInstagramReportSections(previousReport, data));
     } catch {
       toast.error('Failed to load Instagram report');
       setInstagramReport(null);
     } finally {
       setLoadingInstagramReport(false);
     }
-  }, [days, selectedPlatform, selectedAccount]);
+  }, [activeTab, days, selectedPlatform, selectedAccount]);
 
   useEffect(() => {
     if (['summary', 'instagram-audience', 'instagram-reach'].includes(activeTab) && selectedPlatform === 'instagram') {
-      fetchInstagramReport();
+      fetchInstagramReport({ sections: instagramSectionsForTab(activeTab) });
     }
   }, [activeTab, selectedPlatform, fetchInstagramReport]);
+
+  useEffect(() => {
+    if (selectedPlatform === 'instagram') {
+      setInstagramReport(null);
+    }
+  }, [selectedPlatform, selectedAccount, days]);
 
   const fetchBlueskyReport = useCallback(async ({ refresh = false } = {}) => {
     if (selectedPlatform !== 'bluesky') {
@@ -2267,7 +2364,10 @@ const Analytics = () => {
     }
 
     if (['summary', 'instagram-audience', 'instagram-reach'].includes(activeTab)) {
-      await fetchInstagramReport({ refresh: true });
+      await fetchInstagramReport({
+        refresh: true,
+        sections: instagramSectionsForTab(activeTab),
+      });
       return;
     }
 
@@ -2512,8 +2612,13 @@ const Analytics = () => {
   }, [postsSort, visibleSortOptions]);
 
   const instagramSummary = instagramReport?.summary || {};
+  const instagramSummarySupport = instagramReport?.summary_support || {};
   const instagramAudience = instagramReport?.audience || {};
   const instagramReach = instagramReport?.reach || {};
+  const instagramNetFollowersSupport = instagramSummarySupport.new_followers || {};
+  const instagramReachSupport = instagramSummarySupport.reach || {};
+  const instagramImpressionsSupport = instagramSummarySupport.impressions || {};
+  const instagramProfileViewsSupport = instagramSummarySupport.profile_views || {};
   const instagramFollowerTimeline = (instagramAudience.follower_growth || []).map((point) => ({
     ...point,
     label: formatReportDate(point.date, days),
@@ -4142,8 +4247,14 @@ const Analytics = () => {
                   <InstagramMetricTile
                     title="Net Follower Change"
                     value={instagramSummary.new_followers}
-                    subtitle={`Net avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`}
+                    subtitle={
+                      instagramNetFollowersSupport.supported === false
+                        ? null
+                        : `Net avg. per day: ${instagramSummary.avg_new_followers_per_day ?? 0}`
+                    }
                     info="Shows net follower change for the selected period. Positive values mean the account gained followers overall, and negative values mean it lost followers overall."
+                    supported={instagramNetFollowersSupport.supported !== false}
+                    unavailableMessage={instagramNetFollowersSupport.message}
                   />
                 </div>
 
@@ -4152,21 +4263,23 @@ const Analytics = () => {
                   info="Summarizes profile visits, posting volume, and total engagement generated during the selected date range."
                 >
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Profile Views</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.profile_views)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Total profile views in the selected period.</p>
-                    </div>
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Posts Published</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_posts)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Avg. per day: {instagramSummary.post_summary?.avg_posts_per_day ?? 0}</p>
-                    </div>
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Total Engagement</p>
-                      <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(instagramSummary.post_summary?.total_engagement)}</p>
-                      <p className="mt-2 text-sm text-gray-500">Avg. per post: {instagramSummary.post_summary?.avg_engagement_per_post ?? 0}</p>
-                    </div>
+                    <InstagramSummaryStatCard
+                      title="Profile Views"
+                      value={instagramSummary.profile_views}
+                      subtitle="Total profile views in the selected period."
+                      supported={instagramProfileViewsSupport.supported !== false}
+                      unavailableMessage={instagramProfileViewsSupport.message}
+                    />
+                    <InstagramSummaryStatCard
+                      title="Posts Published"
+                      value={instagramSummary.post_summary?.total_posts}
+                      subtitle={`Avg. per day: ${instagramSummary.post_summary?.avg_posts_per_day ?? 0}`}
+                    />
+                    <InstagramSummaryStatCard
+                      title="Total Engagement"
+                      value={instagramSummary.post_summary?.total_engagement}
+                      subtitle={`Avg. per post: ${instagramSummary.post_summary?.avg_engagement_per_post ?? 0}`}
+                    />
                   </div>
                 </InstagramDetailCard>
 
@@ -4180,12 +4293,16 @@ const Analytics = () => {
                       value={instagramSummary.reach}
                       subtitle="Accounts reached in the selected period"
                       info="Unique accounts reached by your content in the selected window."
+                      supported={instagramReachSupport.supported !== false}
+                      unavailableMessage={instagramReachSupport.message}
                     />
                     <InstagramMetricTile
                       title="Impressions"
                       value={instagramSummary.impressions}
                       subtitle="Total content impressions in the selected period"
                       info="Total times your content was displayed, including repeated views from the same accounts."
+                      supported={instagramImpressionsSupport.supported !== false}
+                      unavailableMessage={instagramImpressionsSupport.message}
                     />
                   </div>
                 </InstagramDetailCard>
@@ -4572,18 +4689,24 @@ const Analytics = () => {
                     value={instagramSummary.reach}
                     subtitle="Unique accounts reached during the selected period"
                     info="Shows how many unique Instagram accounts saw your content across the selected date range."
+                    supported={instagramReachSupport.supported !== false}
+                    unavailableMessage={instagramReachSupport.message}
                   />
                   <InstagramMetricTile
                     title="Impressions"
                     value={instagramSummary.impressions}
                     subtitle="Total content impressions during the selected period"
                     info="Shows how many total times your Instagram content was displayed, including repeat views from the same accounts."
+                    supported={instagramImpressionsSupport.supported !== false}
+                    unavailableMessage={instagramImpressionsSupport.message}
                   />
                   <InstagramMetricTile
                     title="Profile Views"
                     value={instagramSummary.profile_views}
                     subtitle="Instagram profile visits during the selected period"
                     info="Shows how many times people visited your Instagram profile during the selected date range."
+                    supported={instagramProfileViewsSupport.supported !== false}
+                    unavailableMessage={instagramProfileViewsSupport.message}
                   />
                 </div>
 

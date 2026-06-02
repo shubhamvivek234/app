@@ -117,6 +117,9 @@ async def test_fetch_engagement_returns_totals_and_daily_series(monkeypatch):
     assert result["impressions"] == 25
     assert result["reach"] == 18
     assert result["profile_views"] == 6
+    assert result["metric_support"]["impressions"] == {"supported": True, "message": None}
+    assert result["metric_support"]["reach"] == {"supported": True, "message": None}
+    assert result["metric_support"]["profile_views"] == {"supported": True, "message": None}
     assert result["impressions_series"] == [
         {"date": "2026-05-20", "count": 10},
         {"date": "2026-05-21", "count": 15},
@@ -435,6 +438,7 @@ async def test_fetch_follower_growth_returns_explicit_error_when_unavailable(mon
     result = await auth.fetch_follower_growth("token", "ig-user", days=30)
 
     assert result["supported"] is False
+    assert result["growth"] is None
     assert result["growth_series"] == []
     assert "follower_count" in result["error"]
     assert "follows_and_unfollows" in result["error"]
@@ -463,3 +467,67 @@ async def test_fetch_demographics_classifies_api_rejections(monkeypatch):
     assert result["supported"] is False
     assert result["error_type"] == "api_rejected"
     assert "rejected" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_fetch_engagement_marks_unsupported_impressions_unavailable(monkeypatch):
+    client = _QueuedAsyncClient(
+        [
+            _FakeResponse(
+                200,
+                {
+                    "id": "ig-user",
+                    "username": "creator",
+                    "followers_count": 12,
+                    "follows_count": 3,
+                    "media_count": 4,
+                },
+            ),
+            _FakeResponse(400, {"error": {"message": "Unsupported impressions metric"}}),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "reach",
+                            "values": [
+                                {"value": 4, "end_time": "2026-05-20T07:00:00+0000"},
+                                {"value": 6, "end_time": "2026-05-21T07:00:00+0000"},
+                            ],
+                        }
+                    ]
+                },
+            ),
+            _FakeResponse(
+                200,
+                {
+                    "data": [
+                        {
+                            "name": "profile_views",
+                            "values": [
+                                {"value": 0, "end_time": "2026-05-20T07:00:00+0000"},
+                                {"value": 0, "end_time": "2026-05-21T07:00:00+0000"},
+                            ],
+                        }
+                    ]
+                },
+            ),
+            _FakeResponse(200, {"data": []}),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "backend.app.social.instagram.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    auth = InstagramAuth()
+    result = await auth.fetch_engagement("token", "ig-user", days=30)
+
+    assert result["impressions"] is None
+    assert result["reach"] == 10
+    assert result["profile_views"] == 0
+    assert result["metric_support"]["impressions"]["supported"] is False
+    assert "impressions" in result["metric_support"]["impressions"]["message"].lower()
+    assert result["metric_support"]["reach"] == {"supported": True, "message": None}
+    assert result["metric_support"]["profile_views"] == {"supported": True, "message": None}

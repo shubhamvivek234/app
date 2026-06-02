@@ -389,7 +389,13 @@ class InstagramAuth:
                 })
             return result
 
-    async def fetch_engagement(self, access_token: str, user_id: str, days: int | None = None) -> dict:
+    async def fetch_engagement(
+        self,
+        access_token: str,
+        user_id: str,
+        days: int | None = None,
+        include_series: bool = True,
+    ) -> dict:
         """Fetch Instagram account engagement metrics"""
         async with httpx.AsyncClient() as client:
             # Get user profile stats
@@ -411,6 +417,20 @@ class InstagramAuth:
                 "reach": [],
                 "profile_views": [],
             }
+            metric_support = {
+                "impressions": {
+                    "supported": False,
+                    "message": "Instagram did not expose account-level impressions for this connected account.",
+                },
+                "reach": {
+                    "supported": False,
+                    "message": "Instagram did not return usable reach data for this connected account in the selected period.",
+                },
+                "profile_views": {
+                    "supported": False,
+                    "message": "Instagram did not return usable profile view data for this connected account in the selected period.",
+                },
+            }
             followers_growth = None
             try:
                 range_days = max(int(days or 30), 1)
@@ -427,22 +447,37 @@ class InstagramAuth:
                             "access_token": access_token,
                         },
                     )
-                    if metric_resp.status_code != 200:
-                        logging.warning(f"[Instagram] Insight {metric_name} fetch failed: {metric_resp.text}")
+                    metric_payload = metric_resp.json() if metric_resp.text else {}
+                    metric_error = self._response_error(metric_payload)
+                    if metric_resp.status_code != 200 or metric_error:
+                        logging.warning(
+                            "[Instagram] Insight %s fetch failed: %s",
+                            metric_name,
+                            metric_error or metric_resp.text,
+                        )
                         continue
 
-                    for item in metric_resp.json().get("data", []):
+                    metric_total = None
+                    saw_usable_metric = False
+                    for item in metric_payload.get("data", []):
                         name = item.get("name")
                         if not name:
                             continue
                         normalized_series = self._normalize_daily_insight_series(item.get("values", []))
-                        if normalized_series:
+                        if include_series and normalized_series:
                             insight_series[name] = normalized_series
-                        if item.get("total_value", {}).get("value") is not None:
-                            insights[name] = int(item.get("total_value", {}).get("value", 0) or 0)
+                        total_value = item.get("total_value")
+                        if isinstance(total_value, dict) and total_value.get("value") is not None:
+                            metric_total = int(total_value.get("value", 0) or 0)
+                            saw_usable_metric = True
                             continue
                         if normalized_series:
-                            insights[name] = sum(point["count"] for point in normalized_series)
+                            metric_total = sum(point["count"] for point in normalized_series)
+                            saw_usable_metric = True
+
+                    if saw_usable_metric:
+                        insights[metric_name] = metric_total or 0
+                        metric_support[metric_name] = {"supported": True, "message": None}
                 growth_resp = await client.get(
                     f"{self.GRAPH_URL}/{user_id}/insights",
                     params={
@@ -470,12 +505,13 @@ class InstagramAuth:
                 "following": profile.get("follows_count", 0),
                 "posts_count": profile.get("media_count", 0),
                 "followers_growth": followers_growth,
-                "impressions": insights.get("impressions", 0),
-                "reach": insights.get("reach", 0),
-                "profile_views": insights.get("profile_views", 0),
+                "impressions": insights.get("impressions") if metric_support["impressions"]["supported"] else None,
+                "reach": insights.get("reach") if metric_support["reach"]["supported"] else None,
+                "profile_views": insights.get("profile_views") if metric_support["profile_views"]["supported"] else None,
                 "impressions_series": insight_series.get("impressions", []),
                 "reach_series": insight_series.get("reach", []),
                 "profile_views_series": insight_series.get("profile_views", []),
+                "metric_support": metric_support,
                 "platform": "instagram",
             }
 
@@ -779,7 +815,7 @@ class InstagramAuth:
                 "source": None,
                 "series": [],
                 "growth_series": [],
-                "growth": 0,
+                "growth": None,
                 "error": error_message,
                 "error_type": error_type,
             }

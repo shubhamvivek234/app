@@ -1619,6 +1619,36 @@ def _summarize_instagram_period(
     }
 
 
+_INSTAGRAM_REPORT_SECTIONS = ("summary", "audience", "reach")
+
+
+def _parse_report_sections(raw_sections: str | None, allowed_sections: tuple[str, ...]) -> list[str]:
+    if raw_sections is None or not isinstance(raw_sections, str):
+        return list(allowed_sections)
+
+    requested: list[str] = []
+    invalid: list[str] = []
+    allowed = set(allowed_sections)
+    for section in str(raw_sections).split(","):
+        normalized = section.strip().lower()
+        if not normalized:
+            continue
+        if normalized not in allowed:
+            invalid.append(normalized)
+            continue
+        if normalized not in requested:
+            requested.append(normalized)
+
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported analytics sections requested: {', '.join(invalid)}",
+        )
+    if not requested:
+        raise HTTPException(status_code=400, detail="At least one analytics section must be requested.")
+    return requested
+
+
 @router.get("/analytics/instagram-report")
 async def analytics_instagram_report(
     current_user: CurrentUser,
@@ -1626,7 +1656,13 @@ async def analytics_instagram_report(
     days: int = Query(30, ge=1, le=365),
     account_id: str | None = Query(None, alias="accountId"),
     refresh: bool = Query(False),
+    sections: str | None = Query(None),
 ):
+    requested_sections = _parse_report_sections(sections, _INSTAGRAM_REPORT_SECTIONS)
+    include_summary = "summary" in requested_sections
+    include_audience = "audience" in requested_sections
+    include_reach = "reach" in requested_sections
+
     accounts = await _load_social_accounts(db, current_user["user_id"], "instagram", account_id)
     if not accounts:
         return {
@@ -1647,6 +1683,12 @@ async def analytics_instagram_report(
         "reach": 0,
         "impressions": 0,
         "profile_views": 0,
+    }
+    summary_support_tracker = {
+        "new_followers": {"supported": False, "messages": []},
+        "reach": {"supported": False, "messages": []},
+        "impressions": {"supported": False, "messages": []},
+        "profile_views": {"supported": False, "messages": []},
     }
     demographics_bucket = {"age": [], "gender": [], "cities": [], "countries": []}
     accounts_used: list[str] = []
@@ -1678,97 +1720,154 @@ async def analytics_instagram_report(
             _append_account_error(errors, account, "Stored token could not be decrypted.")
             continue
 
-        try:
-            feed = await auth.fetch_feed(access_token, platform_user_id, limit=100)
-            engagement = await auth.fetch_engagement(access_token, platform_user_id, days=days)
-            growth = await auth.fetch_follower_growth(access_token, platform_user_id, days=days)
-        except Exception as exc:
-            _append_account_error(errors, account, _analytics_error_message("instagram", exc))
-            continue
-
-        if not feed:
-            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
-
-        all_current_feed.extend(feed)
-        summary_totals["followers_total"] += _metric_int(engagement.get("followers"))
-        summary_totals["new_followers"] += _metric_int(
-            growth.get("growth") if growth.get("supported") else engagement.get("followers_growth")
-        )
-        summary_totals["reach"] += _metric_int(engagement.get("reach"))
-        summary_totals["impressions"] += _metric_int(engagement.get("impressions"))
-        summary_totals["profile_views"] += _metric_int(engagement.get("profile_views"))
-        if growth.get("growth_series"):
-            follower_series.append(growth["growth_series"])
-            follower_growth_supported = True
-            follower_growth_source = follower_growth_source or growth.get("source") or "follower_count"
-        elif growth.get("error"):
-            follower_growth_errors.append(
-                {
-                    "account": label,
-                    "error": growth["error"],
-                    "error_type": growth.get("error_type"),
-                }
-            )
-        if engagement.get("reach_series"):
-            reach_series.append(engagement["reach_series"])
-        if engagement.get("impressions_series"):
-            impressions_series.append(engagement["impressions_series"])
-        if engagement.get("profile_views_series"):
-            profile_views_series.append(engagement["profile_views_series"])
-
-        engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
-        demographics = None
-        demographics_source_label = None
-        last_demographics_attempt = None
-        for metric_name, timeframe, source_label in (
-            ("engaged_audience_demographics", engagement_demographic_timeframe, "engaged audience"),
-            ("reached_audience_demographics", engagement_demographic_timeframe, "reached audience"),
-            ("follower_demographics", None, "follower demographics"),
-        ):
-            candidate = await auth.fetch_demographics(
+        requested_tasks: dict[str, Any] = {}
+        if include_summary:
+            requested_tasks["feed"] = auth.fetch_feed(access_token, platform_user_id, limit=100)
+        if include_summary or include_reach:
+            requested_tasks["engagement"] = auth.fetch_engagement(
                 access_token,
                 platform_user_id,
-                metric=metric_name,
-                timeframe=timeframe,
+                days=days,
+                include_series=include_reach,
             )
-            last_demographics_attempt = candidate
-            if candidate.get("supported"):
-                demographics = candidate
-                demographics_source_label = source_label
-                break
+        if include_summary or include_audience:
+            requested_tasks["growth"] = auth.fetch_follower_growth(access_token, platform_user_id, days=days)
 
-        if demographics and demographics.get("supported"):
-            accounts_used.append(label)
-            demographics_bucket["age"].extend(demographics.get("age", []))
-            demographics_bucket["gender"].extend(demographics.get("gender", []))
-            demographics_bucket["cities"].extend(demographics.get("cities", []))
-            demographics_bucket["countries"].extend(demographics.get("countries", []))
-            if report_demographics_metric is None:
-                report_demographics_metric = demographics.get("metric")
-                report_demographics_timeframe = demographics.get("timeframe")
-                report_demographics_source_label = demographics_source_label
-        else:
-            demographics_errors.append(
-                {
-                    "account": label,
-                    "metric": (demographics or last_demographics_attempt or {}).get("metric", "demographics"),
-                    "error_type": (
-                        demographics.get("error_type")
-                        if demographics
-                        else (last_demographics_attempt or {}).get("error_type")
-                    ),
-                    "error": (
-                        demographics.get("error")
-                        if demographics
-                        else (last_demographics_attempt or {}).get("error")
-                        if last_demographics_attempt
-                        else "Instagram did not return engaged, reached, or follower demographic insights for this account."
-                    )
-                    or "Instagram demographic insights are not available for this account yet.",
-                }
-            )
+        task_results: dict[str, Any] = {}
+        if requested_tasks:
+            resolved = await asyncio.gather(*requested_tasks.values(), return_exceptions=True)
+            task_results = dict(zip(requested_tasks.keys(), resolved))
+
+        feed = task_results.get("feed", [])
+        if isinstance(feed, Exception):
+            _append_account_error(errors, account, _analytics_error_message("instagram", feed))
+            feed = []
+        engagement = task_results.get("engagement", {})
+        if isinstance(engagement, Exception):
+            _append_account_error(errors, account, _analytics_error_message("instagram", engagement))
+            engagement = {}
+        growth = task_results.get("growth", {})
+        if isinstance(growth, Exception):
+            growth = {
+                "supported": False,
+                "source": None,
+                "growth_series": [],
+                "growth": None,
+                "error": _analytics_error_message("instagram", growth),
+                "error_type": "api_rejected",
+            }
+
+        if include_summary and not feed:
+            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=100)
+
+        if include_summary:
+            all_current_feed.extend(feed)
+            summary_totals["followers_total"] += _metric_int(engagement.get("followers"))
+
+            if growth.get("supported"):
+                summary_support_tracker["new_followers"]["supported"] = True
+                summary_totals["new_followers"] += _metric_int(growth.get("growth"))
+            elif growth.get("error"):
+                summary_support_tracker["new_followers"]["messages"].append(f"{label}: {growth['error']}")
+
+            metric_support = engagement.get("metric_support") or {}
+            for metric_name in ("reach", "impressions", "profile_views"):
+                metric_state = metric_support.get(metric_name)
+                if metric_state is None:
+                    metric_supported = engagement.get(metric_name) is not None
+                    metric_message = None
+                else:
+                    metric_supported = bool(metric_state.get("supported"))
+                    metric_message = metric_state.get("message")
+
+                if metric_supported:
+                    summary_support_tracker[metric_name]["supported"] = True
+                    summary_totals[metric_name] += _metric_int(engagement.get(metric_name))
+                elif metric_message:
+                    summary_support_tracker[metric_name]["messages"].append(f"{label}: {metric_message}")
+
+        if include_audience:
+            if growth.get("growth_series"):
+                follower_series.append(growth["growth_series"])
+                follower_growth_supported = True
+                follower_growth_source = follower_growth_source or growth.get("source") or "follower_count"
+            elif growth.get("error"):
+                follower_growth_errors.append(
+                    {
+                        "account": label,
+                        "error": growth["error"],
+                        "error_type": growth.get("error_type"),
+                    }
+                )
+
+        if include_reach:
+            if engagement.get("reach_series"):
+                reach_series.append(engagement["reach_series"])
+            if engagement.get("impressions_series"):
+                impressions_series.append(engagement["impressions_series"])
+            if engagement.get("profile_views_series"):
+                profile_views_series.append(engagement["profile_views_series"])
+
+        if include_audience:
+            engagement_demographic_timeframe = "this_week" if days <= 7 else "this_month"
+            demographics = None
+            demographics_source_label = None
+            last_demographics_attempt = None
+            for metric_name, timeframe, source_label in (
+                ("engaged_audience_demographics", engagement_demographic_timeframe, "engaged audience"),
+                ("reached_audience_demographics", engagement_demographic_timeframe, "reached audience"),
+                ("follower_demographics", None, "follower demographics"),
+            ):
+                candidate = await auth.fetch_demographics(
+                    access_token,
+                    platform_user_id,
+                    metric=metric_name,
+                    timeframe=timeframe,
+                )
+                last_demographics_attempt = candidate
+                if candidate.get("supported"):
+                    demographics = candidate
+                    demographics_source_label = source_label
+                    break
+
+            if demographics and demographics.get("supported"):
+                accounts_used.append(label)
+                demographics_bucket["age"].extend(demographics.get("age", []))
+                demographics_bucket["gender"].extend(demographics.get("gender", []))
+                demographics_bucket["cities"].extend(demographics.get("cities", []))
+                demographics_bucket["countries"].extend(demographics.get("countries", []))
+                if report_demographics_metric is None:
+                    report_demographics_metric = demographics.get("metric")
+                    report_demographics_timeframe = demographics.get("timeframe")
+                    report_demographics_source_label = demographics_source_label
+            else:
+                demographics_errors.append(
+                    {
+                        "account": label,
+                        "metric": (demographics or last_demographics_attempt or {}).get("metric", "demographics"),
+                        "error_type": (
+                            demographics.get("error_type")
+                            if demographics
+                            else (last_demographics_attempt or {}).get("error_type")
+                        ),
+                        "error": (
+                            demographics.get("error")
+                            if demographics
+                            else (last_demographics_attempt or {}).get("error")
+                            if last_demographics_attempt
+                            else "Instagram did not return engaged, reached, or follower demographic insights for this account."
+                        )
+                        or "Instagram demographic insights are not available for this account yet.",
+                    }
+                )
 
     merged_follower_growth = _merge_date_counts(follower_series)
+    merged_demographics = {
+        "age": _merge_named_counts(demographics_bucket["age"], "range"),
+        "gender": _merge_named_counts(demographics_bucket["gender"], "label"),
+        "cities": _merge_named_counts(demographics_bucket["cities"], "name")[:10],
+        "countries": _merge_named_counts(demographics_bucket["countries"], "name")[:10],
+    }
     if not follower_growth_supported and follower_growth_errors:
         follower_growth_error = " | ".join(
             f"{item['account']}: {item['error']}" for item in follower_growth_errors
@@ -1782,7 +1881,15 @@ async def analytics_instagram_report(
             "and Meta may delay or withhold breakdowns even when the account is connected correctly."
         )
 
-    if not any(summary_totals.values()) and not all_current_feed and errors:
+    has_requested_data = False
+    if include_summary and (summary_totals["followers_total"] or all_current_feed):
+        has_requested_data = True
+    if include_audience and (merged_follower_growth or any(merged_demographics.values())):
+        has_requested_data = True
+    if include_reach and (reach_series or impressions_series or profile_views_series):
+        has_requested_data = True
+
+    if not has_requested_data and errors:
         return {
             "supported": False,
             "message": "Unable to load Instagram analytics for the selected account.",
@@ -1790,12 +1897,20 @@ async def analytics_instagram_report(
         }
 
     period_summary = _summarize_instagram_period(all_current_feed, current_since, previous_since)
-    merged_demographics = {
-        "age": _merge_named_counts(demographics_bucket["age"], "range"),
-        "gender": _merge_named_counts(demographics_bucket["gender"], "label"),
-        "cities": _merge_named_counts(demographics_bucket["cities"], "name")[:10],
-        "countries": _merge_named_counts(demographics_bucket["countries"], "name")[:10],
-    }
+
+    def _summary_support_message(metric_name: str) -> str | None:
+        tracker = summary_support_tracker[metric_name]
+        if tracker["supported"]:
+            return None
+        if tracker["messages"]:
+            return " | ".join(dict.fromkeys(tracker["messages"]))
+        defaults = {
+            "new_followers": "Instagram did not return usable follower growth for this account in the selected period.",
+            "reach": "Instagram did not return usable reach data for this connected account in the selected period.",
+            "impressions": "Instagram did not expose account-level impressions for this connected account.",
+            "profile_views": "Instagram did not return usable profile view data for this connected account in the selected period.",
+        }
+        return defaults[metric_name]
 
     def _normalize_top_entry(post: dict[str, Any] | None) -> dict[str, Any] | None:
         if not post:
@@ -1813,16 +1928,32 @@ async def analytics_instagram_report(
             "comments": _metric_int(post.get("comments_count")),
         }
 
-    report = {
+    report: dict[str, Any] = {
         "supported": True,
         "days": days,
-        "summary": {
+        "sections_returned": requested_sections,
+        "errors": errors,
+        "follower_growth_errors": follower_growth_errors,
+        "demographics_errors": demographics_errors,
+    }
+
+    if include_summary:
+        new_followers_supported = summary_support_tracker["new_followers"]["supported"]
+        reach_supported = summary_support_tracker["reach"]["supported"]
+        impressions_supported = summary_support_tracker["impressions"]["supported"]
+        profile_views_supported = summary_support_tracker["profile_views"]["supported"]
+
+        report["summary"] = {
             "followers_total": summary_totals["followers_total"],
-            "new_followers": summary_totals["new_followers"],
-            "avg_new_followers_per_day": round(summary_totals["new_followers"] / max(days, 1), 2),
-            "reach": summary_totals["reach"],
-            "impressions": summary_totals["impressions"],
-            "profile_views": summary_totals["profile_views"],
+            "new_followers": summary_totals["new_followers"] if new_followers_supported else None,
+            "avg_new_followers_per_day": (
+                round(summary_totals["new_followers"] / max(days, 1), 2)
+                if new_followers_supported
+                else None
+            ),
+            "reach": summary_totals["reach"] if reach_supported else None,
+            "impressions": summary_totals["impressions"] if impressions_supported else None,
+            "profile_views": summary_totals["profile_views"] if profile_views_supported else None,
             "post_summary": {
                 "total_posts": period_summary["total_posts"],
                 "avg_posts_per_day": round(period_summary["total_posts"] / max(days, 1), 2),
@@ -1841,8 +1972,28 @@ async def analytics_instagram_report(
                 "total_engagement_change_pct": period_summary["reels"]["total_engagement_change_pct"],
                 "top_reel": _normalize_top_entry(period_summary["reels"]["top_reel"]),
             },
-        },
-        "audience": {
+        }
+        report["summary_support"] = {
+            "new_followers": {
+                "supported": new_followers_supported,
+                "message": _summary_support_message("new_followers"),
+            },
+            "reach": {
+                "supported": reach_supported,
+                "message": _summary_support_message("reach"),
+            },
+            "impressions": {
+                "supported": impressions_supported,
+                "message": _summary_support_message("impressions"),
+            },
+            "profile_views": {
+                "supported": profile_views_supported,
+                "message": _summary_support_message("profile_views"),
+            },
+        }
+
+    if include_audience:
+        report["audience"] = {
             "follower_growth": merged_follower_growth,
             "follower_growth_supported": follower_growth_supported,
             "follower_growth_source": follower_growth_source,
@@ -1860,16 +2011,15 @@ async def analytics_instagram_report(
             "demographics_source_label": report_demographics_source_label,
             "demographics_error_details": demographics_errors,
             "demographics": merged_demographics,
-        },
-        "reach": {
+        }
+
+    if include_reach:
+        report["reach"] = {
             "reach_series": _merge_date_counts(reach_series),
             "impressions_series": _merge_date_counts(impressions_series),
             "profile_views_series": _merge_date_counts(profile_views_series),
-        },
-        "errors": errors,
-        "follower_growth_errors": follower_growth_errors,
-        "demographics_errors": demographics_errors,
-    }
+        }
+
     return report
 
 
