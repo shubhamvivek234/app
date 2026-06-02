@@ -22,7 +22,7 @@ import {
   FaHeart, FaComment, FaShare, FaEye, FaFileAlt, FaExternalLinkAlt,
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
-  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight, FaInfoCircle,
+  FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight, FaInfoCircle, FaSync,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import worldGeo from 'world-atlas/countries-110m.json';
@@ -1912,10 +1912,15 @@ const Analytics = () => {
   }, [loadedPlatformOrder, platformOrderStorageKey, platformOrder]);
 
   // Fetch overview + timeline whenever filters change
-  const fetchOverview = useCallback(async () => {
+  const fetchOverview = useCallback(async ({ refresh = false } = {}) => {
     setLoadingOverview(true);
     try {
-      const params = { days, platform: selectedPlatform, accountId: selectedAccount };
+      const params = {
+        days,
+        platform: selectedPlatform,
+        accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
+      };
       const [ov, tl] = await Promise.all([
         getAnalyticsOverview(params),
         getAnalyticsTimeline(params),
@@ -1934,13 +1939,14 @@ const Analytics = () => {
   }, [fetchOverview]);
 
   // Fetch engagement when on Overview tab
-  const fetchEngagement = useCallback(async () => {
+  const fetchEngagement = useCallback(async ({ refresh = false } = {}) => {
     setLoadingEngagement(true);
     try {
       const data = await getAnalyticsEngagement({
         days,
         platform: selectedPlatform,
         accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
       });
       setEngagement(data);
     } catch {
@@ -1957,13 +1963,14 @@ const Analytics = () => {
   }, [activeTab, fetchEngagement]);
 
   // Fetch posts when Posts tab is active
-  const fetchPosts = useCallback(async () => {
+  const fetchPosts = useCallback(async ({ refresh = false } = {}) => {
     setLoadingPosts(true);
     try {
       const data = await getPublishFeed({
         platform: selectedPlatform,
         accountId: selectedAccount,
         limit: 50,
+        ...(refresh ? { refresh: true } : {}),
       });
       setPosts(data.posts || []);
       setPostsErrors(Array.isArray(data.errors) ? data.errors : []);
@@ -1985,12 +1992,13 @@ const Analytics = () => {
   }, [activeTab, fetchPosts]);
 
   // Fetch demographics when tab is active
-  const fetchDemographics = useCallback(async () => {
+  const fetchDemographics = useCallback(async ({ refresh = false } = {}) => {
     setLoadingDemos(true);
     try {
       const data = await getAnalyticsDemographics({
         platform: selectedPlatform,
         accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
       });
       setDemographics(data);
     } catch {
@@ -2019,7 +2027,7 @@ const Analytics = () => {
     }
   }, [selectedPlatform, fetchOverview, fetchEngagement]);
 
-  const fetchInstagramReport = useCallback(async () => {
+  const fetchInstagramReport = useCallback(async ({ refresh = false } = {}) => {
     if (selectedPlatform !== 'instagram') {
       setInstagramReport(null);
       return;
@@ -2029,6 +2037,7 @@ const Analytics = () => {
       const data = await getInstagramAnalyticsReport({
         days,
         accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
       });
       setInstagramReport(data);
     } catch {
@@ -2045,7 +2054,7 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchInstagramReport]);
 
-  const fetchBlueskyReport = useCallback(async () => {
+  const fetchBlueskyReport = useCallback(async ({ refresh = false } = {}) => {
     if (selectedPlatform !== 'bluesky') {
       setBlueskyReport(null);
       return;
@@ -2055,6 +2064,7 @@ const Analytics = () => {
       const data = await getBlueskyAnalyticsReport({
         days,
         accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
       });
       setBlueskyReport(data);
     } catch {
@@ -2074,7 +2084,7 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchBlueskyReport]);
 
-  const fetchYoutubeReport = useCallback(async () => {
+  const fetchYoutubeReport = useCallback(async ({ refresh = false } = {}) => {
     if (selectedPlatform !== 'youtube') {
       setYoutubeReport(null);
       return;
@@ -2099,11 +2109,13 @@ const Analytics = () => {
         days,
         accountId: requestedAccountId,
         groupBy: youtubeChartGranularity,
+        ...(refresh ? { refresh: true } : {}),
       });
       if (requestedAccountId && data && data.supported === false) {
         const fallbackData = await getYoutubeAnalyticsReport({
           days,
           groupBy: youtubeChartGranularity,
+          ...(refresh ? { refresh: true } : {}),
         });
         if (fallbackData?.supported) {
           data = fallbackData;
@@ -2127,7 +2139,7 @@ const Analytics = () => {
     }
   }, [activeTab, selectedPlatform, fetchYoutubeReport]);
 
-  const fetchTikTokReport = useCallback(async () => {
+  const fetchTikTokReport = useCallback(async ({ refresh = false } = {}) => {
     if (selectedPlatform !== 'tiktok') {
       setTikTokReport(null);
       return;
@@ -2137,6 +2149,7 @@ const Analytics = () => {
       const data = await getTikTokAnalyticsReport({
         days,
         accountId: selectedAccount,
+        ...(refresh ? { refresh: true } : {}),
       });
       setTikTokReport(data);
     } catch {
@@ -2185,6 +2198,105 @@ const Analytics = () => {
       setActiveTab('overview');
     }
   }, [selectedPlatform, activeTab]);
+
+  const currentTabRefreshLoading = useMemo(() => {
+    if (selectedPlatform === 'tiktok' && activeTab === 'overview') {
+      return loadingTikTokReport;
+    }
+    if (['summary', 'instagram-audience', 'instagram-reach'].includes(activeTab)) {
+      return loadingInstagramReport;
+    }
+    if (['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)) {
+      return loadingBlueskyReport;
+    }
+    if (['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)) {
+      return loadingYoutubeReport;
+    }
+    if (['tiktok-content', 'tiktok-viewers', 'tiktok-followers'].includes(activeTab)) {
+      return loadingTikTokReport;
+    }
+    if (activeTab === 'overview') {
+      return loadingOverview || loadingEngagement;
+    }
+    if (activeTab === 'posts') {
+      return loadingPosts;
+    }
+    if (activeTab === 'demographics') {
+      return loadingDemos;
+    }
+    return false;
+  }, [
+    activeTab,
+    selectedPlatform,
+    loadingOverview,
+    loadingEngagement,
+    loadingPosts,
+    loadingDemos,
+    loadingInstagramReport,
+    loadingBlueskyReport,
+    loadingYoutubeReport,
+    loadingTikTokReport,
+  ]);
+
+  const handleRefreshClick = useCallback(async () => {
+    if (currentTabRefreshLoading) {
+      return;
+    }
+
+    if (selectedPlatform === 'tiktok' && activeTab === 'overview') {
+      await fetchTikTokReport({ refresh: true });
+      return;
+    }
+
+    if (activeTab === 'overview') {
+      await Promise.all([
+        fetchOverview({ refresh: true }),
+        fetchEngagement({ refresh: true }),
+      ]);
+      return;
+    }
+
+    if (activeTab === 'posts') {
+      await fetchPosts({ refresh: true });
+      return;
+    }
+
+    if (activeTab === 'demographics') {
+      await fetchDemographics({ refresh: true });
+      return;
+    }
+
+    if (['summary', 'instagram-audience', 'instagram-reach'].includes(activeTab)) {
+      await fetchInstagramReport({ refresh: true });
+      return;
+    }
+
+    if (['bluesky-summary', 'bluesky-audience', 'bluesky-posts-engagement'].includes(activeTab)) {
+      await fetchBlueskyReport({ refresh: true });
+      return;
+    }
+
+    if (['youtube-summary', 'youtube-audience', 'youtube-video-performance'].includes(activeTab)) {
+      await fetchYoutubeReport({ refresh: true });
+      return;
+    }
+
+    if (['tiktok-content', 'tiktok-viewers', 'tiktok-followers'].includes(activeTab)) {
+      await fetchTikTokReport({ refresh: true });
+    }
+  }, [
+    activeTab,
+    selectedPlatform,
+    currentTabRefreshLoading,
+    fetchOverview,
+    fetchEngagement,
+    fetchPosts,
+    fetchDemographics,
+    fetchInstagramReport,
+    fetchBlueskyReport,
+    fetchYoutubeReport,
+    fetchTikTokReport,
+  ]);
 
   // Platform sidebar selection — auto-select account if only one exists
   const handlePlatformSelect = (plat) => {
@@ -2746,19 +2858,35 @@ const Analytics = () => {
         )}
 
         {/* ── Tabs ─────────────────────────────────────────────────── */}
-        <div className="flex border-b border-gray-200 mb-6 gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleTabClick(tab.id)}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px
-                ${activeTab === tab.id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200">
+          <div className="flex min-w-0 flex-wrap gap-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabClick(tab.id)}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px
+                  ${activeTab === tab.id
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRefreshClick}
+            disabled={currentTabRefreshLoading}
+            className={`mb-2 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+              currentTabRefreshLoading
+                ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                : 'border-gray-200 bg-offwhite text-gray-600 hover:border-indigo-200 hover:text-indigo-600'
+            }`}
+          >
+            <FaSync className={`text-xs ${currentTabRefreshLoading ? 'animate-spin' : ''}`} />
+            {currentTabRefreshLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
         </div>
 
         {/* ━━━━━━━━━━━━━━━━━ TIKTOK OVERVIEW TAB ━━━━━━━━━━━━━━━━━━━━━ */}

@@ -326,6 +326,85 @@ def _merge_named_counts(items: list[dict[str, Any]], key_name: str) -> list[dict
     return [{key_name: k, "count": v} for k, v in sorted(merged.items(), key=lambda kv: kv[1], reverse=True)]
 
 
+async def _collect_provider_window_metrics(
+    db,
+    *,
+    accounts: list[dict[str, Any]],
+    days: int,
+    route: str,
+    failure_type: str,
+    platform: str | None = None,
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    published_in_period = 0
+    platform_counts: dict[str, int] = {}
+    type_counts = {"text": 0, "image": 0, "video": 0}
+    counts_by_date: dict[str, int] = {}
+    errors: list[dict[str, str]] = []
+    successful_fetches = 0
+
+    for account in accounts:
+        try:
+            feed, _ = await _fetch_account_feed_and_stats(db, account, days=days)
+            successful_fetches += 1
+        except Exception as exc:
+            event_log(
+                logger,
+                "warning",
+                "analytics.provider.refresh_failed",
+                exc_info=exc,
+                route=route,
+                platform=platform or account.get("platform"),
+                account_id=account_id or account.get("account_id") or account.get("id"),
+                failure_type=failure_type,
+                provider_error=shorten_provider_error(exc),
+                fetch_mode="refresh_api",
+                outcome="failed",
+            )
+            _append_account_error(errors, account, _analytics_error_message(account.get("platform"), exc))
+            continue
+
+        filtered_feed: list[dict[str, Any]] = []
+        for post in feed:
+            ts = _parse_platform_timestamp(post.get("timestamp"))
+            if ts and ts < since_dt:
+                continue
+            filtered_feed.append(post)
+
+        published_in_period += len(filtered_feed)
+        platform_key = account.get("platform")
+        if filtered_feed:
+            platform_counts[platform_key] = platform_counts.get(platform_key, 0) + len(filtered_feed)
+
+        for post in filtered_feed:
+            media_type = str(post.get("media_type") or "").upper()
+            if media_type in {"VIDEO", "REELS"}:
+                type_counts["video"] += 1
+            elif media_type in {"IMAGE", "CAROUSEL_ALBUM"}:
+                type_counts["image"] += 1
+            else:
+                type_counts["text"] += 1
+
+            ts = _parse_platform_timestamp(post.get("timestamp"))
+            if ts:
+                date_key = ts.date().isoformat()
+            else:
+                date_key = str(post.get("timestamp") or "")[:10]
+            if not date_key:
+                continue
+            counts_by_date[date_key] = counts_by_date.get(date_key, 0) + 1
+
+    return {
+        "successful_fetches": successful_fetches,
+        "published_in_period": published_in_period,
+        "platform_counts": platform_counts,
+        "type_counts": type_counts,
+        "counts_by_date": counts_by_date,
+        "errors": errors,
+    }
+
+
 async def _load_social_accounts(
     db,
     user_id: str,
@@ -1546,6 +1625,7 @@ async def analytics_instagram_report(
     db: DB,
     days: int = Query(30, ge=1, le=365),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     accounts = await _load_social_accounts(db, current_user["user_id"], "instagram", account_id)
     if not accounts:
@@ -1800,6 +1880,7 @@ async def analytics_youtube_report(
     days: int = Query(30, ge=1, le=365),
     account_id: str | None = Query(None, alias="accountId"),
     group_by: str = Query("day", alias="groupBy", pattern="^(day|week|month|quarter)$"),
+    refresh: bool = Query(False),
 ):
     accounts, fallback_used = await _load_social_accounts_for_report(
         db,
@@ -3012,6 +3093,7 @@ async def analytics_tiktok_report(
     db: DB,
     days: int = Query(30, ge=1, le=365),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     accounts, fallback_used = await _load_social_accounts_for_report(
         db,
@@ -3249,6 +3331,7 @@ async def analytics_bluesky_report(
     db: DB,
     days: int = Query(30, ge=1, le=365),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     accounts = await _load_social_accounts(db, current_user["user_id"], "bluesky", account_id)
     if not accounts:
@@ -3569,6 +3652,7 @@ async def analytics_overview(
     days: int = Query(30, ge=1, le=365),
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     workspace_id = _workspace_id_for(current_user)
     since_iso = _iso_since(days)
@@ -3615,74 +3699,38 @@ async def analytics_overview(
         else:
             type_counts["text"] += doc["count"]
 
-    # When an analytics account is explicitly selected, local published-post
-    # history may be empty even though the connected platform account has live
-    # content (for example, YouTube videos posted directly on YouTube). In that
-    # case, fall back to the platform feed for overview counts.
-    if account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS and published_in_period == 0:
-        accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
-        fallback_platform_counts: dict[str, int] = {}
-        fallback_type_counts = {"text": 0, "image": 0, "video": 0}
-        fallback_published_count = 0
-        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-
-        for account in accounts:
-            try:
-                feed, _ = await _fetch_account_feed_and_stats(db, account)
-            except Exception as exc:
-                event_log(
-                    logger,
-                    "warning",
-                    "analytics.provider.fallback_failed",
-                    exc_info=exc,
-                    route="/analytics/overview",
-                    platform=platform,
-                    account_id=account_id,
-                    failure_type="feed_fallback_failed",
-                    provider_error=shorten_provider_error(exc),
-                    fetch_mode="db_to_api_fallback",
-                    outcome="failed",
-                )
-                capture_degraded_event(
-                    "Analytics overview feed fallback failed",
-                    route="/analytics/overview",
-                    platform=platform,
-                    account_id=account_id,
-                    failure_type="feed_fallback_failed",
-                )
-                continue
-
-            in_period_posts = []
-            for post in feed:
-                ts = _parse_platform_timestamp(post.get("timestamp"))
-                if ts and ts < since_dt:
-                    continue
-                in_period_posts.append(post)
-
-            if not in_period_posts:
-                continue
-
-            fallback_published_count += len(in_period_posts)
-            fallback_platform_counts[account.get("platform", platform)] = (
-                fallback_platform_counts.get(account.get("platform", platform), 0) + len(in_period_posts)
-            )
-            for post in in_period_posts:
-                media_type = str(post.get("media_type") or "").upper()
-                if media_type in {"VIDEO", "REELS"}:
-                    fallback_type_counts["video"] += 1
-                elif media_type in {"IMAGE", "CAROUSEL_ALBUM"}:
-                    fallback_type_counts["image"] += 1
-                else:
-                    fallback_type_counts["text"] += 1
-
-        if fallback_published_count:
-            published_in_period = fallback_published_count
-            platform_counts = fallback_platform_counts
-            type_counts = fallback_type_counts
-
     accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
     connected_accounts: list[dict[str, Any]] = []
     overview_errors: list[dict[str, str]] = []
+    should_refresh_from_provider = bool(refresh and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS and platform)
+    should_fallback_from_provider = bool(
+        account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS and published_in_period == 0
+    )
+
+    if (should_refresh_from_provider or should_fallback_from_provider) and accounts:
+        provider_window = await _collect_provider_window_metrics(
+            db,
+            accounts=accounts,
+            days=days,
+            route="/analytics/overview",
+            failure_type="overview_refresh_feed_failed" if should_refresh_from_provider else "feed_fallback_failed",
+            platform=platform,
+            account_id=account_id,
+        )
+        if provider_window["successful_fetches"]:
+            published_in_period = provider_window["published_in_period"]
+            platform_counts = provider_window["platform_counts"]
+            type_counts = provider_window["type_counts"]
+        elif should_fallback_from_provider:
+            capture_degraded_event(
+                "Analytics overview feed fallback failed",
+                route="/analytics/overview",
+                platform=platform,
+                account_id=account_id,
+                failure_type="feed_fallback_failed",
+            )
+        overview_errors.extend(provider_window["errors"])
+
     if accounts:
         async def _build_account_summary(account: dict[str, Any]) -> dict[str, Any]:
             plat = account.get("platform")
@@ -3725,6 +3773,7 @@ async def analytics_timeline(
     days: int = Query(30, ge=1, le=365),
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     workspace_id = _workspace_id_for(current_user)
     since_iso = _iso_since(days)
@@ -3738,43 +3787,24 @@ async def analytics_timeline(
     docs = await db.posts.aggregate(pipeline).to_list(None)
     timeline = [{"date": d["_id"], "count": d["count"]} for d in docs if d.get("_id")]
 
-    if not timeline and account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS:
+    should_refresh_from_provider = bool(refresh and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS and platform)
+    should_fallback_from_provider = bool(not timeline and account_id and platform in _SUPPORTED_ENGAGEMENT_PLATFORMS)
+
+    if should_refresh_from_provider or should_fallback_from_provider:
         accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
         if accounts:
-            counts_by_date: dict[str, int] = {}
-            since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-            for account in accounts:
-                try:
-                    feed, _ = await _fetch_account_feed_and_stats(db, account, days=days)
-                except Exception as exc:
-                    event_log(
-                        logger,
-                        "warning",
-                        "analytics.provider.fallback_failed",
-                        exc_info=exc,
-                        route="/analytics/timeline",
-                        platform=platform,
-                        account_id=account_id,
-                        failure_type="timeline_feed_fallback_failed",
-                        provider_error=shorten_provider_error(exc),
-                        fetch_mode="db_to_api_fallback",
-                        outcome="failed",
-                    )
-                    continue
-
-                for post in feed:
-                    ts = _parse_platform_timestamp(post.get("timestamp"))
-                    if ts and ts < since_dt:
-                        continue
-                    if ts:
-                        date_key = ts.date().isoformat()
-                    else:
-                        date_key = str(post.get("timestamp") or "")[:10]
-                    if not date_key:
-                        continue
-                    counts_by_date[date_key] = counts_by_date.get(date_key, 0) + 1
-
-            timeline = [{"date": date_key, "count": counts_by_date[date_key]} for date_key in sorted(counts_by_date.keys())]
+            provider_window = await _collect_provider_window_metrics(
+                db,
+                accounts=accounts,
+                days=days,
+                route="/analytics/timeline",
+                failure_type="timeline_refresh_feed_failed" if should_refresh_from_provider else "timeline_feed_fallback_failed",
+                platform=platform,
+                account_id=account_id,
+            )
+            if provider_window["successful_fetches"]:
+                counts_by_date = provider_window["counts_by_date"]
+                timeline = [{"date": date_key, "count": counts_by_date[date_key]} for date_key in sorted(counts_by_date.keys())]
 
     return {"timeline": timeline}
 
@@ -3786,6 +3816,7 @@ async def analytics_engagement(
     days: int = Query(30, ge=1, le=365),
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     accounts = await _load_social_accounts(db, current_user["user_id"], platform, account_id)
     if not accounts:
@@ -3906,6 +3937,7 @@ async def analytics_demographics(
     db: DB,
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
+    refresh: bool = Query(False),
 ):
     if platform and platform not in _SUPPORTED_DEMOGRAPHIC_PLATFORMS:
         return {
@@ -3997,6 +4029,7 @@ async def publish_feed(
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
     limit: int = Query(50, ge=1, le=100),
+    refresh: bool = Query(False),
 ):
     fallback_used = False
     if platform:
