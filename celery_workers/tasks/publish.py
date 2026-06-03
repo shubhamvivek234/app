@@ -606,11 +606,44 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
         )
         return {"status": "version_mismatch_requeued"}
 
+    dispatch_delay = _seconds_until_scheduled_time(post)
+    if dispatch_delay > 1:
+        queue_name = "high_priority" if dispatch_delay <= 300 else "default"
+        publish_post.apply_async(
+            kwargs={"post_id": post_id, "version": post.get("version", 1)},
+            countdown=dispatch_delay,
+            queue=queue_name,
+        )
+        event_log(
+            logger,
+            "info",
+            "publish.parent.deferred_until_scheduled_time",
+            task_name="publish_post",
+            post_id=post_id,
+            scheduled_time=str(post.get("scheduled_time")),
+            retry_after=dispatch_delay,
+            queue_name=queue_name,
+            outcome="deferred",
+        )
+        return {
+            "status": "deferred_until_scheduled_time",
+            "post_id": post_id,
+            "countdown": dispatch_delay,
+            "queue": queue_name,
+        }
+
     # Apply jitter — use Celery countdown instead of blocking time.sleep (LB-2)
     post_type = post.get("post_type", "image")
-    jitter = _jitter_seconds(post_type)
+    is_scheduled_post = bool(post.get("scheduler_claimed_at"))
+    jitter = 0 if is_scheduled_post else _jitter_seconds(post_type)
 
     processing_started_at = datetime.now(timezone.utc)
+    scheduled_time = _coerce_utc_datetime(post.get("scheduled_time"))
+    scheduled_publish_lag_seconds = (
+        max(0.0, (processing_started_at - scheduled_time).total_seconds())
+        if isinstance(scheduled_time, datetime)
+        else 0.0
+    )
 
     # Update post with jitter info + processing status
     await db.posts.update_one(
@@ -715,6 +748,18 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     if dispatch_updates:
         dispatch_updates["updated_at"] = processing_started_at
         await db.posts.update_one({"id": post_id}, {"$set": dispatch_updates})
+
+    event_log(
+        logger,
+        "info",
+        "publish.parent.dispatched",
+        task_name="publish_post",
+        post_id=post_id,
+        target_count=len(targets),
+        jitter_seconds=jitter,
+        scheduled_publish_lag_seconds=scheduled_publish_lag_seconds,
+        outcome="dispatched",
+    )
 
     return {
         "status": "dispatched",
@@ -961,6 +1006,14 @@ def _seconds_until_retry(next_retry_at, fallback: int) -> int:
         return fallback
     remaining = int((next_retry_at - datetime.now(timezone.utc)).total_seconds())
     return max(fallback, remaining if remaining > 0 else 0)
+
+
+def _seconds_until_scheduled_time(post: dict, *, now: datetime | None = None) -> float:
+    scheduled_time = _coerce_utc_datetime(post.get("scheduled_time"))
+    if not isinstance(scheduled_time, datetime):
+        return 0.0
+    current_time = now or datetime.now(timezone.utc)
+    return max(0.0, (scheduled_time - current_time).total_seconds())
 
 
 async def _handle_pre_upload_permanent_error(
@@ -1304,7 +1357,6 @@ async def _async_publish_to_platform(
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
-    r_cache = get_cache_redis()
     target_key = _result_target_key(platform, account_id)
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
@@ -1321,6 +1373,41 @@ async def _async_publish_to_platform(
             outcome="post_deleted_or_cancelled",
         )
         return {"status": "post_deleted", "platform": platform, "account_id": account_id}
+
+    dispatch_delay = _seconds_until_scheduled_time(post)
+    if dispatch_delay > 1:
+        publish_queue = _publish_queue_for(platform, post)
+        publish_to_platform.apply_async(
+            kwargs={
+                "post_id": post_id,
+                "platform": platform,
+                "account_id": account_id,
+                "attempt": attempt,
+                "dispatch_source": dispatch_source,
+            },
+            countdown=dispatch_delay,
+            queue=publish_queue,
+        )
+        event_log(
+            logger,
+            "info",
+            "publish.platform.deferred_until_scheduled_time",
+            task_name="publish_to_platform",
+            post_id=post_id,
+            platform=platform,
+            account_id=account_id,
+            dispatch_source=dispatch_source,
+            retry_after=dispatch_delay,
+            outcome="deferred",
+        )
+        return {
+            "status": "deferred_until_scheduled_time",
+            "platform": platform,
+            "account_id": account_id,
+            "countdown": dispatch_delay,
+        }
+
+    r_cache = get_cache_redis()
     post = await _hydrate_post_media(db, post)
     current_target_state = _get_target_publish_state(post, platform, target_key)
     if dispatch_source == "fallback" and _is_terminal_target_state(current_target_state):

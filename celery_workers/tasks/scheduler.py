@@ -18,11 +18,30 @@ from db.mongo import get_client
 
 logger = logging.getLogger(__name__)
 
+
+def _schedule_scan_interval_secs() -> float:
+    return float(os.environ.get("SCHEDULE_SCAN_INTERVAL_SECS", "15"))
+
+
+def _schedule_lookahead_secs() -> int:
+    return int(os.environ.get("SCHEDULE_LOOKAHEAD_SECS", "45"))
+
+
+def _schedule_scan_batch_size() -> int:
+    return max(1, int(os.environ.get("SCHEDULE_SCAN_BATCH_SIZE", "500")))
+
+
+def _schedule_scan_max_batches() -> int:
+    return max(1, int(os.environ.get("SCHEDULE_SCAN_MAX_BATCHES", "5")))
+
+
+_SCHEDULE_SCAN_INTERVAL_SECS = _schedule_scan_interval_secs()
+
 # ── Beat schedule registration ───────────────────────────────────────────────
 celery_app.conf.beat_schedule.update({
     "scan-scheduled-posts": {
         "task": "celery_workers.tasks.scheduler.scan_and_enqueue",
-        "schedule": 30.0,  # every 30 seconds
+        "schedule": _SCHEDULE_SCAN_INTERVAL_SECS,
         "options": {"queue": "default"},
     },
     "token-refresh": {
@@ -126,60 +145,69 @@ async def _async_scan_and_enqueue() -> dict:
     db = client[os.environ["DB_NAME"]]
 
     now = datetime.now(timezone.utc)
-    # 10-second buffer compensates for minor clock drift (Phase 2.4.4)
-    window_end = now + timedelta(seconds=10)
-    # 35-second look-ahead for 30s beat interval with buffer
-    enqueue_horizon = now + timedelta(seconds=35)
+    lookahead_secs = _schedule_lookahead_secs()
+    batch_size = _schedule_scan_batch_size()
+    max_batches = _schedule_scan_max_batches()
+    enqueue_horizon = now + timedelta(seconds=lookahead_secs)
 
     enqueued = 0
+    batches_processed = 0
     high_priority_threshold = now + timedelta(minutes=5)
 
-    # Cursor over posts due in window — each iteration atomically claims one.
-    # Capped at 500 per scan: prevents Beat task from running past its 30s window
-    # on popular time slots (e.g. 9AM Monday with thousands of posts due).
-    # Unclaimed posts are picked up by the next scan cycle 30s later.
-    cursor = db.posts.find(
-        {"status": "scheduled", "scheduled_time": {"$lte": enqueue_horizon}},
-        {"_id": 0, "id": 1, "scheduled_time": 1, "platforms": 1, "version": 1},
-        limit=500,
-    )
-
-    async for post in cursor:
-        post_id = post["id"]
-
-        # Atomic claim — prevents double-enqueue from concurrent Beat instances (EC2)
-        result = await db.posts.find_one_and_update(
-            {"id": post_id, "status": "scheduled"},
-            {
-                "$set": {"status": "queued"},
-                "$push": {"status_history": {
-                    "status": "queued",
-                    "timestamp": now.isoformat(),
-                    "actor": "beat_scheduler",
-                }},
-            },
-            return_document=True,
+    while batches_processed < max_batches:
+        cursor = db.posts.find(
+            {"status": "scheduled", "scheduled_time": {"$lte": enqueue_horizon}},
+            {"_id": 0, "id": 1, "scheduled_time": 1, "platforms": 1, "version": 1},
+            limit=batch_size,
         )
+        batch_posts = [post async for post in cursor]
+        if not batch_posts:
+            break
+        batches_processed += 1
 
-        if result is None:
-            # Another Beat instance (or concurrent request) already claimed this post
-            logger.debug("Post %s already claimed — skipping", post_id)
-            continue
+        for post in batch_posts:
+            post_id = post["id"]
 
-        # Determine queue priority
-        scheduled = post.get("scheduled_time", now)
-        queue = "high_priority" if scheduled <= high_priority_threshold else "default"
+            # Atomic claim — prevents double-enqueue from concurrent Beat instances (EC2)
+            result = await db.posts.find_one_and_update(
+                {"id": post_id, "status": "scheduled"},
+                {
+                    "$set": {
+                        "status": "queued",
+                        "scheduler_claimed_at": now,
+                    },
+                    "$push": {"status_history": {
+                        "status": "queued",
+                        "timestamp": now.isoformat(),
+                        "actor": "beat_scheduler",
+                    }},
+                },
+                return_document=True,
+            )
 
-        # Enqueue with post_id + version only (EC3: version for edit-conflict detection)
-        publish_post.apply_async(
-            kwargs={
-                "post_id": post_id,
-                "version": post.get("version", 1),
-            },
-            queue=queue,
-        )
-        enqueued += 1
-        logger.info("Enqueued post %s to %s queue", post_id, queue)
+            if result is None:
+                logger.debug("Post %s already claimed — skipping", post_id)
+                continue
+
+            scheduled = post.get("scheduled_time", now)
+            queue = "high_priority" if scheduled <= high_priority_threshold else "default"
+            countdown = max(0.0, (scheduled - now).total_seconds()) if isinstance(scheduled, datetime) else 0.0
+
+            publish_post.apply_async(
+                kwargs={
+                    "post_id": post_id,
+                    "version": post.get("version", 1),
+                },
+                countdown=countdown,
+                queue=queue,
+            )
+            enqueued += 1
+            logger.info(
+                "Enqueued post %s to %s queue with countdown=%ss (scheduled_lag_target)",
+                post_id,
+                queue,
+                f"{countdown:.2f}",
+            )
 
     # 17.3 + Phase 1.5.3: Trigger pre-upload for video posts whose dynamic window has opened.
     # Use a wide scan horizon (60 min) and filter per-post using calculate_pre_upload_start.
@@ -264,7 +292,31 @@ async def _async_scan_and_enqueue() -> dict:
                 )
                 pre_uploads_triggered += 1
 
-    return {"enqueued": enqueued, "pre_uploads": pre_uploads_triggered, "scan_time": now.isoformat()}
+    if batches_processed >= max_batches:
+        logger.warning(
+            "Scheduled scan hit batch cap: enqueued=%s batches=%s batch_size=%s lookahead=%ss",
+            str(enqueued),
+            str(batches_processed),
+            str(batch_size),
+            str(lookahead_secs),
+        )
+    else:
+        logger.info(
+            "Scheduled scan complete: enqueued=%s pre_uploads=%s batches=%s batch_size=%s lookahead=%ss",
+            str(enqueued),
+            str(pre_uploads_triggered),
+            str(batches_processed),
+            str(batch_size),
+            str(lookahead_secs),
+        )
+
+    return {
+        "enqueued": enqueued,
+        "pre_uploads": pre_uploads_triggered,
+        "batches_processed": batches_processed,
+        "scan_time": now.isoformat(),
+        "lookahead_seconds": lookahead_secs,
+    }
 
 
 # ── 17.4D: Dynamic pre_upload window using timing formula ─────────────────────

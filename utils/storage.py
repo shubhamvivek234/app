@@ -268,6 +268,34 @@ async def download_file_to_path_async(reference: str, destination_path: str) -> 
     )
 
 
+def copy_storage_object(
+    source_reference: str,
+    destination_key: str,
+    *,
+    content_type: str | None = None,
+) -> str:
+    if _STORAGE_BACKEND == "r2":
+        return _r2_copy_object(source_reference, destination_key)
+    return _firebase_copy_object(source_reference, destination_key, content_type=content_type)
+
+
+async def copy_storage_object_async(
+    source_reference: str,
+    destination_key: str,
+    *,
+    content_type: str | None = None,
+) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: copy_storage_object(
+            source_reference,
+            destination_key,
+            content_type=content_type,
+        ),
+    )
+
+
 # ── R2 backend ────────────────────────────────────────────────────────────────
 
 def _r2_object_key(folder: str, filename: str) -> str:
@@ -586,6 +614,20 @@ def _r2_download_to_path(reference: str, destination_path: str) -> str:
     return destination_path
 
 
+def _r2_copy_object(source_reference: str, destination_key: str) -> str:
+    source_key = _reference_to_r2_key(source_reference)
+    client = _get_r2_client()
+    client.copy_object(
+        Bucket=_R2_BUCKET,
+        CopySource={"Bucket": _R2_BUCKET, "Key": source_key},
+        Key=destination_key,
+        MetadataDirective="COPY",
+    )
+    public_url = public_url_for_key(destination_key)
+    logger.info("R2 copy complete: source=%s dest=%s url=%s", source_key, destination_key, public_url)
+    return public_url
+
+
 # ── Firebase backend (existing behaviour wrapped) ─────────────────────────────
 
 def _firebase_upload(
@@ -631,6 +673,21 @@ def _firebase_download_to_path(reference: str, destination_path: str) -> str:
     Path(destination_path).parent.mkdir(parents=True, exist_ok=True)
     blob.download_to_filename(destination_path)
     return destination_path
+
+
+def _firebase_copy_object(source_reference: str, destination_key: str, *, content_type: str | None = None) -> str:
+    bucket = _get_firebase_bucket()
+    source_blob_name = urlparse(source_reference).path.lstrip("/") if source_reference.startswith("http") else source_reference
+    source_blob = bucket.blob(source_blob_name)
+    if not source_blob.exists():
+        raise FileNotFoundError(f"Firebase object not found: {source_blob_name}")
+    copied_blob = bucket.copy_blob(source_blob, bucket, new_name=destination_key)
+    if content_type:
+        copied_blob.content_type = content_type
+        copied_blob.patch()
+    copied_blob.make_public()
+    logger.info("Firebase copy complete: source=%s dest=%s url=%s", source_blob_name, destination_key, copied_blob.public_url)
+    return copied_blob.public_url
 
 
 def _firebase_delete(url: str) -> None:

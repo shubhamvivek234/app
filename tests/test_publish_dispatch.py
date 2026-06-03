@@ -157,6 +157,92 @@ async def test_publish_post_dispatches_children_explicitly_and_records_task_ids(
 
 
 @pytest.mark.asyncio
+async def test_publish_post_defers_until_scheduled_time(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    scheduled_time = datetime.now(timezone.utc) + timedelta(seconds=25)
+    post = {
+        "id": "post-scheduled-1",
+        "version": 1,
+        "status": "queued",
+        "scheduled_time": scheduled_time,
+        "post_type": "text",
+        "platforms": ["linkedin"],
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="parent-task-scheduled"))
+
+    monkeypatch.setattr(publish_tasks, "_check_poison_pill", AsyncMock(return_value=False))
+    monkeypatch.setattr("celery_workers.shutdown_handler.is_shutting_down", Mock(return_value=False))
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+
+    republish_mock = Mock()
+    monkeypatch.setattr(publish_tasks.publish_post, "apply_async", republish_mock)
+    child_dispatch_mock = Mock()
+    monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", child_dispatch_mock)
+
+    result = await publish_tasks._async_publish_post(fake_task, "post-scheduled-1", 1)
+
+    assert result["status"] == "deferred_until_scheduled_time"
+    child_dispatch_mock.assert_not_called()
+    republish_mock.assert_called_once()
+    countdown = republish_mock.call_args.kwargs["countdown"]
+    assert 0 < countdown <= 25.5
+    assert fake_db.posts.post["status"] == "queued"
+    assert fake_db.posts.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_publish_to_platform_defers_until_scheduled_time(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    scheduled_time = datetime.now(timezone.utc) + timedelta(seconds=30)
+    post = {
+        "id": "post-scheduled-2",
+        "user_id": "user-1",
+        "status": "queued",
+        "scheduled_time": scheduled_time,
+        "post_type": "text",
+        "platforms": ["linkedin"],
+        "publish_targets": [
+            {"platform": "linkedin", "account_id": "linkedin-account-1"},
+        ],
+        "account_results": {
+            "linkedin-account-1": {"status": "pending"},
+        },
+        "platform_results": {
+            "linkedin": {"status": "pending"},
+        },
+        "media_ids": [],
+        "media_urls": [],
+    }
+    fake_db = FakeDB(post)
+    fake_task = SimpleNamespace(request=SimpleNamespace(id="child-task-scheduled"))
+
+    monkeypatch.setattr(publish_tasks, "get_client", AsyncMock(return_value=FakeClient(fake_db)))
+    monkeypatch.setattr(publish_tasks, "_hydrate_post_media", AsyncMock(side_effect=lambda _db, doc: doc))
+
+    redis_factory = Mock(side_effect=AssertionError("scheduled deferral should happen before Redis access"))
+    monkeypatch.setattr(publish_tasks, "get_cache_redis", redis_factory)
+    monkeypatch.setattr(publish_tasks, "get_queue_redis", redis_factory)
+
+    requeue_mock = Mock()
+    monkeypatch.setattr(publish_tasks.publish_to_platform, "apply_async", requeue_mock)
+
+    result = await publish_tasks._async_publish_to_platform(
+        fake_task,
+        "post-scheduled-2",
+        "linkedin",
+        "linkedin-account-1",
+        0,
+        "primary",
+    )
+
+    assert result["status"] == "deferred_until_scheduled_time"
+    requeue_mock.assert_called_once()
+    countdown = requeue_mock.call_args.kwargs["countdown"]
+    assert 0 < countdown <= 30.5
+
+
+@pytest.mark.asyncio
 async def test_publish_to_platform_clears_stale_lock_before_retrying(monkeypatch):
     os.environ["DB_NAME"] = "testdb"
     now = datetime.now(timezone.utc)

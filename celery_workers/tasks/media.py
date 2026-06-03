@@ -11,10 +11,9 @@ import pathlib
 import tempfile
 from datetime import datetime, timezone
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
 from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
+from db.mongo import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,39 +52,22 @@ def process_media(self, media_job_id: str, user_id: str) -> dict:
 
 
 async def _get_db():
-    mongo_url = os.environ.get("MONGODB_URI") or os.environ.get("MONGO_URL")
-    if not mongo_url:
-        raise KeyError("MONGO_URL")
-    client = AsyncIOMotorClient(
-        mongo_url,
-        maxPoolSize=50,
-        minPoolSize=10,
-        maxIdleTimeMS=30_000,
-        serverSelectionTimeoutMS=5_000,
-        connectTimeoutMS=5_000,
-        socketTimeoutMS=30_000,
-    )
-    await client.admin.command("ping")
+    client = await get_client()
     return client, client[os.environ["DB_NAME"]]
 
 
 async def _mark_media_failed(media_job_id: str, error_message: str) -> None:
-    client = None
     try:
-        client, db = await _get_db()
+        _client, db = await _get_db()
         await db.media_assets.update_one(
             {"media_id": media_job_id},
             {"$set": {"status": "failed", "error_message": error_message}},
         )
     except Exception as mark_exc:
         logger.error("Failed to mark media %s as failed: %s", media_job_id, mark_exc)
-    finally:
-        if client is not None:
-            client.close()
 
 
 async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
-    client = None
     quarantine_path: str | None = None
     source_storage_key: str | None = None
     source_local_path: str | None = None
@@ -96,13 +78,14 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         from media_pipeline.ffmpeg_worker import process_video
         from media_pipeline.thumbnail import generate_thumbnail
         from utils.storage import (
+            copy_storage_object_async,
             delete_file_async,
             download_file_to_path_async,
             upload_file_async,
             upload_file_from_path_async,
         )
 
-        client, db = await _get_db()
+        _client, db = await _get_db()
         asset = await db.media_assets.find_one({"media_id": media_job_id}, {"_id": 0})
         if not asset:
             return {"status": "not_found"}
@@ -144,6 +127,21 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         else:
             processed_path = input_path
 
+        used_passthrough = processed_path == input_path
+        if used_passthrough:
+            logger.info(
+                "Media %s passed validation without transcode (mime_type=%s, source_storage_key=%s)",
+                media_job_id,
+                mime_type,
+                bool(source_storage_key),
+            )
+        else:
+            logger.info(
+                "Media %s required transcode before publish (mime_type=%s)",
+                media_job_id,
+                mime_type,
+            )
+
         # Step 3: Thumbnail
         thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
 
@@ -152,12 +150,30 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         media_filename = f"{media_job_id}{ext}"
         media_folder = f"media/{user_id}"
         media_storage_key = f"{media_folder}/{media_filename}"
-        media_url = await upload_file_from_path_async(
-            processed_path,
-            media_filename,
-            mime_type,
-            folder=media_folder,
+        can_promote_source_object = bool(
+            source_storage_key
+            and source_storage_key != media_storage_key
+            and processed_path == source_local_path
         )
+        if can_promote_source_object:
+            media_url = await copy_storage_object_async(
+                source_storage_key,
+                media_storage_key,
+                content_type=mime_type,
+            )
+            logger.info(
+                "Media promoted via storage-side copy: media_id=%s source_key=%s dest_key=%s",
+                media_job_id,
+                source_storage_key,
+                media_storage_key,
+            )
+        else:
+            media_url = await upload_file_from_path_async(
+                processed_path,
+                media_filename,
+                mime_type,
+                folder=media_folder,
+            )
         logger.info("Media uploaded: media_id=%s url=%s", media_job_id, media_url)
 
         # Step 5: Upload thumbnail
@@ -233,8 +249,6 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         raise task.retry(countdown=30, exc=exc)
 
     finally:
-        if client is not None:
-            client.close()
         transient_paths = {source_local_path}
         if processed_path and processed_path not in {quarantine_path, source_local_path}:
             transient_paths.add(processed_path)

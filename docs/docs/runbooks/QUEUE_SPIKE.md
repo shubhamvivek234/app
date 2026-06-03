@@ -58,6 +58,36 @@ watch -n5 "redis-cli -h redis-queue LLEN celery"
 # once you've let it catch up — just give it 5 minutes)
 ```
 
+For the current Docker Compose deployment, scale the worker pools independently instead of only adding one generic worker type:
+
+```bash
+docker compose up -d --scale worker=3 --scale worker_video=2 --scale worker_media=2
+```
+
+Use this order during burst windows:
+
+1. `worker` for `high_priority`, `default`, and `publish_light`
+2. `worker_video` for TikTok/YouTube/video publishes
+3. `worker_media` if uploads/transcodes are backing up
+
+Scheduler throughput knobs are env-based:
+
+```bash
+SCHEDULE_SCAN_INTERVAL_SECS=15
+SCHEDULE_LOOKAHEAD_SECS=45
+SCHEDULE_SCAN_BATCH_SIZE=500
+SCHEDULE_SCAN_MAX_BATCHES=5
+```
+
+Interpretation:
+
+- `SCHEDULE_SCAN_INTERVAL_SECS`: how often Beat scans scheduled posts
+- `SCHEDULE_LOOKAHEAD_SECS`: how far ahead Beat claims posts and queues the parent publish task
+- `SCHEDULE_SCAN_BATCH_SIZE`: posts claimed per batch
+- `SCHEDULE_SCAN_MAX_BATCHES`: maximum batches per Beat run
+
+If a spike causes posts to miss SLA while Beat is healthy, increase `worker` / `worker_video` first before increasing scan limits.
+
 ### Cause: Platform outage (circuit breaker should have opened)
 
 ```bash

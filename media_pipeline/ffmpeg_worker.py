@@ -31,6 +31,14 @@ def _ffmpeg_timeout_for_file(file_path: str) -> int:
 TEMP_DIR = "/tmp/media_processing"
 
 
+def _build_transcode_scale_filter(width: int | None, height: int | None) -> str:
+    width = int(width or 0)
+    height = int(height or 0)
+    if height > width:
+        return "scale=-2:min(1920\\,ih):flags=lanczos"
+    return "scale=min(1920\\,iw):-2:flags=lanczos"
+
+
 async def process_video(input_path: str, metadata: dict) -> str:
     """Process a video. Returns path to processed output."""
     Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
@@ -44,19 +52,23 @@ async def process_video(input_path: str, metadata: dict) -> str:
 
     needs_transcode = (
         metadata.get("codec") not in ("h264", "avc1") or
-        (metadata.get("width") or 0) > 1920
+        max(int(metadata.get("width") or 0), int(metadata.get("height") or 0)) > 1920
     )
     if needs_transcode:
-        return await _transcode_h264(input_path, output_path)
+        return await _transcode_h264(input_path, output_path, metadata)
 
     return input_path
 
 
-async def _transcode_h264(input_path: str, output_path: str) -> str:
+async def _transcode_h264(input_path: str, output_path: str, metadata: dict) -> str:
+    scale_filter = _build_transcode_scale_filter(
+        metadata.get("width"),
+        metadata.get("height"),
+    )
     cmd_args = [
         "ffmpeg", "-y", "-i", input_path,
         "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-        "-vf", "scale=min(1920\\,iw):min(1080\\,ih):force_original_aspect_ratio=decrease",
+        "-vf", scale_filter,
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
         output_path,
