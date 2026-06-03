@@ -265,10 +265,42 @@ def _platform_message(platform: str | None) -> str | None:
     return (_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("message")
 
 
+def _platform_label(platform: str | None) -> str:
+    labels = {
+        "facebook": "Facebook",
+        "twitter": "X (Twitter)",
+        "linkedin": "LinkedIn",
+        "instagram": "Instagram",
+        "pinterest": "Pinterest",
+        "youtube": "YouTube",
+        "tiktok": "TikTok",
+        "bluesky": "Bluesky",
+        "threads": "Threads",
+        "mastodon": "Mastodon",
+        "discord": "Discord",
+        "snapchat": "Snapchat",
+    }
+    return labels.get(platform or "", (platform or "This platform").title())
+
+
 def _platform_supports(platform: str | None) -> dict[str, bool]:
     if not platform:
         return {}
     return ((_PLATFORM_ANALYTICS_CAPABILITIES.get(platform) or {}).get("supports") or {}).copy()
+
+
+def _parse_account_ids_param(value: str | None) -> list[str]:
+    if not value:
+        return []
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        parsed.append(normalized)
+    return parsed
 
 
 def _account_error_label(account: dict[str, Any]) -> str:
@@ -302,6 +334,15 @@ def _analytics_error_message(platform: str | None, exc: Exception) -> str:
     return message
 
 
+def _publish_feed_error_type(platform: str | None, message: str) -> str:
+    lowered = str(message or "").lower()
+    if platform == "twitter" and "credits" in lowered:
+        return "credits_depleted"
+    if any(token in lowered for token in ("reconnect", "expired", "revoked", "invalid credential", "session expired", "access was revoked")):
+        return "auth"
+    return "provider_error"
+
+
 def _append_account_error(errors: list[dict[str, str]], account: dict[str, Any], message: str) -> bool:
     label = _account_error_label(account)
     entry = {"account": label, "error": message}
@@ -311,9 +352,48 @@ def _append_account_error(errors: list[dict[str, str]], account: dict[str, Any],
     return True
 
 
+def _append_feed_error(
+    errors: list[dict[str, str]],
+    account: dict[str, Any],
+    *,
+    platform: str | None,
+    message: str,
+) -> bool:
+    entry = {
+        "account": _account_error_label(account),
+        "platform": platform or account.get("platform") or "unknown",
+        "error": message,
+        "type": _publish_feed_error_type(platform, message),
+    }
+    if entry in errors:
+        return False
+    errors.append(entry)
+    return True
+
+
 def _has_account_error(errors: list[dict[str, str]], account: dict[str, Any]) -> bool:
     label = _account_error_label(account)
     return any(item.get("account") == label for item in errors)
+
+
+def _append_feed_warning(
+    warnings: list[dict[str, str]],
+    account: dict[str, Any],
+    *,
+    platform: str | None,
+    reason: str,
+    warning_type: str,
+) -> bool:
+    entry = {
+        "account": _account_error_label(account),
+        "platform": platform or account.get("platform") or "unknown",
+        "reason": reason,
+        "type": warning_type,
+    }
+    if entry in warnings:
+        return False
+    warnings.append(entry)
+    return True
 
 
 def _merge_named_counts(items: list[dict[str, Any]], key_name: str) -> list[dict[str, Any]]:
@@ -421,6 +501,41 @@ async def _load_social_accounts(
     cursor = db.social_accounts.find(query, {"_id": 0})
     docs = await cursor.to_list(length=50)
     return [await _hydrate_social_account_metadata(db, doc) for doc in docs]
+
+
+async def _load_social_accounts_by_ids(
+    db,
+    user_id: str,
+    account_ids: list[str],
+    platform: str | None = None,
+) -> list[dict[str, Any]]:
+    from api.routes.accounts import _hydrate_social_account_metadata
+
+    normalized_ids = [account_id for account_id in account_ids if account_id]
+    if not normalized_ids:
+        return []
+
+    query: dict[str, Any] = {
+        "user_id": user_id,
+        "is_active": True,
+        "$or": [
+            {"account_id": {"$in": normalized_ids}},
+            {"id": {"$in": normalized_ids}},
+        ],
+    }
+    if platform:
+        query["platform"] = platform
+
+    cursor = db.social_accounts.find(query, {"_id": 0})
+    docs = await cursor.to_list(length=max(50, len(normalized_ids)))
+    hydrated = [await _hydrate_social_account_metadata(db, doc) for doc in docs]
+    order = {account_id: index for index, account_id in enumerate(normalized_ids)}
+
+    def _sort_key(doc: dict[str, Any]) -> tuple[int, str]:
+        identifier = str(doc.get("account_id") or doc.get("id") or "")
+        return (order.get(identifier, len(order)), identifier)
+
+    return sorted(hydrated, key=_sort_key)
 
 
 def _account_identifier_matches(account: dict[str, Any], account_id: str) -> bool:
@@ -730,6 +845,7 @@ async def _fetch_db_published_posts(
         feed.append(
             {
                 "id": platform_result.get("platform_post_id") or post.get("id"),
+                "platform_post_id": platform_result.get("platform_post_id"),
                 "content": post.get("content", ""),
                 "media_url": _db_post_media_url(post),
                 "media_type": _db_post_media_type(post),
@@ -740,6 +856,8 @@ async def _fetch_db_published_posts(
                 "views": 0,
                 "permalink": platform_result.get("post_url") or (post.get("platform_post_urls") or {}).get(platform),
                 "platform": platform,
+                "source_mode": "db_fallback",
+                "post_type": post.get("post_type"),
             }
         )
     return feed
@@ -836,6 +954,7 @@ def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
     metrics = post.get("metrics") or {}
     return {
         "id": post.get("id") or post.get("platform_post_id") or post.get("uri"),
+        "platform_post_id": post.get("platform_post_id") or post.get("id") or post.get("uri"),
         "content": post.get("content", ""),
         "media_url": post.get("media_url"),
         "video_url": post.get("video_url"),
@@ -854,7 +973,80 @@ def _standardize_feed_post(post: dict[str, Any]) -> dict[str, Any]:
         ),
         "views": post.get("views", metrics.get("views", metrics.get("impressions"))),
         "quotes": post.get("quotes", metrics.get("quotes", metrics.get("quoteCount"))),
+        "source_mode": post.get("source_mode") or "live",
     }
+
+
+def _feed_post_type(post: dict[str, Any]) -> str:
+    post_type = str(post.get("post_type") or post.get("media_type") or "").strip()
+    if not post_type:
+        return "text"
+    normalized = post_type.lower()
+    mapping = {
+        "carousel_album": "carousel",
+        "reels": "reel",
+    }
+    return mapping.get(normalized, normalized)
+
+
+def _raw_metric_value(post: dict[str, Any], metric: str) -> Any:
+    metrics = post.get("metrics") or {}
+    if metric == "likes":
+        return post.get("likes", metrics.get("likes"))
+    if metric == "comments":
+        return post.get(
+            "comments_count",
+            post.get("replies", metrics.get("comments_count", metrics.get("comments", metrics.get("replies")))),
+        )
+    if metric == "shares":
+        return post.get(
+            "shares",
+            post.get("retweets", metrics.get("shares", metrics.get("reblogs", metrics.get("reposts", metrics.get("retweet_count"))))),
+        )
+    if metric == "views":
+        return post.get("views", metrics.get("views", metrics.get("impressions")))
+    if metric == "quotes":
+        return post.get("quotes", metrics.get("quotes", metrics.get("quoteCount")))
+    return None
+
+
+def _metric_unavailable_message(platform: str | None, metric: str) -> str:
+    platform_label = _platform_label(platform)
+    metric_label = metric.replace("_", " ").lower()
+    return f"{platform_label} does not expose {metric_label} in the current integration."
+
+
+def _feed_metric_support(platform: str | None, post: dict[str, Any], source_mode: str) -> dict[str, dict[str, Any]]:
+    if source_mode != "live":
+        return {
+            metric: {
+                "supported": False,
+                "message": "Live engagement metrics are unavailable for fallback posts published from Unravler history.",
+            }
+            for metric in ("likes", "comments", "shares", "views", "quotes")
+        }
+
+    platform_support = _platform_supports(platform)
+    support_by_metric: dict[str, dict[str, Any]] = {}
+    for metric, support_key in {
+        "likes": "likes",
+        "comments": "comments",
+        "shares": "shares",
+        "views": "views",
+        "quotes": "shares",
+    }.items():
+        if not platform_support.get(support_key, False):
+            support_by_metric[metric] = {
+                "supported": False,
+                "message": _metric_unavailable_message(platform, metric),
+            }
+            continue
+        raw_value = _raw_metric_value(post, metric)
+        support_by_metric[metric] = {
+            "supported": raw_value is not None,
+            "message": None if raw_value is not None else _metric_unavailable_message(platform, metric),
+        }
+    return support_by_metric
 
 
 def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
@@ -863,17 +1055,23 @@ def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[
     shares = _metric_int(post.get("shares"))
     views = _metric_int(post.get("views"))
     quotes = _metric_int(post.get("quotes"))
+    source_mode = post.get("source_mode") or "live"
     return {
-        "id": post.get("id"),
+        "id": post.get("platform_post_id") or post.get("id"),
+        "platform_post_id": post.get("platform_post_id") or post.get("id"),
         "platform": account.get("platform"),
         "account_id": account.get("account_id") or account.get("id"),
         "account_username": account.get("platform_username") or account.get("display_name"),
+        "account_display_name": account.get("display_name") or account.get("platform_username"),
+        "account_picture": account.get("picture_url"),
         "content": post.get("content", ""),
         "media_url": post.get("media_url"),
         "video_url": post.get("video_url"),
         "media_type": post.get("media_type"),
+        "post_type": _feed_post_type(post),
         "published_at": post.get("timestamp"),
         "post_url": post.get("permalink"),
+        "source_mode": source_mode,
         "metrics": {
             "likes": likes,
             "comments": comments,
@@ -881,6 +1079,7 @@ def _normalize_feed_post(account: dict[str, Any], post: dict[str, Any]) -> dict[
             "views": views,
             "quotes": quotes,
         },
+        "metric_support": _feed_metric_support(account.get("platform"), post, source_mode),
     }
 
 
@@ -4178,11 +4377,17 @@ async def publish_feed(
     db: DB,
     platform: str | None = Query(None),
     account_id: str | None = Query(None, alias="accountId"),
+    account_ids_param: str | None = Query(None, alias="accountIds"),
     limit: int = Query(50, ge=1, le=100),
     refresh: bool = Query(False),
 ):
+    del refresh
+
+    requested_account_ids = _parse_account_ids_param(account_ids_param)
     fallback_used = False
-    if platform:
+    if requested_account_ids:
+        accounts = await _load_social_accounts_by_ids(db, current_user["user_id"], requested_account_ids, platform)
+    elif platform:
         accounts, fallback_used = await _load_social_accounts_for_report(
             db,
             current_user["user_id"],
@@ -4201,10 +4406,77 @@ async def publish_feed(
     posts: list[dict[str, Any]] = []
     connected_accounts: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    live_accounts = 0
+    fallback_accounts = 0
+    error_accounts: set[str] = set()
+    live_feed_platforms = _SUPPORTED_ENGAGEMENT_PLATFORMS - {"linkedin"}
+    semaphore = asyncio.Semaphore(5)
 
-    for account in accounts:
-        plat = account.get("platform")
+    async def _process_account(account: dict[str, Any]) -> dict[str, Any]:
+        async with semaphore:
+            plat = account.get("platform")
+            account_identifier = account.get("account_id") or account.get("id")
+            normalized_posts: list[dict[str, Any]] = []
+            used_fallback = False
+            used_live = False
+            feed: list[dict[str, Any]] = []
+
+            if plat in live_feed_platforms:
+                try:
+                    feed, _ = await _fetch_account_feed_and_stats(db, account)
+                    if feed:
+                        used_live = True
+                except Exception as exc:
+                    message = _analytics_error_message(plat, exc)
+                    _append_feed_error(errors, account, platform=plat, message=message)
+                    error_accounts.add(str(account_identifier or account.get("platform_username") or plat or "unknown"))
+                    feed = []
+
+            if not feed:
+                fallback_feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=limit)
+                if fallback_feed:
+                    used_fallback = True
+                    fallback_accounts_local_reason = (
+                        f"{_PLATFORM_ANALYTICS_CAPABILITIES.get(plat, {}).get('message') or 'Live platform feed is unavailable for this account.'} Showing posts published from Unravler history instead."
+                    )
+                    warning_type = "fallback_used"
+                    if plat not in live_feed_platforms:
+                        fallback_accounts_local_reason = (
+                            f"{_platform_label(plat)} feed can only show posts published from Unravler right now."
+                        )
+                        warning_type = "local_history_only"
+                    _append_feed_warning(
+                        warnings,
+                        account,
+                        platform=plat,
+                        reason=fallback_accounts_local_reason,
+                        warning_type=warning_type,
+                    )
+                    feed = fallback_feed
+                elif plat not in live_feed_platforms:
+                    _append_feed_warning(
+                        warnings,
+                        account,
+                        platform=plat,
+                        reason=f"{_platform_label(plat)} feed can only show posts published from Unravler right now.",
+                        warning_type="local_history_only",
+                    )
+
+            if feed:
+                normalized_posts = [_normalize_feed_post(account, post) for post in feed[:limit]]
+
+            return {
+                "posts": normalized_posts,
+                "used_live": used_live,
+                "used_fallback": used_fallback,
+            }
+
+    results = await asyncio.gather(*[_process_account(account) for account in accounts])
+
+    for account, result in zip(accounts, results):
         account_identifier = account.get("account_id") or account.get("id")
+        plat = account.get("platform")
         connected_accounts.append(
             {
                 "id": account_identifier,
@@ -4215,42 +4487,38 @@ async def publish_feed(
                 "picture_url": account.get("picture_url"),
             }
         )
-
-        if plat not in _SUPPORTED_ENGAGEMENT_PLATFORMS:
-            feed = []
-        else:
-            try:
-                feed, _ = await _fetch_account_feed_and_stats(db, account)
-            except Exception as exc:
-                errors.append(
-                    {
-                        "account": account.get("platform_username") or account_identifier or plat or "unknown",
-                        "error": str(exc),
-                    }
-                )
-                feed = []
-
-        if not feed:
-            feed = await _fetch_db_published_posts(db, current_user["user_id"], account, limit=limit)
-        if not feed:
-            errors.append(
-                {
-                    "account": account.get("platform_username") or account_identifier or plat or "unknown",
-                    "error": "No recent posts were returned from the platform API or local publish history.",
-                }
-            )
-            continue
-
-        posts.extend(_normalize_feed_post(account, post) for post in feed[:limit])
+        if result["used_live"]:
+            live_accounts += 1
+        if result["used_fallback"]:
+            fallback_accounts += 1
+        posts.extend(result["posts"])
 
     posts.sort(
         key=lambda post: _parse_platform_timestamp(post.get("published_at")) or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
 
+    message = None
+    if not posts:
+        if platform and any(item.get("type") == "local_history_only" for item in warnings):
+            message = f"{_platform_label(platform)} feed can only show posts published from Unravler right now. None were found for the selected filters."
+        elif errors:
+            message = "We could not load recent posts for one or more selected accounts."
+        else:
+            message = "No published posts found for the selected filters."
+
     return {
         "posts": posts[:limit],
         "connected_accounts": connected_accounts,
         "errors": errors,
+        "warnings": warnings,
+        "message": message,
+        "meta": {
+            "filtered_accounts": len(accounts),
+            "live_accounts": live_accounts,
+            "fallback_accounts": fallback_accounts,
+            "error_accounts": len(error_accounts),
+            "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        },
         "account_fallback_used": fallback_used,
     }

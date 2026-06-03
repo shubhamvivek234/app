@@ -7,17 +7,16 @@ import {
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
-// ── Platform metadata ─────────────────────────────────────────────────────────
 const PLATFORM_META = {
-  facebook:  { icon: FaFacebook,  color: 'text-blue-600',  ring: '#1877F2', label: 'Facebook' },
-  twitter:   { icon: FaTwitter,   color: 'text-sky-500',   ring: '#1DA1F2', label: 'X (Twitter)' },
-  linkedin:  { icon: FaLinkedin,  color: 'text-blue-700',  ring: '#0A66C2', label: 'LinkedIn' },
-  instagram: { icon: FaInstagram, color: 'text-pink-500',  ring: '#E1306C', label: 'Instagram' },
-  pinterest: { icon: FaPinterest, color: 'text-red-600',   ring: '#E60023', label: 'Pinterest' },
-  youtube:   { icon: FaYoutube,   color: 'text-red-500',   ring: '#FF0000', label: 'YouTube' },
-  tiktok:    { icon: FaTiktok,    color: 'text-gray-900',  ring: '#010101', label: 'TikTok' },
-  bluesky:   { icon: SiBluesky,   color: 'text-blue-500',  ring: '#0085FF', label: 'Bluesky' },
-  threads:   { icon: SiThreads,   color: 'text-gray-900',  ring: '#101010', label: 'Threads' },
+  facebook: { icon: FaFacebook, color: 'text-blue-600', ring: '#1877F2', label: 'Facebook' },
+  twitter: { icon: FaTwitter, color: 'text-sky-500', ring: '#1DA1F2', label: 'X (Twitter)' },
+  linkedin: { icon: FaLinkedin, color: 'text-blue-700', ring: '#0A66C2', label: 'LinkedIn' },
+  instagram: { icon: FaInstagram, color: 'text-pink-500', ring: '#E1306C', label: 'Instagram' },
+  pinterest: { icon: FaPinterest, color: 'text-red-600', ring: '#E60023', label: 'Pinterest' },
+  youtube: { icon: FaYoutube, color: 'text-red-500', ring: '#FF0000', label: 'YouTube' },
+  tiktok: { icon: FaTiktok, color: 'text-gray-900', ring: '#010101', label: 'TikTok' },
+  bluesky: { icon: SiBluesky, color: 'text-blue-500', ring: '#0085FF', label: 'Bluesky' },
+  threads: { icon: SiThreads, color: 'text-gray-900', ring: '#101010', label: 'Threads' },
 };
 
 const COMMENT_PLATFORMS = new Set(['instagram', 'facebook', 'youtube', 'reddit', 'bluesky']);
@@ -27,22 +26,18 @@ const AVATAR_COLORS = [
   'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500',
   'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500',
 ];
+
 const avatarColor = (name = '') =>
   AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length];
 
-// ── Metric pill ───────────────────────────────────────────────────────────────
-const Metric = ({ icon: Icon, value, label }) => {
-  if (value === undefined || value === null) return null;
-  return (
-    <span className="flex items-center gap-1 text-xs text-gray-500">
-      <Icon className="text-[11px]" />
-      <span className="font-medium text-gray-700">{Number(value).toLocaleString()}</span>
-      {label && <span className="hidden sm:inline">{label}</span>}
-    </span>
-  );
-};
+const Metric = ({ icon: Icon, value, label }) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-600">
+    <Icon className="text-[11px]" />
+    <span className="font-semibold text-gray-800">{Number(value).toLocaleString()}</span>
+    <span>{label}</span>
+  </span>
+);
 
-// ── Format time helper ────────────────────────────────────────────────────────
 const formatTime = (isoString) => {
   if (!isoString) return '';
   try {
@@ -52,7 +47,22 @@ const formatTime = (isoString) => {
   }
 };
 
-const formatRelative = (isoString) => {
+const formatAbsoluteDateTime = (isoString) => {
+  if (!isoString) return '';
+  try {
+    return new Date(isoString).toLocaleString([], {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+};
+
+const formatRelativeDate = (isoString) => {
   if (!isoString) return '';
   try {
     return new Date(isoString).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -61,15 +71,14 @@ const formatRelative = (isoString) => {
   }
 };
 
-// ── PostCard ──────────────────────────────────────────────────────────────────
-const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => {
-  const [expanded, setExpanded] = useState(false);
-  const [commentOpen, setCommentOpen] = useState(false);
-  const [commentText, setCommentText] = useState('');
-  const [commentLoading, setCommentLoading] = useState(false);
-  const [commentSuccess, setCommentSuccess] = useState(false);
+const prettyPostType = (value) => {
+  const normalized = String(value || 'text').replace(/_/g, ' ').trim();
+  if (!normalized) return 'Text';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
 
-  // Comments state
+const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
+  const [expanded, setExpanded] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -79,49 +88,54 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
 
   const {
     platform,
+    platform_post_id,
     account_username,
+    account_display_name,
     account_picture,
     content,
     media_url,
     media_type,
+    post_type,
     post_url,
     metrics = {},
+    metric_support = {},
     published_at,
+    source_mode,
   } = post;
 
   const meta = PLATFORM_META[platform] || {};
   const PlatformIcon = meta.icon;
   const ringColor = meta.ring || '#3B82F6';
+  const primaryName = account_display_name || account_username || meta.label || platform || 'Account';
+  const secondaryHandle = account_username && account_username !== primaryName ? account_username : null;
+  const captionLimit = 180;
+  const isLong = content && content.length > captionLimit;
+  const displayContent = isLong && !expanded ? `${content.slice(0, captionLimit)}…` : content;
+  const isVideo = media_type === 'VIDEO' || media_type === 'REELS' || String(post_type || '').toLowerCase() === 'video';
+  const canFetchComments = COMMENT_PLATFORMS.has(platform) && !!onFetchComments && !!platform_post_id;
+  const canReply = REPLY_PLATFORMS.has(platform) && !!onReplyToComment && !!platform_post_id;
+  const sourceBadge = source_mode === 'db_fallback' ? 'Unravler Fallback' : 'Platform Feed';
+  const publishedLabel = formatAbsoluteDateTime(published_at);
 
-  const CAPTION_LIMIT = 160;
-  const isLong = content && content.length > CAPTION_LIMIT;
-  const displayContent = isLong && !expanded ? content.slice(0, CAPTION_LIMIT) + '…' : content;
+  const visibleMetrics = [
+    { key: 'likes', label: 'Likes', icon: FaHeart, value: metrics.likes },
+    { key: 'comments', label: 'Comments', icon: FaComment, value: metrics.comments },
+    { key: 'shares', label: 'Shares', icon: FaShare, value: metrics.shares },
+    { key: 'views', label: 'Views', icon: FaEye, value: metrics.views },
+    { key: 'saves', label: 'Saves', icon: FaBookmark, value: metrics.saves },
+  ].filter((metric) => {
+    if (metric.key === 'saves') return metric.value !== undefined && metric.value !== null;
+    const support = metric_support?.[metric.key];
+    if (support?.supported === false) return false;
+    return metric.value !== undefined && metric.value !== null;
+  });
 
-  const isVideo = media_type === 'VIDEO' || media_type === 'REELS';
-  const canFetchComments = COMMENT_PLATFORMS.has(platform) && !!onFetchComments;
-  const canReply = REPLY_PLATFORMS.has(platform) && !!onReplyToComment;
-
-  const handleCommentSubmit = async () => {
-    if (!commentText.trim() || commentLoading || !onAddComment) return;
-    setCommentLoading(true);
-    try {
-      await onAddComment(post, commentText.trim());
-      setCommentText('');
-      setCommentOpen(false);
-      setCommentSuccess(true);
-      setTimeout(() => setCommentSuccess(false), 3000);
-    } finally {
-      setCommentLoading(false);
-    }
-  };
-
-  const handleCommentKeyDown = (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      handleCommentSubmit();
-    }
-  };
+  const engagementUnavailable = source_mode === 'db_fallback' || (
+    ['likes', 'comments', 'shares', 'views'].every((key) => metric_support?.[key]?.supported === false)
+  );
 
   const handleFetchComments = async () => {
+    if (!canFetchComments) return;
     if (commentsOpen) {
       setCommentsOpen(false);
       return;
@@ -145,7 +159,6 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
       await onReplyToComment(post, comment, replyText.trim());
       setReplyText('');
       setReplyingTo(null);
-      // Refresh comments
       if (onFetchComments) {
         const result = await onFetchComments(post);
         setComments(result?.comments || []);
@@ -156,93 +169,101 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
   };
 
   return (
-    <div className="bg-offwhite rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
-      <div className="flex gap-4 p-4">
-
-        {/* Left: time column */}
-        <div className="flex-shrink-0 w-16 text-right pt-0.5">
-          <p className="text-xs text-gray-400 font-medium">{formatTime(published_at)}</p>
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-offwhite shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex flex-col gap-4 p-4 md:flex-row md:items-start">
+        <div className="order-1 flex items-start justify-between gap-3 md:w-44 md:flex-shrink-0 md:flex-col md:justify-start">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{formatTime(published_at) || 'Unknown time'}</p>
+            <p className="mt-1 text-sm font-medium text-gray-700">{formatRelativeDate(published_at) || 'Unknown date'}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 md:mt-2">
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-700">
+              {PlatformIcon && <PlatformIcon className={meta.color} />}
+              {meta.label || platform}
+            </span>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-600">
+              {prettyPostType(post_type || media_type)}
+            </span>
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+              source_mode === 'db_fallback'
+                ? 'border border-amber-200 bg-amber-50 text-amber-700'
+                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}>
+              {sourceBadge}
+            </span>
+          </div>
         </div>
 
-        {/* Center: content */}
-        <div className="flex-1 min-w-0">
-
-          {/* Account header */}
-          <div className="flex items-center gap-2 mb-2">
+        <div className="order-2 min-w-0 flex-1">
+          <div className="mb-3 flex items-start gap-3">
             <div className="relative flex-shrink-0">
               {account_picture ? (
                 <img
                   src={account_picture}
-                  alt={account_username}
-                  className="w-9 h-9 rounded-full object-cover"
+                  alt={primaryName}
+                  className="h-10 w-10 rounded-full object-cover"
                   style={{ boxShadow: `0 0 0 2px white, 0 0 0 3.5px ${ringColor}` }}
                 />
               ) : (
                 <div
-                  className={`w-9 h-9 rounded-full ${avatarColor(account_username)} flex items-center justify-center text-white text-sm font-bold`}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white ${avatarColor(primaryName)}`}
                   style={{ boxShadow: `0 0 0 2px white, 0 0 0 3.5px ${ringColor}` }}
                 >
-                  {(account_username || platform || '?').charAt(0).toUpperCase()}
-                </div>
-              )}
-              {PlatformIcon && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-offwhite border border-gray-100 flex items-center justify-center shadow-sm">
-                  <PlatformIcon className={`text-[9px] ${meta.color}`} />
+                  {primaryName.charAt(0).toUpperCase()}
                 </div>
               )}
             </div>
-
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate max-w-[160px]">
-                {account_username || platform}
-              </p>
-              <p className="text-[11px] text-gray-400">{meta.label || platform}</p>
+              <p className="truncate text-sm font-semibold text-gray-900">{primaryName}</p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                {secondaryHandle && <span className="truncate">@{secondaryHandle}</span>}
+                {publishedLabel && <span title={publishedLabel}>{publishedLabel}</span>}
+              </div>
             </div>
           </div>
 
-          {/* Caption */}
-          {content && (
-            <p className="text-sm text-gray-700 leading-relaxed mb-3 whitespace-pre-line">
+          {content ? (
+            <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-gray-700">
               {displayContent}
               {isLong && (
                 <button
                   onClick={() => setExpanded(!expanded)}
-                  className="ml-1 text-green-600 hover:text-green-700 text-xs font-medium"
+                  className="ml-1 text-xs font-medium text-green-600 hover:text-green-700"
                 >
                   {expanded ? 'less' : 'more'}
                 </button>
               )}
             </p>
+          ) : (
+            <p className="mb-3 text-sm italic text-gray-400">No caption provided</p>
           )}
 
-          {/* Metrics row */}
-          <div className="flex items-center gap-4 flex-wrap">
-            {metrics.likes     !== undefined && <Metric icon={FaHeart}    value={metrics.likes}    label="Likes" />}
-            {metrics.comments  !== undefined && <Metric icon={FaComment}  value={metrics.comments} label="Comments" />}
-            {metrics.shares    !== undefined && <Metric icon={FaShare}    value={metrics.shares}   label="Shares" />}
-            {metrics.views     !== undefined && <Metric icon={FaEye}      value={metrics.views}    label="Views" />}
-            {metrics.saves     !== undefined && <Metric icon={FaBookmark} value={metrics.saves}    label="Saves" />}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-gray-400">
-                Published via {meta.label || platform}
-              </span>
-              {commentSuccess && (
-                <span className="text-[11px] text-green-600 font-medium">✓ Comment posted</span>
-              )}
+          {visibleMetrics.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {visibleMetrics.map((metric) => (
+                <Metric key={metric.key} icon={metric.icon} value={metric.value} label={metric.label} />
+              ))}
             </div>
-            <div className="flex items-center gap-2">
-              {/* View Comments button — only for platforms that support it */}
+          )}
+
+          {engagementUnavailable && (
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Live engagement is unavailable for this post, so this card is showing publish history without platform metrics.
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
+            <div className="text-[11px] text-gray-400">
+              {platform_post_id ? `Platform post ID: ${platform_post_id}` : 'Platform post ID unavailable for this record'}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               {canFetchComments && (
                 <button
                   onClick={handleFetchComments}
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
                     commentsOpen
                       ? 'border-blue-300 bg-blue-50 text-blue-600'
-                      : 'border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50/50'
+                      : 'border-gray-200 bg-offwhite text-gray-500 hover:border-blue-200 hover:bg-blue-50/50 hover:text-blue-600'
                   }`}
                 >
                   <FaComment className="text-[10px]" />
@@ -250,29 +271,12 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
                   Comments{metrics.comments ? ` (${metrics.comments})` : ''}
                 </button>
               )}
-              {/* Add Comment button */}
-              {onAddComment && canReply && (
-                <button
-                  onClick={() => {
-                    setCommentOpen((prev) => !prev);
-                    setCommentText('');
-                  }}
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${
-                    commentOpen
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-600'
-                      : 'border-gray-200 text-gray-500 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50/50'
-                  }`}
-                >
-                  <FaReply className="text-[10px]" />
-                  Comment on Post
-                </button>
-              )}
               {post_url && (
                 <a
                   href={post_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-green-600 hover:text-green-700 font-medium"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-green-600 hover:text-green-700"
                 >
                   <FaExternalLinkAlt className="text-[10px]" />
                   View Post
@@ -282,122 +286,78 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
           </div>
         </div>
 
-        {/* Right: media thumbnail */}
         {media_url && (
-          <div className="flex-shrink-0 self-start">
-            <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-gray-100">
+          <div className="order-3 md:w-32 md:flex-shrink-0">
+            <div className="relative h-40 overflow-hidden rounded-xl bg-gray-100 md:h-32 md:w-32">
               <img
                 src={media_url}
                 alt="Post media"
-                className="w-full h-full object-cover"
+                className="h-full w-full object-cover"
                 onError={(e) => { e.target.style.display = 'none'; }}
               />
               {isVideo && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                  <FaPlay className="text-white text-lg drop-shadow" />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+                  <FaPlay className="text-lg text-white drop-shadow" />
                 </div>
               )}
             </div>
           </div>
         )}
-
       </div>
 
-      {/* Inline comment composer */}
-      {commentOpen && onAddComment && (
-        <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-3">
-          <textarea
-            value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
-            onKeyDown={handleCommentKeyDown}
-            placeholder="Write a comment… (⌘↵ to send)"
-            rows={3}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
-          />
-          <div className="flex justify-end gap-2 mt-2">
-            <button
-              onClick={() => { setCommentOpen(false); setCommentText(''); }}
-              className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCommentSubmit}
-              disabled={!commentText.trim() || commentLoading}
-              className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {commentLoading ? (
-                <>
-                  <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  Posting…
-                </>
-              ) : (
-                'Post Comment'
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Comments section */}
       {commentsOpen && (
         <div className="border-t border-gray-100 bg-gray-50/40">
           {commentsLoading ? (
-            <div className="p-4 space-y-3">
+            <div className="space-y-3 p-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="animate-pulse flex gap-3">
-                  <div className="w-7 h-7 rounded-full bg-gray-200 flex-shrink-0" />
+                <div key={i} className="flex animate-pulse gap-3">
+                  <div className="h-7 w-7 flex-shrink-0 rounded-full bg-gray-200" />
                   <div className="flex-1 space-y-1.5">
-                    <div className="h-3 bg-gray-200 rounded w-24" />
-                    <div className="h-3 bg-gray-200 rounded w-full" />
+                    <div className="h-3 w-24 rounded bg-gray-200" />
+                    <div className="h-3 w-full rounded bg-gray-200" />
                   </div>
                 </div>
               ))}
             </div>
           ) : comments.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-gray-400">
-              No comments yet
-            </div>
+            <div className="px-4 py-6 text-center text-sm text-gray-400">No comments yet</div>
           ) : (
             <div className="divide-y divide-gray-100">
               {comments.map((comment) => (
                 <div key={comment.id} className="px-4 py-3">
                   <div className="flex items-start gap-2.5">
-                    {/* Avatar */}
                     {comment.author_avatar ? (
-                      <img src={comment.author_avatar} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                      <img src={comment.author_avatar} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
                     ) : (
-                      <div className={`w-7 h-7 rounded-full ${avatarColor(comment.author_name)} flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0`}>
+                      <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${avatarColor(comment.author_name)}`}>
                         {(comment.author_name || '?').charAt(0).toUpperCase()}
                       </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-0.5 flex items-center gap-2">
                         <span className="text-xs font-semibold text-gray-800">{comment.author_name}</span>
-                        <span className="text-[10px] text-gray-400">{formatRelative(comment.timestamp)}</span>
+                        <span className="text-[10px] text-gray-400">{formatRelativeDate(comment.timestamp)}</span>
                         {comment.likes > 0 && (
                           <span className="flex items-center gap-0.5 text-[10px] text-gray-400">
                             <FaHeart className="text-rose-400" /> {comment.likes}
                           </span>
                         )}
                       </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{comment.content}</p>
+                      <p className="whitespace-pre-wrap text-sm text-gray-700">{comment.content}</p>
 
-                      {/* Reply button */}
                       {canReply && comment.can_reply && (
                         <button
                           onClick={() => {
                             setReplyingTo(replyingTo === comment.id ? null : comment.id);
                             setReplyText('');
                           }}
-                          className="mt-1 text-[11px] text-indigo-500 hover:text-indigo-700 font-medium flex items-center gap-1"
+                          className="mt-1 flex items-center gap-1 text-[11px] font-medium text-indigo-500 hover:text-indigo-700"
                         >
                           <FaReply className="text-[9px]" />
                           Reply
                         </button>
                       )}
 
-                      {/* Inline reply composer */}
                       {replyingTo === comment.id && (
                         <div className="mt-2">
                           <textarea
@@ -408,22 +368,22 @@ const PostCard = ({ post, onAddComment, onFetchComments, onReplyToComment }) => 
                             }}
                             placeholder={`Reply to ${comment.author_name}… (⌘↵)`}
                             rows={2}
-                            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+                            className="w-full resize-none rounded-lg border border-gray-200 bg-offwhite px-3 py-1.5 text-sm placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
                           />
-                          <div className="flex justify-end gap-2 mt-1.5">
+                          <div className="mt-1.5 flex justify-end gap-2">
                             <button
                               onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                              className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                              className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                             >
                               Cancel
                             </button>
                             <button
                               onClick={() => handleReplySubmit(comment)}
                               disabled={!replyText.trim() || replySending}
-                              className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg disabled:opacity-50"
+                              className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1 text-xs text-white disabled:opacity-50 hover:bg-indigo-700"
                             >
                               {replySending ? (
-                                <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                               ) : (
                                 <FaReply className="text-[9px]" />
                               )}

@@ -162,7 +162,15 @@ const Publish = () => {
   const [posts, setPosts]                     = useState([]);
   const [feedLoading, setFeedLoading]         = useState(false);
   const [feedError, setFeedError]             = useState(null);
+  const [feedErrors, setFeedErrors]           = useState([]);
   const [feedWarnings, setFeedWarnings]       = useState([]);
+  const [feedMessage, setFeedMessage]         = useState(null);
+  const [feedMeta, setFeedMeta]               = useState(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const [feedSearch, setFeedSearch]           = useState('');
+  const [feedSourceFilter, setFeedSourceFilter] = useState('all');
+  const [feedPostTypeFilter, setFeedPostTypeFilter] = useState('all');
+  const [feedSort, setFeedSort]               = useState('newest');
 
   // ── Inbox state ──
   const [inboxPlatform, setInboxPlatform]   = useState('');
@@ -184,20 +192,32 @@ const Publish = () => {
   }, []);
 
   // ── Fetch feed ──
-  const fetchFeed = useCallback(async () => {
+  const fetchFeed = useCallback(async ({ refresh = false } = {}) => {
     setFeedLoading(true);
     setFeedError(null);
     try {
       const params = { limit: 50 };
       if (activePlatform) params.platform = activePlatform;
-      if (selectedAccounts.length === 1) params.accountId = selectedAccounts[0];
+      if (selectedAccounts.length === 1) {
+        params.accountId = selectedAccounts[0];
+      } else if (selectedAccounts.length > 1) {
+        params.accountIds = selectedAccounts.join(',');
+      }
+      if (refresh) params.refresh = true;
       const data = await getPublishFeed(params);
       setPosts(data.posts || []);
+      setFeedErrors(Array.isArray(data.errors) ? data.errors : []);
       setFeedWarnings(data.warnings || []);
+      setFeedMessage(data.message || null);
+      setFeedMeta(data.meta || null);
+      setLastRefreshedAt(data.meta?.refreshed_at || new Date().toISOString());
     } catch (err) {
       setFeedError('Failed to load posts. Please try again.');
       setPosts([]);
+      setFeedErrors([]);
       setFeedWarnings([]);
+      setFeedMessage(null);
+      setFeedMeta(null);
     } finally {
       setFeedLoading(false);
     }
@@ -418,8 +438,6 @@ const Publish = () => {
 
   // ── Derived ──
   const platforms  = [...new Set(accounts.map((a) => a.platform))];
-  const dateGroups = groupByDate(posts);
-
   const unreadCount = inboxMessages.filter((m) => m.status === 'unread').length;
   const inboxPlatformOptions = Object.values(inboxCapabilities)
     .filter((entry) => {
@@ -433,6 +451,52 @@ const Publish = () => {
       ? DM_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(inboxCapabilities[inboxSelected.platform]?.supports_dm_reply)
       : COMMENT_REPLY_PLATFORMS.has(inboxSelected.platform) && Boolean(inboxCapabilities[inboxSelected.platform]?.supports_comment_reply))
     : false;
+  const availablePostTypes = [...new Set(posts.map((post) => post.post_type).filter(Boolean))].sort();
+  const searchedPosts = posts.filter((post) => {
+    if (feedSourceFilter !== 'all' && post.source_mode !== feedSourceFilter) return false;
+    if (feedPostTypeFilter !== 'all' && post.post_type !== feedPostTypeFilter) return false;
+    if (!feedSearch.trim()) return true;
+    const searchValue = feedSearch.trim().toLowerCase();
+    const haystack = [
+      post.content,
+      post.account_username,
+      post.account_display_name,
+      PLATFORM_META[post.platform]?.label,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(searchValue);
+  });
+  const sortedPosts = [...searchedPosts].sort((a, b) => {
+    const aTime = a.published_at ? new Date(a.published_at).getTime() : 0;
+    const bTime = b.published_at ? new Date(b.published_at).getTime() : 0;
+    const aMetrics = a.metrics || {};
+    const bMetrics = b.metrics || {};
+    const aEngagement = (aMetrics.likes || 0) + (aMetrics.comments || 0) + (aMetrics.shares || 0) + (aMetrics.views || 0);
+    const bEngagement = (bMetrics.likes || 0) + (bMetrics.comments || 0) + (bMetrics.shares || 0) + (bMetrics.views || 0);
+
+    if (feedSort === 'oldest') return aTime - bTime;
+    if (feedSort === 'likes') return (bMetrics.likes || 0) - (aMetrics.likes || 0);
+    if (feedSort === 'comments') return (bMetrics.comments || 0) - (aMetrics.comments || 0);
+    if (feedSort === 'views') return (bMetrics.views || 0) - (aMetrics.views || 0);
+    if (feedSort === 'engagement') return bEngagement - aEngagement;
+    return bTime - aTime;
+  });
+  const shouldShowReconnectCta = feedErrors.some((item) => item?.type === 'auth');
+  const effectiveFeedMessage = (posts.length > 0 && sortedPosts.length === 0)
+    ? 'No posts match the current search or filter settings.'
+    : (feedMessage || (
+      accounts.length === 0
+        ? 'Connect your social accounts to see your published posts here.'
+        : 'No published posts were found for the selected accounts or platform.'
+    ));
+
+  useEffect(() => {
+    if (feedPostTypeFilter !== 'all' && !availablePostTypes.includes(feedPostTypeFilter)) {
+      setFeedPostTypeFilter('all');
+    }
+  }, [availablePostTypes, feedPostTypeFilter]);
 
   return (
     <DashboardLayout>
@@ -445,10 +509,15 @@ const Publish = () => {
             <p className="text-sm text-gray-500 mt-1">
               View your published posts and manage messages across connected accounts.
             </p>
+            {activeTab === 'feed' && lastRefreshedAt && (
+              <p className="mt-1 text-xs text-gray-400">
+                Last refreshed {new Date(lastRefreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
           </div>
           {activeTab === 'feed' && (
             <button
-              onClick={fetchFeed}
+              onClick={() => fetchFeed({ refresh: true })}
               disabled={feedLoading}
               className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
@@ -593,27 +662,122 @@ const Publish = () => {
         ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'feed' && (
           <>
-            {/* ── Warnings (token expired, API errors, etc.) ── */}
-            {feedWarnings.length > 0 && !feedLoading && (
-              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
-                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">⚠ Some accounts could not load posts</p>
-                {feedWarnings.map((w, i) => {
-                  const meta = PLATFORM_META[w.platform] || {};
-                  const Icon = meta.icon;
-                  return (
-                    <div key={i} className="flex items-start gap-2 text-xs text-amber-800">
-                      {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
-                      <span><strong>{w.username}</strong> ({meta.label || w.platform}): {w.reason}</span>
-                    </div>
-                  );
-                })}
-                <p className="text-[11px] text-amber-600 mt-1">
-                  Go to <a href="/accounts" className="underline font-medium">Accounts</a> to reconnect.
-                </p>
+            {!feedLoading && feedMeta && (
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Posts in view</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{sortedPosts.length}</p>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Filtered accounts</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{feedMeta.filtered_accounts || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Live feed accounts</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{feedMeta.live_accounts || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Fallback / degraded</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{(feedMeta.fallback_accounts || 0) + (feedMeta.error_accounts || 0)}</p>
+                </div>
               </div>
             )}
 
-            {/* Post feed */}
+            {!feedLoading && feedWarnings.length > 0 && (
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Feed notices</p>
+                {feedWarnings.map((warning, index) => {
+                  const meta = PLATFORM_META[warning.platform] || {};
+                  const Icon = meta.icon;
+                  return (
+                    <div key={`${warning.account}-${index}`} className="flex items-start gap-2 text-sm text-amber-900">
+                      {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
+                      <span><strong>{warning.account || 'Account'}</strong>: {warning.reason}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!feedLoading && feedErrors.length > 0 && (
+              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Feed errors</p>
+                {feedErrors.map((item, index) => {
+                  const meta = PLATFORM_META[item.platform] || {};
+                  const Icon = meta.icon;
+                  return (
+                    <div key={`${item.account}-${index}`} className="flex items-start gap-2 text-sm text-red-900">
+                      {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
+                      <span><strong>{item.account || 'Account'}</strong>: {item.error}</span>
+                    </div>
+                  );
+                })}
+                {shouldShowReconnectCta && (
+                  <p className="text-xs text-red-700">
+                    Go to <a href="/accounts" className="font-medium underline">Accounts</a> to reconnect the affected profiles.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {!feedLoading && (
+              <div className="mb-4 rounded-2xl border border-gray-200 bg-offwhite p-4 space-y-3">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
+                  <input
+                    value={feedSearch}
+                    onChange={(e) => setFeedSearch(e.target.value)}
+                    placeholder="Search captions, accounts, or platforms"
+                    className="w-full rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                  <select
+                    value={feedSourceFilter}
+                    onChange={(e) => setFeedSourceFilter(e.target.value)}
+                    className="rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  >
+                    <option value="all">All sources</option>
+                    <option value="live">Platform Feed</option>
+                    <option value="db_fallback">Unravler Fallback</option>
+                  </select>
+                  <select
+                    value={feedPostTypeFilter}
+                    onChange={(e) => setFeedPostTypeFilter(e.target.value)}
+                    className="rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  >
+                    <option value="all">All post types</option>
+                    {availablePostTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {String(type).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-500">Sort by:</span>
+                  {[
+                    ['newest', 'Newest'],
+                    ['oldest', 'Oldest'],
+                    ['engagement', 'Most Engaged'],
+                    ['likes', 'Likes'],
+                    ['comments', 'Comments'],
+                    ['views', 'Views'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setFeedSort(value)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+                        feedSort === value
+                          ? 'border-indigo-600 bg-indigo-600 text-white'
+                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="ml-auto text-xs text-gray-400">{sortedPosts.length} visible posts</span>
+                </div>
+              </div>
+            )}
+
             {feedLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4].map((i) => <SkeletonPostCard key={i} />)}
@@ -622,13 +786,13 @@ const Publish = () => {
               <div className="bg-offwhite rounded-2xl border border-red-100 p-8 text-center">
                 <p className="text-sm text-red-600 font-medium">{feedError}</p>
                 <button
-                  onClick={fetchFeed}
+                  onClick={() => fetchFeed({ refresh: true })}
                   className="mt-3 text-sm text-green-600 hover:text-green-700 underline"
                 >
                   Try again
                 </button>
               </div>
-            ) : posts.length === 0 ? (
+            ) : sortedPosts.length === 0 ? (
               <div className="bg-offwhite rounded-2xl border border-gray-200 p-12 flex flex-col items-center justify-center text-center">
                 <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
                   <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -638,33 +802,18 @@ const Publish = () => {
                 </div>
                 <p className="text-sm font-semibold text-gray-700">No posts found</p>
                 <p className="text-xs text-gray-400 mt-1 max-w-xs">
-                  {accounts.length === 0
-                    ? 'Connect your social accounts to see your published posts here.'
-                    : 'No published posts were found for the selected accounts or platform.'}
+                  {effectiveFeedMessage}
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {dateGroups.map(([dateLabel, datePosts]) => (
-                  <div key={dateLabel}>
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="h-px flex-1 bg-gray-50" />
-                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2">
-                        {dateLabel}
-                      </span>
-                      <div className="h-px flex-1 bg-gray-50" />
-                    </div>
-                    <div className="space-y-3">
-                      {datePosts.map((post, idx) => (
-                        <PostCard
-                          key={post.platform_post_id || idx}
-                          post={post}
-                          onFetchComments={handleFetchComments}
-                          onReplyToComment={handleReplyToComment}
-                        />
-                      ))}
-                    </div>
-                  </div>
+              <div className="space-y-3">
+                {sortedPosts.map((post, idx) => (
+                  <PostCard
+                    key={post.platform_post_id || post.id || idx}
+                    post={post}
+                    onFetchComments={handleFetchComments}
+                    onReplyToComment={handleReplyToComment}
+                  />
                 ))}
               </div>
             )}
