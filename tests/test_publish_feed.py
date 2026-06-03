@@ -81,6 +81,58 @@ async def test_publish_feed_supports_multi_account_selection_and_live_metadata(m
 
 
 @pytest.mark.asyncio
+async def test_publish_feed_prefers_live_account_picture_metadata(monkeypatch):
+    stale_picture = "https://cdn.example/stale.jpg"
+    fresh_picture = "https://cdn.example/fresh.jpg"
+
+    async def fake_load_social_accounts_for_report(db, user_id, platform, account_id):
+        account = _account(platform="instagram", account_id="ig_1", username="tee_theory")
+        account["picture_url"] = stale_picture
+        return ([account], False)
+
+    async def fake_fetch_account_feed_and_stats(db, account, days=None):
+        return (
+            [
+                {
+                    "id": "ig_1-post",
+                    "platform_post_id": "ig_1-post",
+                    "content": "Caption",
+                    "media_url": "https://cdn.example/post.jpg",
+                    "media_type": "IMAGE",
+                    "post_type": "IMAGE",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "permalink": "https://example.com/ig_1-post",
+                    "likes": 2,
+                    "comments_count": 1,
+                    "shares": 0,
+                    "views": None,
+                }
+            ],
+            {
+                "display_name": "Fresh Name",
+                "picture_url": fresh_picture,
+            },
+        )
+
+    monkeypatch.setattr(analytics, "_load_social_accounts_for_report", fake_load_social_accounts_for_report)
+    monkeypatch.setattr(analytics, "_fetch_account_feed_and_stats", fake_fetch_account_feed_and_stats)
+
+    report = await analytics.publish_feed(
+        current_user={"user_id": "user_1"},
+        db=object(),
+        platform="instagram",
+        account_id="ig_1",
+        account_ids_param=None,
+        limit=50,
+        refresh=False,
+    )
+
+    assert report["posts"][0]["account_picture"] == fresh_picture
+    assert report["posts"][0]["account_display_name"] == "Fresh Name"
+    assert report["connected_accounts"][0]["picture_url"] == fresh_picture
+
+
+@pytest.mark.asyncio
 async def test_publish_feed_marks_db_fallback_metrics_unsupported(monkeypatch):
     async def fake_load_social_accounts_for_report(db, user_id, platform, account_id):
         return ([_account(platform="tiktok", account_id="tt_1", username="tokalpha")], False)

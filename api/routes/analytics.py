@@ -614,8 +614,17 @@ async def _fetch_account_feed_and_stats(
         from backend.app.social.instagram import InstagramAuth
 
         auth = InstagramAuth()
-        feed = await auth.fetch_feed(access_token, platform_user_id, limit=50)
-        engagement = await auth.fetch_engagement(access_token, platform_user_id, days=days)
+        feed, engagement, profile = await asyncio.gather(
+            auth.fetch_feed(access_token, platform_user_id, limit=50),
+            auth.fetch_engagement(access_token, platform_user_id, days=days),
+            auth.get_user_profile(access_token),
+        )
+        engagement["display_name"] = (
+            profile.get("name")
+            or account.get("display_name")
+            or account.get("platform_username")
+        )
+        engagement["picture_url"] = profile.get("profile_picture_url") or account.get("picture_url")
         return [_standardize_feed_post(post) for post in feed], engagement
 
     if platform == "facebook":
@@ -4421,10 +4430,15 @@ async def publish_feed(
             used_fallback = False
             used_live = False
             feed: list[dict[str, Any]] = []
+            account_for_render = dict(account)
 
             if plat in live_feed_platforms:
                 try:
-                    feed, _ = await _fetch_account_feed_and_stats(db, account)
+                    feed, engagement = await _fetch_account_feed_and_stats(db, account)
+                    if engagement.get("display_name"):
+                        account_for_render["display_name"] = engagement.get("display_name")
+                    if engagement.get("picture_url"):
+                        account_for_render["picture_url"] = engagement.get("picture_url")
                     if feed:
                         used_live = True
                 except Exception as exc:
@@ -4464,9 +4478,10 @@ async def publish_feed(
                     )
 
             if feed:
-                normalized_posts = [_normalize_feed_post(account, post) for post in feed[:limit]]
+                normalized_posts = [_normalize_feed_post(account_for_render, post) for post in feed[:limit]]
 
             return {
+                "account": account_for_render,
                 "posts": normalized_posts,
                 "used_live": used_live,
                 "used_fallback": used_fallback,
@@ -4475,16 +4490,17 @@ async def publish_feed(
     results = await asyncio.gather(*[_process_account(account) for account in accounts])
 
     for account, result in zip(accounts, results):
-        account_identifier = account.get("account_id") or account.get("id")
-        plat = account.get("platform")
+        rendered_account = result.get("account") or account
+        account_identifier = rendered_account.get("account_id") or rendered_account.get("id")
+        plat = rendered_account.get("platform")
         connected_accounts.append(
             {
                 "id": account_identifier,
                 "account_id": account_identifier,
                 "platform": plat,
-                "platform_username": account.get("platform_username"),
-                "display_name": account.get("display_name"),
-                "picture_url": account.get("picture_url"),
+                "platform_username": rendered_account.get("platform_username"),
+                "display_name": rendered_account.get("display_name"),
+                "picture_url": rendered_account.get("picture_url"),
             }
         )
         if result["used_live"]:
