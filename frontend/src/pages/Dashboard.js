@@ -1,140 +1,112 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import DashboardLayout from '@/components/DashboardLayout';
-import { getStats, getRecentPublishedPosts, getFailedPosts, retryFailedPost, getNotifications, markAllNotificationsRead } from '@/lib/api';
-import { getPublishFailureAction, getPublishFailureMessage } from '@/lib/publishFailures';
-import { usePostStatusStream } from '@/hooks/usePostStatusStream';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  FaPlus,
-  FaCalendarAlt,
-  FaCheckCircle,
-  FaLink,
-  FaExclamationTriangle,
-  FaRedo,
-  FaBell,
-  FaImage,
-  FaVideo,
-  FaRegFileAlt,
-} from 'react-icons/fa';
-import { Button } from '@/components/ui/button';
+import { FaCalendarAlt, FaPlus, FaRedo, FaSignal, FaSyncAlt } from 'react-icons/fa';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+
+import DashboardLayout from '@/components/DashboardLayout';
 import BrandMarkLoader from '@/components/BrandMarkLoader';
+import ActionCenter from '@/components/dashboard/ActionCenter';
+import WorkspacePulse from '@/components/dashboard/WorkspacePulse';
+import UpcomingQueue from '@/components/dashboard/UpcomingQueue';
+import AccountHealthPanel from '@/components/dashboard/AccountHealthPanel';
+import PerformanceSnapshot7d from '@/components/dashboard/PerformanceSnapshot7d';
+import RecentActivity from '@/components/dashboard/RecentActivity';
+import RecentWins from '@/components/dashboard/RecentWins';
+import { Button } from '@/components/ui/button';
+import { getDashboardOverview } from '@/lib/api';
+import { usePostStatusStream } from '@/hooks/usePostStatusStream';
+import { useAuth } from '@/context/AuthContext';
+import { formatRelativeDate } from '@/components/dashboard/helpers';
 
-const PLATFORM_LABELS = {
-  instagram: 'Instagram',
-  facebook: 'Facebook',
-  youtube: 'YouTube',
-  twitter: 'X',
-  linkedin: 'LinkedIn',
-  tiktok: 'TikTok',
-};
-
-const getPostKind = (post) => {
-  const normalizedType = (post?.post_type || '').toLowerCase();
-  if (['mixed', 'carousel', 'album'].includes(normalizedType)) {
-    return 'mixed';
-  }
-  if (normalizedType.includes('video') || normalizedType === 'reel' || normalizedType === 'story') {
-    return 'video';
-  }
-  if ((post?.media_urls || []).length > 0 || (post?.thumbnail_urls || []).length > 0) {
-    return 'image';
-  }
-  return 'text';
-};
-
-const getPrimaryThumbnail = (post) => post?.thumbnail_urls?.[0] || post?.media_urls?.[0] || null;
+const DASHBOARD_WINDOW_DAYS = 7;
+const STREAM_REFRESH_STATUSES = new Set(['queued', 'scheduled', 'processing', 'published', 'failed', 'partial', 'cancelled']);
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [recentPosts, setRecentPosts] = useState([]);
+  const { user } = useAuth();
+  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [failedPosts, setFailedPosts] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshTimerRef = useRef(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const refreshRecentPostsAndStats = useCallback(async () => {
-    try {
-      const [statsData, postsData] = await Promise.all([
-        getStats(),
-        getRecentPublishedPosts(25),
-      ]);
-      setStats(statsData);
-      setRecentPosts(postsData);
-    } catch (error) {
-      // Keep the existing dashboard state if the live refresh fails.
+  const loadDashboard = useCallback(async ({ refresh = false, silent = false, withLoader = false } = {}) => {
+    if (refresh) {
+      setRefreshing(true);
+    } else if (withLoader) {
+      setLoading(true);
     }
-  }, []);
 
-  const fetchData = async () => {
     try {
-      const [statsData, postsData, failedData] = await Promise.all([
-        getStats(),
-        getRecentPublishedPosts(25),
-        getFailedPosts().catch(() => []),
-      ]);
-      setStats(statsData);
-      setRecentPosts(postsData);
-      setFailedPosts(failedData);
-      const notifData = await getNotifications(true).catch(() => []);
-      setUnreadCount(notifData.length);
+      const data = await getDashboardOverview({ days: DASHBOARD_WINDOW_DAYS, refresh });
+      setDashboard(data);
     } catch (error) {
-      toast.error('Failed to load dashboard data');
+      if (!silent) {
+        toast.error('Failed to load dashboard overview');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, []);
 
-  const handleRetry = async (postId, platform = null) => {
-    try {
-      const result = await retryFailedPost(postId, platform);
-      toast.success(result.message || 'Post queued for retry');
-      fetchData();
-    } catch (error) {
-      toast.error(error?.response?.data?.detail || 'Failed to retry post');
+  useEffect(() => {
+    void loadDashboard({ withLoader: true });
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, [loadDashboard]);
+
+  const scheduleBackgroundRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
     }
-  };
+    refreshTimerRef.current = setTimeout(() => {
+      void loadDashboard({ refresh: false, silent: true });
+    }, 1200);
+  }, [loadDashboard]);
 
   const handlePostUpdate = useCallback((update) => {
-    const { post_id, status, platform_results } = update;
+    const postId = update?.post_id;
+    const status = update?.status;
 
-    // Update recentPosts in-place without mutation
-    setRecentPosts(prev => prev.map(p =>
-      p.id === post_id
-        ? { ...p, status, platform_results }
-        : p
-    ));
-
-    // Sync failedPosts: add/update if failed or partial, remove if now published
-    if (status === 'failed' || status === 'partial') {
-      setFailedPosts(prev => {
-        const exists = prev.find(p => p.id === post_id);
-        if (exists) {
-          return prev.map(p => p.id === post_id ? { ...p, status, platform_results } : p);
-        }
-        return [...prev, { id: post_id, status, platform_results }];
-      });
-    } else if (status === 'published') {
-      setFailedPosts(prev => prev.filter(p => p.id !== post_id));
+    if (!postId || !STREAM_REFRESH_STATUSES.has(status)) {
+      return;
     }
 
-    // Toast notifications for status transitions
-    if (status === 'published') {
-      void refreshRecentPostsAndStats();
-      toast.success('Post published successfully!');
-    }
-    else if (status === 'failed') toast.error('Post failed to publish');
-    else if (status === 'partial') toast.warning('Post partially published — some platforms failed');
-  }, [refreshRecentPostsAndStats]);
+    setDashboard((prev) => {
+      if (!prev) return prev;
+      const shouldPruneUpcoming = ['published', 'failed', 'partial', 'cancelled'].includes(status);
+      if (!shouldPruneUpcoming) return prev;
+      const upcomingPosts = prev.upcoming_posts || [];
+      if (!upcomingPosts.some((post) => post.id === postId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        upcoming_posts: upcomingPosts.filter((post) => post.id !== postId),
+      };
+    });
+
+    scheduleBackgroundRefresh();
+  }, [scheduleBackgroundRefresh]);
 
   usePostStatusStream(handlePostUpdate);
 
-  if (loading) {
+  const headerStats = useMemo(() => {
+    if (!dashboard?.summary) return [];
+    return [
+      { label: 'Total posts', value: dashboard.summary.total_posts ?? 0 },
+      { label: 'Needs attention', value: dashboard.action_items?.length ?? 0 },
+      { label: 'Upcoming queue', value: dashboard.summary.scheduled_posts ?? 0 },
+      { label: 'Connected accounts', value: dashboard.summary.connected_accounts ?? 0 },
+    ];
+  }, [dashboard]);
+
+  const headlineName = user?.display_name || user?.email?.split('@')?.[0] || 'there';
+
+  if (loading && !dashboard) {
     return (
       <DashboardLayout>
         <BrandMarkLoader overlay />
@@ -142,281 +114,91 @@ const Dashboard = () => {
     );
   }
 
+  if (!dashboard) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-10 shadow-sm">
+          <h1 className="text-2xl font-semibold text-slate-950">Dashboard unavailable</h1>
+          <p className="mt-3 text-slate-600">The control center could not be loaded right now. Retry the request and keep the rest of the workspace untouched.</p>
+          <Button className="mt-6" onClick={() => loadDashboard({ refresh: true })}>
+            <FaRedo className="mr-2" />
+            Retry
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-8">
-        {/* Header */}
-        <div className="flex justify-between items-center">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
-              <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block" />
-                Live
-              </span>
-            </div>
-            <p className="text-base text-slate-600 mt-1">Welcome back! Here's your overview.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              className="relative p-2 rounded-lg hover:bg-slate-100 transition-colors"
-              onClick={async () => { await markAllNotificationsRead(); setUnreadCount(0); }}
-              title="Notifications"
-            >
-              <FaBell className="text-slate-600 text-lg" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                  {unreadCount > 9 ? '9+' : unreadCount}
+        <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 text-white shadow-xl">
+          <div className="grid gap-8 px-6 py-7 lg:grid-cols-[1.2fr_0.8fr] lg:px-8">
+            <div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  Dashboard
                 </span>
-              )}
-            </button>
-            <Button onClick={() => navigate('/create')} data-testid="create-post-button">
-              <FaPlus className="mr-2" />
-              Create Post
-            </Button>
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-offwhite rounded-lg border border-border p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600">Total Posts</p>
-                <p className="text-3xl font-semibold text-slate-900 mt-2">{stats?.total_posts || 0}</p>
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-300">
+                  <FaSignal className="text-emerald-400" />
+                  Updated {formatRelativeDate(dashboard.refreshed_at)}
+                </span>
               </div>
-              <div className="w-12 h-12 rounded-lg bg-indigo-100 flex items-center justify-center">
-                <FaCalendarAlt className="text-xl text-indigo-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-offwhite rounded-lg border border-border p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600">Scheduled</p>
-                <p className="text-3xl font-semibold text-slate-900 mt-2">{stats?.scheduled_posts || 0}</p>
-              </div>
-              <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
-                <FaCalendarAlt className="text-xl text-amber-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-offwhite rounded-lg border border-border p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600">Published</p>
-                <p className="text-3xl font-semibold text-slate-900 mt-2">{stats?.published_posts || 0}</p>
-              </div>
-              <div className="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center">
-                <FaCheckCircle className="text-xl text-green-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-offwhite rounded-lg border border-border p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600">Connected Accounts</p>
-                <p className="text-3xl font-semibold text-slate-900 mt-2">{stats?.connected_accounts || 0}</p>
-              </div>
-              <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center">
-                <FaLink className="text-xl text-purple-600" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Failed Posts Alert — per-platform status */}
-        {failedPosts.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <FaExclamationTriangle className="text-red-500" />
-                <h3 className="font-semibold text-red-800">
-                  {failedPosts.length} Post{failedPosts.length > 1 ? 's' : ''} with Failed Platforms
-                </h3>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {failedPosts.slice(0, 3).map((post) => {
-                const platformResults = post.platform_results || {};
-                const failedPlatforms = Object.entries(platformResults).filter(
-                  ([, pr]) => pr.status === 'permanently_failed' || pr.status === 'failed'
-                );
-                const succeededPlatforms = Object.entries(platformResults).filter(
-                  ([, pr]) => pr.status === 'success' || pr.status === 'published'
-                );
-
-                return (
-                  <div
-                    key={post.id}
-                    className="bg-offwhite rounded-md p-4 border border-red-100"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <p className="text-sm text-slate-800 truncate flex-1">{post.content || 'No content'}</p>
-                      {post.trace_id && (
-                        <span className="text-xs text-slate-400 font-mono ml-2 flex-shrink-0">
-                          #{post.trace_id}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Per-platform results */}
-                    <div className="space-y-1.5 mt-2">
-                      {succeededPlatforms.map(([platform]) => (
-                        <div key={platform} className="flex items-center gap-2 text-xs">
-                          <span className="text-green-600">✓</span>
-                          <span className="text-slate-700 capitalize">{platform}</span>
-                          <span className="text-green-600">Published</span>
-                        </div>
-                      ))}
-                      {failedPlatforms.map(([platform, pr]) => (
-                        <div key={platform} className="flex items-start justify-between gap-2 text-xs">
-                          <div className="flex items-start gap-2 flex-1 min-w-0">
-                            <span className="text-red-500">✗</span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-700 capitalize">{platform}</span>
-                                <span className="text-red-500 truncate">{getPublishFailureMessage(pr)}</span>
-                              </div>
-                              {getPublishFailureAction(pr) && (
-                                <p className="text-[11px] text-amber-700 mt-1">{getPublishFailureAction(pr)}</p>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleRetry(post.id, platform); }}
-                            className="flex items-center gap-1 text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 transition-colors flex-shrink-0"
-                          >
-                            <FaRedo className="text-[10px]" />
-                            Retry
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Retry all failed button */}
-                    {failedPlatforms.length > 1 && (
-                      <button
-                        onClick={() => handleRetry(post.id)}
-                        className="mt-2 w-full flex items-center justify-center gap-1 text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900 transition-colors"
-                      >
-                        <FaRedo className="text-[10px]" />
-                        Retry All {failedPlatforms.length} Failed Platforms
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {failedPosts.length > 3 && (
-                <p className="text-xs text-red-600 text-center mt-1">
-                  +{failedPosts.length - 3} more in Content Library
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Recent Posts */}
-        <div className="bg-offwhite rounded-lg border border-border">
-          <div className="p-6 border-b border-border">
-            <h2 className="text-xl font-semibold text-slate-900">Recent Posts</h2>
-          </div>
-          <div className="divide-y divide-border">
-            {recentPosts.length === 0 ? (
-              <div className="p-8 text-center text-slate-600">
-                <p>No published posts yet. Publish your first post to populate this feed.</p>
-                <Button
-                  className="mt-4"
-                  onClick={() => navigate('/create')}
-                  data-testid="empty-create-post-button"
-                >
+              <h1 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Operational view for {headlineName}
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
+                See what needs attention, what is going out next, which accounts are unhealthy, and how the workspace performed over the last {DASHBOARD_WINDOW_DAYS} days.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button className="bg-white text-slate-950 hover:bg-slate-100" onClick={() => navigate('/create-post')} data-testid="create-post-button">
                   <FaPlus className="mr-2" />
                   Create Post
                 </Button>
+                <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate('/calendar')}>
+                  <FaCalendarAlt className="mr-2" />
+                  Open Calendar
+                </Button>
+                <Button
+                  variant="outline"
+                  className="border-white/20 bg-white/5 text-white hover:bg-white/10"
+                  onClick={() => loadDashboard({ refresh: true })}
+                  disabled={refreshing}
+                >
+                  <FaSyncAlt className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
               </div>
-            ) : (
-              recentPosts.map((post) => {
-                const thumbnail = getPrimaryThumbnail(post);
-                const postKind = getPostKind(post);
-                const publishedAt = post.published_at || post.updated_at || post.created_at;
-                const mediaCount = Math.max(post.media_urls?.length || 0, post.media_ids?.length || 0);
+            </div>
 
-                return (
-                  <div
-                    key={post.id}
-                    className="p-6 hover:bg-slate-50 cursor-pointer transition-colors"
-                    onClick={() => navigate('/content')}
-                    data-testid={`post-item-${post.id}`}
-                  >
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                      <div className="flex-shrink-0">
-                        {thumbnail ? (
-                          <div className="relative h-16 w-16 overflow-hidden rounded-lg border border-border bg-slate-100">
-                            {postKind === 'video' && (
-                              <div className="absolute left-1.5 top-1.5 z-10 rounded bg-slate-900/70 p-1 text-white">
-                                <FaVideo className="text-[10px]" />
-                              </div>
-                            )}
-                            <img
-                              src={thumbnail}
-                              alt={post.title || post.content || 'Post thumbnail'}
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-border bg-slate-50 text-slate-400">
-                            {postKind === 'video' ? (
-                              <FaVideo className="text-lg" />
-                            ) : postKind === 'image' || postKind === 'mixed' ? (
-                              <FaImage className="text-lg" />
-                            ) : (
-                              <FaRegFileAlt className="text-lg" />
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                            Published
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 capitalize">
-                            {postKind}
-                          </span>
-                          {mediaCount > 1 && (
-                            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
-                              {mediaCount} assets
-                            </span>
-                          )}
-                          {(post.platforms || []).map((platform) => (
-                            <span
-                              key={`${post.id}-${platform}`}
-                              className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700"
-                            >
-                              {PLATFORM_LABELS[platform] || platform}
-                            </span>
-                          ))}
-                        </div>
-
-                        <p className="mt-3 text-sm font-medium text-slate-900 line-clamp-3">
-                          {post.content || post.title || 'No description'}
-                        </p>
-
-                        <div className="mt-3 flex items-center gap-4 text-sm text-slate-600">
-                          <span>{format(new Date(publishedAt), 'MMM d, yyyy h:mm a')}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            <div className="grid grid-cols-2 gap-3 self-end">
+              {headerStats.map((item) => (
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-300">{item.label}</p>
+                  <p className="mt-3 text-3xl font-semibold text-white">{item.value}</p>
+                </div>
+              ))}
+            </div>
           </div>
+        </section>
+
+        <div className="grid gap-8 xl:grid-cols-[1.35fr_0.85fr]">
+          <ActionCenter actionItems={dashboard.action_items} onNavigate={navigate} />
+          <WorkspacePulse summary={dashboard.summary} operations={dashboard.operations} />
         </div>
+
+        <div className="grid gap-8 xl:grid-cols-[1.15fr_0.85fr]">
+          <UpcomingQueue posts={dashboard.upcoming_posts} onNavigate={navigate} />
+          <AccountHealthPanel accounts={dashboard.account_health} onNavigate={navigate} />
+        </div>
+
+        <div className="grid gap-8 xl:grid-cols-[1.15fr_0.85fr]">
+          <PerformanceSnapshot7d performance={dashboard.performance_7d} onNavigate={navigate} />
+          <RecentActivity operations={dashboard.operations} activity={dashboard.activity} onNavigate={navigate} />
+        </div>
+
+        <RecentWins posts={dashboard.recent_published} onNavigate={navigate} />
       </div>
     </DashboardLayout>
   );

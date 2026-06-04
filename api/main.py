@@ -43,6 +43,7 @@ from api.routes.timeslots import router as timeslots_router
 from api.routes.notifications import router as notifications_router
 from api.routes.hashtags import router as hashtags_router
 from api.routes.stats import router as stats_router
+from api.routes.dashboard import router as dashboard_router
 from api.routes.analytics import router as analytics_router
 from api.routes.api_keys import router as api_keys_router
 from api.routes.team import router as team_router
@@ -166,6 +167,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(notifications_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(hashtags_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(stats_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(dashboard_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(analytics_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(api_keys_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(team_router, prefix=prefix, include_in_schema=include_in_schema)

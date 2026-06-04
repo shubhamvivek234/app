@@ -306,6 +306,17 @@ export const getStats = async () => {
   return response.data;
 };
 
+export const getDashboardOverview = async ({ days = 7, refresh = false } = {}) => {
+  const params = new URLSearchParams();
+  if (days) params.set('days', String(days));
+  if (refresh) params.set('refresh', 'true');
+  const query = params.toString();
+  const response = await axios.get(`${API}/dashboard/overview${query ? `?${query}` : ''}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
 // Media Upload with progress tracking
 export const uploadMedia = async (file, onProgress) => {
   let mediaJobId = null;
