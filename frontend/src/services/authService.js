@@ -27,10 +27,12 @@ const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 let volatileAuthToken = null;
 
-export const isMissingSessionEndpoint = (error) => {
-  return error?.response?.status === 404
-    && typeof error?.config?.url === 'string'
-    && error.config.url.includes('/auth/session');
+export const isLegacySessionFallbackEligible = (error) => {
+  if (typeof error?.config?.url !== 'string' || !error.config.url.includes('/auth/session')) {
+    return false;
+  }
+  const status = error?.response?.status;
+  return status === 401 || status === 404;
 };
 
 export const isRetriableBackendError = (error) => {

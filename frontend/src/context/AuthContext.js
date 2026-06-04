@@ -17,7 +17,7 @@ import {
   getSavedToken,
   isRetriableBackendError,
   isFatalAuthSyncError,
-  isMissingSessionEndpoint,
+  isLegacySessionFallbackEligible,
 } from '@/services/authService';
 
 const AuthContext = createContext();
@@ -111,7 +111,7 @@ export const AuthProvider = ({ children }) => {
       }
       return profile;
     } catch (error) {
-      if (isMissingSessionEndpoint(error)) {
+      if (isLegacySessionFallbackEligible(error)) {
         enableLegacyBrowserToken(idToken);
         setToken(idToken);
         return syncProfile(idToken, currentUser, { silent });
@@ -385,7 +385,7 @@ export const AuthProvider = ({ children }) => {
       try {
         profile = await exchangeSession(idToken);
       } catch (error) {
-        if (!isMissingSessionEndpoint(error)) {
+        if (!isLegacySessionFallbackEligible(error)) {
           throw error;
         }
         enableLegacyBrowserToken(idToken);
