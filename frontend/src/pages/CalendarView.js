@@ -1,144 +1,53 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import {
+  addMonths,
+  addWeeks,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameDay,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+  subWeeks,
+} from 'date-fns';
+import { FaLink } from 'react-icons/fa';
+
 import DashboardLayout from '@/components/DashboardLayout';
-import { getPosts, getCalendarNotes, createCalendarNote, deleteCalendarNote, createCalendarShare, getSocialAccounts } from '@/lib/api';
-import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, startOfWeek, endOfWeek, addMonths, subMonths, addWeeks, subWeeks } from 'date-fns';
-import { FaChevronLeft, FaChevronRight, FaInfoCircle, FaShare, FaLink, FaTimes, FaRegClock } from 'react-icons/fa';
+import CalendarDayCell from '@/components/calendar/CalendarDayCell';
+import CalendarToolbar from '@/components/calendar/CalendarToolbar';
+import DayAgendaPanel from '@/components/calendar/DayAgendaPanel';
+import {
+  getPostAccountIds,
+  NOTE_COLORS,
+} from '@/components/calendar/calendarHelpers';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import BrandMarkLoader from '@/components/BrandMarkLoader';
-
-const NOTE_COLORS = ['green', 'blue', 'yellow', 'red'];
-
-const noteColorClasses = {
-  green:  { chip: 'bg-green-100 text-green-700',  form: 'bg-green-50 text-green-800',  dot: 'bg-green-400'  },
-  blue:   { chip: 'bg-blue-100 text-blue-700',    form: 'bg-blue-50 text-blue-800',    dot: 'bg-blue-400'   },
-  yellow: { chip: 'bg-yellow-100 text-yellow-700',form: 'bg-yellow-50 text-yellow-800',dot: 'bg-yellow-400' },
-  red:    { chip: 'bg-red-100 text-red-700',      form: 'bg-red-50 text-red-800',      dot: 'bg-red-400'    },
-};
-
-const statusBadgeClasses = {
-  draft: 'bg-gray-100 text-gray-600',
-  scheduled: 'bg-blue-100 text-blue-700',
-  queued: 'bg-amber-100 text-amber-700',
-  processing: 'bg-violet-100 text-violet-700',
-  published: 'bg-emerald-100 text-emerald-700',
-  failed: 'bg-red-100 text-red-700',
-  partial: 'bg-orange-100 text-orange-700',
-  cancelled: 'bg-slate-100 text-slate-600',
-};
-
-const accountAvatarTone = [
-  'bg-sky-100 text-sky-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-amber-100 text-amber-700',
-  'bg-fuchsia-100 text-fuchsia-700',
-];
-
-const getAccountInitials = (account) => {
-  const label = account?.platform_username || account?.display_name || account?.platform_user_id || account?.platform || '?';
-  return String(label).slice(0, 2).toUpperCase();
-};
-
-const formatPostLabel = (post) => {
-  const raw = post?.title || post?.content || 'Scheduled post';
-  return String(raw).replace(/\s+/g, ' ').trim() || 'Scheduled post';
-};
-
-const getPostAccountIds = (post) => {
-  if (Array.isArray(post?.account_ids) && post.account_ids.length > 0) return post.account_ids;
-  if (Array.isArray(post?.social_account_ids) && post.social_account_ids.length > 0) return post.social_account_ids;
-  if (Array.isArray(post?.platform_account_ids) && post.platform_account_ids.length > 0) return post.platform_account_ids;
-  if (post?.social_account_id) return [post.social_account_id];
-  if (Array.isArray(post?.publish_targets) && post.publish_targets.length > 0) {
-    return post.publish_targets.map((target) => target?.account_id).filter(Boolean);
-  }
-  return [];
-};
-
-const AccountAvatar = ({ account, size = 'sm' }) => {
-  const sizeClass = size === 'xs' ? 'h-5 w-5 text-[9px]' : 'h-6 w-6 text-[10px]';
-
-  if (account?.picture_url) {
-    return (
-      <img
-        src={account.picture_url}
-        alt=""
-        className={`${sizeClass} rounded-full border border-white object-cover shadow-sm`}
-      />
-    );
-  }
-
-  const tone = accountAvatarTone[(account?.id || account?.account_id || '').length % accountAvatarTone.length];
-  return (
-    <div className={`${sizeClass} ${tone} flex items-center justify-center rounded-full border border-white font-bold shadow-sm`}>
-      {getAccountInitials(account)}
-    </div>
-  );
-};
-
-const CalendarPostChip = ({ post, accounts, compact = true, today = false }) => {
-  const visibleAccounts = accounts.slice(0, 2);
-  const extraAccounts = Math.max(accounts.length - visibleAccounts.length, 0);
-  const status = String(post?.status || 'scheduled').toLowerCase();
-  const statusClass = statusBadgeClasses[status] || statusBadgeClasses.scheduled;
-  const label = formatPostLabel(post);
-  const textClass = today ? 'text-white/95' : 'text-gray-700';
-  const chipClass = today
-    ? 'bg-green-400/90 border border-green-300 text-white'
-    : 'bg-white border border-gray-200 text-gray-700 shadow-sm';
-  const timeValue = post?.scheduled_time ? format(new Date(post.scheduled_time), 'h:mm a') : 'No time';
-
-  return (
-    <div
-      className={`${chipClass} rounded-lg px-2 py-1.5`}
-      title={label}
-      data-testid={`post-${post.id}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className={`flex min-w-0 items-center gap-1 text-[10px] font-semibold ${today ? 'text-white/90' : 'text-gray-500'}`}>
-          <FaRegClock className="shrink-0" />
-          <span className="truncate">{timeValue}</span>
-        </div>
-        <div className="flex shrink-0 items-center -space-x-1">
-          {visibleAccounts.map((account) => (
-            <AccountAvatar key={account.account_id || account.id} account={account} size="xs" />
-          ))}
-          {extraAccounts > 0 && (
-            <div className={`ml-1 flex h-5 min-w-[20px] items-center justify-center rounded-full border border-white px-1 text-[9px] font-bold shadow-sm ${today ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>
-              +{extraAccounts}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className={`mt-1 flex items-center gap-1.5 ${compact ? '' : 'gap-2'}`}>
-        <span className={`inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${today ? 'bg-white/15 text-white' : statusClass}`}>
-          {status}
-        </span>
-        <span className={`min-w-0 truncate text-[11px] font-medium ${textClass}`}>
-          {label}
-        </span>
-      </div>
-    </div>
-  );
-};
+import {
+  createCalendarNote,
+  createCalendarShare,
+  deleteCalendarNote,
+  getCalendarNotes,
+  getPosts,
+  getSocialAccounts,
+} from '@/lib/api';
+import { toast } from 'sonner';
 
 const CalendarView = () => {
   const [posts, setPosts] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState('month'); // 'month' or 'week'
+  const [viewMode, setViewMode] = useState('month');
 
-  // Calendar Notes
   const [notes, setNotes] = useState([]);
-  const [selectedDay, setSelectedDay] = useState(null);
-  const [selectedPostsDay, setSelectedPostsDay] = useState(null);
+  const [agendaDay, setAgendaDay] = useState(null);
   const [noteText, setNoteText] = useState('');
-  const [noteColor, setNoteColor] = useState('green');
+  const [noteColor, setNoteColor] = useState(NOTE_COLORS[0]);
   const [savingNote, setSavingNote] = useState(false);
 
-  // Sharing
   const [shareToken, setShareToken] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
@@ -148,7 +57,6 @@ const CalendarView = () => {
     loadAccounts();
   }, []);
 
-  // Reload notes whenever the visible month/week changes
   useEffect(() => {
     const loadNotes = async () => {
       try {
@@ -156,7 +64,7 @@ const CalendarView = () => {
         const data = await getCalendarNotes(month);
         setNotes(data);
       } catch {
-        // silent — notes are non-critical
+        // Notes are supportive; do not block the calendar if they fail.
       }
     };
     loadNotes();
@@ -176,7 +84,7 @@ const CalendarView = () => {
         page += 1;
       }
 
-      setPosts(collected.filter((p) => p.scheduled_time));
+      setPosts(collected.filter((post) => post.scheduled_time));
     } catch (error) {
       toast.error('Failed to load posts');
     } finally {
@@ -193,7 +101,9 @@ const CalendarView = () => {
     }
   };
 
-  let calendarStart, calendarEnd;
+  let calendarStart;
+  let calendarEnd;
+
   if (viewMode === 'month') {
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(currentDate);
@@ -203,7 +113,9 @@ const CalendarView = () => {
     calendarStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     calendarEnd = endOfWeek(currentDate, { weekStartsOn: 0 });
   }
+
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
+  const visiblePostsPerDay = viewMode === 'week' ? 6 : 2;
 
   const accountLookup = useMemo(() => {
     const lookup = {};
@@ -220,12 +132,14 @@ const CalendarView = () => {
       .filter(Boolean);
     const deduped = [];
     const seen = new Set();
+
     resolved.forEach((account) => {
       const key = account.account_id || account.id;
       if (!key || seen.has(key)) return;
       seen.add(key);
       deduped.push(account);
     });
+
     return deduped;
   };
 
@@ -235,7 +149,22 @@ const CalendarView = () => {
       .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time));
 
   const getNotesForDay = (day) =>
-    notes.filter((n) => n.date === format(day, 'yyyy-MM-dd'));
+    notes.filter((note) => note.date === format(day, 'yyyy-MM-dd'));
+
+  const visibleScheduledCount = calendarDays.reduce((total, day) => total + getPostsForDay(day).length, 0);
+  const visibleNotesCount = calendarDays.reduce((total, day) => total + getNotesForDay(day).length, 0);
+
+  const openAgenda = (day) => {
+    setAgendaDay(day);
+    setNoteText('');
+    setNoteColor(NOTE_COLORS[0]);
+  };
+
+  const closeAgenda = () => {
+    setAgendaDay(null);
+    setNoteText('');
+    setNoteColor(NOTE_COLORS[0]);
+  };
 
   const goToPrevious = () => {
     if (viewMode === 'month') setCurrentDate(subMonths(currentDate, 1));
@@ -249,13 +178,12 @@ const CalendarView = () => {
 
   const isToday = (day) => isSameDay(day, new Date());
 
-  // ── Note handlers ──────────────────────────────────────────────────────────
   const handleAddNote = async () => {
-    if (!noteText.trim() || !selectedDay) return;
+    if (!noteText.trim() || !agendaDay) return;
     setSavingNote(true);
     try {
       const created = await createCalendarNote({
-        date: format(selectedDay, 'yyyy-MM-dd'),
+        date: format(agendaDay, 'yyyy-MM-dd'),
         text: noteText.trim(),
         color: noteColor,
       });
@@ -270,26 +198,16 @@ const CalendarView = () => {
   };
 
   const handleDeleteNote = async (noteId, e) => {
-    e.stopPropagation();
+    if (e?.stopPropagation) e.stopPropagation();
     try {
       await deleteCalendarNote(noteId);
-      setNotes((prev) => prev.filter((n) => n.id !== noteId));
+      setNotes((prev) => prev.filter((note) => note.id !== noteId));
+      toast.success('Note removed');
     } catch {
       toast.error('Failed to delete note');
     }
   };
 
-  const closeNoteDialog = () => {
-    setSelectedDay(null);
-    setNoteText('');
-    setNoteColor('green');
-  };
-
-  const closePostsDialog = () => {
-    setSelectedPostsDay(null);
-  };
-
-  // ── Share handler ──────────────────────────────────────────────────────────
   const handleShare = async () => {
     setShareLoading(true);
     try {
@@ -304,6 +222,8 @@ const CalendarView = () => {
   };
 
   const shareUrl = shareToken ? `${window.location.origin}/calendar/public/${shareToken}` : '';
+  const agendaPosts = agendaDay ? getPostsForDay(agendaDay) : [];
+  const agendaNotes = agendaDay ? getNotesForDay(agendaDay) : [];
 
   if (loading) {
     return (
@@ -315,298 +235,104 @@ const CalendarView = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-full mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>
-            <FaInfoCircle className="text-gray-400" />
+      <div className="mx-auto max-w-[1500px]">
+        <CalendarToolbar
+          currentDate={currentDate}
+          calendarStart={calendarStart}
+          viewMode={viewMode}
+          visiblePostCount={visibleScheduledCount}
+          visibleNoteCount={visibleNotesCount}
+          onPrev={goToPrevious}
+          onNext={goToNext}
+          onViewModeChange={setViewMode}
+          onShare={handleShare}
+          shareLoading={shareLoading}
+        />
+
+        {visibleScheduledCount === 0 ? (
+          <div className="mb-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-center">
+            <p className="text-lg font-semibold text-slate-900">No scheduled posts in this range</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Move to another month or week, or use this quieter view to add planning notes before the queue fills up.
+            </p>
           </div>
+        ) : null}
 
-          <div className="flex items-center gap-3">
-            {/* Share button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleShare}
-              disabled={shareLoading}
-              className="gap-2 text-sm text-gray-600"
-            >
-              <FaShare className="text-xs" />
-              {shareLoading ? 'Generating…' : 'Share'}
-            </Button>
-
-            {/* Month Navigation */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={goToPrevious}
-                className="p-1 hover:bg-gray-100 rounded"
-                data-testid="prev-button"
-              >
-                <FaChevronLeft className="text-gray-500" />
-              </button>
-              <span className="text-lg font-medium text-gray-900 min-w-[200px] text-center">
-                {viewMode === 'month'
-                  ? format(currentDate, 'MMMM yyyy')
-                  : `Week of ${format(calendarStart, 'MMM d, yyyy')}`}
-              </span>
-              <button
-                onClick={goToNext}
-                className="p-1 hover:bg-gray-100 rounded"
-                data-testid="next-button"
-              >
-                <FaChevronRight className="text-gray-500" />
-              </button>
-            </div>
-
-            {/* View Toggle */}
-            <div className="flex bg-offwhite border border-gray-200 rounded-lg p-1">
-              <Button
-                variant={viewMode === 'month' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('month')}
-                className={viewMode === 'month' ? 'bg-green-500 hover:bg-green-600' : ''}
-                data-testid="month-view-button"
-              >
-                📅 Month
-              </Button>
-              <Button
-                variant={viewMode === 'week' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('week')}
-                className={viewMode === 'week' ? 'bg-green-500 hover:bg-green-600' : ''}
-                data-testid="week-view-button"
-              >
-                📆 Week
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Calendar Grid */}
-        <div className="bg-offwhite rounded-lg border border-gray-200 overflow-hidden">
-          {/* Weekday Headers */}
-          <div className="grid grid-cols-7 bg-offwhite border-b border-gray-200">
+        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_60px_-48px_rgba(15,23,42,0.5)]">
+          <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
               <div
                 key={day}
-                className="text-center text-sm font-medium text-gray-600 py-3 border-r border-gray-200 last:border-r-0"
+                className="border-r border-slate-200 px-3 py-3 text-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 last:border-r-0"
               >
                 {day}
               </div>
             ))}
           </div>
 
-          {/* Calendar Days */}
           <div className="grid grid-cols-7">
-            {calendarDays.map((day, index) => {
-              const dayPosts = getPostsForDay(day);
-              const dayNotes = getNotesForDay(day);
-              const isCurrentMonth = day.getMonth() === currentDate.getMonth();
-              const today = isToday(day);
-
-              return (
-                <div
-                  key={index}
-                  onClick={() => setSelectedDay(day)}
-                  className={`min-h-[120px] border-b border-r border-gray-200 last:border-r-0 cursor-pointer transition-colors
-                    ${!isCurrentMonth ? 'bg-offwhite hover:bg-gray-50' : 'bg-offwhite hover:bg-gray-50'}
-                    ${today ? 'bg-green-500 hover:bg-green-500' : ''}`}
-                  data-testid={`calendar-day-${format(day, 'yyyy-MM-dd')}`}
-                >
-                  {/* Day Number */}
-                  <div className={`p-2 ${today ? 'text-white' : ''}`}>
-                    <span className={`text-sm font-medium ${
-                      isCurrentMonth
-                        ? today ? 'text-white' : 'text-gray-900'
-                        : 'text-gray-400'
-                    }`}>
-                      {format(day, 'MMM d') === format(day, 'MMM 1')
-                        ? format(day, 'MMM d')
-                        : format(day, 'd')}
-                    </span>
-                  </div>
-
-                  {/* Posts */}
-                  <div className="px-1 pb-1 space-y-1">
-                    {dayPosts.slice(0, 2).map((post) => (
-                      <div key={post.id} onClick={(e) => e.stopPropagation()}>
-                        <CalendarPostChip
-                          post={post}
-                          accounts={getPostDisplayAccounts(post)}
-                          today={today}
-                        />
-                      </div>
-                    ))}
-                    {dayPosts.length > 2 && (
-                      <button
-                        type="button"
-                        className={`px-2 text-[11px] font-semibold transition-colors ${today ? 'text-white/90 hover:text-white' : 'text-gray-500 hover:text-gray-700'}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedPostsDay(day);
-                        }}
-                      >
-                        +{dayPosts.length - 2} more
-                      </button>
-                    )}
-                    {dayPosts.length === 0 && isCurrentMonth && !today && (
-                      <div className="text-xs px-2 text-gray-400">No posts</div>
-                    )}
-
-                    {/* Note chips */}
-                    {dayNotes.map((note) => (
-                      <div
-                        key={note.id}
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full truncate font-medium ${noteColorClasses[note.color]?.chip || noteColorClasses.green.chip}`}
-                        title={note.text}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        📌 {note.text}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+            {calendarDays.map((day) => (
+              <CalendarDayCell
+                key={format(day, 'yyyy-MM-dd')}
+                day={day}
+                posts={getPostsForDay(day)}
+                notes={getNotesForDay(day)}
+                isCurrentMonth={day.getMonth() === currentDate.getMonth()}
+                today={isToday(day)}
+                viewMode={viewMode}
+                visiblePostsPerDay={visiblePostsPerDay}
+                getPostDisplayAccounts={getPostDisplayAccounts}
+                onOpenAgenda={openAgenda}
+              />
+            ))}
           </div>
         </div>
       </div>
 
-      {/* ── Posts Dialog ─────────────────────────────────────────────────────── */}
-      <Dialog open={!!selectedPostsDay} onOpenChange={(open) => { if (!open) closePostsDialog(); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-semibold text-gray-900">
-              {selectedPostsDay ? `Scheduled posts for ${format(selectedPostsDay, 'MMMM d, yyyy')}` : ''}
-            </DialogTitle>
-          </DialogHeader>
+      <DayAgendaPanel
+        open={!!agendaDay}
+        day={agendaDay}
+        posts={agendaPosts}
+        notes={agendaNotes}
+        getPostDisplayAccounts={getPostDisplayAccounts}
+        noteText={noteText}
+        noteColor={noteColor}
+        onNoteTextChange={setNoteText}
+        onNoteColorChange={setNoteColor}
+        onAddNote={handleAddNote}
+        onDeleteNote={handleDeleteNote}
+        savingNote={savingNote}
+        onClose={closeAgenda}
+      />
 
-          {selectedPostsDay && (
-            <div className="max-h-[420px] space-y-3 overflow-y-auto">
-              {getPostsForDay(selectedPostsDay).map((post) => {
-                const postAccounts = getPostDisplayAccounts(post);
-                const fullAccountLabel = postAccounts.length
-                  ? postAccounts.map((account) => account.platform_username || account.display_name || account.platform_user_id || account.platform).join(', ')
-                  : 'No account info';
-
-                return (
-                  <div key={post.id} className="rounded-xl border border-gray-200 bg-offwhite p-3">
-                    <CalendarPostChip post={post} accounts={postAccounts} compact={false} />
-                    <div className="mt-3 grid gap-2 text-xs text-gray-500">
-                      <div>
-                        <span className="font-semibold text-gray-700">Scheduled:</span>{' '}
-                        {post?.scheduled_time ? format(new Date(post.scheduled_time), 'MMMM d, yyyy h:mm a') : 'No scheduled time'}
-                      </div>
-                      <div>
-                        <span className="font-semibold text-gray-700">Accounts:</span>{' '}
-                        {fullAccountLabel}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Note Dialog ──────────────────────────────────────────────────────── */}
-      <Dialog open={!!selectedDay} onOpenChange={(open) => { if (!open) closeNoteDialog(); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-semibold text-gray-900">
-              {selectedDay ? format(selectedDay, 'MMMM d, yyyy') : ''}
-            </DialogTitle>
-          </DialogHeader>
-
-          {/* Existing notes for this day */}
-          {selectedDay && getNotesForDay(selectedDay).length > 0 && (
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {getNotesForDay(selectedDay).map((note) => (
-                <div
-                  key={note.id}
-                  className={`flex items-start justify-between gap-2 px-3 py-2 rounded-lg text-sm ${noteColorClasses[note.color]?.form || noteColorClasses.green.form}`}
-                >
-                  <span className="flex-1 leading-relaxed">{note.text}</span>
-                  <button
-                    onClick={(e) => handleDeleteNote(note.id, e)}
-                    className="flex-shrink-0 opacity-50 hover:opacity-100 transition-opacity mt-0.5"
-                    title="Delete note"
-                  >
-                    <FaTimes className="text-xs" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Add new note */}
-          <div className={`${selectedDay && getNotesForDay(selectedDay).length > 0 ? 'border-t pt-3' : ''} space-y-2.5`}>
-            <textarea
-              rows={2}
-              placeholder="Add a note for this day…"
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAddNote();
-              }}
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 placeholder:text-gray-300 text-gray-800"
-            />
-
-            {/* Color picker + save button */}
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                {NOTE_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setNoteColor(c)}
-                    className={`w-5 h-5 rounded-full transition-transform ${noteColorClasses[c].dot} ${
-                      noteColor === c ? 'scale-125 ring-2 ring-offset-1 ring-gray-400' : 'opacity-70'
-                    }`}
-                    title={c}
-                  />
-                ))}
-              </div>
-              <button
-                onClick={handleAddNote}
-                disabled={!noteText.trim() || savingNote}
-                className="ml-auto px-3 py-1.5 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg disabled:opacity-40 transition-colors"
-              >
-                {savingNote ? 'Saving…' : 'Add Note'}
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Share Modal ───────────────────────────────────────────────────────── */}
       <Dialog open={showShareModal} onOpenChange={setShowShareModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md border-slate-200">
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-              <FaLink className="text-green-500" />
+            <DialogTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <FaLink className="text-emerald-500" />
               Shareable Calendar Link
             </DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-gray-500">
-            Anyone with this link can view your scheduled content calendar — read-only, no login required.
+          <p className="text-sm leading-6 text-slate-600">
+            Anyone with this link can view your scheduled content calendar in read-only mode.
           </p>
-          <div className="flex items-center gap-2 bg-offwhite border border-gray-200 rounded-lg px-3 py-2.5">
-            <span className="text-xs text-gray-600 truncate flex-1 font-mono">{shareUrl}</span>
-            <button
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+            <span className="flex-1 truncate font-mono text-xs text-slate-600">{shareUrl}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="border-slate-300 bg-white text-slate-700"
               onClick={() => {
                 navigator.clipboard.writeText(shareUrl);
-                toast.success('Link copied!');
+                toast.success('Link copied');
               }}
-              className="text-xs font-semibold text-green-600 hover:text-green-700 flex-shrink-0 transition-colors"
             >
               Copy
-            </button>
+            </Button>
           </div>
-          <p className="text-xs text-gray-400">
-            This link is permanent until you revoke it. Share it with clients or team members.
+          <p className="text-xs text-slate-400">
+            This link stays active until you revoke it. Share it with clients or teammates when they only need visibility.
           </p>
         </DialogContent>
       </Dialog>
