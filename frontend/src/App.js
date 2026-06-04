@@ -10,6 +10,7 @@ import BrandMarkLoader from '@/components/BrandMarkLoader';
 import LandingPage from '@/pages/LandingPage';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import ForgotPassword from '@/pages/ForgotPassword';
 import AuthCallback from '@/pages/AuthCallback';
 import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';
@@ -201,7 +202,7 @@ const ThemeApplier = () => {
   const { pathname } = useLocation();
 
   React.useEffect(() => {
-    const publicRoutes = ['/login', '/signup', '/verify-email', '/terms', '/privacy', '/data-deletion', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
+    const publicRoutes = ['/login', '/signup', '/forgot-password', '/verify-email', '/terms', '/privacy', '/data-deletion', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
     const isPublicRoute = pathname === '/' || 
                         publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
 
@@ -217,6 +218,47 @@ const ThemeApplier = () => {
   return null;
 }
 
+const EmailVerificationBanner = () => {
+  const { user } = useAuth();
+  const location = useLocation();
+
+  if (!user || user.email_verified) {
+    return null;
+  }
+
+  if (
+    location.pathname === '/verify-email'
+    || location.pathname === '/login'
+    || location.pathname === '/signup'
+    || location.pathname === '/forgot-password'
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p>
+          Verify your email before connecting accounts, publishing, scheduling posts, or inviting teammates.
+        </p>
+        <NavigateButton />
+      </div>
+    </div>
+  );
+};
+
+const NavigateButton = () => {
+  const location = useLocation();
+  return (
+    <a
+      href={`/verify-email${location.pathname ? `?returnTo=${encodeURIComponent(location.pathname)}` : ''}`}
+      className="inline-flex items-center justify-center rounded-md border border-amber-300 bg-white px-3 py-1.5 font-medium text-amber-900 transition hover:bg-amber-100"
+    >
+      Verify email
+    </a>
+  );
+};
+
 function App() {
   return (
 <ErrorBoundary>
@@ -225,11 +267,13 @@ function App() {
         <AuthProvider>
           <ThemeApplier />
           <div className="App flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
+            <EmailVerificationBanner />
             <Routes>
               {/* Public routes — redirect authenticated users to dashboard */}
               <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
               <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
               <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
+              <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />

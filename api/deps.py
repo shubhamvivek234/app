@@ -67,9 +67,21 @@ async def _bootstrap_user_from_claims(
     uid = decoded.get("uid")
     email = decoded.get("email", uid)
     display_name = decoded.get("name")
+    email_verified = bool(decoded.get("email_verified", False))
+    avatar_url = decoded.get("picture")
 
     user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
     if user is not None:
+        updates = {}
+        if user.get("email_verified") != email_verified:
+            updates["email_verified"] = email_verified
+        if display_name and user.get("display_name") != display_name:
+            updates["display_name"] = display_name
+        if avatar_url and user.get("avatar_url") != avatar_url:
+            updates["avatar_url"] = avatar_url
+        if updates:
+            await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
+            user.update(updates)
         return user
 
     if email:
@@ -78,8 +90,12 @@ async def _bootstrap_user_from_claims(
             updates = {}
             if uid and not user.get("firebase_uid"):
                 updates["firebase_uid"] = uid
-            if display_name and not user.get("display_name"):
+            if display_name and user.get("display_name") != display_name:
                 updates["display_name"] = display_name
+            if user.get("email_verified") != email_verified:
+                updates["email_verified"] = email_verified
+            if avatar_url and user.get("avatar_url") != avatar_url:
+                updates["avatar_url"] = avatar_url
             if updates:
                 await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
                 user.update(updates)
@@ -98,8 +114,9 @@ async def _bootstrap_user_from_claims(
         "user_id": f"usr_{secrets.token_hex(12)}",
         "firebase_uid": uid,
         "email": email,
+        "email_verified": email_verified,
         "display_name": display_name,
-        "avatar_url": decoded.get("picture"),
+        "avatar_url": avatar_url,
         "plan": "starter",
         "subscription_status": "free",
         "subscription_end_date": None,
@@ -159,23 +176,38 @@ async def get_current_user(
     Raises 401 if token is missing/invalid.
     Sets request.state.user_id so the rate limiter can key by user.
     """
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    decoded = None
+    cookie_error: HTTPException | None = None
 
-    try:
-        get_firebase_app()
-        decoded = firebase_auth.verify_id_token(credentials.credentials)
-    except Exception as exc:
-        event_log(
-            logger,
-            "warning",
-            "auth.token.verification_failed",
-            route="/auth/me",
-            failure_type=type(exc).__name__,
-            provider_error=shorten_provider_error(exc),
-            outcome="invalid_token",
-        )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    get_firebase_app()
+    if request.cookies.get("session"):
+        try:
+            decoded = await verify_session_cookie(request)
+            request.state.jti = decoded.get("jti") or decoded.get("sub")
+        except HTTPException as exc:
+            cookie_error = exc
+
+    if decoded is None and credentials is not None:
+        try:
+            decoded = firebase_auth.verify_id_token(credentials.credentials)
+            request.state.jti = decoded.get("jti") or decoded.get("sub")
+        except Exception as exc:
+            event_log(
+                logger,
+                "warning",
+                "auth.token.verification_failed",
+                route="/auth/me",
+                failure_type=type(exc).__name__,
+                provider_error=shorten_provider_error(exc),
+                outcome="invalid_token",
+            )
+            if cookie_error is None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    if decoded is None:
+        if cookie_error is not None:
+            raise cookie_error
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
     try:
         user = await _bootstrap_user_from_claims(db, decoded)
@@ -240,6 +272,18 @@ CookieUser = Annotated[dict, Depends(get_current_user_from_cookie)]
 DB = Annotated[AsyncIOMotorDatabase, Depends(get_db)]
 CacheRedis = Annotated[Redis, Depends(get_cache_redis)]
 QueueRedis = Annotated[Redis, Depends(get_queue_redis)]
+
+
+async def require_verified_email(current_user: CurrentUser) -> dict:
+    if not current_user.get("email_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required before connecting accounts, publishing, or inviting teammates.",
+        )
+    return current_user
+
+
+VerifiedUser = Annotated[dict, Depends(require_verified_email)]
 
 
 # ── Permission dependency factory ────────────────────────────────────────────

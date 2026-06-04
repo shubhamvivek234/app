@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
-from api.deps import CurrentUser, DB, require_permission
+from api.deps import CurrentUser, DB, VerifiedUser, require_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["team"])
@@ -41,7 +41,7 @@ async def list_members(current_user: CurrentUser, db: DB):
 
 @router.post("/workspace/members/invite", status_code=status.HTTP_201_CREATED,
              dependencies=[require_permission("workspace:invite")])
-async def invite_member(body: InviteRequest, current_user: CurrentUser, db: DB):
+async def invite_member(body: InviteRequest, current_user: VerifiedUser, db: DB):
     if body.role not in VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role. Must be one of {sorted(VALID_ROLES)}")
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
@@ -118,7 +118,7 @@ async def get_invite_details(token: str, db: DB):
 
 
 @router.post("/workspace/invite/{token}/accept")
-async def accept_invite(token: str, current_user: CurrentUser, db: DB):
+async def accept_invite(token: str, current_user: VerifiedUser, db: DB):
     invite = await db.workspace_invites.find_one({"token": token, "status": "pending"}, {"_id": 0})
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found or already used")

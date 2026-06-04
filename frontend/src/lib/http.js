@@ -1,9 +1,9 @@
 import axios from 'axios';
-import { auth } from '@/firebase';
 import env from '@/env';
 
 let initialized = false;
 const BACKEND_URL = (env.BACKEND_URL || '').replace(/\/+$/, '');
+let originalFetch = null;
 
 function generateTraceId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -18,19 +18,31 @@ function isBackendRequest(config) {
   return url.startsWith('/api/') || (BACKEND_URL && url.startsWith(BACKEND_URL));
 }
 
-async function getFreshFirebaseToken(forceRefresh = false) {
-  const currentUser = auth.currentUser;
-  if (!currentUser) return null;
-  try {
-    const token = await currentUser.getIdToken(forceRefresh);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('token', token);
-    }
-    return token;
-  } catch (error) {
-    console.warn('[http] Unable to refresh Firebase ID token', error);
-    return null;
+function isBackendFetchTarget(input) {
+  if (typeof input === 'string') {
+    return input.startsWith('/api/') || (BACKEND_URL && input.startsWith(BACKEND_URL));
   }
+  if (input instanceof Request) {
+    return input.url.startsWith('/api/') || (BACKEND_URL && input.url.startsWith(BACKEND_URL));
+  }
+  return false;
+}
+
+function sanitizeFetchHeaders(headersLike) {
+  const headers = new Headers(headersLike || {});
+  const authorization = headers.get('Authorization') || headers.get('authorization');
+  if (
+    authorization === 'Bearer null'
+    || authorization === 'Bearer undefined'
+    || authorization === 'Bearer '
+  ) {
+    headers.delete('Authorization');
+    headers.delete('authorization');
+  }
+  if (!headers.get('X-Trace-ID') && !headers.get('x-trace-id')) {
+    headers.set('X-Trace-ID', generateTraceId());
+  }
+  return headers;
 }
 
 export function initHttpInterceptors() {
@@ -41,12 +53,18 @@ export function initHttpInterceptors() {
     const nextConfig = { ...config };
     nextConfig.headers = nextConfig.headers || {};
     if (isBackendRequest(nextConfig)) {
+      nextConfig.withCredentials = true;
       if (!nextConfig.headers['X-Trace-ID']) {
         nextConfig.headers['X-Trace-ID'] = generateTraceId();
       }
-      const token = await getFreshFirebaseToken(false);
-      if (token) {
-        nextConfig.headers.Authorization = `Bearer ${token}`;
+      const authHeader = nextConfig.headers.Authorization || nextConfig.headers.authorization;
+      if (
+        authHeader === 'Bearer null'
+        || authHeader === 'Bearer undefined'
+        || authHeader === 'Bearer '
+      ) {
+        delete nextConfig.headers.Authorization;
+        delete nextConfig.headers.authorization;
       }
     } else {
       delete nextConfig.headers.Authorization;
@@ -60,27 +78,6 @@ export function initHttpInterceptors() {
   axios.interceptors.response.use(
     (response) => response,
     async (error) => {
-      const originalRequest = error?.config;
-      if (
-        error?.response?.status === 401
-        && originalRequest
-        && !originalRequest._authRetried
-        && isBackendRequest(originalRequest)
-      ) {
-        const refreshedToken = await getFreshFirebaseToken(true);
-        if (refreshedToken) {
-          const retryConfig = {
-            ...originalRequest,
-            _authRetried: true,
-            headers: {
-              ...(originalRequest.headers || {}),
-              Authorization: `Bearer ${refreshedToken}`,
-            },
-          };
-          return axios(retryConfig);
-        }
-      }
-
       const traceId = error?.response?.headers?.['x-trace-id'];
       if (traceId) {
         error.traceId = traceId;
@@ -94,4 +91,27 @@ export function initHttpInterceptors() {
       return Promise.reject(error);
     }
   );
+
+  if (typeof window !== 'undefined' && typeof window.fetch === 'function' && !originalFetch) {
+    originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+      if (!isBackendFetchTarget(input)) {
+        return originalFetch(input, init);
+      }
+
+      if (input instanceof Request) {
+        const nextRequest = new Request(input, {
+          credentials: 'include',
+          headers: sanitizeFetchHeaders(input.headers),
+        });
+        return originalFetch(nextRequest, init);
+      }
+
+      return originalFetch(input, {
+        ...init,
+        credentials: 'include',
+        headers: sanitizeFetchHeaders(init.headers),
+      });
+    };
+  }
 }

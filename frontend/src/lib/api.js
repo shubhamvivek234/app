@@ -6,8 +6,7 @@ const SOCIAL_ACCOUNTS_CACHE_KEY = 'social_accounts_cache_v2';
 const SOCIAL_ACCOUNTS_CACHE_TTL_MS = 60 * 1000;
 
 const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 };
 
 const normalizeSocialAccount = (account) => {

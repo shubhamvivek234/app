@@ -9,19 +9,26 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel
+import httpx
+from fastapi import APIRouter, HTTPException, Request, Response, status
+from pydantic import BaseModel, EmailStr
 from redis.exceptions import RedisError
 
-from api.deps import CurrentUser, DB, CacheRedis
+from api.deps import CurrentUser, CookieUser, DB, CacheRedis, get_firebase_app
 from api.limiter import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
+from utils.session import clear_session_cookie, create_session_cookie, revoke_session, verify_session_cookie
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
 
 _TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() == "true"
+_FIREBASE_WEB_API_KEY = (
+    os.environ.get("FIREBASE_WEB_API_KEY")
+    or os.environ.get("REACT_APP_FIREBASE_API_KEY")
+    or os.environ.get("VITE_FIREBASE_API_KEY")
+)
 
 # ── Request models ────────────────────────────────────────────────────────────
 
@@ -43,6 +50,15 @@ class UpdateMeRequest(BaseModel):
     user_type: str | None = None
     timezone: str | None = None
     onboarding_completed: bool | None = None
+
+
+class SessionExchangeRequest(BaseModel):
+    id_token: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+    cf_turnstile_token: str | None = None
 
 
 # ── Turnstile helper ──────────────────────────────────────────────────────────
@@ -197,6 +213,77 @@ async def get_me(
     return UserResponse(**user)
 
 
+@router.post("/auth/session", response_model=UserResponse)
+@limiter.limit("30/minute")
+async def exchange_session(
+    request: Request,
+    response: Response,
+    body: SessionExchangeRequest,
+    db: DB,
+) -> UserResponse:
+    try:
+        get_firebase_app()
+        import firebase_admin.auth as fb_auth
+        decoded = fb_auth.verify_id_token(body.id_token)
+    except Exception as exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.session_exchange.rejected",
+            exc_info=exc,
+            route="/auth/session",
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="invalid_token",
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    from api.deps import _bootstrap_user_from_claims
+    user = await _bootstrap_user_from_claims(db, decoded)
+    await create_session_cookie(response, body.id_token)
+    request.state.user_id = user["user_id"]
+    request.state.jti = decoded.get("jti") or decoded.get("sub")
+
+    if user.get("plan") is None:
+        user["plan"] = "starter"
+    if user.get("subscription_status") is None:
+        user["subscription_status"] = "free"
+
+    event_log(
+        logger,
+        "info",
+        "auth.session_exchange.succeeded",
+        route="/auth/session",
+        user_id=user["user_id"],
+        outcome="succeeded",
+    )
+    return UserResponse(**user)
+
+
+@router.post("/auth/session/logout", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+async def logout_session(
+    request: Request,
+    response: Response,
+    current_user: CookieUser,
+    cache_redis: CacheRedis,
+) -> None:
+    try:
+        claims = await verify_session_cookie(request)
+        await revoke_session(cache_redis, claims)
+    except HTTPException:
+        pass
+    clear_session_cookie(response)
+    event_log(
+        logger,
+        "info",
+        "auth.session_logout.succeeded",
+        route="/auth/session/logout",
+        user_id=current_user["user_id"],
+        outcome="succeeded",
+    )
+
+
 @router.patch("/auth/me", response_model=UserResponse)
 @limiter.limit("20/minute")
 async def patch_me(
@@ -246,6 +333,75 @@ async def patch_me(
         user["subscription_status"] = "free"
 
     return UserResponse(**user)
+
+
+@router.post("/auth/password-reset/request")
+@limiter.limit("10/minute")
+async def request_password_reset(
+    request: Request,
+    body: PasswordResetRequest,
+) -> dict:
+    client_ip = request.client.host if request.client else ""
+    await _verify_turnstile_if_enabled(body.cf_turnstile_token, client_ip)
+
+    if not _FIREBASE_WEB_API_KEY:
+        event_log(
+            logger,
+            "error",
+            "auth.password_reset.unavailable",
+            route="/auth/password-reset/request",
+            failure_type="missing_firebase_web_api_key",
+            outcome="misconfigured",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is temporarily unavailable. Please try again later.",
+        )
+
+    frontend_base = os.environ.get("FRONTEND_URL", "").strip() or "https://app.unravler.com"
+    continue_url = f"{frontend_base.rstrip('/')}/login?passwordReset=completed"
+    payload = {
+        "requestType": "PASSWORD_RESET",
+        "email": body.email,
+        "continueUrl": continue_url,
+        "canHandleCodeInApp": False,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={_FIREBASE_WEB_API_KEY}",
+                json=payload,
+            )
+        if resp.status_code >= 400:
+            error_message = ((resp.json() or {}).get("error") or {}).get("message", "unknown")
+            if error_message not in {"EMAIL_NOT_FOUND", "INVALID_EMAIL"}:
+                event_log(
+                    logger,
+                    "warning",
+                    "auth.password_reset.provider_error",
+                    route="/auth/password-reset/request",
+                    email=str(body.email),
+                    failure_type="provider_error",
+                    provider_error=error_message,
+                    outcome="degraded",
+                )
+    except Exception as exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.password_reset.degraded",
+            exc_info=exc,
+            route="/auth/password-reset/request",
+            email=str(body.email),
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
+
+    return {
+        "message": "If the address is eligible for password reset, a reset email will be sent shortly.",
+    }
 
 
 # ── /login (with brute-force protection) ─────────────────────────────────────
@@ -322,7 +478,14 @@ async def login(
     if user is None:
         # Auto-create user on first login
         display_name = decoded.get("name")
-        user = await _auto_create_user(db, uid, email, display_name)
+        user = await _auto_create_user(
+            db,
+            uid,
+            email,
+            display_name,
+            email_verified=bool(decoded.get("email_verified", False)),
+            avatar_url=decoded.get("picture"),
+        )
 
     # Phase 6.5 — MFA check (TOTP required if mfa_enabled)
     if user.get("mfa_enabled") and user.get("mfa_secret"):
@@ -431,7 +594,14 @@ async def signup(
     user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
     if user is None:
         display_name = decoded.get("name")
-        user = await _auto_create_user(db, uid, email, display_name)
+        user = await _auto_create_user(
+            db,
+            uid,
+            email,
+            display_name,
+            email_verified=bool(decoded.get("email_verified", False)),
+            avatar_url=decoded.get("picture"),
+        )
 
     event_log(
         logger,
@@ -615,7 +785,15 @@ async def _check_account_takeover(db, user_id: str, client_ip: str) -> None:
         )
 
 
-async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str | None) -> dict:
+async def _auto_create_user(
+    db,
+    firebase_uid: str,
+    email: str,
+    display_name: str | None,
+    *,
+    email_verified: bool = False,
+    avatar_url: str | None = None,
+) -> dict:
     """Bootstrap user record on first Firebase login."""
     now = datetime.now(timezone.utc)
     user_id = f"usr_{secrets.token_hex(12)}"
@@ -624,8 +802,9 @@ async def _auto_create_user(db, firebase_uid: str, email: str, display_name: str
         "user_id": user_id,
         "firebase_uid": firebase_uid,
         "email": email,
+        "email_verified": email_verified,
         "display_name": display_name,
-        "avatar_url": None,
+        "avatar_url": avatar_url,
         "plan": Plan.STARTER,
         "subscription_status": SubscriptionStatus.FREE,
         "subscription_end_date": None,

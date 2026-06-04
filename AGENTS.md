@@ -4,48 +4,32 @@
 ## Current Phase
 Stage: v2.9 shipped
 Branch: main
-Focus: R2 migration + composer reliability + onboarding reliability
+Focus: auth hardening + R2 migration + composer reliability
 
 ## Last Session Completed
-Date: 2026-05-31
+Date: 2026-06-04
 Completed:
-- Backend: TikTok public-account posting failures now persist structured provider-restriction metadata on both posts and `social_accounts`, and successful reconnects/publishes clear the sticky account block state.
-  Files: `celery_workers/tasks/publish.py`, `api/models/post.py`, `api/routes/accounts.py`
-- Frontend: All Posts, Dashboard failed-post surfaces, Connected Accounts, and Create Post now read TikTok restriction state directly from account payloads and block repeat publishes with explicit guidance instead of generic failed/processing messaging.
-  Files: `frontend/src/lib/publishFailures.js`, `frontend/src/pages/ContentLibrary.js`, `frontend/src/pages/Dashboard.js`, `frontend/src/pages/ConnectedAccounts.js`, `frontend/src/pages/CreatePostForm.js`
-- Frontend: Create Post now refreshes connected accounts on TikTok submit so a stale open composer cannot post again after the account was newly marked blocked.
-  Files: `frontend/src/pages/CreatePostForm.js`
-- Backend: fallback publish tasks now skip when a target is already accepted asynchronously (`processing` with a provider post id), preventing duplicate TikTok uploads after the primary task succeeds.
-  Files: `celery_workers/tasks/publish.py`, `tests/test_publish_dispatch.py`
-- Backend: processing-status poller now normalizes naive Mongo datetimes before cutoff comparisons, fixing the crash that prevented TikTok async publishes from being polled to completion.
-  Files: `celery_workers/tasks/poll_status.py`, `tests/test_poll_status_recovery.py`
-- Ops: added TikTok public-posting restriction runbook for future triage.
-  Files: `docs/docs/runbooks/TIKTOK_PUBLIC_POSTING.md`
-- Backend: fixed YouTube/video publishes stuck in `processing` by delaying fallback child dispatch behind the primary queue, classifying `PlatformAPIError(code=429)` correctly, and preserving retryable pre-upload states as `retrying` instead of `failed`.
-  Files: `celery_workers/tasks/publish.py`, `platform_adapters/base.py`
-- Backend: removed the false local YouTube publish limiter and now rely on real Google API responses plus the circuit breaker for upload flow.
-  Files: `utils/rate_limit.py`, `platform_adapters/youtube.py`
-- Backend: pre-upload auth failures (for example YouTube `401 Invalid Credentials` during resumable-upload init) now attempt on-demand token refresh before reconnect/fail handling.
-  Files: `celery_workers/tasks/publish.py`
-- Backend: fixed async event-loop reuse across Celery worker tasks by introducing a shared per-process async runner and removing ad-hoc `asyncio.run(...)` / `run_until_complete(...)` wrappers.
-  Files: `celery_workers/async_runner.py`, `celery_workers/tasks/*`, `db/mongo.py`, `db/redis_client.py`
-- Backend: fixed token refresh comparisons for naive `token_expiry` values so refresh no longer crashes with `can't compare offset-naive and offset-aware datetimes`.
-  Files: `celery_workers/tasks/tokens.py`
-- Backend: fixed YouTube pre-upload refresh requeue state so a successful token refresh clears stale pre-upload state instead of leaving the publish worker in an infinite `pending` retry loop; publish-task retries now preserve `dispatch_source`.
-  Files: `celery_workers/tasks/publish.py`
-- Backend: post list/detail card payloads now backfill missing `thumbnail_urls`, `media_urls`, and `published_card_thumbnail_url` from stored media assets / thumbnail keys so All Posts and Published Posts keep showing previews even when older post docs are sparse.
-  Files: `api/routes/posts.py`
-- Backend: pre-upload status lookup no longer falls back from an empty per-target state to a stale aggregate `pre_upload_status`, which fixes retry loops for pre-upload platforms after state resets.
-  Files: `celery_workers/tasks/publish.py`
-- Backend: YouTube geography analytics now falls back from an empty lag-adjusted settled window to the selected current window, so recent country data visible in YouTube Studio can appear in-app.
-  Files: `api/routes/analytics.py`
-- Tests: added token refresh regressions and kept publish-dispatch regressions passing.
-  Files: `tests/test_tokens.py`, `tests/test_publish_dispatch.py`, `tests/test_published_post_retention.py`, `tests/test_youtube_analytics_expansion.py`
+- Backend: added Firebase session-cookie auth with `POST /api/auth/session` and `POST /api/auth/session/logout`; browser auth is now cookie-first with bearer fallback.
+  Files: `api/routes/auth.py`, `api/deps.py`, `utils/session.py`, `api/models/user.py`
+- Backend: `/api/auth/password-reset/request` now uses Firebase-managed reset emails, Turnstile, rate limiting, and generic success responses that do not leak account existence.
+  Files: `api/routes/auth.py`, `docker-compose.yml`
+- Backend: added `email_verified` propagation from Firebase claims into Mongo bootstrap/update flow and exposed it from `/api/auth/me`.
+  Files: `api/deps.py`, `api/models/user.py`, `api/routes/auth.py`
+- Backend: gated verified-email-required actions for social account connect, publish/schedule/retry/approve, team invite/accept, recurring rules, and bulk CSV scheduling.
+  Files: `api/routes/accounts.py`, `api/routes/posts.py`, `api/routes/team.py`, `api/routes/recurring.py`, `api/routes/bulk_upload.py`
+- Frontend: removed auth-page roulette; login/signup now use the hardened V1 flows consistently with Turnstile.
+  Files: `frontend/src/pages/Login.js`, `frontend/src/pages/Signup.js`, `frontend/src/pages/LoginV1.js`, `frontend/src/pages/SignupV1.js`
+- Frontend: moved the web app away from `localStorage` bearer auth toward HttpOnly cookie sessions while keeping compatibility fallback for legacy callers.
+  Files: `frontend/src/services/authService.js`, `frontend/src/context/AuthContext.js`, `frontend/src/lib/http.js`, `frontend/src/lib/api.js`, `frontend/src/lib/requestOAuthUrl.js`, `frontend/src/lib/requestOAuthCallback.js`, `frontend/src/hooks/usePostStatusStream.js`
+- Frontend: added real `/forgot-password` and replaced the dead verify-email flow with Firebase action-code verification plus backend resync.
+  Files: `frontend/src/pages/ForgotPassword.js`, `frontend/src/pages/VerifyEmail.js`, `frontend/src/App.js`, `frontend/src/pages/AuthCallback.js`
+- Tests: added auth-security regressions for session exchange, password reset privacy, cookie-first auth, and verified-email enforcement.
+  Files: `tests/test_auth_security.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify EC2 deploy for the card-hydration, pre-upload-state, and YouTube geography fallback fixes.
+- Commit/deploy the auth hardening once requested and verify the live cookie-session flow on Vercel + EC2.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
@@ -57,6 +41,6 @@ Next:
 ```bash
 git status --short
 CI=true npm run build --prefix frontend
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests --ignore=tests/sandbox -q
-python3 -m compileall celery_workers/tasks/publish.py celery_workers/tasks/tokens.py celery_workers/async_runner.py
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/test_auth_security.py tests/test_publish_feed.py tests/test_accounts_route.py -q
+python3 -m compileall api/routes/auth.py api/deps.py api/routes/posts.py api/routes/accounts.py api/routes/team.py api/routes/recurring.py api/routes/bulk_upload.py utils/session.py
 ```

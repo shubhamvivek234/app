@@ -16,7 +16,7 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
-from api.deps import CurrentUser, DB, QueueRedis, require_permission
+from api.deps import CurrentUser, DB, QueueRedis, VerifiedUser, require_permission
 from api.limiter import limiter
 from api.models.post import (
     BulkCreateRequest,
@@ -59,6 +59,14 @@ _POLL_RULES = {
         "durations": {"ONE_DAY"},
     },
 }
+
+
+def _ensure_verified_email_for_publish_action(current_user: dict) -> None:
+    if not current_user.get("email_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required before connecting accounts, publishing, or inviting teammates.",
+        )
 
 
 def _subtract_months(reference: datetime, months: int) -> datetime:
@@ -515,6 +523,8 @@ async def create_post(
     db: DB,
     queue_redis: QueueRedis,
 ) -> PostResponse:
+    if body.publish_now or body.scheduled_time or body.timeslot_category:
+        _ensure_verified_email_for_publish_action(current_user)
     sub_status = current_user.get("subscription_status", "free")
     if sub_status not in _SUBSCRIPTION_ALLOWED:
         raise HTTPException(
@@ -930,6 +940,8 @@ async def bulk_create_posts(
     db: DB,
     queue_redis: QueueRedis,
 ) -> BulkCreateResponse:
+    if any(post_item.scheduled_time for post_item in body.posts):
+        _ensure_verified_email_for_publish_action(current_user)
     sub_status = current_user.get("subscription_status", "free")
     if sub_status not in _SUBSCRIPTION_ALLOWED:
         raise HTTPException(
@@ -1137,6 +1149,8 @@ async def update_post(
     current_user: CurrentUser,
     db: DB,
 ) -> PostResponse:
+    if body.scheduled_time is not None:
+        _ensure_verified_email_for_publish_action(current_user)
     user_id = current_user["user_id"]
 
     existing = await db.posts.find_one(
@@ -1342,7 +1356,7 @@ async def list_failed_posts(current_user: CurrentUser, db: DB):
 @router.post("/posts/{post_id}/retry", dependencies=[require_permission("post:update")])
 async def retry_failed_post(
     post_id: str,
-    current_user: CurrentUser,
+    current_user: VerifiedUser,
     db: DB,
     platform: str | None = Query(None),
 ):
@@ -1502,7 +1516,7 @@ async def retry_failed_post(
 # ── Approval workflow ─────────────────────────────────────────────────────────
 
 @router.post("/posts/{post_id}/approve", dependencies=[require_permission("post:update")])
-async def approve_post(post_id: str, current_user: CurrentUser, db: DB):
+async def approve_post(post_id: str, current_user: VerifiedUser, db: DB):
     """Approve a post in review status → scheduled."""
     user_id = current_user["user_id"]
     workspace_id = current_user.get("default_workspace_id") or user_id

@@ -5,7 +5,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const usePostStatusStream = (onUpdate) => {
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token || !BACKEND_URL) return;
+    if (!BACKEND_URL) return;
 
     let controller = new AbortController();
     let retryTimeout = null;
@@ -15,7 +15,8 @@ export const usePostStatusStream = (onUpdate) => {
       try {
         // Correct endpoint: /api/stream/posts (matches api/routes/stream.py)
         const response = await fetch(`${BACKEND_URL}/api/v1/stream/posts`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'include',
           signal: controller.signal,
         });
 

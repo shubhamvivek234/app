@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
 
     user_id: str
     email: EmailStr
+    email_verified: bool = False
     display_name: str | None = None
     avatar_url: str | None = None
     plan: Plan = Plan.STARTER

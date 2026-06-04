@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, VerifiedUser
 from utils.timeslots import DEFAULT_TIMESLOT_CATEGORY, normalize_timeslot_category, resolve_next_timeslot_for_account
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ async def _layer7_validate(db, user_id: str, workspace_id: str, posts: list[Bulk
 @router.post("/bulk/csv-schedule", response_model=BulkScheduleResponse)
 async def bulk_csv_schedule(
     request: BulkScheduleRequest,
-    current_user: CurrentUser,
+    current_user: VerifiedUser,
     db: DB,
 ):
     """
@@ -218,8 +218,8 @@ async def bulk_csv_schedule(
             detail=f"Maximum {max_per_request} posts per bulk import",
         )
 
-    user_id = current_user.user_id
-    workspace_id = current_user.workspace_id or user_id
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
 
     # Layer 7 validation
     layer7_errors = await _layer7_validate(db, user_id, workspace_id, request.posts)

@@ -1,9 +1,7 @@
 import axios from 'axios';
 import env from '@/env';
 
-const buildHeaders = (token) => ({
-  Authorization: `Bearer ${token}`,
-});
+const buildHeaders = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
 
 export async function requestOAuthUrl(platform, token) {
   const requestConfig = {

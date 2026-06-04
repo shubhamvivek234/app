@@ -1,5 +1,4 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import axios from 'axios';
 import { setUserContext } from '../lib/sentry';
 import { toast } from 'sonner';
 import {
@@ -9,24 +8,29 @@ import {
   emailSignUp,
   firebaseSignOut,
   getIdToken,
+  exchangeSession,
+  logoutBackendSession,
   fetchBackendProfile as fetchProfileService,
   listenToAuthState,
-  setAuthToken,
   clearAuthData,
   getSavedToken,
   isRetriableBackendError,
   isFatalAuthSyncError,
 } from '@/services/authService';
-import env from '@/env';
 
 const AuthContext = createContext();
-
-const BACKEND_URL = env.BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-const PUBLIC_AUTH_PATHS = new Set(['/login', '/signup', '/auth/callback']);
+const PUBLIC_AUTH_PATHS = new Set(['/login', '/signup', '/forgot-password', '/verify-email', '/auth/callback']);
 
 const resolvePostAuthDestination = (profile) => {
   if (!profile) return '/login';
+  if (typeof window !== 'undefined') {
+    const pendingVerification = sessionStorage.getItem('post_signup_verify_email') === '1';
+    if (profile.email_verified) {
+      sessionStorage.removeItem('post_signup_verify_email');
+    } else if (pendingVerification) {
+      return '/verify-email?sent=1';
+    }
+  }
   if (!profile.onboarding_completed) return '/onboarding';
   if (profile.subscription_status === 'free') return '/onboarding/pricing';
   if (profile.subscription_status === 'expired') return '/subscription-expired';
@@ -39,8 +43,8 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [redirectCheckComplete, setRedirectCheckComplete] = useState(false);
   const [authIssue, setAuthIssue] = useState(null);
+  const [cookieBootstrapChecked, setCookieBootstrapChecked] = useState(false);
   const [token, setToken] = useState(() => {
-    // Initialize from localStorage if available
     return getSavedToken() || null;
   });
 
@@ -87,9 +91,39 @@ export const AuthProvider = ({ children }) => {
     setFirebaseUser(currentUser);
     const idToken = await getIdToken(currentUser);
     setToken(idToken);
-    setAuthIssue(null);
-    return syncProfile(idToken, currentUser, { silent });
-  }, [syncProfile]);
+    try {
+      const profile = await exchangeSession(idToken);
+      setUser(profile);
+      setUserContext(profile);
+      setAuthIssue(null);
+      if (typeof window !== 'undefined') {
+        const currentPath = window.location.pathname;
+        const pendingGoogleAuth = sessionStorage.getItem('pending_google_auth') === '1';
+        if (pendingGoogleAuth || PUBLIC_AUTH_PATHS.has(currentPath)) {
+          sessionStorage.removeItem('pending_google_auth');
+          const target = resolvePostAuthDestination(profile);
+          if (target && currentPath !== target) {
+            window.location.replace(target);
+          }
+        }
+      }
+      return profile;
+    } catch (error) {
+      const transient = isRetriableBackendError(error);
+      const fatal = isFatalAuthSyncError(error);
+      if (!silent) {
+        console.error('[AuthContext] Error exchanging session:', error);
+      }
+      if (fatal || !transient) {
+        throw error;
+      }
+      setAuthIssue({
+        code: 'backend_sync_unavailable',
+        message: 'You are signed in, but the app server is taking a moment to establish the session.',
+      });
+      throw error;
+    }
+  }, []);
 
   // 1. Check for redirect result on mount (Google sign-in via redirect)
   useEffect(() => {
@@ -193,6 +227,30 @@ export const AuthProvider = ({ children }) => {
     }
   }, [token, user, firebaseUser]);
 
+  useEffect(() => {
+    if (!redirectCheckComplete || cookieBootstrapChecked || firebaseUser || user || token) {
+      return;
+    }
+
+    setLoading(true);
+    fetchProfileService()
+      .then((profile) => {
+        setUser(profile);
+        setUserContext(profile);
+        setAuthIssue(null);
+      })
+      .catch((error) => {
+        const status = error?.response?.status;
+        if (status !== 401 && status !== 403) {
+          console.warn('[AuthContext] Cookie bootstrap failed:', error?.message);
+        }
+      })
+      .finally(() => {
+        setCookieBootstrapChecked(true);
+        setLoading(false);
+      });
+  }, [cookieBootstrapChecked, firebaseUser, redirectCheckComplete, token, user]);
+
   // 4. Login Actions (delegated to authService)
   const loginWithGoogle = async () => {
     try {
@@ -227,10 +285,7 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (email, password, name, cfTurnstileToken = null) => {
     try {
-      // Use authService email signup (handles Turnstile validation)
-      await emailSignUp(email, password);
-
-      // onAuthStateChanged will handle backend sync automatically
+      await emailSignUp(email, password, name, cfTurnstileToken);
       return true;
     } catch (error) {
       console.error('[AuthContext] Signup error:', error.code);
@@ -245,6 +300,11 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      try {
+        await logoutBackendSession();
+      } catch (sessionError) {
+        console.warn('[AuthContext] Backend session logout failed:', sessionError?.message);
+      }
       // Clear state and storage BEFORE signOut so onAuthStateChanged
       // doesn't skip cleanup due to the localStorage token check
       setToken(null);
@@ -314,7 +374,7 @@ export const AuthProvider = ({ children }) => {
     if (firebaseUser) {
       const idToken = await getIdToken(firebaseUser);
       setToken(idToken);
-      const profile = await fetchProfileService(idToken);
+      const profile = await exchangeSession(idToken);
       setUser(profile);
       setUserContext(profile);
     } else if (token) {

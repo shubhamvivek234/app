@@ -17,12 +17,15 @@ import {
   signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
   signOut,
   getRedirectResult,
+  updateProfile,
 } from 'firebase/auth';
 
 const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+let volatileAuthToken = null;
 
 export const isRetriableBackendError = (error) => {
   if (!error) return false;
@@ -52,8 +55,9 @@ export const isFatalAuthSyncError = (error) => {
  */
 export const setAuthToken = (token) => {
   if (token) {
-    localStorage.setItem('token', token);
+    volatileAuthToken = token;
   } else {
+    volatileAuthToken = null;
     localStorage.removeItem('token');
   }
 };
@@ -62,14 +66,23 @@ export const setAuthToken = (token) => {
  * Get saved auth token from localStorage
  */
 export const getSavedToken = () => {
-  return localStorage.getItem('token');
+  return volatileAuthToken;
 };
 
 /**
  * Clear all auth data
  */
 export const clearAuthData = () => {
+  volatileAuthToken = null;
   localStorage.removeItem('token');
+};
+
+const buildActionCodeSettings = (path) => {
+  if (typeof window === 'undefined') return undefined;
+  return {
+    url: `${window.location.origin}${path}`,
+    handleCodeInApp: true,
+  };
 };
 
 /**
@@ -188,18 +201,20 @@ export const emailSignIn = async (email, password, cfTurnstileToken = null) => {
     console.log('[AuthService] Starting email sign-in...');
     const credential = await signInWithEmailAndPassword(auth, email, password);
 
-    // If Turnstile token provided, notify backend
-    if (cfTurnstileToken) {
-      try {
-        const idToken = await credential.user.getIdToken();
-        await axios.post(
-          `${API}/auth/login`,
-          { cf_turnstile_token: cfTurnstileToken },
-          { headers: { Authorization: `Bearer ${idToken}` } }
-        );
-      } catch (backendErr) {
-        console.warn('[AuthService] Turnstile validation error:', backendErr?.response?.data);
-        if (backendErr?.response?.status === 403) throw backendErr;
+    try {
+      const idToken = await credential.user.getIdToken();
+      await axios.post(
+        `${API}/auth/login`,
+        { cf_turnstile_token: cfTurnstileToken },
+        {
+          headers: { Authorization: `Bearer ${idToken}` },
+          withCredentials: true,
+        }
+      );
+    } catch (backendErr) {
+      console.warn('[AuthService] Login sync error:', backendErr?.response?.data);
+      if (backendErr?.response?.status === 401 || backendErr?.response?.status === 403) {
+        throw backendErr;
       }
     }
 
@@ -213,10 +228,29 @@ export const emailSignIn = async (email, password, cfTurnstileToken = null) => {
 /**
  * Email/Password Sign-Up
  */
-export const emailSignUp = async (email, password) => {
+export const emailSignUp = async (email, password, displayName, cfTurnstileToken = null) => {
   try {
     console.log('[AuthService] Starting email sign-up...');
     const credential = await createUserWithEmailAndPassword(auth, email, password);
+    if (displayName?.trim()) {
+      await updateProfile(credential.user, { displayName: displayName.trim() });
+    }
+    const idToken = await credential.user.getIdToken(true);
+    await axios.post(
+      `${API}/auth/signup`,
+      { cf_turnstile_token: cfTurnstileToken },
+      {
+        headers: { Authorization: `Bearer ${idToken}` },
+        withCredentials: true,
+      }
+    );
+    await sendEmailVerification(
+      credential.user,
+      buildActionCodeSettings('/verify-email')
+    );
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('post_signup_verify_email', '1');
+    }
     return credential.user;
   } catch (error) {
     console.error('[AuthService] Email sign-up error:', error.code);
@@ -238,6 +272,66 @@ export const firebaseSignOut = async () => {
     console.error('[AuthService] Sign-out error:', error);
     throw error;
   }
+};
+
+export const exchangeSession = async (idToken) => {
+  const delaysMs = [0, 800, 1800];
+  let lastError;
+
+  for (let index = 0; index < delaysMs.length; index += 1) {
+    if (delaysMs[index] > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[index]));
+    }
+    try {
+      const response = await axios.post(
+        `${API}/auth/session`,
+        { id_token: idToken },
+        {
+          withCredentials: true,
+          timeout: 8000,
+        }
+      );
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      if (!isRetriableBackendError(error) || index === delaysMs.length - 1) {
+        break;
+      }
+    }
+  }
+
+  throw lastError;
+};
+
+export const logoutBackendSession = async () => {
+  await axios.post(
+    `${API}/auth/session/logout`,
+    {},
+    {
+      withCredentials: true,
+    }
+  );
+};
+
+export const requestPasswordReset = async (email, cfTurnstileToken = null) => {
+  const response = await axios.post(
+    `${API}/auth/password-reset/request`,
+    {
+      email,
+      cf_turnstile_token: cfTurnstileToken,
+    },
+    {
+      withCredentials: true,
+    }
+  );
+  return response.data;
+};
+
+export const resendVerificationEmail = async (user) => {
+  if (!user) {
+    throw new Error('No user logged in');
+  }
+  await sendEmailVerification(user, buildActionCodeSettings('/verify-email'));
 };
 
 /**
@@ -262,7 +356,8 @@ export const getIdToken = async (user) => {
 export const fetchBackendProfile = async (idToken) => {
   const attempt = async () => {
     const response = await axios.get(`${API}/auth/me`, {
-      headers: { Authorization: `Bearer ${idToken}` },
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+      withCredentials: true,
       timeout: 8000,
     });
     return response.data;

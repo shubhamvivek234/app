@@ -39,8 +39,6 @@ const AuthCallback = () => {
       }
 
       try {
-        // Store token for backend-authenticated requests
-        localStorage.setItem('token', tokenParam);
         setToken(tokenParam);
 
         // Fetch backend profile with the new token
@@ -62,7 +60,6 @@ const AuthCallback = () => {
       } catch (error) {
         console.error('Auth callback error:', error);
         // Clear any partial state
-        localStorage.removeItem('token');
         toast.error('Authentication failed. Please try again.');
         navigate('/login');
       }

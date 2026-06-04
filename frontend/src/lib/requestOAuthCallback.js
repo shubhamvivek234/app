@@ -3,7 +3,7 @@ import env from '@/env';
 
 export async function submitOAuthCallback(platform, callbackData, token) {
   const requestConfig = {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     withCredentials: true,
   };
 

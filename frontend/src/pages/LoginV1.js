@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
@@ -7,6 +7,7 @@ import TurnstileWidget from '@/components/TurnstileWidget';
 
 const LoginV1 = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
@@ -25,6 +26,12 @@ const LoginV1 = () => {
       document.head.removeChild(link);
     };
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get('passwordReset') === 'completed') {
+      toast.success('Password reset complete. Sign in with your new password.');
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

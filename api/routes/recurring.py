@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from api.deps import CurrentUser, DB
+from api.deps import CurrentUser, DB, VerifiedUser
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["recurring"])
@@ -39,7 +39,7 @@ async def list_recurring_rules(current_user: CurrentUser, db: DB):
 
 
 @router.post("/recurring-rules", status_code=status.HTTP_201_CREATED)
-async def create_recurring_rule(body: RecurringRuleCreate, current_user: CurrentUser, db: DB):
+async def create_recurring_rule(body: RecurringRuleCreate, current_user: VerifiedUser, db: DB):
     if body.frequency not in VALID_FREQUENCIES:
         raise HTTPException(status_code=422, detail=f"frequency must be one of {sorted(VALID_FREQUENCIES)}")
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
@@ -60,7 +60,7 @@ async def create_recurring_rule(body: RecurringRuleCreate, current_user: Current
 
 
 @router.patch("/recurring-rules/{rule_id}")
-async def update_recurring_rule(rule_id: str, body: RecurringRuleCreate, current_user: CurrentUser, db: DB):
+async def update_recurring_rule(rule_id: str, body: RecurringRuleCreate, current_user: VerifiedUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     now = datetime.now(timezone.utc)
     result = await db.recurring_rules.find_one_and_update(

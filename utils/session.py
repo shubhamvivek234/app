@@ -3,6 +3,7 @@ Phase 6.5.3 — Firebase token HttpOnly cookie + JTI blocklist.
 Migrates from localStorage to HttpOnly Secure SameSite=Strict cookie.
 """
 import logging
+import os
 import time
 from datetime import timedelta
 
@@ -15,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 _COOKIE_NAME = "session"
 _DEFAULT_EXPIRES_IN = 3600 * 24 * 5  # 5 days
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=_COOKIE_NAME,
+        httponly=True,
+        secure=os.getenv("ENV", "development") == "production",
+        samesite="strict",
+        path="/",
+    )
 
 
 async def create_session_cookie(
@@ -44,7 +55,7 @@ async def create_session_cookie(
         value=session_cookie,
         max_age=expires_in,
         httponly=True,
-        secure=True,
+        secure=os.getenv("ENV", "development") == "production",
         samesite="strict",
         path="/",
     )
