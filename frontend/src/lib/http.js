@@ -1,15 +1,66 @@
 import axios from 'axios';
 import env from '@/env';
+import { auth } from '@/firebase';
 
 let initialized = false;
 const BACKEND_URL = (env.BACKEND_URL || '').replace(/\/+$/, '');
 let originalFetch = null;
+let cachedAuthToken = null;
+let cachedAuthTokenAt = 0;
 
 function generateTraceId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sanitizeStoredToken(token) {
+  if (!token || token === 'null' || token === 'undefined') {
+    return null;
+  }
+  return token;
+}
+
+async function resolveBackendAuthToken() {
+  const now = Date.now();
+  if (cachedAuthToken && now - cachedAuthTokenAt < 30_000) {
+    return cachedAuthToken;
+  }
+
+  try {
+    const currentUser = auth?.currentUser;
+    if (currentUser) {
+      const token = sanitizeStoredToken(await currentUser.getIdToken());
+      if (token) {
+        cachedAuthToken = token;
+        cachedAuthTokenAt = now;
+        try {
+          localStorage.setItem('token', token);
+        } catch {
+          // Ignore storage failures.
+        }
+        return token;
+      }
+    }
+  } catch {
+    // Fall back to any locally persisted token for legacy compatibility.
+  }
+
+  try {
+    const token = sanitizeStoredToken(localStorage.getItem('token'));
+    if (token) {
+      cachedAuthToken = token;
+      cachedAuthTokenAt = now;
+      return token;
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+
+  cachedAuthToken = null;
+  cachedAuthTokenAt = 0;
+  return null;
 }
 
 function isBackendRequest(config) {
@@ -66,6 +117,11 @@ export function initHttpInterceptors() {
         delete nextConfig.headers.Authorization;
         delete nextConfig.headers.authorization;
       }
+      const backendAuthToken = await resolveBackendAuthToken();
+      if (backendAuthToken) {
+        nextConfig.headers.Authorization = `Bearer ${backendAuthToken}`;
+        delete nextConfig.headers.authorization;
+      }
     } else {
       delete nextConfig.headers.Authorization;
       delete nextConfig.headers.authorization;
@@ -94,15 +150,21 @@ export function initHttpInterceptors() {
 
   if (typeof window !== 'undefined' && typeof window.fetch === 'function' && !originalFetch) {
     originalFetch = window.fetch.bind(window);
-    window.fetch = (input, init = {}) => {
+    window.fetch = async (input, init = {}) => {
       if (!isBackendFetchTarget(input)) {
         return originalFetch(input, init);
+      }
+
+      const headers = sanitizeFetchHeaders(input instanceof Request ? input.headers : init.headers);
+      const backendAuthToken = await resolveBackendAuthToken();
+      if (backendAuthToken) {
+        headers.set('Authorization', `Bearer ${backendAuthToken}`);
       }
 
       if (input instanceof Request) {
         const nextRequest = new Request(input, {
           credentials: 'include',
-          headers: sanitizeFetchHeaders(input.headers),
+          headers,
         });
         return originalFetch(nextRequest, init);
       }
@@ -110,7 +172,7 @@ export function initHttpInterceptors() {
       return originalFetch(input, {
         ...init,
         credentials: 'include',
-        headers: sanitizeFetchHeaders(init.headers),
+        headers,
       });
     };
   }

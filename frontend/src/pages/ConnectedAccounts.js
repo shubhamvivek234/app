@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useAuth } from '@/context/AuthContext';
 import {
   getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
   connectBluesky, connectDiscord, connectMastodon, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
@@ -270,6 +271,7 @@ const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, co
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 const ConnectedAccounts = () => {
+  const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
@@ -362,6 +364,10 @@ const ConnectedAccounts = () => {
   );
 
   const handleConnect = async (platformId) => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (platformId === 'bluesky') { setBlueskyModal(true); return; }
     if (platformId === 'discord') { setDiscordModal(true); return; }
     if (platformId === 'mastodon') { setMastodonModal(true); return; }
@@ -370,11 +376,10 @@ const ConnectedAccounts = () => {
     // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
     markOAuthPopupExpected(false);
     try {
-      const token = localStorage.getItem('token');
       const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
 
       if (oauthPlatforms.includes(platformId)) {
-        const { authorization_url, code_verifier } = await requestOAuthUrl(platformId, token);
+        const { authorization_url, code_verifier } = await requestOAuthUrl(platformId);
         if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
         sessionStorage.setItem('oauth_platform', platformId);
         sessionStorage.setItem('oauth_return_to', 'accounts');
@@ -405,6 +410,10 @@ const ConnectedAccounts = () => {
   };
 
   const handleBlueskyConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
     setBlueskyLoading(true);
     try {
@@ -421,6 +430,10 @@ const ConnectedAccounts = () => {
   };
 
   const handleDiscordConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!discordWebhookUrl.trim()) return;
     setDiscordLoading(true);
     try {
@@ -437,6 +450,10 @@ const ConnectedAccounts = () => {
   };
 
   const handleMastodonConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()) return;
     setMastodonLoading(true);
     try {
@@ -454,6 +471,10 @@ const ConnectedAccounts = () => {
   };
 
   const handleAddLinkedinPage = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!pageIdInput.trim() || !pageNameInput.trim()) return;
     setAddingPage(true);
     try {

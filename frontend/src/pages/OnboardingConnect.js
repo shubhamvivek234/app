@@ -19,11 +19,13 @@ import { SiBluesky, SiMastodon, SiSnapchat, SiThreads } from 'react-icons/si';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { connectBluesky, connectDiscord, connectMastodon } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
 const OnboardingConnect = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPlatformModal, setShowPlatformModal] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
@@ -85,11 +87,9 @@ const OnboardingConnect = () => {
 
   const fetchConnectedAccounts = async () => {
     try {
-      const token = localStorage.getItem('token');
       const apiUrl = process.env.REACT_APP_BACKEND_URL || '';
 
       const response = await axios.get(`${apiUrl}/api/social-accounts`, {
-        headers: { Authorization: `Bearer ${token}` },
         withCredentials: true,
       });
 
@@ -122,13 +122,16 @@ const OnboardingConnect = () => {
 
   const handleConnectPlatform = async () => {
     if (!selectedPlatform) return;
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
 
     setLoading(true);
     // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
     markOAuthPopupExpected(false);
     try {
-      const token = localStorage.getItem('token');
-      const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id, token);
+      const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id);
 
       // Store code_verifier for Twitter if present
       if (code_verifier) {
@@ -148,7 +151,7 @@ const OnboardingConnect = () => {
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
         toast.error(`${selectedPlatform.name} API credentials not configured. Please contact administrator.`);
       } else {
-        toast.error('Failed to connect platform');
+        toast.error(error?.response?.data?.detail || 'Failed to connect platform');
       }
     } finally {
       setLoading(false);
@@ -168,6 +171,10 @@ const OnboardingConnect = () => {
   };
 
   const handleBlueskyConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
 
     setBlueskyLoading(true);
@@ -194,6 +201,10 @@ const OnboardingConnect = () => {
   };
 
   const handleDiscordConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!discordWebhookUrl.trim()) return;
 
     setDiscordLoading(true);
@@ -224,6 +235,10 @@ const OnboardingConnect = () => {
   };
 
   const handleMastodonConnect = async () => {
+    if (user && !user.email_verified) {
+      toast.error('Verify your email before connecting accounts.');
+      return;
+    }
     if (!mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()) return;
 
     setMastodonLoading(true);
