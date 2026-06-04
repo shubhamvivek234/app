@@ -13,9 +13,11 @@ import {
   fetchBackendProfile as fetchProfileService,
   listenToAuthState,
   clearAuthData,
+  enableLegacyBrowserToken,
   getSavedToken,
   isRetriableBackendError,
   isFatalAuthSyncError,
+  isMissingSessionEndpoint,
 } from '@/services/authService';
 
 const AuthContext = createContext();
@@ -109,6 +111,11 @@ export const AuthProvider = ({ children }) => {
       }
       return profile;
     } catch (error) {
+      if (isMissingSessionEndpoint(error)) {
+        enableLegacyBrowserToken(idToken);
+        setToken(idToken);
+        return syncProfile(idToken, currentUser, { silent });
+      }
       const transient = isRetriableBackendError(error);
       const fatal = isFatalAuthSyncError(error);
       if (!silent) {
@@ -123,7 +130,7 @@ export const AuthProvider = ({ children }) => {
       });
       throw error;
     }
-  }, []);
+  }, [syncProfile]);
 
   // 1. Check for redirect result on mount (Google sign-in via redirect)
   useEffect(() => {
@@ -374,7 +381,16 @@ export const AuthProvider = ({ children }) => {
     if (firebaseUser) {
       const idToken = await getIdToken(firebaseUser);
       setToken(idToken);
-      const profile = await exchangeSession(idToken);
+      let profile;
+      try {
+        profile = await exchangeSession(idToken);
+      } catch (error) {
+        if (!isMissingSessionEndpoint(error)) {
+          throw error;
+        }
+        enableLegacyBrowserToken(idToken);
+        profile = await fetchProfileService(idToken);
+      }
       setUser(profile);
       setUserContext(profile);
     } else if (token) {

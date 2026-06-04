@@ -27,6 +27,12 @@ const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 let volatileAuthToken = null;
 
+export const isMissingSessionEndpoint = (error) => {
+  return error?.response?.status === 404
+    && typeof error?.config?.url === 'string'
+    && error.config.url.includes('/auth/session');
+};
+
 export const isRetriableBackendError = (error) => {
   if (!error) return false;
   if (error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED' || error.code === 'ECONNREFUSED') {
@@ -66,7 +72,13 @@ export const setAuthToken = (token) => {
  * Get saved auth token from localStorage
  */
 export const getSavedToken = () => {
-  return volatileAuthToken;
+  return volatileAuthToken || localStorage.getItem('token');
+};
+
+export const enableLegacyBrowserToken = (token) => {
+  if (!token) return;
+  volatileAuthToken = token;
+  localStorage.setItem('token', token);
 };
 
 /**
