@@ -243,4 +243,9 @@ class PostResponse(BaseModel):
     dlq_reason: str | None = None
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
     account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
+    rejection_reason: str | None = None
+    rejected_at: datetime | None = None
+    rejected_by: str | None = None
+    approved_at: datetime | None = None
+    approved_by: str | None = None
     account_results: dict[str, PlatformResult] = Field(default_factory=dict)

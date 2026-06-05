@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { getWorkspaceInviteDetails, acceptWorkspaceInvite } from '@/lib/api';
@@ -68,10 +68,11 @@ const FieldGroup = ({ children }) => <div style={{ marginBottom: '16px' }}>{chil
 // ── Main component ────────────────────────────────────────────────────────────
 const AcceptInvite = () => {
   const [searchParams] = useSearchParams();
+  const { token: routeToken } = useParams();
   const navigate = useNavigate();
-  const { user, login, signup } = useAuth();
+  const { user, login, signup, refreshUser } = useAuth();
 
-  const token = searchParams.get('token');
+  const token = routeToken || searchParams.get('token');
 
   const [pageState, setPageState] = useState('loading'); // loading | preview | accepted | error
   const [invite, setInvite] = useState(null);
@@ -105,11 +106,18 @@ const AcceptInvite = () => {
   const handleAccept = useCallback(async () => {
     try {
       await acceptWorkspaceInvite(token);
+      await refreshUser();
       setPageState('accepted');
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to accept invite.');
+      const detail = err?.response?.data?.detail || 'Failed to accept invite.';
+      if (err?.response?.status === 403 && detail.includes('Verify your email')) {
+        toast.error(detail);
+        navigate(`/verify-email?returnTo=${encodeURIComponent(`/accept-invite/${token}`)}`);
+        return;
+      }
+      toast.error(detail);
     }
-  }, [token]);
+  }, [navigate, refreshUser, token]);
 
   useEffect(() => {
     if (pageState !== 'preview' || !user || !invite) return;

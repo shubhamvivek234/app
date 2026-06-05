@@ -301,7 +301,7 @@ const ContentLibrary = () => {
     try {
       await submitPostForReview(postId);
       setPosts((prev) =>
-        prev.map((p) => (p.id === postId ? { ...p, status: 'pending_review' } : p))
+        prev.map((p) => (p.id === postId ? { ...p, status: 'pending_approval', rejection_reason: null } : p))
       );
       toast.success('Post submitted for review');
     } catch (err) {
@@ -540,10 +540,10 @@ const ContentLibrary = () => {
                   </div>
 
                   {/* Rejection note badge (shown on rejected drafts) */}
-                  {post.status === 'draft' && post.rejection_note && (
+                  {post.status === 'draft' && (post.rejection_reason || post.rejection_note) && (
                     <div className="absolute top-2 left-2 z-10">
                       <div
-                        title={`Rejected: ${post.rejection_note}`}
+                        title={`Rejected: ${post.rejection_reason || post.rejection_note}`}
                         className="flex items-center gap-1 bg-red-100 text-red-600 text-[10px] font-semibold px-2 py-0.5 rounded-full"
                       >
                         <FaExclamationCircle className="text-[9px]" />

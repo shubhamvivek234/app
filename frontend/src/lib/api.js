@@ -636,8 +636,11 @@ export const getWorkspaceMembers = async () => {
   return response.data;
 };
 
-export const inviteWorkspaceMember = async (data) => {
-  const response = await axios.post(`${API}/workspace/members/invite`, data, {
+export const inviteWorkspaceMember = async (dataOrEmail, role = 'viewer') => {
+  const payload = typeof dataOrEmail === 'string'
+    ? { email: dataOrEmail, role }
+    : dataOrEmail;
+  const response = await axios.post(`${API}/workspace/members/invite`, payload, {
     headers: getAuthHeaders(),
   });
   return response.data;
@@ -646,6 +649,23 @@ export const inviteWorkspaceMember = async (data) => {
 export const removeWorkspaceMember = async (memberId) => {
   const response = await axios.delete(
     `${API}/workspace/members/${memberId}`,
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const updateWorkspaceMemberRole = async (memberId, role) => {
+  const response = await axios.patch(
+    `${API}/workspace/members/${memberId}/role`,
+    { role },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const revokeWorkspaceInvite = async (inviteId) => {
+  const response = await axios.delete(
+    `${API}/workspace/invites/${inviteId}`,
     { headers: getAuthHeaders() }
   );
   return response.data;
@@ -695,7 +715,7 @@ export const deleteInternalNote = async (noteId) => {
 
 // ── Post Review (Stub - to be implemented) ──
 export const submitPostForReview = async (postId, data) => {
-  const response = await axios.post(`${API}/posts/${postId}/submit-review`, data, {
+  const response = await axios.post(`${API}/posts/${postId}/submit-review`, data || {}, {
     headers: getAuthHeaders(),
   });
   return response.data;
@@ -730,18 +750,28 @@ export const sendSupportRequest = async (formData) => {
 };
 
 // ── Approval Queue ──
+export const getApprovalQueue = async () => {
+  const response = await axios.get(`${API}/approvals`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const approvePost = async (postId) => {
   const response = await axios.post(`${API}/posts/${postId}/approve`, {}, { headers: getAuthHeaders() });
   return response.data;
 };
 
-export const rejectPost = async (postId, data) => {
-  const response = await axios.post(`${API}/posts/${postId}/reject`, data, { headers: getAuthHeaders() });
+export const rejectPost = async (postId, reason = '') => {
+  const response = await axios.post(`${API}/posts/${postId}/reject`, { reason }, { headers: getAuthHeaders() });
   return response.data;
 };
 
-export const resubmitPost = async (postId, data) => {
+export const resubmitPost = async (postId, data = {}) => {
   const response = await axios.post(`${API}/posts/${postId}/resubmit`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const returnPostToDraft = async (postId) => {
+  const response = await axios.post(`${API}/posts/${postId}/return-to-draft`, {}, { headers: getAuthHeaders() });
   return response.data;
 };
 
@@ -894,7 +924,7 @@ export const getWorkspaceInviteDetails = async (token) => {
 };
 
 export const acceptWorkspaceInvite = async (token, data) => {
-  const response = await axios.post(`${API}/workspace/invite/${token}/accept`, data, { headers: getAuthHeaders() });
+  const response = await axios.post(`${API}/workspace/invite/${token}/accept`, data || {}, { headers: getAuthHeaders() });
   return response.data;
 };
 

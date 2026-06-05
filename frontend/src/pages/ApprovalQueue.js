@@ -1,413 +1,471 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import DashboardLayout from '@/components/DashboardLayout';
-import { getPosts, approvePost, rejectPost, resubmitPost } from '@/lib/api';
-import { toast } from 'sonner';
-import { format, parseISO } from 'date-fns';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { format, formatDistanceToNow } from 'date-fns';
 import {
-  FaCheckDouble, FaCheck, FaTimes, FaClock, FaImage, FaVideo,
-  FaTwitter, FaInstagram, FaFacebook, FaLinkedin, FaYoutube,
-  FaRedo, FaExclamationTriangle,
+  FaCheck,
+  FaCheckDouble,
+  FaClock,
+  FaExclamationTriangle,
+  FaImage,
+  FaPaperPlane,
+  FaRedo,
+  FaTimes,
+  FaVideo,
 } from 'react-icons/fa';
+import { toast } from 'sonner';
 
-const PLATFORM_ICONS = {
-  twitter: FaTwitter, instagram: FaInstagram, facebook: FaFacebook,
-  linkedin: FaLinkedin, youtube: FaYoutube,
+import DashboardLayout from '@/components/DashboardLayout';
+import { useAuth } from '@/context/AuthContext';
+import {
+  approvePost,
+  getApprovalQueue,
+  rejectPost,
+  resubmitPost,
+  returnPostToDraft,
+} from '@/lib/api';
+
+const PLATFORM_STYLES = {
+  instagram: 'border-pink-200 bg-pink-50 text-pink-700',
+  facebook: 'border-blue-200 bg-blue-50 text-blue-700',
+  youtube: 'border-red-200 bg-red-50 text-red-700',
+  twitter: 'border-slate-200 bg-slate-50 text-slate-700',
+  linkedin: 'border-sky-200 bg-sky-50 text-sky-700',
+  tiktok: 'border-slate-900 bg-slate-900 text-white',
+  threads: 'border-slate-300 bg-white text-slate-700',
 };
-const PLATFORM_COLORS = {
-  twitter: 'text-sky-500', instagram: 'text-pink-500', facebook: 'text-blue-600',
-  linkedin: 'text-blue-700', youtube: 'text-red-500',
+
+const formatScheduled = (value) => {
+  if (!value) return 'No scheduled time';
+  try {
+    return format(new Date(value), 'MMM d, yyyy, h:mm a');
+  } catch {
+    return 'No scheduled time';
+  }
 };
 
-const truncate = (s, n = 160) => (!s ? '' : s.length > n ? s.slice(0, n) + '…' : s);
-
-const formatScheduled = (t) => {
-  try { return format(parseISO(t), 'MMM d, yyyy · h:mm a') + ' UTC'; }
-  catch { return t || '—'; }
+const relativeTime = (value) => {
+  if (!value) return 'recently';
+  try {
+    return formatDistanceToNow(new Date(value), { addSuffix: true });
+  } catch {
+    return 'recently';
+  }
 };
 
-// ── Shared card shell ─────────────────────────────────────────────────────────
-const CardShell = ({ post, bannerContent, actionBar, children }) => {
-  const hasMedia = (post.media_urls || []).length > 0;
-  const isVideo  = post.post_type === 'video';
+const primaryMedia = (post) => post.thumbnail_urls?.[0] || post.media_urls?.[0] || null;
+
+const TabButton = ({ active, count, label, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+      active
+        ? 'border-slate-900 bg-slate-900 text-white'
+        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+    }`}
+  >
+    {label}
+    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${active ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-600'}`}>
+      {count}
+    </span>
+  </button>
+);
+
+const ApprovalCard = ({
+  post,
+  mode,
+  currentUserId,
+  onApprove,
+  onReject,
+  onResubmit,
+  onReturnToDraft,
+  busyId,
+}) => {
+  const [showReject, setShowReject] = useState(false);
+  const [reason, setReason] = useState('');
+  const mediaUrl = primaryMedia(post);
+  const isVideo = post.post_type === 'video';
+  const isOwner = post.user_id === currentUserId;
+  const isBusy = busyId === post.id;
+
+  const creatorLabel = post.creator_display_name || post.creator_email || 'Workspace member';
+  const reasonText = post.rejection_reason || post.rejection_note;
 
   return (
-    <div className="bg-offwhite rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-      {bannerContent}
-      <div className="p-4">
-        <div className="flex gap-4">
-          {hasMedia && (
-            <div className="w-20 h-20 rounded-lg overflow-hidden bg-gray-50 flex-shrink-0 border border-gray-200">
-              {isVideo ? (
-                <div className="w-full h-full flex items-center justify-center">
-                  <FaVideo className="text-gray-300 text-2xl" />
-                </div>
-              ) : (
-                <img src={post.media_urls[0]} alt="" className="w-full h-full object-cover"
-                  onError={(e) => { e.target.style.display = 'none'; }} />
-              )}
-            </div>
+    <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-4 p-4 lg:flex-row">
+        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+          {mediaUrl ? (
+            <img src={mediaUrl} alt="" className="h-full w-full object-cover" />
+          ) : isVideo ? (
+            <FaVideo className="text-2xl text-slate-300" />
+          ) : (
+            <FaImage className="text-2xl text-slate-300" />
           )}
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-line">
-              {truncate(post.content)}
-            </p>
-            <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-              {(post.platforms || []).map((p) => {
-                const Icon = PLATFORM_ICONS[p];
-                return (
-                  <span key={p} className={`flex items-center gap-1 text-xs font-medium capitalize ${PLATFORM_COLORS[p] || 'text-gray-500'}`}>
-                    {Icon && <Icon className="text-sm" />}{p}
-                  </span>
-                );
-              })}
-              {hasMedia && (
-                <span className="text-xs text-gray-400 ml-auto flex items-center gap-1">
-                  {isVideo ? <FaVideo /> : <FaImage />}
-                  {post.media_urls.length} {isVideo ? 'video' : `image${post.media_urls.length !== 1 ? 's' : ''}`}
-                </span>
-              )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {(post.platforms || []).map((platform) => (
+              <span
+                key={`${post.id}-${platform}`}
+                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold capitalize ${PLATFORM_STYLES[platform] || PLATFORM_STYLES.twitter}`}
+              >
+                {platform}
+              </span>
+            ))}
+            {mode === 'awaiting' ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+                Pending approval
+              </span>
+            ) : null}
+            {mode === 'changes_requested' ? (
+              <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">
+                Changes requested
+              </span>
+            ) : null}
+            {mode === 'expired' ? (
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                Approval expired
+              </span>
+            ) : null}
+          </div>
+
+          <p className="mt-3 text-sm leading-6 text-slate-800 whitespace-pre-line">
+            {post.content || 'No post copy added yet.'}
+          </p>
+
+          <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Creator</span>
+              <span>{creatorLabel}</span>
+            </div>
+            <div>
+              <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Scheduled</span>
+              <span>{formatScheduled(post.scheduled_time)}</span>
+            </div>
+            <div>
+              <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Updated</span>
+              <span>{relativeTime(post.updated_at || post.created_at)}</span>
+            </div>
+            <div>
+              <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Media</span>
+              <span>{post.post_type || ((post.media_urls || []).length ? 'media' : 'text')}</span>
             </div>
           </div>
+
+          {reasonText ? (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {reasonText}
+            </div>
+          ) : null}
+
+          {mode === 'awaiting' && showReject ? (
+            <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <textarea
+                rows={3}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Explain what needs to change before this can go live."
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-slate-300"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onReject(post.id, reason, () => {
+                    setShowReject(false);
+                    setReason('');
+                  })}
+                  disabled={isBusy}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+                >
+                  <FaTimes className="text-xs" />
+                  {isBusy ? 'Sending…' : 'Request changes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReject(false);
+                    setReason('');
+                  }}
+                  className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'awaiting' && !showReject ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onApprove(post.id)}
+                disabled={isBusy}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+              >
+                <FaCheck className="text-xs" />
+                {isBusy ? 'Approving…' : 'Approve'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowReject(true)}
+                disabled={isBusy}
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+              >
+                <FaTimes className="text-xs" />
+                Request changes
+              </button>
+            </div>
+          ) : null}
+
+          {mode === 'changes_requested' ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {isOwner ? (
+                <button
+                  type="button"
+                  onClick={() => onResubmit(post.id)}
+                  disabled={isBusy}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  <FaRedo className="text-xs" />
+                  {isBusy ? 'Resubmitting…' : 'Resubmit for review'}
+                </button>
+              ) : (
+                <span className="text-sm text-slate-500">Waiting on the creator to update and resubmit this draft.</span>
+              )}
+            </div>
+          ) : null}
+
+          {mode === 'expired' ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onReturnToDraft(post.id)}
+                disabled={isBusy}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+              >
+                <FaPaperPlane className="text-xs" />
+                {isBusy ? 'Returning…' : 'Return to draft'}
+              </button>
+            </div>
+          ) : null}
         </div>
-        {children}
-        {actionBar}
       </div>
-    </div>
+    </article>
   );
 };
 
-// ── Awaiting Review card ───────────────────────────────────────────────────────
-const AwaitingCard = ({ post, onApprove, onReject }) => {
-  const [rejecting, setRejecting] = useState(false);
-  const [note,      setNote]      = useState('');
-  const [busy,      setBusy]      = useState(false);
-
-  const handleApprove = async () => {
-    setBusy(true);
-    try { await onApprove(post.id); }
-    finally { setBusy(false); }
-  };
-
-  const handleReject = async () => {
-    setBusy(true);
-    try { await onReject(post.id, note); }
-    finally { setBusy(false); setRejecting(false); setNote(''); }
-  };
-
-  const banner = (
-    <div className="bg-amber-50 border-b border-amber-100 px-4 py-2 flex items-center gap-2">
-      <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-      <span className="text-xs font-semibold text-amber-700">Pending Review</span>
-      {post.scheduled_time && (
-        <span className="ml-auto text-xs text-amber-600 flex items-center gap-1">
-          <FaClock className="text-[10px]" />{formatScheduled(post.scheduled_time)}
-        </span>
-      )}
-    </div>
-  );
-
-  const actionBar = !rejecting && (
-    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
-      <button onClick={handleApprove} disabled={busy}
-        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg disabled:opacity-60 transition-colors">
-        <FaCheck className="text-[10px]" />{busy ? 'Approving…' : 'Approve'}
-      </button>
-      <button onClick={() => setRejecting(true)} disabled={busy}
-        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border border-red-200 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-60 transition-colors">
-        <FaTimes className="text-[10px]" />Reject
-      </button>
-    </div>
-  );
-
-  return (
-    <CardShell post={post} bannerContent={banner} actionBar={actionBar}>
-      {rejecting && (
-        <div className="mt-3 space-y-2">
-          <textarea rows={2} placeholder="Reason for rejection (optional)…"
-            value={note} onChange={(e) => setNote(e.target.value)}
-            className="w-full text-sm border border-red-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-red-300 placeholder:text-gray-300" />
-          <div className="flex items-center gap-2">
-            <button onClick={handleReject} disabled={busy}
-              className="px-3 py-1.5 text-xs font-semibold bg-red-500 hover:bg-red-600 text-white rounded-lg disabled:opacity-60 transition-colors">
-              {busy ? 'Rejecting…' : 'Confirm Reject'}
-            </button>
-            <button onClick={() => { setRejecting(false); setNote(''); }}
-              className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </CardShell>
-  );
-};
-
-// ── Not Approved card ─────────────────────────────────────────────────────────
-const RejectedCard = ({ post, onResubmit }) => {
-  const [busy, setBusy] = useState(false);
-
-  const handleResubmit = async () => {
-    setBusy(true);
-    try { await onResubmit(post.id); }
-    finally { setBusy(false); }
-  };
-
-  const banner = (
-    <div className="bg-red-50 border-b border-red-100 px-4 py-2 flex items-center gap-2">
-      <div className="w-2 h-2 rounded-full bg-red-400" />
-      <span className="text-xs font-semibold text-red-700">Not Approved</span>
-    </div>
-  );
-
-  const actionBar = (
-    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
-      <button onClick={handleResubmit} disabled={busy}
-        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-white rounded-lg disabled:opacity-60 transition-colors">
-        <FaRedo className="text-[10px]" />{busy ? 'Moving…' : 'Move to Draft'}
-      </button>
-    </div>
-  );
-
-  return (
-    <CardShell post={post} bannerContent={banner} actionBar={actionBar}>
-      {post.rejection_note && (
-        <div className="mt-3 px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg">
-          <p className="text-xs text-red-500 font-semibold mb-0.5">Rejection reason</p>
-          <p className="text-xs text-red-700">{post.rejection_note}</p>
-        </div>
-      )}
-    </CardShell>
-  );
-};
-
-// ── Expired Approval card ─────────────────────────────────────────────────────
-const ExpiredCard = ({ post, onResubmit }) => {
-  const [busy, setBusy] = useState(false);
-
-  const handleResubmit = async () => {
-    setBusy(true);
-    try { await onResubmit(post.id); }
-    finally { setBusy(false); }
-  };
-
-  const banner = (
-    <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 flex items-center gap-2">
-      <FaExclamationTriangle className="text-gray-400 text-xs" />
-      <span className="text-xs font-semibold text-gray-500">Approval Expired</span>
-      {post.scheduled_time && (
-        <span className="ml-auto text-xs text-gray-400 flex items-center gap-1">
-          Was: {formatScheduled(post.scheduled_time)}
-        </span>
-      )}
-    </div>
-  );
-
-  const actionBar = (
-    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
-      <button onClick={handleResubmit} disabled={busy}
-        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-white rounded-lg disabled:opacity-60 transition-colors">
-        <FaRedo className="text-[10px]" />{busy ? 'Moving…' : 'Move to Draft'}
-      </button>
-    </div>
-  );
-
-  return <CardShell post={post} bannerContent={banner} actionBar={actionBar} />;
-};
-
-// ── Tab pill ──────────────────────────────────────────────────────────────────
-const TabPill = ({ label, count, active, color = 'amber', onClick }) => {
-  const activeColors = {
-    amber: 'bg-amber-100 text-amber-800 border-amber-300',
-    red:   'bg-red-100 text-red-700 border-red-300',
-    gray:  'bg-gray-200 text-gray-600 border-gray-300',
-  };
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
-        active ? activeColors[color] : 'border-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-      }`}
-    >
-      {label}
-      {count > 0 && (
-        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-offwhite bg-opacity-70' : 'bg-gray-200 text-gray-500'}`}>
-          {count}
-        </span>
-      )}
-    </button>
-  );
-};
-
-// ── Empty state ───────────────────────────────────────────────────────────────
-const EmptyState = ({ icon: Icon, iconColor, title, subtitle }) => (
-  <div className="flex flex-col items-center justify-center py-20 text-center bg-offwhite rounded-xl border border-dashed border-gray-200">
-    <Icon className={`text-4xl ${iconColor} mb-3`} />
-    <p className="text-sm font-semibold text-gray-600">{title}</p>
-    <p className="text-xs text-gray-400 mt-1 max-w-xs">{subtitle}</p>
+const EmptyState = ({ icon: Icon, title, description }) => (
+  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-14 text-center">
+    <Icon className="mx-auto text-3xl text-slate-300" />
+    <h3 className="mt-4 text-base font-semibold text-slate-900">{title}</h3>
+    <p className="mt-2 text-sm text-slate-500">{description}</p>
   </div>
 );
 
-// ── Main component ────────────────────────────────────────────────────────────
 const ApprovalQueue = () => {
-  const [awaiting,  setAwaiting]  = useState([]);
-  const [rejected,  setRejected]  = useState([]);
-  const [expired,   setExpired]   = useState([]);
-  const [loading,   setLoading]   = useState(true);
+  const { user } = useAuth();
+  const [queue, setQueue] = useState({ awaiting: [], changes_requested: [], expired: [], summary: {} });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('awaiting');
+  const [busyId, setBusyId] = useState(null);
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [aw, rj, ex] = await Promise.all([
-        getPosts({ status: 'pending_review' }),
-        getPosts({ status: 'rejected' }),
-        getPosts({ status: 'expired_approval' }),
-      ]);
-      setAwaiting(Array.isArray(aw) ? aw : []);
-      setRejected(Array.isArray(rj) ? rj : []);
-      setExpired(Array.isArray(ex) ? ex : []);
-    } catch {
-      if (!silent) toast.error('Failed to load approval queue');
+      const data = await getApprovalQueue();
+      setQueue(data);
+    } catch (error) {
+      if (!silent) {
+        toast.error(error?.response?.data?.detail || 'Failed to load approval queue');
+      }
     } finally {
       if (!silent) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await load({ silent: true });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleApprove = async (postId) => {
+    setBusyId(postId);
     try {
-      const result = await approvePost(postId);
-      // Optimistic update
-      setAwaiting((prev) => prev.filter((p) => p.id !== postId));
-      toast.success(result.status === 'scheduled' ? 'Post approved and scheduled ✓' : 'Post approved ✓');
-      // Silent refresh to sync server state
-      load(true);
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to approve');
+      await approvePost(postId);
+      await load({ silent: true });
+      toast.success('Post approved');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to approve post');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleReject = async (postId, note) => {
+  const handleReject = async (postId, reason, onDone) => {
+    setBusyId(postId);
     try {
-      await rejectPost(postId, note);
-      // Optimistic update
-      const post = awaiting.find((p) => p.id === postId);
-      setAwaiting((prev) => prev.filter((p) => p.id !== postId));
-      if (post) setRejected((prev) => [{ ...post, status: 'rejected', rejection_note: note || null }, ...prev]);
-      setActiveTab('rejected');
-      toast.success('Post rejected — moved to Not Approved');
-      // Silent refresh to sync server state
-      load(true);
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to reject');
+      await rejectPost(postId, reason);
+      await load({ silent: true });
+      setActiveTab('changes_requested');
+      onDone?.();
+      toast.success('Changes requested');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to request changes');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleResubmit = async (postId, from) => {
+  const handleResubmit = async (postId) => {
+    setBusyId(postId);
     try {
-      await resubmitPost(postId);
-      // Optimistic update
-      if (from === 'rejected') setRejected((prev) => prev.filter((p) => p.id !== postId));
-      if (from === 'expired')  setExpired((prev)  => prev.filter((p) => p.id !== postId));
-      toast.success('Post moved to drafts — edit and resubmit when ready');
-      // Silent refresh to sync server state
-      load(true);
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to move post');
+      await resubmitPost(postId, {});
+      await load({ silent: true });
+      setActiveTab('awaiting');
+      toast.success('Post resubmitted for review');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to resubmit post');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const tabs = [
-    { key: 'awaiting', label: 'Awaiting Review', count: awaiting.length, color: 'amber' },
-    { key: 'rejected', label: 'Not Approved',    count: rejected.length, color: 'red' },
-    { key: 'expired',  label: 'Expired',          count: expired.length,  color: 'gray' },
-  ];
-
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="space-y-4">
-          {[...Array(2)].map((_, i) => (
-            <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-40 animate-pulse" />
-          ))}
-        </div>
-      );
-    }
-
-    if (activeTab === 'awaiting') {
-      if (!awaiting.length) return (
-        <EmptyState icon={FaCheckDouble} iconColor="text-green-300"
-          title="All clear — nothing to review"
-          subtitle="Posts submitted for review will appear here. Submit a draft from the Content Library." />
-      );
-      return (
-        <div className="space-y-4">
-          {awaiting.map((post) => (
-            <AwaitingCard key={post.id} post={post} onApprove={handleApprove} onReject={handleReject} />
-          ))}
-        </div>
-      );
-    }
-
-    if (activeTab === 'rejected') {
-      if (!rejected.length) return (
-        <EmptyState icon={FaTimes} iconColor="text-red-200"
-          title="No rejected posts"
-          subtitle="Posts that are rejected will appear here. Move them back to Draft to edit and resubmit." />
-      );
-      return (
-        <div className="space-y-4">
-          {rejected.map((post) => (
-            <RejectedCard key={post.id} post={post} onResubmit={(id) => handleResubmit(id, 'rejected')} />
-          ))}
-        </div>
-      );
-    }
-
-    if (activeTab === 'expired') {
-      if (!expired.length) return (
-        <EmptyState icon={FaClock} iconColor="text-gray-300"
-          title="No expired approvals"
-          subtitle="Posts that weren't approved before their scheduled time will appear here." />
-      );
-      return (
-        <div className="space-y-4">
-          {expired.map((post) => (
-            <ExpiredCard key={post.id} post={post} onResubmit={(id) => handleResubmit(id, 'expired')} />
-          ))}
-        </div>
-      );
+  const handleReturnToDraft = async (postId) => {
+    setBusyId(postId);
+    try {
+      await returnPostToDraft(postId);
+      await load({ silent: true });
+      toast.success('Post returned to draft');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to return post to draft');
+    } finally {
+      setBusyId(null);
     }
   };
+
+  const tabs = useMemo(() => ([
+    { key: 'awaiting', label: 'Awaiting Review', count: queue.summary?.awaiting || 0 },
+    { key: 'changes_requested', label: 'Changes Requested', count: queue.summary?.changes_requested || 0 },
+    { key: 'expired', label: 'Expired', count: queue.summary?.expired || 0 },
+  ]), [queue.summary]);
+
+  const activeItems = queue[activeTab] || [];
 
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-              <FaCheckDouble className="text-green-500" />
-              Approval Queue
-            </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {loading ? 'Loading…' : `${awaiting.length + rejected.length + expired.length} total posts`}
-            </p>
+      <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-white">
+                  <FaCheckDouble className="text-sm" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-semibold text-slate-950">Approvals</h1>
+                  <p className="text-sm text-slate-500">Workspace review queue for scheduled content.</p>
+                </div>
+              </div>
+              <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                Review pending posts, track requested changes, and pull expired approvals back into draft before they miss the publish window.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Awaiting</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{queue.summary?.awaiting || 0}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Changes requested</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{queue.summary?.changes_requested || 0}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Expired</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{queue.summary?.expired || 0}</p>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 mb-5 bg-gray-50 rounded-xl p-1 w-fit">
-          {tabs.map((tab) => (
-            <TabPill key={tab.key} label={tab.label} count={tab.count}
-              active={activeTab === tab.key} color={tab.color}
-              onClick={() => setActiveTab(tab.key)} />
-          ))}
-        </div>
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            {tabs.map((tab) => (
+              <TabButton
+                key={tab.key}
+                active={activeTab === tab.key}
+                count={tab.count}
+                label={tab.label}
+                onClick={() => setActiveTab(tab.key)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="ml-auto inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              <FaRedo className={`text-xs ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
+        </section>
 
-        {/* Content */}
-        {renderContent()}
+        <section className="space-y-4">
+          {loading ? (
+            <div className="space-y-4">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="h-44 animate-pulse rounded-lg border border-slate-200 bg-slate-50" />
+              ))}
+            </div>
+          ) : activeItems.length === 0 ? (
+            <>
+              {activeTab === 'awaiting' ? (
+                <EmptyState
+                  icon={FaCheck}
+                  title="Nothing is waiting for review"
+                  description="Drafts submitted for approval will appear here once a workspace member sends them into review."
+                />
+              ) : null}
+              {activeTab === 'changes_requested' ? (
+                <EmptyState
+                  icon={FaTimes}
+                  title="No drafts are waiting on changes"
+                  description="Rejected review items will show up here until their creator resubmits them."
+                />
+              ) : null}
+              {activeTab === 'expired' ? (
+                <EmptyState
+                  icon={FaClock}
+                  title="No approvals have expired"
+                  description="Pending approvals with past scheduled times will land here so they can be returned to draft."
+                />
+              ) : null}
+            </>
+          ) : (
+            activeItems.map((post) => (
+              <ApprovalCard
+                key={post.id}
+                post={post}
+                mode={activeTab}
+                currentUserId={user?.user_id}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onResubmit={handleResubmit}
+                onReturnToDraft={handleReturnToDraft}
+                busyId={busyId}
+              />
+            ))
+          )}
+        </section>
       </div>
     </DashboardLayout>
   );

@@ -15,6 +15,7 @@ from typing import Annotated
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from api.deps import CurrentUser, DB, QueueRedis, VerifiedUser, require_permission
 from api.limiter import limiter
@@ -59,6 +60,14 @@ _POLL_RULES = {
         "durations": {"ONE_DAY"},
     },
 }
+
+
+class ApprovalDecisionBody(BaseModel):
+    reason: str = ""
+
+
+class ApprovalResubmitBody(BaseModel):
+    content: str | None = None
 
 
 def _ensure_verified_email_for_publish_action(current_user: dict) -> None:
@@ -254,6 +263,24 @@ def _post_workspace_id(current_user: dict) -> str:
         or current_user.get("workspace_id")
         or current_user["user_id"]
     )
+
+
+async def _enrich_approval_docs(db, docs: list[dict]) -> list[dict]:
+    if not docs:
+        return []
+
+    hydrated_docs = await _hydrate_post_card_fields_for_docs(db, docs)
+    for doc in hydrated_docs:
+        creator = await db.users.find_one(
+            {"user_id": doc.get("user_id")},
+            {"_id": 0, "display_name": 1, "email": 1},
+        )
+        if creator:
+            doc["creator_display_name"] = creator.get("display_name") or creator.get("email")
+            doc["creator_email"] = creator.get("email")
+        if doc.get("rejection_reason") and not doc.get("rejection_note"):
+            doc["rejection_note"] = doc["rejection_reason"]
+    return hydrated_docs
 
 
 def _social_account_identifier(account_doc: dict) -> str | None:
@@ -1109,6 +1136,71 @@ async def list_recent_published_posts(
     return [_doc_to_response(d) for d in hydrated_docs]
 
 
+@router.get("/approvals", dependencies=[require_permission("post:read")])
+async def list_approval_queue(
+    current_user: CurrentUser,
+    db: DB,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+):
+    workspace_id = _post_workspace_id(current_user)
+    now = datetime.now(timezone.utc)
+    base_query = {
+        "workspace_id": workspace_id,
+        "deleted_at": {"$exists": False},
+    }
+
+    awaiting_cursor = db.posts.find(
+        {
+            **base_query,
+            "status": PostStatus.PENDING_APPROVAL,
+            "$or": [
+                {"scheduled_time": {"$exists": False}},
+                {"scheduled_time": None},
+                {"scheduled_time": {"$gt": now}},
+            ],
+        },
+        {"_id": 0},
+    ).sort([("scheduled_time", 1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
+    changes_requested_cursor = db.posts.find(
+        {
+            **base_query,
+            "status": PostStatus.DRAFT,
+            "rejection_reason": {"$exists": True, "$ne": None},
+        },
+        {"_id": 0},
+    ).sort([("rejected_at", -1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
+    expired_cursor = db.posts.find(
+        {
+            **base_query,
+            "status": PostStatus.PENDING_APPROVAL,
+            "scheduled_time": {"$lte": now},
+        },
+        {"_id": 0},
+    ).sort([("scheduled_time", -1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
+
+    awaiting_docs = await awaiting_cursor.to_list(length=limit)
+    changes_requested_docs = await changes_requested_cursor.to_list(length=limit)
+    expired_docs = await expired_cursor.to_list(length=limit)
+
+    awaiting = await _enrich_approval_docs(db, awaiting_docs)
+    changes_requested = [
+        doc for doc in await _enrich_approval_docs(db, changes_requested_docs)
+        if str(doc.get("rejection_reason") or "").strip()
+    ]
+    expired = await _enrich_approval_docs(db, expired_docs)
+
+    return {
+        "awaiting": awaiting,
+        "changes_requested": changes_requested,
+        "expired": expired,
+        "summary": {
+            "awaiting": len(awaiting),
+            "changes_requested": len(changes_requested),
+            "expired": len(expired),
+        },
+    }
+
+
 # ── Get single ───────────────────────────────────────────────────────────────
 
 @router.get("/posts/{post_id}", response_model=PostResponse,
@@ -1521,11 +1613,28 @@ async def approve_post(post_id: str, current_user: VerifiedUser, db: DB):
     user_id = current_user["user_id"]
     workspace_id = current_user.get("default_workspace_id") or user_id
     now = datetime.now(timezone.utc)
+    existing = await db.posts.find_one(
+        {
+            "id": post_id,
+            "workspace_id": workspace_id,
+            "status": PostStatus.PENDING_APPROVAL,
+            "deleted_at": {"$exists": False},
+        },
+        {"_id": 0, "scheduled_time": 1},
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Post not found or not pending approval")
+    scheduled_time = existing.get("scheduled_time")
+    if isinstance(scheduled_time, datetime) and scheduled_time <= now:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approval window expired. Move this post back to draft and reschedule it before approval.",
+        )
     result = await db.posts.find_one_and_update(
         {
             "id": post_id,
             "workspace_id": workspace_id,
-            "status": "pending_approval",
+            "status": PostStatus.PENDING_APPROVAL,
             "deleted_at": {"$exists": False},
         },
         {"$set": {"status": PostStatus.SCHEDULED, "approved_by": user_id,
@@ -1537,12 +1646,74 @@ async def approve_post(post_id: str, current_user: VerifiedUser, db: DB):
     )
     if not result:
         raise HTTPException(status_code=404, detail="Post not found or not pending approval")
-    return {"approved": True, "post_id": post_id}
+    return {"approved": True, "post_id": post_id, "status": PostStatus.SCHEDULED}
 
 
 @router.post("/posts/{post_id}/reject", dependencies=[require_permission("post:update")])
-async def reject_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
+async def reject_post(post_id: str, body: ApprovalDecisionBody, current_user: CurrentUser, db: DB):
     """Reject a post in review — moves to draft with rejection note."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    now = datetime.now(timezone.utc)
+    reason = (body.reason or "").strip() or "Changes requested"
+    result = await db.posts.find_one_and_update(
+        {
+            "id": post_id,
+            "workspace_id": workspace_id,
+            "status": PostStatus.PENDING_APPROVAL,
+            "deleted_at": {"$exists": False},
+        },
+        {"$set": {"status": PostStatus.DRAFT, "rejected_by": user_id,
+                  "rejected_at": now, "rejection_reason": reason,
+                  "updated_at": now},
+         "$push": {"status_history": {"status": PostStatus.DRAFT,
+                                      "timestamp": now, "actor": user_id,
+                                      "reason": reason}}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Post not found or not pending approval")
+    return {"rejected": True, "post_id": post_id, "status": PostStatus.DRAFT, "rejection_reason": reason}
+
+
+@router.post("/posts/{post_id}/resubmit", dependencies=[require_permission("post:update")])
+async def resubmit_post(post_id: str, body: ApprovalResubmitBody, current_user: CurrentUser, db: DB):
+    """Resubmit a rejected post for approval."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    now = datetime.now(timezone.utc)
+    updates: dict = {"status": PostStatus.PENDING_APPROVAL, "updated_at": now}
+    if body.content:
+        updates["content"] = body.content
+    result = await db.posts.find_one_and_update(
+        {
+            "id": post_id,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "status": PostStatus.DRAFT,
+            "deleted_at": {"$exists": False},
+        },
+        {"$set": updates,
+         "$unset": {"rejection_reason": "", "rejected_at": "", "rejected_by": ""},
+         "$push": {"status_history": {"status": PostStatus.PENDING_APPROVAL,
+                                      "timestamp": now, "actor": user_id}}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Post not found or not eligible for resubmission")
+    return {"resubmitted": True, "post_id": post_id, "status": PostStatus.PENDING_APPROVAL}
+
+
+@router.post("/posts/{post_id}/submit-review", dependencies=[require_permission("post:update")])
+async def submit_post_for_review(post_id: str, body: ApprovalResubmitBody, current_user: CurrentUser, db: DB):
+    return await resubmit_post(post_id, body, current_user, db)
+
+
+@router.post("/posts/{post_id}/return-to-draft", dependencies=[require_permission("post:update")])
+async def return_post_to_draft(post_id: str, current_user: CurrentUser, db: DB):
+    """Return an expired approval item back to draft for rescheduling."""
     user_id = current_user["user_id"]
     workspace_id = current_user.get("default_workspace_id") or user_id
     now = datetime.now(timezone.utc)
@@ -1550,47 +1721,26 @@ async def reject_post(post_id: str, body: dict, current_user: CurrentUser, db: D
         {
             "id": post_id,
             "workspace_id": workspace_id,
-            "status": "pending_approval",
+            "status": PostStatus.PENDING_APPROVAL,
             "deleted_at": {"$exists": False},
         },
-        {"$set": {"status": PostStatus.DRAFT, "rejected_by": user_id,
-                  "rejected_at": now, "rejection_reason": body.get("reason", ""),
-                  "updated_at": now},
-         "$push": {"status_history": {"status": PostStatus.DRAFT,
-                                      "timestamp": now, "actor": user_id,
-                                      "reason": body.get("reason", "")}}},
+        {
+            "$set": {"status": PostStatus.DRAFT, "updated_at": now},
+            "$push": {
+                "status_history": {
+                    "status": PostStatus.DRAFT,
+                    "timestamp": now,
+                    "actor": user_id,
+                    "reason": "Returned to draft after approval window expired",
+                }
+            },
+        },
         return_document=True,
         projection={"_id": 0},
     )
     if not result:
         raise HTTPException(status_code=404, detail="Post not found or not pending approval")
-    return {"rejected": True, "post_id": post_id}
-
-
-@router.post("/posts/{post_id}/resubmit", dependencies=[require_permission("post:update")])
-async def resubmit_post(post_id: str, body: dict, current_user: CurrentUser, db: DB):
-    """Resubmit a rejected post for approval."""
-    user_id = current_user["user_id"]
-    now = datetime.now(timezone.utc)
-    updates: dict = {"status": "pending_approval", "updated_at": now}
-    if body.get("content"):
-        updates["content"] = body["content"]
-    result = await db.posts.find_one_and_update(
-        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"$set": updates,
-         "$push": {"status_history": {"status": "pending_approval",
-                                      "timestamp": now, "actor": user_id}}},
-        return_document=True,
-        projection={"_id": 0},
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return {"resubmitted": True, "post_id": post_id}
-
-
-@router.post("/posts/{post_id}/submit-review", dependencies=[require_permission("post:update")])
-async def submit_post_for_review(post_id: str, body: dict, current_user: CurrentUser, db: DB):
-    return await resubmit_post(post_id, body, current_user, db)
+    return {"returned_to_draft": True, "post_id": post_id, "status": PostStatus.DRAFT}
 
 
 # ── Duplicate ─────────────────────────────────────────────────────────────────
