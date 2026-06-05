@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
-from api.deps import CurrentUser, DB, CacheRedis, VerifiedUser, require_permission
+from api.deps import CurrentUser, DB, CacheRedis, require_permission
 from api.task_queue import enqueue_task
 from utils.encryption import decrypt, encrypt
 from utils.observability import event_log, shorten_provider_error
@@ -881,7 +881,7 @@ async def disconnect_account(
 async def get_oauth_url(
     platform: str,
     request: Request,
-    current_user: VerifiedUser,
+    current_user: CurrentUser,
     cache_redis: CacheRedis,
 ) -> OAuthUrlResponse:
     if platform not in _SUPPORTED_PLATFORMS:
@@ -980,7 +980,7 @@ async def get_oauth_url(
 async def oauth_callback(
     platform: str,
     payload: OAuthCallbackRequest,
-    current_user: VerifiedUser,
+    current_user: CurrentUser,
     db: DB,
     cache_redis: CacheRedis,
 ) -> OAuthCallbackResponse:
@@ -1095,7 +1095,7 @@ async def disconnect_social_account(
 @router.post("/social-accounts/bluesky/connect")
 async def connect_bluesky(
     body: BlueskyConnectRequest,
-    current_user: VerifiedUser,
+    current_user: CurrentUser,
     db: DB,
 ):
     """Connect a Bluesky account using handle + app password (AT Protocol)."""
@@ -1166,7 +1166,7 @@ async def connect_bluesky(
 @router.post("/social-accounts/discord/connect")
 async def connect_discord(
     body: DiscordWebhookRequest,
-    current_user: VerifiedUser,
+    current_user: CurrentUser,
     db: DB,
 ):
     """Connect a Discord channel via incoming webhook URL."""
@@ -1250,7 +1250,7 @@ async def get_linkedin_pending_orgs(current_user: CurrentUser, db: DB):
 
 
 @router.post("/social-accounts/linkedin/save-orgs")
-async def save_linkedin_orgs(body: LinkedInOrgRequest, current_user: VerifiedUser, db: DB):
+async def save_linkedin_orgs(body: LinkedInOrgRequest, current_user: CurrentUser, db: DB):
     """Save selected LinkedIn org pages to the account."""
     user_id = current_user["user_id"]
     await db.social_accounts.update_one(
@@ -1261,7 +1261,7 @@ async def save_linkedin_orgs(body: LinkedInOrgRequest, current_user: VerifiedUse
 
 
 @router.post("/social-accounts/linkedin/manual")
-async def add_linkedin_page_manually(body: dict, current_user: VerifiedUser, db: DB):
+async def add_linkedin_page_manually(body: dict, current_user: CurrentUser, db: DB):
     """Add a LinkedIn page ID manually (fallback)."""
     page_id = body.get("page_id") or body.get("org_id")
     if not page_id:

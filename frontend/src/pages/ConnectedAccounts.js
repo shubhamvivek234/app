@@ -181,17 +181,17 @@ const getPrimaryActionLabel = (accounts) => {
 };
 
 const VerificationBanner = () => (
-  <div className="rounded-3xl border border-amber-200 bg-amber-50 px-5 py-4">
+  <div className="rounded-3xl border border-blue-200 bg-blue-50 px-5 py-4">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p className="text-sm font-semibold text-amber-900">Verify your email before connecting or reconnecting accounts</p>
-        <p className="mt-1 text-sm text-amber-800">
-          Account connection, publishing, scheduling, and team actions are blocked until your email is verified.
+        <p className="text-sm font-semibold text-blue-900">Account connection is available, but email verification is still recommended</p>
+        <p className="mt-1 text-sm text-blue-800">
+          You can connect and reconnect accounts now. Email verification is still required before publishing, scheduling, and inviting teammates.
         </p>
       </div>
       <Link
         to="/verify-email?returnTo=/accounts"
-        className="inline-flex items-center justify-center rounded-full bg-amber-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-950"
+        className="inline-flex items-center justify-center rounded-full bg-blue-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-950"
       >
         Verify email
       </Link>
@@ -325,7 +325,7 @@ const PlatformCard = ({
   const count = accounts.length;
 
   return (
-    <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
+    <section className="flex h-[44rem] flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
       <div className={`border-b px-5 py-5 ${platform.bg} ${platform.border}`}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
@@ -363,7 +363,8 @@ const PlatformCard = ({
         </div>
       </div>
 
-      <div className="space-y-5 px-5 py-5">
+      <div className="flex-1 overflow-hidden px-5 py-5">
+        <div className="h-full space-y-5 overflow-y-auto pr-2">
         {count === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-5 text-sm text-gray-500">
             Connect this platform to schedule, publish, and track account health from one place.
@@ -415,6 +416,7 @@ const PlatformCard = ({
             ) : null}
           </>
         )}
+        </div>
       </div>
 
       <div className="border-t border-gray-100 px-5 py-4">
@@ -634,11 +636,6 @@ const ConnectedAccounts = () => {
   };
 
   const handleConnect = async (platformId, { mode = 'connect' } = {}) => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
-
     if (MANUAL_PLATFORMS.has(platformId)) {
       openManualModal(platformId, mode);
       return;
@@ -683,10 +680,6 @@ const ConnectedAccounts = () => {
   };
 
   const handleBlueskyConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
 
     setBlueskyLoading(true);
@@ -703,10 +696,6 @@ const ConnectedAccounts = () => {
   };
 
   const handleDiscordConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!discordWebhookUrl.trim()) return;
 
     setDiscordLoading(true);
@@ -727,10 +716,6 @@ const ConnectedAccounts = () => {
   };
 
   const handleMastodonConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()) return;
 
     setMastodonLoading(true);
@@ -747,10 +732,6 @@ const ConnectedAccounts = () => {
   };
 
   const handleAddLinkedinPage = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!pageIdInput.trim() || !pageNameInput.trim()) return;
 
     setAddingPage(true);

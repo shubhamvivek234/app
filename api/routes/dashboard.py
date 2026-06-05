@@ -245,7 +245,7 @@ def _build_action_items(
                 "kind": "verification",
                 "severity": "high",
                 "title": "Verify your email before publishing",
-                "message": "Connecting accounts, publishing, scheduling, and inviting teammates are blocked until the email address is verified.",
+                "message": "Publishing, scheduling, and inviting teammates are blocked until the email address is verified. Account connection can continue in the meantime.",
                 "cta_label": "Verify Email",
                 "cta_path": "/verify-email?returnTo=/dashboard",
             }

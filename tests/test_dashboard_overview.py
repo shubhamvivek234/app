@@ -206,6 +206,8 @@ async def test_dashboard_overview_returns_full_normalized_sections_from_db(monke
 
     assert result["account_health"][0]["health_state"] == "restricted"
     assert result["account_health"][1]["health_state"] == "reconnect_required"
+    verify_email_item = next(item for item in result["action_items"] if item["id"] == "verify-email")
+    assert "Account connection can continue" in verify_email_item["message"]
 
     assert result["performance_7d"]["published_in_period"] == 1
     assert result["performance_7d"]["platform_counts"]["instagram"] == 1

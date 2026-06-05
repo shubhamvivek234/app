@@ -1,3 +1,4 @@
+import inspect
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -184,6 +185,15 @@ async def test_list_accounts_keeps_expired_refreshable_accounts_healthy():
     assert response.connection_state == "healthy"
     assert response.connection_message == "Connection is healthy."
     assert response.requires_reconnect is False
+
+
+def test_account_connection_routes_allow_authenticated_unverified_users():
+    assert inspect.signature(accounts_route.get_oauth_url).parameters["current_user"].annotation is accounts_route.CurrentUser
+    assert inspect.signature(accounts_route.oauth_callback).parameters["current_user"].annotation is accounts_route.CurrentUser
+    assert inspect.signature(accounts_route.connect_bluesky).parameters["current_user"].annotation is accounts_route.CurrentUser
+    assert inspect.signature(accounts_route.connect_discord).parameters["current_user"].annotation is accounts_route.CurrentUser
+    assert inspect.signature(accounts_route.save_linkedin_orgs).parameters["current_user"].annotation is accounts_route.CurrentUser
+    assert inspect.signature(accounts_route.add_linkedin_page_manually).parameters["current_user"].annotation is accounts_route.CurrentUser
 
 
 @pytest.mark.asyncio

@@ -19,13 +19,11 @@ import { SiBluesky, SiMastodon, SiSnapchat, SiThreads } from 'react-icons/si';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { connectBluesky, connectDiscord, connectMastodon } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
 
 import OnboardingHeader from '@/components/OnboardingHeader';
 
 const OnboardingConnect = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPlatformModal, setShowPlatformModal] = useState(false);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
@@ -122,10 +120,6 @@ const OnboardingConnect = () => {
 
   const handleConnectPlatform = async () => {
     if (!selectedPlatform) return;
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
 
     setLoading(true);
     // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
@@ -171,10 +165,6 @@ const OnboardingConnect = () => {
   };
 
   const handleBlueskyConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
 
     setBlueskyLoading(true);
@@ -201,10 +191,6 @@ const OnboardingConnect = () => {
   };
 
   const handleDiscordConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!discordWebhookUrl.trim()) return;
 
     setDiscordLoading(true);
@@ -235,10 +221,6 @@ const OnboardingConnect = () => {
   };
 
   const handleMastodonConnect = async () => {
-    if (user && !user.email_verified) {
-      toast.error('Verify your email before connecting accounts.');
-      return;
-    }
     if (!mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()) return;
 
     setMastodonLoading(true);
