@@ -111,11 +111,11 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
 
     google_key = os.environ.get("GOOGLE_AI_KEY")
     if google_key:
+        model_name = "gemini-2.0-flash-lite"
         try:
             import google.generativeai as genai  # type: ignore
 
             genai.configure(api_key=google_key)
-            model_name = "gemini-2.0-flash-lite"
             model = genai.GenerativeModel(model_name, system_instruction=system_message)
             result = model.generate_content(prompt)
             text = _ensure_text("Gemini", getattr(result, "text", None))
@@ -137,10 +137,10 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
 
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
+        model_name = "llama-3.3-70b-versatile"
         try:
             from groq import AsyncGroq  # type: ignore
 
-            model_name = "llama-3.3-70b-versatile"
             client = AsyncGroq(api_key=groq_key)
             resp = await client.chat.completions.create(
                 model=model_name,
@@ -220,10 +220,10 @@ async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str
 
     cohere_key = os.environ.get("COHERE_API_KEY")
     if cohere_key:
+        model_name = "command-r"
         try:
             import cohere  # type: ignore
 
-            model_name = "command-r"
             client = cohere.AsyncClientV2(api_key=cohere_key)
             resp = await client.chat(
                 model=model_name,
