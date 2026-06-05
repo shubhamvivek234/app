@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from api.deps import CurrentUser, DB
 
@@ -13,10 +13,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["calendar"])
 
 
+_CALENDAR_NOTE_COLOR_ALIASES = {
+    "#4caf50": "green",
+    "#2196f3": "blue",
+    "#ffc107": "yellow",
+    "#f44336": "red",
+    "green": "green",
+    "emerald": "green",
+    "blue": "blue",
+    "sky": "blue",
+    "yellow": "yellow",
+    "amber": "yellow",
+    "red": "red",
+    "rose": "red",
+}
+
+
+def _normalize_calendar_note_color(color: str | None) -> str:
+    value = str(color or "").strip().lower()
+    return _CALENDAR_NOTE_COLOR_ALIASES.get(value, "green")
+
+
+def _serialize_calendar_note(doc: dict) -> dict:
+    note_value = str(doc.get("note") or doc.get("text") or "").strip()
+    serialized = dict(doc)
+    serialized.setdefault("id", serialized.get("note_id", ""))
+    serialized["note"] = note_value
+    serialized["text"] = note_value
+    serialized["color"] = _normalize_calendar_note_color(serialized.get("color"))
+    return serialized
+
+
 class CalendarNoteCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     date: str          # YYYY-MM-DD
-    note: str
-    color: str = "#4CAF50"
+    note: str | None = None
+    text: str | None = None
+    color: str = "green"
+
+    @model_validator(mode="after")
+    def _normalize_fields(self):
+        note_value = str(self.note or self.text or "").strip()
+        if not note_value:
+            raise ValueError("note is required")
+        self.note = note_value
+        self.text = note_value
+        self.color = _normalize_calendar_note_color(self.color)
+        return self
 
 
 class CalendarShareCreate(BaseModel):
@@ -35,9 +79,7 @@ async def list_calendar_notes(
         query["date"] = {"$regex": f"^{month}"}
     cursor = db.calendar_notes.find(query, {"_id": 0}).sort("date", 1)
     docs = await cursor.to_list(None)
-    for d in docs:
-        d.setdefault("id", d.get("note_id", ""))
-    return docs
+    return [_serialize_calendar_note(doc) for doc in docs]
 
 
 @router.post("/calendar/notes", status_code=status.HTTP_201_CREATED)
@@ -57,7 +99,7 @@ async def create_calendar_note(body: CalendarNoteCreate, current_user: CurrentUs
     }
     await db.calendar_notes.insert_one(doc)
     doc.pop("_id", None)
-    return doc
+    return _serialize_calendar_note(doc)
 
 
 @router.delete("/calendar/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)

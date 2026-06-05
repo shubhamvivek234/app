@@ -9,6 +9,8 @@ def _matches_value(value, expected):
     if isinstance(expected, dict):
         if "$exists" in expected:
             return (value is not None) == bool(expected["$exists"])
+        if "$gte" in expected:
+            return value is not None and value >= expected["$gte"]
         if "$in" in expected:
             return value in expected["$in"]
         if "$ne" in expected:
@@ -116,7 +118,7 @@ def _account(account_id, *, platform="instagram", expires_at=None, token_error=N
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_returns_normalized_workspace_sections(monkeypatch):
+async def test_dashboard_overview_returns_full_normalized_sections_from_db(monkeypatch):
     now = datetime.now(timezone.utc)
     db = FakeDB(
         posts=[
@@ -158,24 +160,10 @@ async def test_dashboard_overview_returns_normalized_workspace_sections(monkeypa
         ],
     )
 
-    async def fake_hydrate_account(_db, account):
-        return dict(account)
-
     async def fake_hydrate_posts(_db, docs):
         return list(docs)
 
-    async def fake_analytics_overview(**_kwargs):
-        return {
-            "published_in_period": 4,
-            "platform_counts": {"instagram": 3, "tiktok": 1},
-            "type_counts": {"text": 1, "image": 2, "video": 1},
-            "audience_totals": {"followers_total": 1200, "reach": 2400, "impressions": None, "profile_views": None},
-            "errors": [{"account": "acct_2", "error": "Audience totals unavailable."}],
-        }
-
-    monkeypatch.setattr(dashboard_routes, "_hydrate_social_account_metadata", fake_hydrate_account)
     monkeypatch.setattr(dashboard_routes, "_hydrate_post_card_fields_for_docs", fake_hydrate_posts)
-    monkeypatch.setattr(dashboard_routes.analytics_routes, "analytics_overview", fake_analytics_overview)
 
     result = await dashboard_routes.dashboard_overview(
         current_user={
@@ -189,6 +177,7 @@ async def test_dashboard_overview_returns_normalized_workspace_sections(monkeypa
         refresh=False,
     )
 
+    assert result["sections_returned"] == ["core", "queue", "wins", "activity", "health", "performance"]
     assert result["summary"] == {
         "total_posts": 6,
         "scheduled_posts": 2,
@@ -218,32 +207,34 @@ async def test_dashboard_overview_returns_normalized_workspace_sections(monkeypa
     assert result["account_health"][0]["health_state"] == "restricted"
     assert result["account_health"][1]["health_state"] == "reconnect_required"
 
-    assert result["performance_7d"]["published_in_period"] == 4
-    assert result["performance_7d"]["platform_counts"]["instagram"] == 3
+    assert result["performance_7d"]["published_in_period"] == 1
+    assert result["performance_7d"]["platform_counts"]["instagram"] == 1
+    assert result["performance_7d"]["type_counts"]["text"] == 1
+    assert result["performance_7d"]["audience_totals"]["followers_total"] == 2400
     assert result["activity"][0]["target_path"] == "/accounts"
     assert result["activity"][0]["severity"] == "high"
+    assert any(error["metric"] == "reach" for error in result["performance_7d"]["errors"])
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_gracefully_degrades_performance_snapshot(monkeypatch):
+async def test_dashboard_overview_sections_skip_heavy_health_and_performance_logic(monkeypatch):
     now = datetime.now(timezone.utc)
     db = FakeDB(
-        posts=[_post("pub-1", status="published", created_at=now - timedelta(days=1), published_at=now - timedelta(hours=2))],
+        posts=[
+            _post("sched-1", status="scheduled", created_at=now - timedelta(hours=1), scheduled_time=now + timedelta(hours=3)),
+            _post("pub-1", status="published", created_at=now - timedelta(days=1), published_at=now - timedelta(hours=2)),
+        ],
         social_accounts=[_account("acct_1", expires_at=now + timedelta(days=10))],
     )
-
-    async def fake_hydrate_account(_db, account):
-        return dict(account)
 
     async def fake_hydrate_posts(_db, docs):
         return list(docs)
 
-    async def fake_analytics_overview(**_kwargs):
-        raise RuntimeError("provider temporarily unavailable")
+    async def forbidden_hydrate(_db, _account):
+        raise AssertionError("dashboard should not hydrate account metadata for lightweight sections")
 
-    monkeypatch.setattr(dashboard_routes, "_hydrate_social_account_metadata", fake_hydrate_account)
     monkeypatch.setattr(dashboard_routes, "_hydrate_post_card_fields_for_docs", fake_hydrate_posts)
-    monkeypatch.setattr(dashboard_routes.analytics_routes, "analytics_overview", fake_analytics_overview)
+    monkeypatch.setattr(dashboard_routes, "_hydrate_social_account_metadata", forbidden_hydrate)
 
     result = await dashboard_routes.dashboard_overview(
         current_user={
@@ -254,9 +245,102 @@ async def test_dashboard_overview_gracefully_degrades_performance_snapshot(monke
         },
         db=db,
         days=7,
-        refresh=True,
+        refresh=False,
+        sections="core,queue,wins,activity",
     )
 
-    assert result["performance_7d"]["published_in_period"] == 0
-    assert result["performance_7d"]["errors"][0]["account"] == "workspace"
-    assert "provider temporarily unavailable" in result["performance_7d"]["errors"][0]["error"]
+    assert result["sections_returned"] == ["core", "queue", "wins", "activity"]
+    assert "account_health" not in result
+    assert "performance_7d" not in result
+    assert result["summary"]["scheduled_posts"] == 1
+    assert result["upcoming_posts"][0]["id"] == "sched-1"
+    assert result["recent_published"][0]["id"] == "pub-1"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_health_uses_stored_state_by_default_and_hydrates_missing_metadata_on_refresh(monkeypatch):
+    now = datetime.now(timezone.utc)
+    complete_account = _account("acct_complete", expires_at=now + timedelta(days=10))
+    missing_account = _account("acct_missing", expires_at=now + timedelta(days=4))
+    missing_account["picture_url"] = None
+    missing_account["display_name"] = None
+    db = FakeDB(
+        social_accounts=[complete_account, missing_account],
+    )
+
+    calls = []
+
+    async def tracked_hydrate(_db, account):
+        calls.append(account["account_id"])
+        hydrated = dict(account)
+        hydrated["picture_url"] = "https://cdn.example/refreshed.jpg"
+        hydrated["display_name"] = "Refreshed account"
+        return hydrated
+
+    monkeypatch.setattr(dashboard_routes, "_hydrate_social_account_metadata", tracked_hydrate)
+
+    default_result = await dashboard_routes.dashboard_overview(
+        current_user={
+            "user_id": "user_1",
+            "default_workspace_id": "ws_1",
+            "email_verified": True,
+            "subscription_status": "active",
+        },
+        db=db,
+        days=7,
+        refresh=False,
+        sections="health",
+    )
+
+    assert default_result["sections_returned"] == ["health"]
+    assert calls == []
+    assert len(default_result["account_health"]) == 2
+
+    refresh_result = await dashboard_routes.dashboard_overview(
+        current_user={
+            "user_id": "user_1",
+            "default_workspace_id": "ws_1",
+            "email_verified": True,
+            "subscription_status": "active",
+        },
+        db=db,
+        days=7,
+        refresh=True,
+        sections="health",
+    )
+
+    assert refresh_result["sections_returned"] == ["health"]
+    assert calls == ["acct_missing"]
+    assert any(account["display_name"] == "Refreshed account" for account in refresh_result["account_health"])
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_returns_partial_data_when_one_section_fails(monkeypatch):
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[_post("sched-1", status="scheduled", created_at=now - timedelta(hours=1), scheduled_time=now + timedelta(hours=1))],
+        social_accounts=[_account("acct_1", expires_at=now + timedelta(days=10))],
+    )
+
+    async def broken_hydrate_posts(_db, _docs):
+        raise RuntimeError("post hydration unavailable")
+
+    monkeypatch.setattr(dashboard_routes, "_hydrate_post_card_fields_for_docs", broken_hydrate_posts)
+
+    result = await dashboard_routes.dashboard_overview(
+        current_user={
+            "user_id": "user_1",
+            "default_workspace_id": "ws_1",
+            "email_verified": True,
+            "subscription_status": "active",
+        },
+        db=db,
+        days=7,
+        refresh=False,
+        sections="core,queue",
+    )
+
+    assert result["sections_returned"] == ["core"]
+    assert result["summary"]["scheduled_posts"] == 1
+    assert result["section_errors"]["queue"] == "post hydration unavailable"
+    assert "upcoming_posts" not in result

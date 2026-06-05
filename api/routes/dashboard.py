@@ -1,12 +1,11 @@
 """Dashboard overview — aggregated workspace control center payload."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query
 
 from api.deps import CurrentUser, DB, require_permission
-from api.routes import analytics as analytics_routes
 from api.routes.accounts import _hydrate_social_account_metadata
 from api.routes.posts import _hydrate_post_card_fields_for_docs
 
@@ -14,6 +13,16 @@ router = APIRouter(tags=["dashboard"])
 
 _ACTION_SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _ACCOUNT_HEALTH_RANK = {"restricted": 0, "reconnect_required": 1, "expiring": 2, "healthy": 3}
+_DASHBOARD_SECTIONS = ("core", "queue", "wins", "activity", "health", "performance")
+_SECTION_FIELDS = {
+    "core": ("summary", "operations", "action_items", "refreshed_at"),
+    "queue": ("upcoming_posts",),
+    "wins": ("recent_published",),
+    "activity": ("activity",),
+    "health": ("account_health",),
+    "performance": ("performance_7d",),
+}
+_DEFAULT_TYPE_COUNTS = {"text": 0, "image": 0, "video": 0}
 
 
 def _workspace_id_for(current_user: dict[str, Any]) -> str:
@@ -78,6 +87,18 @@ def _build_account_label_map(accounts: list[dict[str, Any]]) -> dict[str, str]:
         for identifier in identifiers:
             lookup[identifier] = label
     return lookup
+
+
+def _parse_sections_param(sections: str | None) -> list[str]:
+    if not isinstance(sections, str) or not sections:
+        return list(_DASHBOARD_SECTIONS)
+
+    requested: list[str] = []
+    for raw_section in sections.split(","):
+        section = raw_section.strip().lower()
+        if section and section in _SECTION_FIELDS and section not in requested:
+            requested.append(section)
+    return requested or list(_DASHBOARD_SECTIONS)
 
 
 def _derive_account_labels(doc: dict[str, Any], account_lookup: dict[str, str]) -> list[str]:
@@ -331,24 +352,93 @@ async def _count_documents(collection, query: dict[str, Any]) -> int:
     return await collection.count_documents(query)
 
 
-@router.get(
-    "/dashboard/overview",
-    dependencies=[
-        require_permission("analytics:read"),
-        require_permission("post:read"),
-        require_permission("account:read"),
-    ],
-)
-async def dashboard_overview(
-    current_user: CurrentUser,
-    db: DB,
-    days: int = Query(7, ge=1, le=365),
-    refresh: bool = Query(False),
-):
-    workspace_id = _workspace_id_for(current_user)
-    user_id = current_user["user_id"]
-    now = datetime.now(timezone.utc)
+async def _load_raw_accounts(db: DB, user_id: str) -> list[dict[str, Any]]:
+    return await db.social_accounts.find(
+        {"user_id": user_id, "is_active": True},
+        {"_id": 0, "refresh_token": 0},
+    ).to_list(length=100)
 
+
+def _dashboard_account_needs_hydration(account: dict[str, Any]) -> bool:
+    return any(
+        [
+            not account.get("display_name"),
+            not account.get("platform_username"),
+            not account.get("picture_url"),
+            account.get("followers_count") is None,
+            account.get("posts_count") is None,
+        ]
+    )
+
+
+async def _hydrate_dashboard_accounts(
+    db: DB,
+    accounts: list[dict[str, Any]],
+    *,
+    refresh: bool,
+    concurrency: int = 4,
+) -> list[dict[str, Any]]:
+    if not refresh:
+        return [dict(account) for account in accounts]
+
+    semaphore = asyncio.Semaphore(max(concurrency, 1))
+
+    async def _maybe_hydrate(account: dict[str, Any]) -> dict[str, Any]:
+        cloned = dict(account)
+        if not _dashboard_account_needs_hydration(cloned):
+            return cloned
+        async with semaphore:
+            try:
+                return await _hydrate_social_account_metadata(db, cloned)
+            except Exception:
+                return cloned
+
+    return await asyncio.gather(*[_maybe_hydrate(account) for account in accounts])
+
+
+def _build_summary_and_operations(
+    current_user: dict[str, Any],
+    *,
+    total_posts: int,
+    scheduled_posts: int,
+    published_posts: int,
+    draft_posts: int,
+    failed_posts: int,
+    unread_notifications: int,
+    unread_inbox: int,
+    unread_comments: int,
+    unread_dms: int,
+    connected_accounts: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = {
+        "total_posts": total_posts,
+        "scheduled_posts": scheduled_posts,
+        "published_posts": published_posts,
+        "draft_posts": draft_posts,
+        "failed_posts": failed_posts,
+        "connected_accounts": connected_accounts,
+    }
+    operations = {
+        "unread_notifications": unread_notifications,
+        "unread_inbox": unread_inbox,
+        "unread_comments": unread_comments,
+        "unread_dms": unread_dms,
+        "failed_posts": failed_posts,
+        "verification_required": not bool(current_user.get("email_verified", False)),
+        "subscription_status": current_user.get("subscription_status", "free"),
+    }
+    return summary, operations
+
+
+async def _build_core_section(
+    db: DB,
+    *,
+    current_user: dict[str, Any],
+    workspace_id: str,
+    user_id: str,
+    now: datetime,
+    raw_accounts: list[dict[str, Any]],
+) -> dict[str, Any]:
     base_post_query = {
         "workspace_id": workspace_id,
         "user_id": user_id,
@@ -399,101 +489,321 @@ async def dashboard_overview(
         ),
     )
 
-    raw_accounts = await db.social_accounts.find(
-        {"user_id": user_id, "is_active": True},
-        {"_id": 0, "refresh_token": 0},
-    ).to_list(length=100)
-    hydrated_accounts = await asyncio.gather(
-        *[_hydrate_social_account_metadata(db, dict(account)) for account in raw_accounts]
-    )
-    account_lookup = _build_account_label_map(hydrated_accounts)
-    account_health = sorted(
-        [_normalize_account_health(account, now) for account in hydrated_accounts],
+    raw_account_health = sorted(
+        [_normalize_account_health(account, now) for account in raw_accounts],
         key=lambda account: (
             _ACCOUNT_HEALTH_RANK.get(account["health_state"], 99),
             account.get("platform") or "",
             account.get("display_name") or account.get("platform_username") or "",
         ),
     )
+    summary, operations = _build_summary_and_operations(
+        current_user,
+        total_posts=total_posts,
+        scheduled_posts=scheduled_posts,
+        published_posts=published_posts,
+        draft_posts=draft_posts,
+        failed_posts=failed_posts,
+        unread_notifications=unread_notifications,
+        unread_inbox=unread_inbox,
+        unread_comments=unread_comments,
+        unread_dms=unread_dms,
+        connected_accounts=len(raw_accounts),
+    )
+    return {
+        "summary": summary,
+        "operations": operations,
+        "action_items": _build_action_items(
+            current_user,
+            operations=operations,
+            summary=summary,
+            account_health=raw_account_health,
+        ),
+        "refreshed_at": now,
+    }
 
+
+async def _build_queue_section(
+    db: DB,
+    *,
+    workspace_id: str,
+    user_id: str,
+    account_lookup: dict[str, str],
+) -> dict[str, Any]:
+    base_post_query = {
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "deleted_at": {"$exists": False},
+    }
     upcoming_docs = await db.posts.find(
         {**base_post_query, "status": "scheduled"},
         {"_id": 0},
     ).sort([("scheduled_time", 1), ("created_at", 1)]).limit(8).to_list(length=8)
+    upcoming_hydrated = await _hydrate_post_card_fields_for_docs(db, upcoming_docs)
+    return {
+        "upcoming_posts": [_compact_post_card(doc, account_lookup) for doc in upcoming_hydrated],
+    }
+
+
+async def _build_recent_wins_section(
+    db: DB,
+    *,
+    workspace_id: str,
+    user_id: str,
+    account_lookup: dict[str, str],
+) -> dict[str, Any]:
+    base_post_query = {
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "deleted_at": {"$exists": False},
+    }
     recent_docs = await db.posts.find(
         {**base_post_query, "status": "published"},
         {"_id": 0},
     ).sort([("published_at", -1), ("updated_at", -1), ("created_at", -1)]).limit(5).to_list(length=5)
+    recent_hydrated = await _hydrate_post_card_fields_for_docs(db, recent_docs)
+    return {
+        "recent_published": [_compact_post_card(doc, account_lookup) for doc in recent_hydrated],
+    }
 
-    upcoming_hydrated, recent_hydrated = await asyncio.gather(
-        _hydrate_post_card_fields_for_docs(db, upcoming_docs),
-        _hydrate_post_card_fields_for_docs(db, recent_docs),
-    )
 
+async def _build_activity_section(
+    db: DB,
+    *,
+    user_id: str,
+) -> dict[str, Any]:
     recent_notifications = await db.notifications.find(
         {"user_id": user_id},
         {"_id": 0},
     ).sort("created_at", -1).limit(5).to_list(length=5)
-    activity = [_normalize_activity(notification) for notification in recent_notifications]
-
-    summary = {
-        "total_posts": total_posts,
-        "scheduled_posts": scheduled_posts,
-        "published_posts": published_posts,
-        "draft_posts": draft_posts,
-        "failed_posts": failed_posts,
-        "connected_accounts": len(account_health),
-    }
-    operations = {
-        "unread_notifications": unread_notifications,
-        "unread_inbox": unread_inbox,
-        "unread_comments": unread_comments,
-        "unread_dms": unread_dms,
-        "failed_posts": failed_posts,
-        "verification_required": not bool(current_user.get("email_verified", False)),
-        "subscription_status": current_user.get("subscription_status", "free"),
+    return {
+        "activity": [_normalize_activity(notification) for notification in recent_notifications],
     }
 
+
+def _coerce_metric_int(value: Any) -> int | None:
+    if value is None:
+        return None
     try:
-        performance_snapshot = await analytics_routes.analytics_overview(
-            current_user=current_user,
-            db=db,
-            days=days,
-            platform=None,
-            account_id=None,
-            refresh=refresh,
-        )
-        performance_7d = {
-            "published_in_period": performance_snapshot.get("published_in_period", 0),
-            "platform_counts": performance_snapshot.get("platform_counts", {}),
-            "type_counts": performance_snapshot.get("type_counts", {}),
-            "audience_totals": performance_snapshot.get("audience_totals", {}),
-            "errors": performance_snapshot.get("errors", []),
-        }
-    except Exception as exc:
-        performance_7d = {
-            "published_in_period": 0,
-            "platform_counts": {},
-            "type_counts": {"text": 0, "image": 0, "video": 0},
-            "audience_totals": {},
-            "errors": [{"account": "workspace", "error": str(exc) or "Unable to load performance snapshot."}],
-        }
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
-    action_items = _build_action_items(
-        current_user,
-        operations=operations,
-        summary=summary,
-        account_health=account_health,
+
+async def _build_health_section(
+    db: DB,
+    *,
+    raw_accounts: list[dict[str, Any]],
+    now: datetime,
+    refresh: bool,
+) -> dict[str, Any]:
+    accounts = await _hydrate_dashboard_accounts(db, raw_accounts, refresh=refresh)
+    account_health = sorted(
+        [_normalize_account_health(account, now) for account in accounts],
+        key=lambda account: (
+            _ACCOUNT_HEALTH_RANK.get(account["health_state"], 99),
+            account.get("platform") or "",
+            account.get("display_name") or account.get("platform_username") or "",
+        ),
     )
+    return {"account_health": account_health}
+
+
+async def _build_performance_section(
+    db: DB,
+    *,
+    base_post_query: dict[str, Any],
+    raw_accounts: list[dict[str, Any]],
+    days: int,
+    now: datetime,
+) -> dict[str, Any]:
+    window_start = now - timedelta(days=days)
+    recent_docs = await db.posts.find(
+        {
+            **base_post_query,
+            "status": "published",
+            "published_at": {"$gte": window_start},
+        },
+        {"_id": 0, "platforms": 1, "post_type": 1, "published_at": 1},
+    ).to_list(length=5000)
+
+    platform_counts: dict[str, int] = {}
+    type_counts = dict(_DEFAULT_TYPE_COUNTS)
+    for doc in recent_docs:
+        for platform in doc.get("platforms") or []:
+            normalized_platform = str(platform or "").strip().lower()
+            if normalized_platform:
+                platform_counts[normalized_platform] = platform_counts.get(normalized_platform, 0) + 1
+        post_type = str(doc.get("post_type") or "text").strip().lower()
+        if post_type not in type_counts:
+            type_counts[post_type] = 0
+        type_counts[post_type] += 1
+
+    totals = {
+        "followers_total": 0,
+        "reach": 0,
+        "impressions": 0,
+        "profile_views": 0,
+    }
+    supported_counts = {key: 0 for key in totals}
+    for account in raw_accounts:
+        if (followers := _coerce_metric_int(account.get("followers_count"))) is not None:
+            totals["followers_total"] += followers
+            supported_counts["followers_total"] += 1
+        if (reach := _coerce_metric_int(account.get("reach"))) is not None:
+            totals["reach"] += reach
+            supported_counts["reach"] += 1
+        if (impressions := _coerce_metric_int(account.get("impressions"))) is not None:
+            totals["impressions"] += impressions
+            supported_counts["impressions"] += 1
+        if (profile_views := _coerce_metric_int(account.get("profile_views"))) is not None:
+            totals["profile_views"] += profile_views
+            supported_counts["profile_views"] += 1
+
+    audience_totals = {
+        metric: totals[metric] if supported_counts[metric] else None
+        for metric in totals
+    }
+    errors = [
+        {
+            "metric": metric,
+            "error": f"{label} totals are not available in the dashboard snapshot for the connected accounts.",
+        }
+        for metric, label in (
+            ("followers_total", "Follower"),
+            ("reach", "Reach"),
+            ("impressions", "Impression"),
+            ("profile_views", "Profile view"),
+        )
+        if not supported_counts[metric]
+    ]
 
     return {
-        "summary": summary,
-        "operations": operations,
-        "action_items": action_items,
-        "upcoming_posts": [_compact_post_card(doc, account_lookup) for doc in upcoming_hydrated],
-        "recent_published": [_compact_post_card(doc, account_lookup) for doc in recent_hydrated],
-        "account_health": account_health,
-        "performance_7d": performance_7d,
-        "activity": activity,
+        "performance_7d": {
+            "published_in_period": len(recent_docs),
+            "platform_counts": platform_counts,
+            "type_counts": type_counts,
+            "audience_totals": audience_totals,
+            "errors": errors,
+        },
+    }
+
+
+@router.get(
+    "/dashboard/overview",
+    dependencies=[
+        require_permission("analytics:read"),
+        require_permission("post:read"),
+        require_permission("account:read"),
+    ],
+)
+async def dashboard_overview(
+    current_user: CurrentUser,
+    db: DB,
+    days: int = Query(7, ge=1, le=365),
+    refresh: bool = Query(False),
+    sections: str | None = Query(None),
+):
+    workspace_id = _workspace_id_for(current_user)
+    user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
+    requested_sections = _parse_sections_param(sections)
+    base_post_query = {
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "deleted_at": {"$exists": False},
+    }
+    response: dict[str, Any] = {
         "refreshed_at": now,
     }
+    section_errors: dict[str, str] = {}
+    successful_sections: set[str] = set()
+
+    raw_accounts_task: asyncio.Task[list[dict[str, Any]]] | None = None
+
+    async def _get_raw_accounts() -> list[dict[str, Any]]:
+        nonlocal raw_accounts_task
+        if raw_accounts_task is None:
+            raw_accounts_task = asyncio.create_task(_load_raw_accounts(db, user_id))
+        return await raw_accounts_task
+
+    async def _run_section(section_name: str, builder) -> None:
+        try:
+            payload = await builder()
+            response.update(payload)
+            successful_sections.add(section_name)
+        except Exception as exc:
+            section_errors[section_name] = str(exc) or f"Unable to load {section_name}."
+
+    async def _build_core() -> dict[str, Any]:
+        return await _build_core_section(
+            db,
+            current_user=current_user,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            now=now,
+            raw_accounts=await _get_raw_accounts(),
+        )
+
+    async def _build_queue() -> dict[str, Any]:
+        account_lookup = _build_account_label_map(await _get_raw_accounts())
+        return await _build_queue_section(
+            db,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            account_lookup=account_lookup,
+        )
+
+    async def _build_wins() -> dict[str, Any]:
+        account_lookup = _build_account_label_map(await _get_raw_accounts())
+        return await _build_recent_wins_section(
+            db,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            account_lookup=account_lookup,
+        )
+
+    async def _build_activity() -> dict[str, Any]:
+        return await _build_activity_section(db, user_id=user_id)
+
+    async def _build_health() -> dict[str, Any]:
+        return await _build_health_section(
+            db,
+            raw_accounts=await _get_raw_accounts(),
+            now=now,
+            refresh=refresh,
+        )
+
+    async def _build_performance() -> dict[str, Any]:
+        return await _build_performance_section(
+            db,
+            base_post_query=base_post_query,
+            raw_accounts=await _get_raw_accounts(),
+            days=days,
+            now=now,
+        )
+
+    builders = {
+        "core": _build_core,
+        "queue": _build_queue,
+        "wins": _build_wins,
+        "activity": _build_activity,
+        "health": _build_health,
+        "performance": _build_performance,
+    }
+
+    await asyncio.gather(*[
+        _run_section(section_name, builders[section_name])
+        for section_name in requested_sections
+    ])
+
+    response["sections_returned"] = [
+        section_name
+        for section_name in requested_sections
+        if section_name in successful_sections
+    ]
+
+    if section_errors:
+        response["section_errors"] = section_errors
+
+    return response

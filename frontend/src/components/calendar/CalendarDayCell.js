@@ -114,7 +114,7 @@ const CalendarDayCell = ({
                   noteColorClasses[note.color]?.border || noteColorClasses.green.border,
                 )}
               >
-                {note.text}
+                {note.text || note.note}
               </div>
             ))}
             {notes.length > 2 ? (

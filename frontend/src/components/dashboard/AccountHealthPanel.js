@@ -13,7 +13,28 @@ import {
   platformPillClass,
 } from './helpers';
 
-const AccountHealthPanel = ({ accounts = [], onNavigate }) => {
+const LoadingState = () => (
+  <div className="space-y-3">
+    {[0, 1, 2].map((index) => (
+      <div key={index} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+        <div className="h-11 w-11 shrink-0 animate-pulse rounded-full bg-slate-200" />
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="flex gap-2">
+            <div className="h-6 w-20 animate-pulse rounded-full bg-slate-200" />
+            <div className="h-6 w-24 animate-pulse rounded-full bg-slate-200" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-4 w-40 animate-pulse rounded bg-slate-200" />
+            <div className="h-4 w-32 animate-pulse rounded bg-slate-100" />
+          </div>
+          <div className="h-3 w-48 animate-pulse rounded bg-slate-100" />
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+const AccountHealthPanel = ({ accounts = [], loading = false, error = null, onNavigate }) => {
   return (
     <Card className="border-slate-200 bg-white shadow-sm">
       <CardHeader className="border-b border-slate-100 pb-5">
@@ -28,7 +49,13 @@ const AccountHealthPanel = ({ accounts = [], onNavigate }) => {
         </div>
       </CardHeader>
       <CardContent className="pt-6">
-        {accounts.length === 0 ? (
+        {loading && accounts.length === 0 ? (
+          <LoadingState />
+        ) : error && accounts.length === 0 ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-900">
+            Account health could not be refreshed right now. Stored workspace data is still available elsewhere in the dashboard.
+          </div>
+        ) : accounts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
               <FaLink />

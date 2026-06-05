@@ -19,7 +19,53 @@ import { useAuth } from '@/context/AuthContext';
 import { formatRelativeDate } from '@/components/dashboard/helpers';
 
 const DASHBOARD_WINDOW_DAYS = 7;
+const CORE_SECTIONS = ['core', 'queue', 'wins', 'activity'];
+const SECONDARY_SECTIONS = ['health', 'performance'];
+const DASHBOARD_SECTION_FIELDS = {
+  core: ['summary', 'operations', 'action_items', 'refreshed_at'],
+  queue: ['upcoming_posts'],
+  wins: ['recent_published'],
+  activity: ['activity'],
+  health: ['account_health'],
+  performance: ['performance_7d'],
+};
 const STREAM_REFRESH_STATUSES = new Set(['queued', 'scheduled', 'processing', 'published', 'failed', 'partial', 'cancelled']);
+
+const mergeDashboardPayload = (previous, next) => {
+  const merged = { ...(previous || {}) };
+  const sectionsReturned = Object.prototype.hasOwnProperty.call(next || {}, 'sections_returned')
+    ? (Array.isArray(next?.sections_returned) ? next.sections_returned : [])
+    : Object.keys(DASHBOARD_SECTION_FIELDS);
+
+  sectionsReturned.forEach((section) => {
+    (DASHBOARD_SECTION_FIELDS[section] || []).forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(next, field)) {
+        merged[field] = next[field];
+      }
+    });
+  });
+
+  if (Object.prototype.hasOwnProperty.call(next || {}, 'refreshed_at')) {
+    merged.refreshed_at = next.refreshed_at;
+  }
+
+  merged.sections_returned = Array.from(
+    new Set([...(previous?.sections_returned || []), ...sectionsReturned])
+  );
+
+  const nextSectionErrors = next?.section_errors || {};
+  const clearedErrors = { ...(previous?.section_errors || {}), ...nextSectionErrors };
+  sectionsReturned.forEach((section) => {
+    delete clearedErrors[section];
+  });
+  if (Object.keys(clearedErrors).length > 0) {
+    merged.section_errors = clearedErrors;
+  } else {
+    delete merged.section_errors;
+  }
+
+  return merged;
+};
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -27,45 +73,89 @@ const Dashboard = () => {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [panelLoading, setPanelLoading] = useState({
+    health: true,
+    performance: true,
+  });
   const refreshTimerRef = useRef(null);
+  const deferredPanelLoadRef = useRef(null);
 
-  const loadDashboard = useCallback(async ({ refresh = false, silent = false, withLoader = false } = {}) => {
-    if (refresh) {
-      setRefreshing(true);
-    } else if (withLoader) {
-      setLoading(true);
-    }
-
+  const loadDashboardSections = useCallback(async (sections, { refresh = false, silent = false } = {}) => {
     try {
-      const data = await getDashboardOverview({ days: DASHBOARD_WINDOW_DAYS, refresh });
-      setDashboard(data);
+      const data = await getDashboardOverview({ days: DASHBOARD_WINDOW_DAYS, refresh, sections });
+      setDashboard((previous) => mergeDashboardPayload(previous, data));
+      return data;
     } catch (error) {
       if (!silent) {
         toast.error('Failed to load dashboard overview');
       }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      throw error;
     }
   }, []);
 
+  const loadDeferredPanels = useCallback(async ({ refresh = false, silent = true } = {}) => {
+    setPanelLoading({
+      health: true,
+      performance: true,
+    });
+    try {
+      await loadDashboardSections(SECONDARY_SECTIONS, { refresh, silent });
+    } finally {
+      setPanelLoading({
+        health: false,
+        performance: false,
+      });
+    }
+  }, [loadDashboardSections]);
+
   useEffect(() => {
-    void loadDashboard({ withLoader: true });
+    let cancelled = false;
+
+    const runInitialLoad = async () => {
+      setLoading(true);
+      try {
+        await loadDashboardSections(CORE_SECTIONS, { refresh: false });
+        if (cancelled) return;
+        setLoading(false);
+        deferredPanelLoadRef.current = setTimeout(() => {
+          void loadDeferredPanels({ refresh: false, silent: true });
+        }, 0);
+      } catch (_error) {
+        if (cancelled) return;
+        setLoading(false);
+      }
+    };
+
+    void runInitialLoad();
     return () => {
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
       }
+      if (deferredPanelLoadRef.current) {
+        clearTimeout(deferredPanelLoadRef.current);
+      }
+      cancelled = true;
     };
-  }, [loadDashboard]);
+  }, [loadDashboardSections, loadDeferredPanels]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadDashboardSections(CORE_SECTIONS, { refresh: true });
+      await loadDeferredPanels({ refresh: true, silent: true });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadDashboardSections, loadDeferredPanels]);
 
   const scheduleBackgroundRefresh = useCallback(() => {
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
     }
     refreshTimerRef.current = setTimeout(() => {
-      void loadDashboard({ refresh: false, silent: true });
+      void loadDashboardSections(['core', 'queue', 'wins'], { refresh: false, silent: true });
     }, 1200);
-  }, [loadDashboard]);
+  }, [loadDashboardSections]);
 
   const handlePostUpdate = useCallback((update) => {
     const postId = update?.post_id;
@@ -120,7 +210,7 @@ const Dashboard = () => {
         <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-10 shadow-sm">
           <h1 className="text-2xl font-semibold text-slate-950">Dashboard unavailable</h1>
           <p className="mt-3 text-slate-600">The control center could not be loaded right now. Retry the request and keep the rest of the workspace untouched.</p>
-          <Button className="mt-6" onClick={() => loadDashboard({ refresh: true })}>
+          <Button className="mt-6" onClick={handleRefresh}>
             <FaRedo className="mr-2" />
             Retry
           </Button>
@@ -163,7 +253,7 @@ const Dashboard = () => {
                 <Button
                   variant="outline"
                   className="border-white/20 bg-white/5 text-white hover:bg-white/10"
-                  onClick={() => loadDashboard({ refresh: true })}
+                  onClick={handleRefresh}
                   disabled={refreshing}
                 >
                   <FaSyncAlt className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
@@ -190,11 +280,21 @@ const Dashboard = () => {
 
         <div className="grid gap-8 xl:grid-cols-[1.15fr_0.85fr]">
           <UpcomingQueue posts={dashboard.upcoming_posts} onNavigate={navigate} />
-          <AccountHealthPanel accounts={dashboard.account_health} onNavigate={navigate} />
+          <AccountHealthPanel
+            accounts={dashboard.account_health}
+            loading={panelLoading.health}
+            error={dashboard.section_errors?.health}
+            onNavigate={navigate}
+          />
         </div>
 
         <div className="grid gap-8 xl:grid-cols-[1.15fr_0.85fr]">
-          <PerformanceSnapshot7d performance={dashboard.performance_7d} onNavigate={navigate} />
+          <PerformanceSnapshot7d
+            performance={dashboard.performance_7d}
+            loading={panelLoading.performance}
+            error={dashboard.section_errors?.performance}
+            onNavigate={navigate}
+          />
           <RecentActivity operations={dashboard.operations} activity={dashboard.activity} onNavigate={navigate} />
         </div>
 

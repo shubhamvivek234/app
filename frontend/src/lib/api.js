@@ -306,10 +306,15 @@ export const getStats = async () => {
   return response.data;
 };
 
-export const getDashboardOverview = async ({ days = 7, refresh = false } = {}) => {
+export const getDashboardOverview = async ({ days = 7, refresh = false, sections = null } = {}) => {
   const params = new URLSearchParams();
   if (days) params.set('days', String(days));
   if (refresh) params.set('refresh', 'true');
+  if (Array.isArray(sections) && sections.length > 0) {
+    params.set('sections', sections.join(','));
+  } else if (typeof sections === 'string' && sections.trim()) {
+    params.set('sections', sections.trim());
+  }
   const query = params.toString();
   const response = await axios.get(`${API}/dashboard/overview${query ? `?${query}` : ''}`, {
     headers: getAuthHeaders(),
@@ -773,14 +778,51 @@ export const deleteApiKey = async (keyId) => {
 };
 
 // ── Calendar Notes ──
-export const getCalendarNotes = async (params) => {
+const CALENDAR_NOTE_COLOR_ALIASES = {
+  '#4caf50': 'green',
+  '#2196f3': 'blue',
+  '#ffc107': 'yellow',
+  '#f44336': 'red',
+  green: 'green',
+  emerald: 'green',
+  blue: 'blue',
+  sky: 'blue',
+  yellow: 'yellow',
+  amber: 'yellow',
+  red: 'red',
+  rose: 'red',
+};
+
+const normalizeCalendarNoteColor = (color) => {
+  const normalized = String(color || '').trim().toLowerCase();
+  return CALENDAR_NOTE_COLOR_ALIASES[normalized] || 'green';
+};
+
+const normalizeCalendarNote = (note) => ({
+  ...note,
+  id: note?.id || note?.note_id || '',
+  note_id: note?.note_id || note?.id || '',
+  text: String(note?.text || note?.note || '').trim(),
+  note: String(note?.note || note?.text || '').trim(),
+  color: normalizeCalendarNoteColor(note?.color),
+});
+
+export const getCalendarNotes = async (paramsOrMonth) => {
+  const params = typeof paramsOrMonth === 'string'
+    ? { month: paramsOrMonth }
+    : (paramsOrMonth || {});
   const response = await axios.get(`${API}/calendar/notes`, { headers: getAuthHeaders(), params });
-  return response.data;
+  return Array.isArray(response.data) ? response.data.map(normalizeCalendarNote) : [];
 };
 
 export const createCalendarNote = async (data) => {
-  const response = await axios.post(`${API}/calendar/notes`, data, { headers: getAuthHeaders() });
-  return response.data;
+  const payload = {
+    date: data?.date,
+    note: String(data?.note || data?.text || '').trim(),
+    color: normalizeCalendarNoteColor(data?.color),
+  };
+  const response = await axios.post(`${API}/calendar/notes`, payload, { headers: getAuthHeaders() });
+  return normalizeCalendarNote(response.data);
 };
 
 export const deleteCalendarNote = async (noteId) => {

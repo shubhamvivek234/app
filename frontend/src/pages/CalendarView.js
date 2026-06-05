@@ -61,7 +61,7 @@ const CalendarView = () => {
     const loadNotes = async () => {
       try {
         const month = format(currentDate, 'yyyy-MM');
-        const data = await getCalendarNotes(month);
+        const data = await getCalendarNotes({ month });
         setNotes(data);
       } catch {
         // Notes are supportive; do not block the calendar if they fail.
@@ -184,7 +184,7 @@ const CalendarView = () => {
     try {
       const created = await createCalendarNote({
         date: format(agendaDay, 'yyyy-MM-dd'),
-        text: noteText.trim(),
+        note: noteText.trim(),
         color: noteColor,
       });
       setNotes((prev) => [...prev, created]);

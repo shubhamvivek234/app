@@ -6,7 +6,49 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { compactNumber, platformLabel } from './helpers';
 
-const PerformanceSnapshot7d = ({ performance, onNavigate }) => {
+const LoadingState = () => (
+  <div className="space-y-6">
+    <div className="rounded-2xl bg-slate-100 p-5">
+      <div className="h-3 w-28 animate-pulse rounded bg-slate-200" />
+      <div className="mt-4 h-10 w-20 animate-pulse rounded bg-slate-200" />
+    </div>
+    <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+      <div className="space-y-3">
+        {[0, 1, 2].map((index) => (
+          <div key={index}>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="h-4 w-24 animate-pulse rounded bg-slate-200" />
+              <div className="h-4 w-8 animate-pulse rounded bg-slate-100" />
+            </div>
+            <div className="h-2 rounded-full bg-slate-100">
+              <div className="h-2 w-2/3 animate-pulse rounded-full bg-slate-200" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-6">
+        <div className="grid grid-cols-3 gap-3">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="h-3 w-10 animate-pulse rounded bg-slate-200" />
+              <div className="mt-3 h-6 w-8 animate-pulse rounded bg-slate-200" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {[0, 1, 2, 3].map((index) => (
+            <div key={index} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="h-3 w-20 animate-pulse rounded bg-slate-200" />
+              <div className="mt-3 h-6 w-12 animate-pulse rounded bg-slate-200" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+const PerformanceSnapshot7d = ({ performance, loading = false, error = null, onNavigate }) => {
   const platformEntries = Object.entries(performance?.platform_counts || {}).sort((a, b) => b[1] - a[1]);
   const typeEntries = Object.entries(performance?.type_counts || {}).sort((a, b) => b[1] - a[1]);
   const audienceTotals = performance?.audience_totals || {};
@@ -34,6 +76,14 @@ const PerformanceSnapshot7d = ({ performance, onNavigate }) => {
         </div>
       </CardHeader>
       <CardContent className="space-y-6 pt-6">
+        {loading && !performance ? (
+          <LoadingState />
+        ) : error && !performance ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+            The performance snapshot could not be refreshed right now. Open Analytics for deeper live metrics once the provider responses recover.
+          </div>
+        ) : (
+          <>
         <div className="rounded-2xl bg-slate-950 p-5 text-white">
           <p className="text-sm uppercase tracking-[0.18em] text-slate-300">Published in period</p>
           <p className="mt-3 text-4xl font-semibold">{performance?.published_in_period ?? 0}</p>
@@ -103,6 +153,8 @@ const PerformanceSnapshot7d = ({ performance, onNavigate }) => {
             </div>
           </div>
         </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

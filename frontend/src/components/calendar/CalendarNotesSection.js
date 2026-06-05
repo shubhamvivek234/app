@@ -68,6 +68,8 @@ const CalendarNotesSection = ({
   onAddNote,
   savingNote = false,
 }) => {
+  const getNoteText = (note) => String(note?.text || note?.note || '').trim();
+
   if (compact) {
     if (notes.length === 0) {
       return null;
@@ -86,9 +88,9 @@ const CalendarNotesSection = ({
               'max-w-[100px] truncate rounded-full px-2 py-1 text-[10px] font-medium',
               noteColorClasses[note.color]?.chip || noteColorClasses.green.chip,
             )}
-            title={note.text}
+            title={getNoteText(note)}
           >
-            {note.text}
+            {getNoteText(note)}
           </span>
         ))}
         {notes.length > 2 ? (
@@ -121,7 +123,7 @@ const CalendarNotesSection = ({
                 noteColorClasses[note.color]?.border || noteColorClasses.green.border,
               )}
             >
-              <span className="flex-1 leading-relaxed">{note.text}</span>
+              <span className="flex-1 leading-relaxed">{getNoteText(note)}</span>
               {onDeleteNote ? (
                 <button
                   type="button"
