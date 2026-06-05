@@ -752,7 +752,18 @@ const InteractiveDonutChart = ({
               />
             ))}
           </Pie>
-          <Tooltip />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: '#ffffff',
+              border: '1px solid #e5e7eb',
+              borderRadius: '12px',
+              boxShadow: '0 16px 40px rgba(15, 23, 42, 0.14)',
+              opacity: 1,
+            }}
+            wrapperStyle={{ outline: 'none' }}
+            itemStyle={{ color: '#374151' }}
+            labelStyle={{ color: '#111827', fontWeight: 600, marginBottom: 4 }}
+          />
         </PieChart>
       </ResponsiveContainer>
       {centerContent ? (
@@ -843,7 +854,7 @@ const ReportDonutBreakdown = ({
       </div>
 
       <div className="min-w-0">
-        <div className="grid grid-cols-[minmax(0,1fr)_88px_52px] gap-x-3 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 sm:grid-cols-[minmax(0,1.2fr)_108px_64px]">
+        <div className="grid grid-cols-[minmax(0,1.2fr)_92px_56px] items-center gap-x-3 border-b border-gray-200 pb-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 sm:grid-cols-[minmax(0,1.45fr)_116px_68px]">
           <span>Type</span>
           <span className="text-right">{valueHeader}</span>
           <span className="text-right">%</span>
@@ -855,10 +866,12 @@ const ReportDonutBreakdown = ({
             const positiveIndex = positiveItems.findIndex((entry) => (entry.type || entry.label) === (item.type || item.label));
             const color = positiveIndex >= 0 ? palette[positiveIndex % palette.length] : '#d1d5db';
             return (
-              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1fr)_88px_52px] items-center gap-x-3 py-4 text-sm sm:grid-cols-[minmax(0,1.2fr)_108px_64px]">
-                <div className="flex min-w-0 items-center gap-3">
+              <div key={item.type || item.label || index} className="grid grid-cols-[minmax(0,1.2fr)_92px_56px] items-start gap-x-3 py-4 text-sm sm:grid-cols-[minmax(0,1.45fr)_116px_68px] sm:items-center">
+                <div className="flex min-w-0 items-start gap-3">
                   <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                  <span className={`truncate font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{item.label}</span>
+                  <span className={`block min-w-0 break-words text-left leading-5 ${value > 0 ? 'font-medium text-gray-700' : 'font-medium text-gray-400'}`}>
+                    {item.label}
+                  </span>
                 </div>
                 <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{valueFormatter(value)}</span>
                 <span className={`text-right font-medium ${value > 0 ? 'text-gray-700' : 'text-gray-400'}`}>{pct}%</span>
