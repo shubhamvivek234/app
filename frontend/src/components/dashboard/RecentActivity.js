@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 
 import { formatRelativeDate, severityPillClass } from './helpers';
 
-const RecentActivity = ({ operations, activity = [], onNavigate }) => {
+const RecentActivity = ({ operations, activity = [], onNavigate, now = Date.now() }) => {
   const inboxCards = [
     {
       label: 'Unread inbox',
@@ -29,12 +29,12 @@ const RecentActivity = ({ operations, activity = [], onNavigate }) => {
   ];
 
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[540px]">
       <CardHeader className="border-b border-slate-100 pb-5">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Recent Activity</p>
         <CardTitle className="mt-2 text-xl text-slate-950">Inbox and workspace signals</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-6 pt-6">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-6 pt-6">
         <div className="grid gap-3 md:grid-cols-3">
           {inboxCards.map(({ label, value, icon: Icon, onClick }) => (
             <button
@@ -46,7 +46,7 @@ const RecentActivity = ({ operations, activity = [], onNavigate }) => {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm text-slate-600">{label}</p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums text-slate-950">{value}</p>
                 </div>
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">
                   <Icon />
@@ -56,7 +56,7 @@ const RecentActivity = ({ operations, activity = [], onNavigate }) => {
           ))}
         </div>
 
-        <div className="space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
           {activity.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
               No recent workspace notifications yet.
@@ -73,7 +73,7 @@ const RecentActivity = ({ operations, activity = [], onNavigate }) => {
                   <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide', severityPillClass(item.severity))}>
                     {item.severity}
                   </span>
-                  <span className="text-xs text-slate-500">{formatRelativeDate(item.created_at)}</span>
+                  <span className="text-xs text-slate-500">{formatRelativeDate(item.created_at, now)}</span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-700">{item.message}</p>
               </div>

@@ -11,7 +11,7 @@ const ActionCenter = ({ actionItems = [], onNavigate }) => {
   const hasItems = actionItems.length > 0;
 
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[520px]">
       <CardHeader className="border-b border-slate-100 pb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -23,7 +23,7 @@ const ActionCenter = ({ actionItems = [], onNavigate }) => {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-6">
+      <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
         {!hasItems ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-900">
             <div className="flex items-center gap-3">
@@ -37,7 +37,7 @@ const ActionCenter = ({ actionItems = [], onNavigate }) => {
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {actionItems.map((item) => (
               <div
                 key={item.id}

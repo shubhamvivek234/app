@@ -14,9 +14,9 @@ import {
   primaryThumbnail,
 } from './helpers';
 
-const UpcomingQueue = ({ posts = [], onNavigate }) => {
+const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[560px]">
       <CardHeader className="border-b border-slate-100 pb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -28,7 +28,7 @@ const UpcomingQueue = ({ posts = [], onNavigate }) => {
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="pt-6">
+      <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
         {posts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
@@ -41,7 +41,7 @@ const UpcomingQueue = ({ posts = [], onNavigate }) => {
             </Button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {posts.map((post) => {
               const thumbnail = primaryThumbnail(post);
               return (
@@ -75,7 +75,7 @@ const UpcomingQueue = ({ posts = [], onNavigate }) => {
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
                       <span className="inline-flex items-center gap-2">
                         <FaClock className="text-slate-400" />
-                        {countdownLabel(post.scheduled_time)}
+                        {countdownLabel(post.scheduled_time, now)}
                       </span>
                       <span>{formatAbsoluteDate(post.scheduled_time)}</span>
                       {post.account_labels?.length ? (

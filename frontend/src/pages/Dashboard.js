@@ -77,6 +77,7 @@ const Dashboard = () => {
     health: true,
     performance: true,
   });
+  const [relativeTimeTick, setRelativeTimeTick] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
   const deferredPanelLoadRef = useRef(null);
 
@@ -137,6 +138,13 @@ const Dashboard = () => {
       cancelled = true;
     };
   }, [loadDashboardSections, loadDeferredPanels]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setRelativeTimeTick(Date.now());
+    }, 30000);
+    return () => clearInterval(intervalId);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -232,7 +240,7 @@ const Dashboard = () => {
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-300">
                   <FaSignal className="text-emerald-400" />
-                  Updated {formatRelativeDate(dashboard.refreshed_at)}
+                  Updated {formatRelativeDate(dashboard.refreshed_at, relativeTimeTick)}
                 </span>
               </div>
               <h1 className="mt-5 text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -279,7 +287,7 @@ const Dashboard = () => {
         </div>
 
         <div className="grid gap-8 xl:grid-cols-[1.15fr_0.85fr]">
-          <UpcomingQueue posts={dashboard.upcoming_posts} onNavigate={navigate} />
+          <UpcomingQueue posts={dashboard.upcoming_posts} onNavigate={navigate} now={relativeTimeTick} />
           <AccountHealthPanel
             accounts={dashboard.account_health}
             loading={panelLoading.health}
@@ -295,10 +303,15 @@ const Dashboard = () => {
             error={dashboard.section_errors?.performance}
             onNavigate={navigate}
           />
-          <RecentActivity operations={dashboard.operations} activity={dashboard.activity} onNavigate={navigate} />
+          <RecentActivity
+            operations={dashboard.operations}
+            activity={dashboard.activity}
+            onNavigate={navigate}
+            now={relativeTimeTick}
+          />
         </div>
 
-        <RecentWins posts={dashboard.recent_published} onNavigate={navigate} />
+        <RecentWins posts={dashboard.recent_published} onNavigate={navigate} now={relativeTimeTick} />
       </div>
     </DashboardLayout>
   );

@@ -36,7 +36,7 @@ const LoadingState = () => (
 
 const AccountHealthPanel = ({ accounts = [], loading = false, error = null, onNavigate }) => {
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[560px]">
       <CardHeader className="border-b border-slate-100 pb-5">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -48,7 +48,7 @@ const AccountHealthPanel = ({ accounts = [], loading = false, error = null, onNa
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="pt-6">
+      <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
         {loading && accounts.length === 0 ? (
           <LoadingState />
         ) : error && accounts.length === 0 ? (
@@ -67,8 +67,8 @@ const AccountHealthPanel = ({ accounts = [], loading = false, error = null, onNa
             </Button>
           </div>
         ) : (
-          <div className="space-y-3">
-            {accounts.slice(0, 6).map((account) => (
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+            {accounts.map((account) => (
               <button
                 key={account.id}
                 type="button"

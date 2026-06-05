@@ -315,37 +315,37 @@ const GeneratorCard = ({ onSaveAsGroup }) => {
   };
 
   return (
-    <section className="overflow-hidden rounded-[32px] border border-emerald-100 bg-white shadow-[0_20px_60px_-30px_rgba(15,23,42,0.18)]">
-      <div className="border-b border-emerald-100 bg-[linear-gradient(135deg,#f5fffb_0%,#ffffff_65%)] px-6 py-6 sm:px-8">
+    <section className="overflow-hidden rounded-[28px] border border-emerald-100 bg-white shadow-[0_18px_48px_-32px_rgba(15,23,42,0.18)]">
+      <div className="border-b border-emerald-100 bg-[linear-gradient(135deg,#f5fffb_0%,#ffffff_65%)] px-5 py-5 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700">
               <FaBolt className="text-[10px]" />
               AI Generator
             </div>
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Build reusable hashtag sets without losing the creative spark.</h1>
-              <p className="max-w-2xl text-sm leading-6 text-slate-600">
+            <div className="space-y-1.5">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">Build reusable hashtag sets faster.</h1>
+              <p className="max-w-2xl text-sm leading-5 text-slate-600">
                 Generate a tight set for the post in front of you, then save the best combinations into clean, reusable libraries by campaign and platform.
               </p>
             </div>
           </div>
-          <div className="grid min-w-[220px] grid-cols-2 gap-3 self-stretch">
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <div className="grid min-w-[220px] grid-cols-2 gap-2 self-stretch">
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Output size</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-950">{DEFAULT_COUNT}</p>
+              <p className="mt-1.5 text-xl font-semibold text-slate-950">{DEFAULT_COUNT}</p>
               <p className="text-xs text-slate-500">optimized tags per generation</p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Context</p>
-              <p className="mt-2 text-sm font-semibold text-slate-950">{activePlatform?.label || 'All platforms'}</p>
+              <p className="mt-1.5 text-sm font-semibold text-slate-950">{activePlatform?.label || 'All platforms'}</p>
               <p className="text-xs text-slate-500">current generation target</p>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="space-y-6 px-6 py-6 sm:px-8">
+      <div className="space-y-5 px-5 py-5 sm:px-6">
         <label className="grid gap-2">
           <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Describe the post</span>
           <textarea
@@ -354,7 +354,7 @@ const GeneratorCard = ({ onSaveAsGroup }) => {
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) handleGenerate();
             }}
-            className="min-h-[138px] w-full rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition-all placeholder:text-slate-300 focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+            className="min-h-[112px] w-full rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition-all placeholder:text-slate-300 focus:border-emerald-300 focus:bg-white focus:ring-2 focus:ring-emerald-200"
             placeholder="Morning routine reel for a wellness brand, highlighting breathwork, sunrise light, and a soft call-to-action."
           />
           <span className="text-xs text-slate-400">Press Command/Ctrl + Enter to generate quickly.</span>
@@ -377,8 +377,8 @@ const GeneratorCard = ({ onSaveAsGroup }) => {
           ) : null}
         </div>
 
-        <div className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-950">Generated set</p>
               <p className="text-sm text-slate-500">
@@ -412,7 +412,7 @@ const GeneratorCard = ({ onSaveAsGroup }) => {
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-400">
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-center text-sm text-slate-400">
               Your generated hashtags will land here once the prompt is specific enough to produce a clean set.
             </div>
           )}
@@ -429,7 +429,7 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
   const platform = getPlatform(group.platform);
 
   return (
-    <article className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_14px_40px_-28px_rgba(15,23,42,0.3)] transition-all hover:border-emerald-200">
+    <article className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_36px_-28px_rgba(15,23,42,0.24)] transition-all hover:border-emerald-200">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -484,7 +484,7 @@ const GroupCard = ({ group, onEdit, onDelete }) => {
         ) : null}
       </div>
 
-      <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4 text-xs text-slate-400">
+      <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-400">
         <span>Click any hashtag to copy individually.</span>
         <button type="button" onClick={() => copyText(group.hashtags.join(' '), 'Copied all hashtags')} className="font-semibold text-slate-600 transition-colors hover:text-emerald-700">
           Copy all
@@ -607,16 +607,16 @@ const HashtagGroups = () => {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-7xl space-y-8 px-4 py-1 sm:px-6 lg:px-8">
-        <section className="grid gap-8 xl:grid-cols-[minmax(0,1.1fr)_minmax(380px,0.9fr)]">
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-0 sm:px-6 lg:px-8">
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(340px,0.92fr)]">
           <GeneratorCard
             onSaveAsGroup={(hashtags, platform) => {
               openCreateDialog({ hashtags, platform });
             }}
           />
 
-          <section className="space-y-5">
-            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.26)]">
+          <section className="space-y-4">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_44px_-32px_rgba(15,23,42,0.22)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-2">
                   <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
@@ -636,29 +636,29 @@ const HashtagGroups = () => {
                 </Button>
               </div>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Groups</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">{stats.totalGroups}</p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Saved tags</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">{stats.totalTags}</p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Platform specific</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">{stats.platformScoped}</p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_20px_50px_-32px_rgba(15,23,42,0.26)]">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_44px_-32px_rgba(15,23,42,0.22)]">
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
                 <FaFilter className="text-slate-400" />
                 Library controls
               </div>
 
-              <div className="mt-4 grid gap-4">
+              <div className="mt-4 grid gap-3">
                 <label className="grid gap-2">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Search</span>
                   <div className="relative">
@@ -687,7 +687,7 @@ const HashtagGroups = () => {
           </section>
         </section>
 
-        <section className="space-y-4">
+        <section className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Saved groups</p>

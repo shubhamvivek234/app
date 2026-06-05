@@ -45,20 +45,24 @@ const WorkspacePulse = ({ summary, operations }) => {
   ];
 
   return (
-    <Card className="border-slate-200 bg-white shadow-sm">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[520px]">
       <CardHeader className="border-b border-slate-100 pb-5">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workspace Pulse</p>
         <CardTitle className="mt-2 text-xl text-slate-950">Queue, accounts, and backlog</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-6 pt-6">
+      <CardContent className="flex flex-1 flex-col justify-between gap-6 pt-6">
         <div className="grid grid-cols-2 gap-3">
           {stats.map(({ label, value, icon: Icon, tone }) => (
             <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-              <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}>
-                <Icon />
+              <div className="flex items-start justify-between gap-3">
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone}`}>
+                  <Icon />
+                </div>
+                <div className="min-w-0 text-right">
+                  <div className="text-2xl font-semibold tabular-nums text-slate-950">{value}</div>
+                  <div className="mt-1 text-sm leading-5 text-slate-600">{label}</div>
+                </div>
               </div>
-              <div className="mt-4 text-2xl font-semibold text-slate-950">{value}</div>
-              <div className="mt-1 text-sm text-slate-600">{label}</div>
             </div>
           ))}
         </div>
@@ -69,7 +73,7 @@ const WorkspacePulse = ({ summary, operations }) => {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm text-slate-600">{label}</p>
-                  <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums text-slate-950">{value}</p>
                 </div>
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700">
                   <Icon />

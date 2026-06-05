@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow } from 'date-fns';
+import { format, formatDistance } from 'date-fns';
 
 export const PLATFORM_LABELS = {
   instagram: 'Instagram',
@@ -55,20 +55,19 @@ export const formatAbsoluteDate = (value) => {
   return format(parsed, 'MMM d, h:mm a');
 };
 
-export const formatRelativeDate = (value) => {
+export const formatRelativeDate = (value, now = Date.now()) => {
   if (!value) return 'Unknown';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 'Unknown';
-  return formatDistanceToNow(parsed, { addSuffix: true });
+  return formatDistance(parsed, now, { addSuffix: true });
 };
 
-export const countdownLabel = (value) => {
+export const countdownLabel = (value, now = Date.now()) => {
   if (!value) return 'No schedule';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 'No schedule';
-  const now = Date.now();
   if (parsed.getTime() <= now) return 'Due now';
-  return formatDistanceToNow(parsed, { addSuffix: true });
+  return formatDistance(parsed, now, { addSuffix: true });
 };
 
 export const severityPillClass = (severity) => {
