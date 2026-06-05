@@ -16,6 +16,7 @@ class HashtagGroupCreate(BaseModel):
     name: str
     hashtags: list[str] = []
     category: str = "general"
+    platform: str = ""
 
 
 class HashtagGroupResponse(BaseModel):
@@ -23,9 +24,29 @@ class HashtagGroupResponse(BaseModel):
     name: str
     hashtags: list[str] = []
     category: str
+    platform: str = ""
     workspace_id: str
     created_at: datetime
     updated_at: datetime
+
+
+def _normalize_hashtags(hashtags: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in hashtags:
+        tag = str(raw or "").strip().replace(" ", "")
+        if not tag:
+            continue
+        if not tag.startswith("#"):
+            tag = f"#{tag.lstrip('#')}"
+        else:
+            tag = f"#{tag.lstrip('#')}"
+        canonical = tag.lower()
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        normalized.append(tag)
+    return normalized
 
 
 @router.get("/hashtag-groups")
@@ -43,12 +64,14 @@ async def create_hashtag_group(body: HashtagGroupCreate, current_user: CurrentUs
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     now = datetime.now(timezone.utc)
     group_id = str(uuid.uuid4())
+    normalized_hashtags = _normalize_hashtags(body.hashtags)
     doc = {
         "group_id": group_id,
         "id": group_id,
-        "name": body.name,
-        "hashtags": body.hashtags,
-        "category": body.category,
+        "name": body.name.strip(),
+        "hashtags": normalized_hashtags,
+        "category": body.category.strip() or "general",
+        "platform": body.platform.strip().lower(),
         "workspace_id": workspace_id,
         "user_id": current_user["user_id"],
         "created_at": now,
@@ -63,9 +86,18 @@ async def create_hashtag_group(body: HashtagGroupCreate, current_user: CurrentUs
 async def update_hashtag_group(group_id: str, body: HashtagGroupCreate, current_user: CurrentUser, db: DB):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
     now = datetime.now(timezone.utc)
+    normalized_hashtags = _normalize_hashtags(body.hashtags)
     result = await db.hashtag_groups.find_one_and_update(
         {"$or": [{"group_id": group_id}, {"id": group_id}], "workspace_id": workspace_id},
-        {"$set": {"name": body.name, "hashtags": body.hashtags, "category": body.category, "updated_at": now}},
+        {
+            "$set": {
+                "name": body.name.strip(),
+                "hashtags": normalized_hashtags,
+                "category": body.category.strip() or "general",
+                "platform": body.platform.strip().lower(),
+                "updated_at": now,
+            }
+        },
         return_document=True,
         projection={"_id": 0},
     )
