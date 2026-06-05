@@ -104,10 +104,10 @@ const PerformanceSnapshot7d = ({ performance, loading = false, error = null, onN
                   No published activity in the selected window yet.
                 </div>
               ) : platformEntries.map(([platform, count]) => (
-                <div key={platform}>
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="font-medium text-slate-700">{platformLabel(platform)}</span>
-                    <span className="text-slate-500">{count}</span>
+                <div key={platform} className="space-y-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-sm">
+                    <span className="truncate font-medium text-slate-700">{platformLabel(platform)}</span>
+                    <span className="min-w-[2ch] text-right tabular-nums text-slate-500">{count}</span>
                   </div>
                   <div className="h-2 rounded-full bg-slate-100">
                     <div
