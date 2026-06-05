@@ -1,298 +1,553 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
-  connectBluesky, connectDiscord, connectMastodon, getLinkedInPendingOrgs, saveLinkedInOrgs, addLinkedInPageManually,
+  getSocialAccounts,
+  disconnectSocialAccount,
+  connectBluesky,
+  connectDiscord,
+  connectMastodon,
+  getLinkedInPendingOrgs,
+  saveLinkedInOrgs,
+  addLinkedInPageManually,
 } from '@/lib/api';
-import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
+import {
+  getPublishFailureAction,
+  getPublishFailureMessage,
+  getTikTokRestrictionFromAccount,
+} from '@/lib/publishFailures';
 import { clearOAuthPopupExpected, listenForOAuthResult, markOAuthPopupExpected } from '@/lib/oauthPopup';
 import { requestOAuthUrl } from '@/lib/requestOAuthUrl';
 import { toast } from 'sonner';
 import {
-  FaTwitter, FaLinkedin, FaInstagram, FaFacebook, FaYoutube,
-  FaTiktok, FaPinterest, FaTimes, FaExclamationTriangle, FaClock,
-  FaCheckCircle, FaPlus, FaLink, FaDiscord,
+  FaCheckCircle,
+  FaDiscord,
+  FaExclamationTriangle,
+  FaFacebook,
+  FaInstagram,
+  FaLink,
+  FaLinkedin,
+  FaPinterest,
+  FaPlus,
+  FaTimes,
+  FaTiktok,
+  FaTwitter,
+  FaYoutube,
 } from 'react-icons/fa';
-import { SiThreads, SiReddit, SiSnapchat, SiBluesky, SiMastodon } from 'react-icons/si';
-import BrandMarkLoader from '@/components/BrandMarkLoader';
+import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads } from 'react-icons/si';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
-// ── Token status helper ───────────────────────────────────────────────────────
-const getTokenStatus = (account) => {
-  const expiry = account.token_expiry;
-  if (!expiry) return 'unknown';
-  const expiryDate = new Date(expiry);
-  if (isNaN(expiryDate)) return 'unknown';
-  const now = new Date();
-  const diffHours = (expiryDate - now) / (1000 * 60 * 60);
-  if (diffHours < 0) return account.refresh_token ? 'ok' : 'expired';
-  if (diffHours < 24 && !account.refresh_token) return 'expiring';
-  return 'ok';
+const MANUAL_PLATFORMS = new Set(['bluesky', 'discord', 'mastodon']);
+const OAUTH_PLATFORMS = new Set([
+  'facebook',
+  'instagram',
+  'youtube',
+  'twitter',
+  'linkedin',
+  'threads',
+  'reddit',
+  'pinterest',
+  'snapchat',
+  'tiktok',
+]);
+const ATTENTION_STATES = new Set(['reconnect_required', 'restricted', 'expiring']);
+const STATE_ORDER = {
+  reconnect_required: 0,
+  restricted: 1,
+  expiring: 2,
+  healthy: 3,
 };
 
-// ── Platform definitions ──────────────────────────────────────────────────────
 const PLATFORMS = [
-  { id: 'instagram',  name: 'Instagram',  icon: FaInstagram, color: 'text-pink-500',    bg: 'bg-pink-50',    border: 'border-pink-200',   ring: 'focus:ring-pink-400',   btn: 'bg-pink-500 hover:bg-pink-600' },
-  { id: 'facebook',   name: 'Facebook',   icon: FaFacebook,  color: 'text-blue-600',    bg: 'bg-blue-50',    border: 'border-blue-200',   ring: 'focus:ring-blue-400',   btn: 'bg-blue-600 hover:bg-blue-700' },
-  { id: 'twitter',    name: 'X (Twitter)',icon: FaTwitter,   color: 'text-sky-400',     bg: 'bg-sky-50',     border: 'border-sky-200',    ring: 'focus:ring-sky-400',    btn: 'bg-gray-900 hover:bg-black' },
-  { id: 'linkedin',   name: 'LinkedIn',   icon: FaLinkedin,  color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-300',   ring: 'focus:ring-blue-500',   btn: 'bg-blue-700 hover:bg-blue-800' },
-  { id: 'youtube',    name: 'YouTube',    icon: FaYoutube,   color: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',    ring: 'focus:ring-red-400',    btn: 'bg-red-600 hover:bg-red-700' },
-  { id: 'tiktok',     name: 'TikTok',     icon: FaTiktok,    color: 'text-gray-900',    bg: 'bg-gray-50',    border: 'border-gray-300',   ring: 'focus:ring-gray-400',   btn: 'bg-gray-900 hover:bg-black' },
-  { id: 'threads',    name: 'Threads',    icon: SiThreads,   color: 'text-gray-900',    bg: 'bg-gray-50',    border: 'border-gray-300',   ring: 'focus:ring-gray-400',   btn: 'bg-gray-900 hover:bg-black' },
-  { id: 'pinterest',  name: 'Pinterest',  icon: FaPinterest, color: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',    ring: 'focus:ring-red-400',    btn: 'bg-red-600 hover:bg-red-700' },
-  { id: 'reddit',     name: 'Reddit',     icon: SiReddit,    color: 'text-orange-500',  bg: 'bg-orange-50',  border: 'border-orange-200', ring: 'focus:ring-orange-400', btn: 'bg-orange-500 hover:bg-orange-600' },
-  { id: 'snapchat',   name: 'Snapchat',   icon: SiSnapchat,  color: 'text-yellow-500',  bg: 'bg-yellow-50',  border: 'border-yellow-200', ring: 'focus:ring-yellow-400', btn: 'bg-yellow-400 hover:bg-yellow-500',  badge: 'Spotlight only' },
-  { id: 'bluesky',    name: 'Bluesky',    icon: SiBluesky,   color: 'text-sky-500',     bg: 'bg-sky-50',     border: 'border-sky-200',    ring: 'focus:ring-sky-400',    btn: 'bg-sky-500 hover:bg-sky-600',       badge: 'App Password', credential: true },
-  { id: 'discord',    name: 'Discord',    icon: FaDiscord,   color: 'text-indigo-500',  bg: 'bg-indigo-50',  border: 'border-indigo-200', ring: 'focus:ring-indigo-400', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook',      credential: true },
-  { id: 'mastodon',   name: 'Mastodon',   icon: SiMastodon,  color: 'text-indigo-600',  bg: 'bg-indigo-50',  border: 'border-indigo-200', ring: 'focus:ring-indigo-400', btn: 'bg-indigo-600 hover:bg-indigo-700', badge: 'Access token', credential: true },
+  { id: 'instagram', name: 'Instagram', icon: FaInstagram, color: 'text-pink-500', bg: 'bg-pink-50', border: 'border-pink-200', btn: 'bg-pink-500 hover:bg-pink-600' },
+  { id: 'facebook', name: 'Facebook', icon: FaFacebook, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700' },
+  { id: 'twitter', name: 'X (Twitter)', icon: FaTwitter, color: 'text-sky-400', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-300', btn: 'bg-blue-700 hover:bg-blue-800' },
+  { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
+  { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'threads', name: 'Threads', icon: SiThreads, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
+  { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
+  { id: 'reddit', name: 'Reddit', icon: SiReddit, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200', btn: 'bg-orange-500 hover:bg-orange-600' },
+  { id: 'snapchat', name: 'Snapchat', icon: SiSnapchat, color: 'text-yellow-500', bg: 'bg-yellow-50', border: 'border-yellow-200', btn: 'bg-yellow-400 hover:bg-yellow-500', badge: 'Spotlight only' },
+  { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', badge: 'App Password' },
+  { id: 'discord', name: 'Discord', icon: FaDiscord, color: 'text-indigo-500', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook' },
+  { id: 'mastodon', name: 'Mastodon', icon: SiMastodon, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-600 hover:bg-indigo-700', badge: 'Access token' },
 ];
 
-const getAvatarColor = (username = '') => {
-  const palette = ['bg-blue-500','bg-green-500','bg-yellow-500','bg-red-500','bg-purple-500','bg-pink-500','bg-indigo-500','bg-teal-500'];
-  return palette[username.charCodeAt(0) % palette.length];
+const getAvatarColor = (value = '') => {
+  const palette = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-teal-500'];
+  return palette[value.charCodeAt(0) % palette.length];
 };
 
-// ── Account chip — round avatar with tooltip (fixed-position, never clipped) ──
-const AccountChip = ({ account, onDisconnect }) => {
-  const status     = getTokenStatus(account);
-  const displayName = account.platform_username || account.platform;
-  const statusRing =
-    status === 'expired'  ? 'ring-2 ring-red-400'    :
-    status === 'expiring' ? 'ring-2 ring-yellow-400'  : '';
+const formatAbsoluteDate = (value, { includeTime = false } = {}) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString('en-US', includeTime
+    ? { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric', year: 'numeric' });
+};
 
-  const ref = useRef(null);
-  const [tooltipStyle, setTooltipStyle] = useState({});
-  const [showTip, setShowTip] = useState(false);
+const getConnectionState = (account) => {
+  const state = account?.connection_state;
+  if (state && STATE_ORDER[state] !== undefined) return state;
 
-  const handleMouseEnter = () => {
-    if (!ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    // Position tooltip centered above the avatar; clamp to left edge of viewport
-    const tipWidth = 180; // estimated max width
-    let left = rect.left + rect.width / 2 - tipWidth / 2;
-    if (left < 8) left = 8;
-    if (left + tipWidth > window.innerWidth - 8) left = window.innerWidth - tipWidth - 8;
-    setTooltipStyle({ top: rect.top - 8, left, transform: 'translateY(-100%)' });
-    setShowTip(true);
+  if (account?.publish_restriction_type || account?.publish_action_required || account?.publish_error_code) {
+    return 'restricted';
+  }
+
+  const expiresAt = account?.expires_at || account?.token_expiry;
+  if (!expiresAt) return account?.token_error ? 'reconnect_required' : 'healthy';
+
+  const expiryDate = new Date(expiresAt);
+  if (Number.isNaN(expiryDate.getTime())) return account?.token_error ? 'reconnect_required' : 'healthy';
+
+  const diffHours = (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60);
+  if (account?.token_error || diffHours < 0) return 'reconnect_required';
+  if (diffHours < 24) return 'expiring';
+  return 'healthy';
+};
+
+const getConnectionMessage = (account) => {
+  if (account?.connection_message) return account.connection_message;
+  const state = getConnectionState(account);
+  if (state === 'restricted') {
+    return account?.publish_action_required || account?.publish_restriction_type || account?.publish_error_code || 'Publishing is currently restricted for this account.';
+  }
+  if (state === 'reconnect_required') {
+    return account?.reconnect_reason || account?.token_error || 'Reconnect this account to restore access.';
+  }
+  if (state === 'expiring') {
+    return 'Access token expires soon. Reconnect proactively to avoid interruptions.';
+  }
+  return 'Connection is healthy.';
+};
+
+const getStatusTone = (state) => {
+  switch (state) {
+    case 'reconnect_required':
+      return {
+        label: 'Reconnect required',
+        badge: 'bg-red-100 text-red-700 border-red-200',
+        panel: 'border-red-200 bg-red-50',
+      };
+    case 'restricted':
+      return {
+        label: 'Restricted',
+        badge: 'bg-amber-100 text-amber-800 border-amber-200',
+        panel: 'border-amber-200 bg-amber-50',
+      };
+    case 'expiring':
+      return {
+        label: 'Expiring soon',
+        badge: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+        panel: 'border-yellow-200 bg-yellow-50',
+      };
+    default:
+      return {
+        label: 'Healthy',
+        badge: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        panel: 'border-emerald-200 bg-emerald-50',
+      };
+  }
+};
+
+const getDisplayName = (account) => account.display_name || account.platform_username || 'Connected account';
+
+const getHandle = (account) => account.platform_username ? `@${account.platform_username}` : null;
+
+const sortAccounts = (accounts) => (
+  [...accounts].sort((left, right) => {
+    const leftState = getConnectionState(left);
+    const rightState = getConnectionState(right);
+    const stateDiff = (STATE_ORDER[leftState] ?? 99) - (STATE_ORDER[rightState] ?? 99);
+    if (stateDiff !== 0) return stateDiff;
+    return getDisplayName(left).localeCompare(getDisplayName(right));
+  })
+);
+
+const getPrimaryActionLabel = (accounts) => {
+  if (accounts.length === 0) return 'Connect';
+  if (accounts.some((account) => ATTENTION_STATES.has(getConnectionState(account)))) return 'Reconnect';
+  return 'Add account';
+};
+
+const VerificationBanner = () => (
+  <div className="rounded-3xl border border-amber-200 bg-amber-50 px-5 py-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="text-sm font-semibold text-amber-900">Verify your email before connecting or reconnecting accounts</p>
+        <p className="mt-1 text-sm text-amber-800">
+          Account connection, publishing, scheduling, and team actions are blocked until your email is verified.
+        </p>
+      </div>
+      <Link
+        to="/verify-email?returnTo=/accounts"
+        className="inline-flex items-center justify-center rounded-full bg-amber-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-950"
+      >
+        Verify email
+      </Link>
+    </div>
+  </div>
+);
+
+const SummaryCard = ({ label, value, tone = 'neutral', detail }) => {
+  const toneClasses = {
+    neutral: 'border-gray-200 bg-white text-gray-900',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+    warning: 'border-amber-200 bg-amber-50 text-amber-900',
+    danger: 'border-red-200 bg-red-50 text-red-900',
   };
 
   return (
-    <div
-      ref={ref}
-      className="group relative flex-shrink-0 cursor-default"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={() => setShowTip(false)}
-    >
-      {/* Avatar */}
-      <div className="relative">
-        {account.picture_url ? (
-          <img src={account.picture_url} alt={displayName}
-            className={`w-10 h-10 rounded-full object-cover ${statusRing}`} />
-        ) : (
-          <div className={`w-10 h-10 rounded-full ${getAvatarColor(displayName)} flex items-center justify-center text-white text-sm font-bold ${statusRing}`}>
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-        )}
-        {status === 'expired' && (
-          <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-            <FaExclamationTriangle className="text-white text-[8px]" />
-          </div>
-        )}
-        {status === 'expiring' && (
-          <div className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-yellow-400 rounded-full flex items-center justify-center">
-            <FaClock className="text-white text-[8px]" />
-          </div>
-        )}
-        <button
-          onClick={onDisconnect}
-          className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-          title="Disconnect"
-          aria-label={`Disconnect ${displayName}`}
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
-            <FaTimes className="text-[11px]" />
-          </span>
-        </button>
-      </div>
-
-      {/* Fixed-position tooltip — never clipped by card overflow */}
-      {showTip && (
-        <div
-          className="fixed z-[9999] pointer-events-auto"
-          style={tooltipStyle}
-        >
-          <div className="bg-gray-900 text-white rounded-xl shadow-2xl px-3 py-2 flex items-center gap-2 whitespace-nowrap">
-            <span className="text-xs font-medium">@{displayName}</span>
-            {status === 'expired'  && <span className="text-[9px] font-bold text-red-400 uppercase">Expired</span>}
-            {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-400 uppercase">Expiring</span>}
-          </div>
-          <div className="flex justify-center">
-            <div className="border-4 border-transparent border-t-gray-900" />
-          </div>
-        </div>
-      )}
+    <div className={`rounded-3xl border px-5 py-4 ${toneClasses[tone] || toneClasses.neutral}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-current/70">{label}</p>
+      <p className="mt-3 text-3xl font-semibold">{value}</p>
+      {detail ? <p className="mt-2 text-sm text-current/75">{detail}</p> : null}
     </div>
   );
 };
 
-// ── Platform card ─────────────────────────────────────────────────────────────
-const MAX_VISIBLE = 3; // avatars shown before "+N more"
+const StatusBadge = ({ state }) => {
+  const tone = getStatusTone(state);
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${tone.badge}`}>
+      {tone.label}
+    </span>
+  );
+};
 
-const PlatformCard = ({ platform, connectedAccounts, onConnect, onDisconnect, connecting, extra }) => {
-  const Icon = platform.icon;
-  const count = connectedAccounts.length;
-  const hasExpired  = connectedAccounts.some(a => getTokenStatus(a) === 'expired');
-  const hasExpiring = connectedAccounts.some(a => getTokenStatus(a) === 'expiring');
+const AccountAvatar = ({ account }) => {
+  const displayName = getDisplayName(account);
+  if (account.picture_url) {
+    return <img src={account.picture_url} alt={displayName} className="h-12 w-12 rounded-2xl object-cover shadow-sm" />;
+  }
+  return (
+    <div className={`flex h-12 w-12 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm ${getAvatarColor(displayName)}`}>
+      {displayName.charAt(0).toUpperCase()}
+    </div>
+  );
+};
 
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  const visible  = connectedAccounts.slice(0, MAX_VISIBLE);
-  const overflow = connectedAccounts.slice(MAX_VISIBLE);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    const handler = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [dropdownOpen]);
+const ConnectedAccountRow = ({
+  account,
+  platform,
+  onReconnect,
+  onDisconnect,
+  connecting,
+  disconnectingAccountId,
+}) => {
+  const state = getConnectionState(account);
+  const tone = getStatusTone(state);
+  const handle = getHandle(account);
+  const expiresAt = formatAbsoluteDate(account.expires_at);
+  const connectedAt = formatAbsoluteDate(account.connected_at);
+  const restriction = platform.id === 'tiktok' ? getTikTokRestrictionFromAccount(account) : null;
+  const primaryMessage = restriction ? getPublishFailureMessage(restriction) : getConnectionMessage(account);
+  const secondaryMessage = restriction ? getPublishFailureAction(restriction) : null;
 
   return (
-    // No overflow-hidden — needed so fixed tooltips aren't clipped
-    <div className={`relative bg-white rounded-2xl border ${hasExpired ? 'border-red-200' : hasExpiring ? 'border-yellow-200' : 'border-gray-200'} shadow-sm hover:shadow-md transition-shadow flex flex-col`}>
-      {/* Card header */}
-      <div className={`${platform.bg} px-4 pt-4 pb-3 border-b ${platform.border} rounded-t-2xl`}>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl ${platform.bg} border ${platform.border} flex items-center justify-center shadow-sm`}>
+    <div className={`rounded-2xl border px-4 py-4 ${tone.panel}`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <AccountAvatar account={account} />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold text-gray-900">{getDisplayName(account)}</p>
+              <StatusBadge state={state} />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+              {handle ? <span>{handle}</span> : null}
+              <span>{platform.name}</span>
+              {expiresAt ? <span>Expires {expiresAt}</span> : null}
+              {!expiresAt && connectedAt ? <span>Connected {connectedAt}</span> : null}
+            </div>
+            <p className="mt-2 text-sm text-gray-700">{primaryMessage}</p>
+            {secondaryMessage ? <p className="mt-1 text-xs font-medium text-amber-800">{secondaryMessage}</p> : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {state !== 'healthy' ? (
+            <button
+              onClick={() => onReconnect(platform.id)}
+              disabled={connecting === platform.id}
+              className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
+            >
+              {connecting === platform.id ? (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                <FaLink className="text-[11px]" />
+              )}
+              {connecting === platform.id ? 'Opening…' : 'Reconnect'}
+            </button>
+          ) : null}
+          <button
+            onClick={() => onDisconnect(account.id, platform.name)}
+            disabled={disconnectingAccountId === account.id}
+            className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-60"
+          >
+            {disconnectingAccountId === account.id ? (
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-500 border-t-transparent" />
+            ) : (
+              <FaTimes className="text-[10px]" />
+            )}
+            Disconnect
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const PlatformCard = ({
+  platform,
+  accounts,
+  onPrimaryAction,
+  onReconnect,
+  onDisconnect,
+  connecting,
+  disconnectingAccountId,
+  onOpenLinkedInPage,
+}) => {
+  const Icon = platform.icon;
+  const sortedAccounts = useMemo(() => sortAccounts(accounts), [accounts]);
+  const attentionAccounts = sortedAccounts.filter((account) => ATTENTION_STATES.has(getConnectionState(account)));
+  const healthyAccounts = sortedAccounts.filter((account) => !ATTENTION_STATES.has(getConnectionState(account)));
+  const state = sortedAccounts[0] ? getConnectionState(sortedAccounts[0]) : 'healthy';
+  const count = accounts.length;
+
+  return (
+    <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
+      <div className={`border-b px-5 py-5 ${platform.bg} ${platform.border}`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border bg-white/80 shadow-sm ${platform.border}`}>
               <Icon className={`text-xl ${platform.color}`} />
             </div>
             <div>
-              <p className="text-sm font-bold text-gray-900">{platform.name}</p>
-              {platform.badge && (
-                <span className="text-[10px] text-gray-500 bg-white border border-gray-200 px-1.5 py-0.5 rounded-full">{platform.badge}</span>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">{platform.name}</h2>
+                {platform.badge ? (
+                  <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                    {platform.badge}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 text-sm text-gray-600">
+                {count > 0
+                  ? `${count} connected ${count === 1 ? 'account' : 'accounts'}`
+                  : 'No accounts connected yet'}
+              </p>
             </div>
           </div>
-          {count > 0 && (
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${hasExpired ? 'bg-red-100 text-red-600' : hasExpiring ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'}`}>
-              {count} connected
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {count > 0 ? <StatusBadge state={state} /> : null}
+            {platform.id === 'linkedin' && count > 0 ? (
+              <button
+                onClick={onOpenLinkedInPage}
+                className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-50"
+              >
+                <FaPlus className="text-[10px]" />
+                Company page
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      {/* Connected accounts */}
-      <div className="px-4 py-3 flex-1 min-h-[64px]">
-        {count > 0 ? (
-          <div className="flex items-center gap-3 flex-wrap">
-            {visible.map(account => (
-              <AccountChip
-                key={account.id}
-                account={account}
-                onDisconnect={() => onDisconnect(account.id, platform.name)}
-              />
-            ))}
-
-            {/* +N more dropdown button */}
-            {overflow.length > 0 && (
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={() => setDropdownOpen(v => !v)}
-                  className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 border-2 border-dashed border-gray-300 flex items-center justify-center text-xs font-bold text-gray-500 transition-colors"
-                >
-                  +{overflow.length}
-                </button>
-
-                {dropdownOpen && (
-                  <div className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-2xl shadow-xl z-50 min-w-[200px] py-2">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-3 pb-1.5 border-b border-gray-100 mb-1">
-                      More accounts
-                    </p>
-                    {overflow.map(account => {
-                      const name = account.platform_username || account.platform;
-                      const status = getTokenStatus(account);
-                      return (
-                        <div key={account.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 transition-colors">
-                          {account.picture_url ? (
-                            <img src={account.picture_url} alt={name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-                          ) : (
-                            <div className={`w-7 h-7 rounded-full ${getAvatarColor(name)} flex items-center justify-center text-white text-xs font-bold flex-shrink-0`}>
-                              {name.charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                          <span className="text-xs text-gray-800 font-medium flex-1 truncate">@{name}</span>
-                          {status === 'expired'  && <span className="text-[9px] font-bold text-red-500 uppercase">Expired</span>}
-                          {status === 'expiring' && <span className="text-[9px] font-bold text-yellow-500 uppercase">Soon</span>}
-                          <button
-                            onClick={() => { onDisconnect(account.id, platform.name); setDropdownOpen(false); }}
-                            className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
-                            title="Disconnect"
-                          >
-                            <FaTimes className="text-[10px]" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
+      <div className="space-y-5 px-5 py-5">
+        {count === 0 ? (
+          <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-5 text-sm text-gray-500">
+            Connect this platform to schedule, publish, and track account health from one place.
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">No accounts connected</p>
+          <>
+            {attentionAccounts.length > 0 ? (
+              <div>
+                <div className="mb-3 flex items-center gap-2">
+                  <FaExclamationTriangle className="text-red-500" />
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Needs attention</p>
+                </div>
+                <div className="space-y-3">
+                  {attentionAccounts.map((account) => (
+                    <ConnectedAccountRow
+                      key={account.id}
+                      account={account}
+                      platform={platform}
+                      onReconnect={onReconnect}
+                      onDisconnect={onDisconnect}
+                      connecting={connecting}
+                      disconnectingAccountId={disconnectingAccountId}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {healthyAccounts.length > 0 ? (
+              <div>
+                <div className="mb-3 flex items-center gap-2">
+                  <FaCheckCircle className="text-emerald-500" />
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Healthy connections</p>
+                </div>
+                <div className="space-y-3">
+                  {healthyAccounts.map((account) => (
+                    <ConnectedAccountRow
+                      key={account.id}
+                      account={account}
+                      platform={platform}
+                      onReconnect={onReconnect}
+                      onDisconnect={onDisconnect}
+                      connecting={connecting}
+                      disconnectingAccountId={disconnectingAccountId}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
-        {extra ? <div className="mt-3">{extra}</div> : null}
       </div>
 
-      {/* Connect button */}
-      <div className="px-4 pb-4">
+      <div className="border-t border-gray-100 px-5 py-4">
         <button
-          onClick={() => onConnect(platform.id)}
+          onClick={() => onPrimaryAction(platform.id)}
           disabled={connecting === platform.id}
-          className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors disabled:opacity-60 ${platform.btn}`}
+          className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 ${platform.btn}`}
         >
           {connecting === platform.id ? (
-            <span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+          ) : accounts.length > 0 && accounts.some((account) => ATTENTION_STATES.has(getConnectionState(account))) ? (
+            <FaLink className="text-[11px]" />
           ) : (
-            <FaPlus className="text-[10px]" />
+            <FaPlus className="text-[11px]" />
           )}
-          {connecting === platform.id ? 'Connecting…' : count > 0 ? `Add ${platform.name}` : `Connect ${platform.name}`}
+          {connecting === platform.id ? 'Opening…' : `${getPrimaryActionLabel(accounts)} ${platform.name}`}
         </button>
       </div>
+    </section>
+  );
+};
+
+const AttentionItem = ({ account, platform, onReconnect, connecting }) => {
+  const state = getConnectionState(account);
+  const handle = getHandle(account);
+  const restriction = platform.id === 'tiktok' ? getTikTokRestrictionFromAccount(account) : null;
+  const message = restriction ? getPublishFailureMessage(restriction) : getConnectionMessage(account);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${platform.bg}`}>
+          <platform.icon className={`text-lg ${platform.color}`} />
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-gray-900">{getDisplayName(account)}</p>
+            <StatusBadge state={state} />
+          </div>
+          <p className="mt-1 text-sm text-gray-600">
+            {platform.name}{handle ? ` · ${handle}` : ''}
+          </p>
+          <p className={`mt-2 text-sm ${state === 'restricted' ? 'text-amber-800' : 'text-gray-700'}`}>
+            {message}
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={() => onReconnect(platform.id)}
+        disabled={connecting === platform.id}
+        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
+      >
+        {connecting === platform.id ? (
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+        ) : (
+          <FaLink className="text-[11px]" />
+        )}
+        {connecting === platform.id ? 'Opening…' : 'Reconnect'}
+      </button>
     </div>
   );
 };
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+const LoadingSkeleton = () => (
+  <div className="space-y-8">
+    <div className="grid gap-4 md:grid-cols-3">
+      {[0, 1, 2].map((index) => (
+        <div key={index} className="h-28 animate-pulse rounded-3xl border border-gray-200 bg-white" />
+      ))}
+    </div>
+    <div className="grid gap-5 xl:grid-cols-2">
+      {[0, 1, 2, 3].map((index) => (
+        <div key={index} className="h-80 animate-pulse rounded-[28px] border border-gray-200 bg-white" />
+      ))}
+    </div>
+  </div>
+);
+
+const CredentialDialogShell = ({
+  open,
+  onOpenChange,
+  icon,
+  iconClassName,
+  iconWrapClassName,
+  title,
+  description,
+  children,
+  footer,
+}) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="max-w-md rounded-[28px] border-0 p-0 shadow-2xl">
+      <div className="space-y-6 p-6">
+        <DialogHeader className="text-left">
+          <div className="flex items-start gap-3">
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border ${iconWrapClassName}`}>
+              {React.createElement(icon, { className: iconClassName })}
+            </div>
+            <div>
+              <DialogTitle>{title}</DialogTitle>
+              <DialogDescription className="mt-1">{description}</DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+        {children}
+        <DialogFooter className="justify-end gap-2 sm:justify-end">
+          {footer}
+        </DialogFooter>
+      </div>
+    </DialogContent>
+  </Dialog>
+);
+
 const ConnectedAccounts = () => {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(null);
+  const [disconnectingAccountId, setDisconnectingAccountId] = useState(null);
+  const [fetchError, setFetchError] = useState(null);
+  const [manualModal, setManualModal] = useState({ platformId: null, mode: 'connect' });
 
-  // Bluesky modal
-  const [blueskyModal, setBlueskyModal] = useState(false);
   const [blueskyHandle, setBlueskyHandle] = useState('');
   const [blueskyPass, setBlueskyPass] = useState('');
   const [blueskyLoading, setBlueskyLoading] = useState(false);
 
-  // Discord modal
-  const [discordModal, setDiscordModal] = useState(false);
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordChannelName, setDiscordChannelName] = useState('');
   const [discordLoading, setDiscordLoading] = useState(false);
-  const [mastodonModal, setMastodonModal] = useState(false);
+
   const [mastodonInstanceUrl, setMastodonInstanceUrl] = useState('');
   const [mastodonAccessToken, setMastodonAccessToken] = useState('');
   const [mastodonLoading, setMastodonLoading] = useState(false);
 
-  // LinkedIn modals
   const [linkedinOrgsModal, setLinkedinOrgsModal] = useState(false);
   const [linkedinOrgs, setLinkedinOrgs] = useState([]);
   const [selectedOrgs, setSelectedOrgs] = useState([]);
@@ -304,15 +559,16 @@ const ConnectedAccounts = () => {
 
   const [searchParams] = useSearchParams();
 
-  useEffect(() => { fetchAccounts(); }, []);
+  useEffect(() => {
+    fetchAccounts();
+  }, []);
 
-  // Ensure any stale popup state from older deployments can't influence UX.
   useEffect(() => {
     clearOAuthPopupExpected();
   }, []);
 
-  useEffect(() => {
-    return listenForOAuthResult((message) => {
+  useEffect(() => (
+    listenForOAuthResult((message) => {
       if (!message || message.returnTo !== 'accounts') return;
 
       clearOAuthPopupExpected();
@@ -324,17 +580,19 @@ const ConnectedAccounts = () => {
       } else if (message.status === 'error') {
         toast.error(message.error || 'Failed to connect account');
       }
-    });
-  }, []);
+    })
+  ), []);
 
   useEffect(() => {
     if (searchParams.get('linkedin_orgs') === '1') {
-      if (searchParams.get('personal_connected') === 'true') toast.success('LinkedIn personal account connected!');
+      if (searchParams.get('personal_connected') === 'true') {
+        toast.success('LinkedIn personal account connected!');
+      }
       fetchAccounts();
       getLinkedInPendingOrgs().then((data) => {
         if (data.orgs?.length > 0) {
           setLinkedinOrgs(data.orgs);
-          setSelectedOrgs(data.orgs.map(o => o.org_id));
+          setSelectedOrgs(data.orgs.map((org) => org.org_id));
           setLinkedinOrgsModal(true);
         }
       }).catch(() => {});
@@ -342,6 +600,7 @@ const ConnectedAccounts = () => {
       toast.success(`Successfully connected: ${searchParams.get('platforms') || 'account'}`);
       fetchAccounts();
     }
+
     if (searchParams.get('error')) {
       toast.error(`Connection failed: ${searchParams.get('message') || searchParams.get('error')}`);
     }
@@ -349,43 +608,54 @@ const ConnectedAccounts = () => {
 
   const fetchAccounts = async () => {
     try {
+      setFetchError(null);
       const data = await getSocialAccounts();
       setAccounts(data);
     } catch {
+      setFetchError('Failed to load connected accounts.');
       toast.error('Failed to load accounts');
     } finally {
       setLoading(false);
     }
   };
 
-  const latestTikTokRestriction = useMemo(
-    () => accounts.find((account) => account.platform === 'tiktok' && getTikTokRestrictionFromAccount(account)) || null,
-    [accounts]
-  );
+  const closeManualModal = () => {
+    setManualModal({ platformId: null, mode: 'connect' });
+    setBlueskyHandle('');
+    setBlueskyPass('');
+    setDiscordWebhookUrl('');
+    setDiscordChannelName('');
+    setMastodonInstanceUrl('');
+    setMastodonAccessToken('');
+  };
 
-  const handleConnect = async (platformId) => {
+  const openManualModal = (platformId, mode) => {
+    setManualModal({ platformId, mode });
+  };
+
+  const handleConnect = async (platformId, { mode = 'connect' } = {}) => {
     if (user && !user.email_verified) {
       toast.error('Verify your email before connecting accounts.');
       return;
     }
-    if (platformId === 'bluesky') { setBlueskyModal(true); return; }
-    if (platformId === 'discord') { setDiscordModal(true); return; }
-    if (platformId === 'mastodon') { setMastodonModal(true); return; }
+
+    if (MANUAL_PLATFORMS.has(platformId)) {
+      openManualModal(platformId, mode);
+      return;
+    }
+
+    if (!OAUTH_PLATFORMS.has(platformId)) return;
 
     setConnecting(platformId);
-    // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
     markOAuthPopupExpected(false);
-    try {
-      const oauthPlatforms = ['facebook','instagram','youtube','twitter','linkedin','threads','reddit','pinterest','snapchat','tiktok'];
 
-      if (oauthPlatforms.includes(platformId)) {
-        const { authorization_url, code_verifier } = await requestOAuthUrl(platformId);
-        if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
-        sessionStorage.setItem('oauth_platform', platformId);
-        sessionStorage.setItem('oauth_return_to', 'accounts');
-        window.location.assign(authorization_url);
-        return;
-      }
+    try {
+      const { authorization_url, code_verifier } = await requestOAuthUrl(platformId);
+      if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
+      sessionStorage.setItem('oauth_platform', platformId);
+      sessionStorage.setItem('oauth_return_to', 'accounts');
+      window.location.assign(authorization_url);
+      return;
     } catch (error) {
       clearOAuthPopupExpected();
       if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
@@ -401,11 +671,14 @@ const ConnectedAccounts = () => {
   const handleDisconnect = async (accountId, platformName) => {
     if (!window.confirm(`Disconnect your ${platformName} account? This cannot be undone.`)) return;
     try {
+      setDisconnectingAccountId(accountId);
       await disconnectSocialAccount(accountId);
-      setAccounts(prev => prev.filter(a => a.id !== accountId));
+      setAccounts((previous) => previous.filter((account) => account.id !== accountId));
       toast.success(`${platformName} account disconnected`);
     } catch {
       toast.error('Failed to disconnect account');
+    } finally {
+      setDisconnectingAccountId(null);
     }
   };
 
@@ -415,15 +688,15 @@ const ConnectedAccounts = () => {
       return;
     }
     if (!blueskyHandle.trim() || !blueskyPass.trim()) return;
+
     setBlueskyLoading(true);
     try {
       await connectBluesky({ handle: blueskyHandle.trim(), app_password: blueskyPass.trim() });
-      toast.success('Bluesky account connected!');
-      setBlueskyModal(false);
-      setBlueskyHandle(''); setBlueskyPass('');
+      toast.success(`Bluesky account ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'}!`);
+      closeManualModal();
       fetchAccounts();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to connect Bluesky');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to connect Bluesky');
     } finally {
       setBlueskyLoading(false);
     }
@@ -435,15 +708,19 @@ const ConnectedAccounts = () => {
       return;
     }
     if (!discordWebhookUrl.trim()) return;
+
     setDiscordLoading(true);
     try {
-      const res = await connectDiscord(discordWebhookUrl.trim(), discordChannelName.trim() || null);
-      toast.success(`Discord channel "${res.channel}" connected!`);
-      setDiscordModal(false);
-      setDiscordWebhookUrl(''); setDiscordChannelName('');
+      const response = await connectDiscord(discordWebhookUrl.trim(), discordChannelName.trim() || null);
+      toast.success(
+        response?.channel
+          ? `Discord channel ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'}: ${response.channel}`
+          : `Discord ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'} successfully!`,
+      );
+      closeManualModal();
       fetchAccounts();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Invalid webhook URL. Make sure it is a valid Discord webhook.');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Invalid webhook URL. Make sure it is a valid Discord webhook.');
     } finally {
       setDiscordLoading(false);
     }
@@ -455,16 +732,15 @@ const ConnectedAccounts = () => {
       return;
     }
     if (!mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()) return;
+
     setMastodonLoading(true);
     try {
-      const res = await connectMastodon(mastodonInstanceUrl.trim(), mastodonAccessToken.trim());
-      toast.success(`Mastodon account "${res.username}" connected!`);
-      setMastodonModal(false);
-      setMastodonInstanceUrl('');
-      setMastodonAccessToken('');
+      const response = await connectMastodon(mastodonInstanceUrl.trim(), mastodonAccessToken.trim());
+      toast.success(`Mastodon account "${response.username}" ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'}!`);
+      closeManualModal();
       fetchAccounts();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to connect Mastodon');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to connect Mastodon');
     } finally {
       setMastodonLoading(false);
     }
@@ -476,14 +752,17 @@ const ConnectedAccounts = () => {
       return;
     }
     if (!pageIdInput.trim() || !pageNameInput.trim()) return;
+
     setAddingPage(true);
     try {
       await addLinkedInPageManually(pageIdInput.trim(), pageNameInput.trim());
       toast.success(`LinkedIn page "${pageNameInput}" connected!`);
-      setLinkedinPageModal(false); setPageIdInput(''); setPageNameInput('');
+      setLinkedinPageModal(false);
+      setPageIdInput('');
+      setPageNameInput('');
       fetchAccounts();
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to add LinkedIn page');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to add LinkedIn page');
     } finally {
       setAddingPage(false);
     }
@@ -503,362 +782,434 @@ const ConnectedAccounts = () => {
     }
   };
 
-  const getAccountsByPlatform = (id) => accounts.filter(a => a.platform === id);
+  const verificationRequired = Boolean(user && !user.email_verified);
+
+  const platformModels = useMemo(
+    () => PLATFORMS.map((platform) => ({
+      platform,
+      accounts: sortAccounts(accounts.filter((account) => account.platform === platform.id)),
+    })),
+    [accounts],
+  );
+
+  const attentionAccounts = useMemo(
+    () => platformModels.flatMap(({ platform, accounts: platformAccounts }) => (
+      platformAccounts
+        .filter((account) => ATTENTION_STATES.has(getConnectionState(account)))
+        .map((account) => ({ account, platform }))
+    )),
+    [platformModels],
+  );
 
   const totalConnected = accounts.length;
-  const expiredCount = accounts.filter(a => getTokenStatus(a) === 'expired').length;
+  const connectedPlatformsCount = platformModels.filter(({ accounts: platformAccounts }) => platformAccounts.length > 0).length;
+  const expiringCount = accounts.filter((account) => getConnectionState(account) === 'expiring').length;
+  const reconnectCount = accounts.filter((account) => getConnectionState(account) === 'reconnect_required').length;
 
   if (loading) {
     return (
       <DashboardLayout>
-        <BrandMarkLoader overlay />
+        <div className="mx-auto max-w-6xl pb-12">
+          <LoadingSkeleton />
+        </div>
       </DashboardLayout>
     );
   }
 
   return (
     <DashboardLayout>
-      <div className="max-w-5xl mx-auto pb-12">
-
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Connected Accounts</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage your social accounts and channels. Connect as many as you need.
-          </p>
-          {totalConnected > 0 && (
-            <div className="flex items-center gap-4 mt-3">
-              <span className="flex items-center gap-1.5 text-sm text-green-700 font-medium">
-                <FaCheckCircle className="text-green-500" /> {totalConnected} account{totalConnected !== 1 ? 's' : ''} connected
-              </span>
-              {expiredCount > 0 && (
-                <span className="flex items-center gap-1.5 text-sm text-red-600 font-medium">
-                  <FaExclamationTriangle className="text-red-500" /> {expiredCount} expired — reconnect required
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Expired token banner */}
-        {expiredCount > 0 && (
-          <div className="mb-6 flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-            <FaExclamationTriangle className="text-red-500 mt-0.5 shrink-0" />
+      <div className="mx-auto max-w-6xl space-y-8 pb-12">
+        <section className="rounded-[32px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold text-red-700">One or more platform tokens have expired</p>
-              <p className="text-xs text-red-500 mt-0.5">
-                Click <strong>Connect</strong> on the expired platform to re-authenticate.
+              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">Connections</p>
+              <h1 className="mt-3 text-3xl font-semibold text-gray-900">Connected Accounts</h1>
+              <p className="mt-2 max-w-2xl text-sm text-gray-600">
+                Keep every channel healthy, reconnect accounts before they interrupt scheduling, and manage provider-specific setup from one place.
               </p>
             </div>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <a
+                href="/support"
+                className="inline-flex items-center justify-center rounded-full border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Need help?
+              </a>
+              <button
+                onClick={fetchAccounts}
+                className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 font-semibold text-white transition-colors hover:bg-black"
+              >
+                Refresh status
+              </button>
+            </div>
           </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <SummaryCard
+              label="Connected"
+              value={totalConnected}
+              tone={totalConnected > 0 ? 'success' : 'neutral'}
+              detail={`${connectedPlatformsCount} ${connectedPlatformsCount === 1 ? 'platform' : 'platforms'} active`}
+            />
+            <SummaryCard
+              label="Needs attention"
+              value={attentionAccounts.length}
+              tone={attentionAccounts.length > 0 ? 'danger' : 'success'}
+              detail={
+                attentionAccounts.length > 0
+                  ? `${reconnectCount} reconnect required${expiringCount > 0 ? ` · ${expiringCount} expiring soon` : ''}`
+                  : 'All connected accounts are currently healthy'
+              }
+            />
+            <SummaryCard
+              label="Verification"
+              value={verificationRequired ? 'Required' : 'Ready'}
+              tone={verificationRequired ? 'warning' : 'success'}
+              detail={
+                verificationRequired
+                  ? 'Email verification is required before connecting or reconnecting providers'
+                  : 'Email is verified for connection and publishing actions'
+              }
+            />
+          </div>
+        </section>
+
+        {verificationRequired ? <VerificationBanner /> : null}
+
+        {fetchError ? (
+          <div className="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+            {fetchError}
+          </div>
+        ) : null}
+
+        {attentionAccounts.length > 0 ? (
+          <section className="rounded-[32px] border border-red-200 bg-red-50/70 px-6 py-6 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-red-500">Needs attention</p>
+                <h2 className="mt-2 text-xl font-semibold text-gray-900">Reconnect or review these accounts first</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  These accounts are expired, expiring, or restricted and may interrupt publishing until you act.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {attentionAccounts.map(({ account, platform }) => (
+                <AttentionItem
+                  key={`${platform.id}-${account.id}`}
+                  account={account}
+                  platform={platform}
+                  onReconnect={handleConnect}
+                  connecting={connecting}
+                />
+              ))}
+            </div>
+          </section>
+        ) : totalConnected > 0 ? (
+          <section className="rounded-[32px] border border-emerald-200 bg-emerald-50 px-6 py-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <FaCheckCircle className="mt-0.5 text-emerald-500" />
+              <div>
+                <h2 className="text-lg font-semibold text-emerald-900">All connected accounts look healthy</h2>
+                <p className="mt-1 text-sm text-emerald-800">
+                  No reconnect work is needed right now. You can still add more accounts or refresh a provider proactively.
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[32px] border border-dashed border-gray-300 bg-white px-6 py-8 text-center shadow-sm">
+            <h2 className="text-xl font-semibold text-gray-900">Connect your first platform</h2>
+            <p className="mx-auto mt-2 max-w-2xl text-sm text-gray-600">
+              Start with the channels you publish to most often. Once connected, this page will surface expiring tokens, reconnect needs, and provider restrictions automatically.
+            </p>
+          </section>
         )}
 
-        {/* Platform grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {PLATFORMS.map((platform) => {
-            const connected = getAccountsByPlatform(platform.id);
-            const platformExtras = [];
-
-            if (platform.id === 'linkedin' && connected.length > 0) {
-              platformExtras.push(
-                <button
-                  key="linkedin-company-page"
-                  onClick={() => setLinkedinPageModal(true)}
-                  className="flex items-center gap-1 text-[10px] text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-full transition-colors"
-                >
-                  <FaLinkedin className="text-[9px]" /> + Company Page
-                </button>
-              );
-            }
-
-            if (platform.id === 'tiktok' && latestTikTokRestriction) {
-              platformExtras.push(
-                <div
-                  key="tiktok-public-posting-warning"
-                  className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
-                >
-                  <p className="text-xs font-semibold text-amber-800">
-                    TikTok public posting is currently blocked
-                  </p>
-                  <p className="text-[11px] text-amber-700 mt-1">
-                    {getPublishFailureMessage(latestTikTokRestriction)}
-                  </p>
-                  <p className="text-[11px] text-amber-800 mt-1">
-                    {getPublishFailureAction(latestTikTokRestriction)}
-                  </p>
-                </div>
-              );
-            }
-
-            const extra = platformExtras.length > 0 ? (
-              <div className="space-y-2">
-                {platformExtras}
-              </div>
-            ) : null;
-
-            return (
+        <section className="space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">All platforms</p>
+              <h2 className="mt-2 text-2xl font-semibold text-gray-900">Manage every provider connection</h2>
+            </div>
+            <p className="text-sm text-gray-500">
+              Use reconnect for any account that expires, loses access, or needs updated credentials.
+            </p>
+          </div>
+          <div className="grid gap-5 xl:grid-cols-2">
+            {platformModels.map(({ platform, accounts: platformAccounts }) => (
               <PlatformCard
                 key={platform.id}
                 platform={platform}
-                connectedAccounts={connected}
-                onConnect={handleConnect}
+                accounts={platformAccounts}
+                onPrimaryAction={handleConnect}
+                onReconnect={handleConnect}
                 onDisconnect={handleDisconnect}
                 connecting={connecting}
-                extra={extra}
+                disconnectingAccountId={disconnectingAccountId}
+                onOpenLinkedInPage={() => setLinkedinPageModal(true)}
               />
-            );
-          })}
-        </div>
-
-        {/* Help */}
-        <div className="mt-8 pt-6 border-t border-gray-200">
-          <a href="/support" className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 w-fit">
-            <span className="w-4 h-4 rounded-full border border-gray-400 flex items-center justify-center text-xs font-bold">i</span>
-            Need help connecting an account?
-          </a>
-        </div>
-      </div>
-
-      {/* ── Bluesky Modal ──────────────────────────────────────────────────── */}
-      {blueskyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center">
-                <SiBluesky className="text-sky-500 text-lg" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Connect Bluesky</h2>
-                <p className="text-xs text-gray-500">Enter your handle and app password</p>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 mb-4 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
-              Use an{' '}
-              <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noreferrer" className="text-sky-600 hover:underline font-medium">
-                App Password
-              </a>
-              {' '}— not your main Bluesky password.
-            </p>
-            <div className="space-y-3 mb-5">
-              <input type="text" value={blueskyHandle} onChange={e => setBlueskyHandle(e.target.value)}
-                placeholder="handle.bsky.social"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
-              <input type="password" value={blueskyPass} onChange={e => setBlueskyPass(e.target.value)}
-                placeholder="App password (xxxx-xxxx-xxxx-xxxx)"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
-                onKeyDown={e => { if (e.key === 'Enter') handleBlueskyConnect(); }} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => { setBlueskyModal(false); setBlueskyHandle(''); setBlueskyPass(''); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
-              <button onClick={handleBlueskyConnect}
-                disabled={blueskyLoading || !blueskyHandle.trim() || !blueskyPass.trim()}
-                className="px-5 py-2 text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white rounded-xl disabled:opacity-50 transition-colors">
-                {blueskyLoading ? 'Connecting…' : 'Connect'}
-              </button>
-            </div>
+            ))}
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* ── Discord Modal ──────────────────────────────────────────────────── */}
-      {discordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center">
-                <FaDiscord className="text-indigo-500 text-xl" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Connect Discord Channel</h2>
-                <p className="text-xs text-gray-500">Via an incoming webhook URL</p>
-              </div>
-            </div>
-
-            {/* How to steps */}
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
-              <p className="text-xs font-semibold text-indigo-700 mb-2">How to get a webhook URL:</p>
-              <ol className="space-y-1 text-xs text-indigo-700">
-                {[
-                  'Open your Discord server → right-click the channel',
-                  'Go to Edit Channel → Integrations → Webhooks',
-                  'Click "New Webhook", name it, then Copy Webhook URL',
-                ].map((step, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span className="w-4 h-4 rounded-full bg-indigo-200 text-indigo-800 text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                    {step}
-                  </li>
-                ))}
-              </ol>
-            </div>
-
-            <div className="space-y-3 mb-5">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Webhook URL <span className="text-red-500">*</span></label>
-                <input type="url" value={discordWebhookUrl} onChange={e => setDiscordWebhookUrl(e.target.value)}
-                  placeholder="https://discord.com/api/webhooks/..."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Channel Label <span className="text-gray-400">(optional)</span></label>
-                <input type="text" value={discordChannelName} onChange={e => setDiscordChannelName(e.target.value)}
-                  placeholder="e.g. #announcements"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  onKeyDown={e => { if (e.key === 'Enter') handleDiscordConnect(); }} />
-              </div>
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => { setDiscordModal(false); setDiscordWebhookUrl(''); setDiscordChannelName(''); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
-              <button onClick={handleDiscordConnect}
-                disabled={discordLoading || !discordWebhookUrl.trim()}
-                className="px-5 py-2 text-sm font-semibold bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl disabled:opacity-50 transition-colors flex items-center gap-2">
-                {discordLoading && <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />}
-                {discordLoading ? 'Validating…' : 'Connect Channel'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Mastodon Modal ────────────────────────────────────────────────── */}
-      {mastodonModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center">
-                <SiMastodon className="text-indigo-600 text-lg" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Connect Mastodon</h2>
-                <p className="text-xs text-gray-500">Use your instance URL and a personal access token</p>
-              </div>
-            </div>
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
-              <p className="text-xs text-gray-700">
-                Create a personal access token from your Mastodon instance settings, then paste the
-                instance URL and token here. We&apos;ll validate the account before saving it.
-              </p>
-            </div>
-            <div className="space-y-3 mb-5">
-              <input
-                type="url"
-                value={mastodonInstanceUrl}
-                onChange={e => setMastodonInstanceUrl(e.target.value)}
-                placeholder="https://mastodon.social"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              />
-              <input
-                type="password"
-                value={mastodonAccessToken}
-                onChange={e => setMastodonAccessToken(e.target.value)}
-                placeholder="Paste your Mastodon access token"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                onKeyDown={e => { if (e.key === 'Enter') handleMastodonConnect(); }}
-              />
-            </div>
-            <div className="flex gap-2 justify-end">
+        <CredentialDialogShell
+          open={manualModal.platformId === 'bluesky'}
+          onOpenChange={(open) => { if (!open) closeManualModal(); }}
+          icon={SiBluesky}
+          iconClassName="text-lg text-sky-500"
+          iconWrapClassName="border-sky-200 bg-sky-50"
+          title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Bluesky`}
+          description={manualModal.mode === 'reconnect'
+            ? 'Update the app password or handle to restore Bluesky access.'
+            : 'Enter your handle and app password to connect Bluesky.'}
+          footer={(
+            <>
               <button
-                onClick={() => {
-                  setMastodonModal(false);
-                  setMastodonInstanceUrl('');
-                  setMastodonAccessToken('');
-                }}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+                onClick={closeManualModal}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBlueskyConnect}
+                disabled={blueskyLoading || !blueskyHandle.trim() || !blueskyPass.trim()}
+                className="rounded-full bg-sky-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-600 disabled:opacity-50"
+              >
+                {blueskyLoading ? 'Saving…' : manualModal.mode === 'reconnect' ? 'Reconnect Bluesky' : 'Connect Bluesky'}
+              </button>
+            </>
+          )}
+        >
+          <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+            Use an{' '}
+            <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noreferrer" className="font-semibold underline">
+              App Password
+            </a>{' '}
+            instead of your main Bluesky password.
+          </div>
+          <div className="space-y-3">
+            <input
+              type="text"
+              value={blueskyHandle}
+              onChange={(event) => setBlueskyHandle(event.target.value)}
+              placeholder="handle.bsky.social"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <input
+              type="password"
+              value={blueskyPass}
+              onChange={(event) => setBlueskyPass(event.target.value)}
+              placeholder="App password (xxxx-xxxx-xxxx-xxxx)"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+              onKeyDown={(event) => { if (event.key === 'Enter') handleBlueskyConnect(); }}
+            />
+          </div>
+        </CredentialDialogShell>
+
+        <CredentialDialogShell
+          open={manualModal.platformId === 'discord'}
+          onOpenChange={(open) => { if (!open) closeManualModal(); }}
+          icon={FaDiscord}
+          iconClassName="text-xl text-indigo-500"
+          iconWrapClassName="border-indigo-200 bg-indigo-50"
+          title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Discord`}
+          description={manualModal.mode === 'reconnect'
+            ? 'Update the webhook details for this Discord destination.'
+            : 'Connect a Discord channel using an incoming webhook URL.'}
+          footer={(
+            <>
+              <button
+                onClick={closeManualModal}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDiscordConnect}
+                disabled={discordLoading || !discordWebhookUrl.trim()}
+                className="rounded-full bg-indigo-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-600 disabled:opacity-50"
+              >
+                {discordLoading ? 'Saving…' : manualModal.mode === 'reconnect' ? 'Reconnect Discord' : 'Connect Discord'}
+              </button>
+            </>
+          )}
+        >
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">How to get a webhook URL</p>
+            <ol className="mt-2 space-y-1 text-sm text-indigo-800">
+              <li>1. Open your Discord server and channel settings.</li>
+              <li>2. Go to Integrations → Webhooks.</li>
+              <li>3. Create or copy an incoming webhook URL for the channel.</li>
+            </ol>
+          </div>
+          <div className="space-y-3">
+            <input
+              type="url"
+              value={discordWebhookUrl}
+              onChange={(event) => setDiscordWebhookUrl(event.target.value)}
+              placeholder="https://discord.com/api/webhooks/..."
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <input
+              type="text"
+              value={discordChannelName}
+              onChange={(event) => setDiscordChannelName(event.target.value)}
+              placeholder="Channel label (optional)"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              onKeyDown={(event) => { if (event.key === 'Enter') handleDiscordConnect(); }}
+            />
+          </div>
+        </CredentialDialogShell>
+
+        <CredentialDialogShell
+          open={manualModal.platformId === 'mastodon'}
+          onOpenChange={(open) => { if (!open) closeManualModal(); }}
+          icon={SiMastodon}
+          iconClassName="text-lg text-indigo-600"
+          iconWrapClassName="border-indigo-200 bg-indigo-50"
+          title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Mastodon`}
+          description={manualModal.mode === 'reconnect'
+            ? 'Update the instance URL or access token to restore Mastodon access.'
+            : 'Connect Mastodon with your instance URL and a personal access token.'}
+          footer={(
+            <>
+              <button
+                onClick={closeManualModal}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleMastodonConnect}
                 disabled={mastodonLoading || !mastodonInstanceUrl.trim() || !mastodonAccessToken.trim()}
-                className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl disabled:opacity-50 transition-colors"
+                className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-50"
               >
-                {mastodonLoading ? 'Connecting…' : 'Connect'}
+                {mastodonLoading ? 'Saving…' : manualModal.mode === 'reconnect' ? 'Reconnect Mastodon' : 'Connect Mastodon'}
               </button>
-            </div>
+            </>
+          )}
+        >
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+            Create a personal access token from your Mastodon instance settings, then paste the instance URL and token here.
           </div>
-        </div>
-      )}
+          <div className="space-y-3">
+            <input
+              type="url"
+              value={mastodonInstanceUrl}
+              onChange={(event) => setMastodonInstanceUrl(event.target.value)}
+              placeholder="https://mastodon.social"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <input
+              type="password"
+              value={mastodonAccessToken}
+              onChange={(event) => setMastodonAccessToken(event.target.value)}
+              placeholder="Paste your Mastodon access token"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              onKeyDown={(event) => { if (event.key === 'Enter') handleMastodonConnect(); }}
+            />
+          </div>
+        </CredentialDialogShell>
 
-      {/* ── LinkedIn Manual Page Modal ─────────────────────────────────────── */}
-      {linkedinPageModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
-                <FaLinkedin className="text-blue-700 text-xl" />
+        <Dialog open={linkedinPageModal} onOpenChange={setLinkedinPageModal}>
+          <DialogContent className="max-w-md rounded-[28px]">
+            <DialogHeader className="text-left">
+              <DialogTitle>Add LinkedIn Company Page</DialogTitle>
+              <DialogDescription>Enter the page name and page ID or URL slug for the company profile you manage.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500">Page name</label>
+                <input
+                  type="text"
+                  value={pageNameInput}
+                  onChange={(event) => setPageNameInput(event.target.value)}
+                  placeholder="Acme Corporation"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
               <div>
-                <h2 className="text-base font-bold text-gray-900">Add LinkedIn Company Page</h2>
-                <p className="text-xs text-gray-500">Enter your company page details</p>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-500">Page ID or URL slug</label>
+                <input
+                  type="text"
+                  value={pageIdInput}
+                  onChange={(event) => setPageIdInput(event.target.value)}
+                  placeholder="acme-corp or 12345678"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-2 text-xs text-gray-500">Find it in your page URL: linkedin.com/company/your-page-id</p>
               </div>
             </div>
-            <div className="space-y-4 mb-5">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Page Name</label>
-                <input type="text" value={pageNameInput} onChange={e => setPageNameInput(e.target.value)}
-                  placeholder="e.g. Acme Corporation"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">Page ID or URL slug</label>
-                <input type="text" value={pageIdInput} onChange={e => setPageIdInput(e.target.value)}
-                  placeholder="e.g. acme-corp or 12345678"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <p className="text-[11px] text-gray-400 mt-1.5">Find it in your page URL: linkedin.com/company/<strong>your-page-id</strong></p>
-              </div>
-            </div>
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => { setLinkedinPageModal(false); setPageIdInput(''); setPageNameInput(''); }}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors">Cancel</button>
-              <button onClick={handleAddLinkedinPage}
+            <DialogFooter className="justify-end gap-2">
+              <button
+                onClick={() => {
+                  setLinkedinPageModal(false);
+                  setPageIdInput('');
+                  setPageNameInput('');
+                }}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddLinkedinPage}
                 disabled={addingPage || !pageIdInput.trim() || !pageNameInput.trim()}
-                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors">
-                {addingPage ? 'Connecting…' : 'Connect Page'}
+                className="rounded-full bg-blue-700 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-800 disabled:opacity-50"
+              >
+                {addingPage ? 'Saving…' : 'Connect page'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-      {/* ── LinkedIn Orgs Selection Modal ──────────────────────────────────── */}
-      {linkedinOrgsModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
-                <FaLinkedin className="text-blue-700 text-xl" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Connect LinkedIn Pages</h2>
-                <p className="text-xs text-gray-500">Select company pages to manage</p>
-              </div>
-            </div>
-            <div className="space-y-2 max-h-64 overflow-y-auto mb-5">
-              {linkedinOrgs.map(org => (
-                <label key={org.org_id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors">
-                  <input type="checkbox" checked={selectedOrgs.includes(org.org_id)}
-                    onChange={() => setSelectedOrgs(prev => prev.includes(org.org_id) ? prev.filter(id => id !== org.org_id) : [...prev, org.org_id])}
-                    className="w-4 h-4 accent-blue-600" />
-                  <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm shrink-0">
+        <Dialog open={linkedinOrgsModal} onOpenChange={setLinkedinOrgsModal}>
+          <DialogContent className="max-w-md rounded-[28px]">
+            <DialogHeader className="text-left">
+              <DialogTitle>Connect LinkedIn Pages</DialogTitle>
+              <DialogDescription>Select the company pages you want to manage from this workspace.</DialogDescription>
+            </DialogHeader>
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {linkedinOrgs.map((org) => (
+                <label
+                  key={org.org_id}
+                  className="flex cursor-pointer items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3 transition-colors hover:border-blue-300 hover:bg-blue-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedOrgs.includes(org.org_id)}
+                    onChange={() => setSelectedOrgs((previous) => (
+                      previous.includes(org.org_id)
+                        ? previous.filter((orgId) => orgId !== org.org_id)
+                        : [...previous, org.org_id]
+                    ))}
+                    className="h-4 w-4 accent-blue-600"
+                  />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100 text-sm font-semibold text-blue-700">
                     {org.name.charAt(0).toUpperCase()}
                   </div>
-                  <span className="font-medium text-gray-800 text-sm">{org.name}</span>
+                  <span className="text-sm font-medium text-gray-800">{org.name}</span>
                 </label>
               ))}
             </div>
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setLinkedinOrgsModal(false)} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-200 rounded-xl transition-colors">Skip</button>
-              <button onClick={handleSaveLinkedinOrgs}
-                disabled={savingOrgs || selectedOrgs.length === 0}
-                className="px-5 py-2 text-sm font-semibold bg-blue-700 text-white rounded-xl hover:bg-blue-800 disabled:opacity-50 transition-colors">
-                {savingOrgs ? 'Connecting…' : `Connect ${selectedOrgs.length} Page${selectedOrgs.length !== 1 ? 's' : ''}`}
+            <DialogFooter className="justify-end gap-2">
+              <button
+                onClick={() => setLinkedinOrgsModal(false)}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Skip
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <button
+                onClick={handleSaveLinkedinOrgs}
+                disabled={savingOrgs || selectedOrgs.length === 0}
+                className="rounded-full bg-blue-700 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-800 disabled:opacity-50"
+              >
+                {savingOrgs ? 'Saving…' : `Connect ${selectedOrgs.length} page${selectedOrgs.length !== 1 ? 's' : ''}`}
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </DashboardLayout>
   );
 };

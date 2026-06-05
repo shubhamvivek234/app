@@ -29,6 +29,79 @@ _SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin
 _OAUTH_STATE_JWT_SECRET = os.environ.get("JWT_SECRET", "your-secret-key")
 _OAUTH_STATE_JWT_ALGORITHM = "HS256"
 
+
+def _coerce_datetime(value: datetime | str | None) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _connection_health(doc: dict, now: datetime) -> dict[str, object]:
+    expires_at = _coerce_datetime(doc.get("expires_at") or doc.get("token_expiry"))
+    publish_restriction_type = doc.get("publish_restriction_type")
+    publish_action_required = doc.get("publish_action_required")
+    publish_error_code = doc.get("publish_error_code")
+    reconnect_reason = doc.get("reconnect_reason")
+    reconnect_required_at = _coerce_datetime(doc.get("reconnect_required_at"))
+    token_error = doc.get("token_error")
+    has_refresh_token = bool(doc.get("refresh_token"))
+    stored_reconnect_flag = bool(doc.get("requires_reconnect"))
+
+    if publish_restriction_type or publish_action_required or publish_error_code:
+        return {
+            "connection_state": "restricted",
+            "connection_message": (
+                publish_action_required
+                or publish_restriction_type
+                or publish_error_code
+                or "Publishing is currently restricted for this account."
+            ),
+            "requires_reconnect": False,
+            "reconnect_reason": reconnect_reason,
+            "reconnect_required_at": reconnect_required_at,
+        }
+
+    if stored_reconnect_flag or reconnect_reason or token_error:
+        return {
+            "connection_state": "reconnect_required",
+            "connection_message": reconnect_reason or token_error or "Reconnect this account to restore access.",
+            "requires_reconnect": True,
+            "reconnect_reason": reconnect_reason or token_error,
+            "reconnect_required_at": reconnect_required_at or expires_at or now,
+        }
+
+    if expires_at and expires_at <= now and not has_refresh_token:
+        return {
+            "connection_state": "reconnect_required",
+            "connection_message": "Access token expired. Reconnect this account to restore access.",
+            "requires_reconnect": True,
+            "reconnect_reason": "Access token expired.",
+            "reconnect_required_at": expires_at,
+        }
+
+    if expires_at and (expires_at - now).total_seconds() <= 24 * 3600 and not has_refresh_token:
+        return {
+            "connection_state": "expiring",
+            "connection_message": "Access token expires soon. Reconnect proactively to avoid interruptions.",
+            "requires_reconnect": False,
+            "reconnect_reason": None,
+            "reconnect_required_at": None,
+        }
+
+    return {
+        "connection_state": "healthy",
+        "connection_message": "Connection is healthy.",
+        "requires_reconnect": False,
+        "reconnect_reason": None,
+        "reconnect_required_at": None,
+    }
+
 # ── Response models (access_token / refresh_token intentionally absent) ───────
 
 class SocialAccountResponse(BaseModel):
@@ -50,6 +123,11 @@ class SocialAccountResponse(BaseModel):
     connected_at: datetime
     expires_at: datetime | None = None
     token_error: str | None = None
+    connection_state: str = "healthy"
+    connection_message: str | None = None
+    requires_reconnect: bool = False
+    reconnect_reason: str | None = None
+    reconnect_required_at: datetime | None = None
     publish_error_code: str | None = None
     publish_error_category: str | None = None
     publish_action_required: str | None = None
@@ -112,9 +190,10 @@ async def list_accounts(
     db: DB,
 ) -> list[SocialAccountResponse]:
     user_id = current_user["user_id"]
+    now = datetime.now(timezone.utc)
     cursor = db.social_accounts.find(
         {"user_id": user_id, "is_active": True},
-        {"_id": 0, "refresh_token": 0},
+        {"_id": 0},
     )
     docs = await cursor.to_list(length=50)
     response_docs: list[SocialAccountResponse] = []
@@ -142,6 +221,7 @@ async def list_accounts(
                 },
                 {"$set": updates},
             )
+        connection_health = _connection_health(doc, now)
         response_docs.append(
             SocialAccountResponse(
                 id=account_identifier,
@@ -160,6 +240,11 @@ async def list_accounts(
                 connected_at=doc.get("connected_at"),
                 expires_at=doc.get("expires_at") or doc.get("token_expiry"),
                 token_error=doc.get("token_error"),
+                connection_state=str(connection_health["connection_state"]),
+                connection_message=connection_health["connection_message"],
+                requires_reconnect=bool(connection_health["requires_reconnect"]),
+                reconnect_reason=connection_health["reconnect_reason"],
+                reconnect_required_at=connection_health["reconnect_required_at"],
                 publish_error_code=doc.get("publish_error_code"),
                 publish_error_category=doc.get("publish_error_category"),
                 publish_action_required=doc.get("publish_action_required"),

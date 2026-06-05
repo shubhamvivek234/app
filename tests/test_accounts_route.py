@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -88,6 +88,9 @@ async def test_list_accounts_exposes_account_level_publish_restriction_fields(mo
     assert response.publish_action_required == "complete_tiktok_audit_or_use_private_account"
     assert response.publish_restriction_type == "tiktok_public_posting_not_approved"
     assert response.publish_blocked_at == now
+    assert response.connection_state == "restricted"
+    assert response.connection_message == "complete_tiktok_audit_or_use_private_account"
+    assert response.requires_reconnect is False
 
 
 @pytest.mark.asyncio
@@ -118,6 +121,69 @@ async def test_list_accounts_returns_null_publish_restriction_fields_when_not_bl
     assert response.publish_action_required is None
     assert response.publish_restriction_type is None
     assert response.publish_blocked_at is None
+    assert response.connection_state == "healthy"
+    assert response.connection_message == "Connection is healthy."
+    assert response.requires_reconnect is False
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_marks_non_refreshable_expired_accounts_for_reconnect():
+    now = datetime.now(timezone.utc)
+    db = _FakeDB([
+        {
+            "id": "facebook-account-1",
+            "account_id": "facebook-account-1",
+            "user_id": "user-1",
+            "platform": "facebook",
+            "platform_user_id": "platform-user-1",
+            "platform_username": "creator",
+            "display_name": "Creator",
+            "picture_url": "https://example.com/avatar.png",
+            "is_active": True,
+            "scopes": ["pages_manage_posts"],
+            "connected_at": now,
+            "expires_at": now - timedelta(days=365),
+        }
+    ])
+
+    responses = await accounts_route.list_accounts({"user_id": "user-1"}, db)
+
+    assert len(responses) == 1
+    response = responses[0]
+    assert response.connection_state == "reconnect_required"
+    assert response.requires_reconnect is True
+    assert response.reconnect_reason == "Access token expired."
+    assert response.reconnect_required_at == response.expires_at
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_keeps_expired_refreshable_accounts_healthy():
+    now = datetime.now(timezone.utc)
+    db = _FakeDB([
+        {
+            "id": "youtube-account-1",
+            "account_id": "youtube-account-1",
+            "user_id": "user-1",
+            "platform": "youtube",
+            "platform_user_id": "UC123",
+            "platform_username": "Creator",
+            "display_name": "Creator",
+            "picture_url": "https://example.com/avatar.png",
+            "is_active": True,
+            "scopes": ["youtube.upload"],
+            "connected_at": now,
+            "expires_at": now - timedelta(days=365),
+            "refresh_token": "encrypted-refresh-token",
+        }
+    ])
+
+    responses = await accounts_route.list_accounts({"user_id": "user-1"}, db)
+
+    assert len(responses) == 1
+    response = responses[0]
+    assert response.connection_state == "healthy"
+    assert response.connection_message == "Connection is healthy."
+    assert response.requires_reconnect is False
 
 
 @pytest.mark.asyncio
