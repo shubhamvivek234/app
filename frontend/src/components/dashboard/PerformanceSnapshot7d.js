@@ -6,6 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { compactNumber, platformLabel } from './helpers';
 
+const formatTypeLabel = (value) => {
+  if (!value) return 'Other';
+  return value
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+};
+
 const LoadingState = () => (
   <div className="space-y-6">
     <div className="rounded-2xl bg-slate-100 p-5">
@@ -123,11 +132,27 @@ const PerformanceSnapshot7d = ({ performance, loading = false, error = null, onN
               <div className="min-h-0 space-y-6 overflow-y-auto pr-1">
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Content mix</h3>
-                  <div className="mt-4 grid grid-cols-3 gap-3">
-                    {typeEntries.map(([type, count]) => (
-                      <div key={type} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">{type}</p>
-                        <p className="mt-2 text-xl font-semibold tabular-nums text-slate-950">{count}</p>
+                  <div className="mt-4 space-y-3">
+                    {typeEntries.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                        No content-type activity in this window yet.
+                      </div>
+                    ) : typeEntries.map(([type, count]) => (
+                      <div
+                        key={type}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Content type
+                          </p>
+                          <p className="mt-1 truncate text-sm font-medium text-slate-800">
+                            {formatTypeLabel(type)}
+                          </p>
+                        </div>
+                        <p className="text-right text-2xl font-semibold tabular-nums text-slate-950">
+                          {count}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -135,16 +160,26 @@ const PerformanceSnapshot7d = ({ performance, loading = false, error = null, onN
 
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Audience totals</h3>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="mt-4 space-y-3">
                     {audienceMetrics.length === 0 ? (
-                      <div className="col-span-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
                         Audience totals are not available for the connected accounts in this workspace yet.
                       </div>
                     ) : audienceMetrics.map(([label, value]) => (
-                      <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-                        <p className="mt-2 flex items-center gap-2 text-xl font-semibold tabular-nums text-slate-950">
-                          <FaChartBar className="text-slate-400" />
+                      <div
+                        key={label}
+                        className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3.5"
+                      >
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                          <FaChartBar className="text-sm" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Audience metric
+                          </p>
+                          <p className="mt-1 truncate text-sm font-medium text-slate-800">{label}</p>
+                        </div>
+                        <p className="text-right text-xl font-semibold tabular-nums text-slate-950">
                           {compactNumber(value)}
                         </p>
                       </div>
