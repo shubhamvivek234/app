@@ -49,7 +49,7 @@ const ForgotPassword = () => {
                 Recover access without exposing whether an account exists.
               </h1>
               <p className="max-w-md text-sm leading-7 text-white/75">
-                Enter your email and we will trigger Firebase&apos;s secure reset flow. If the address is eligible, a reset message will arrive shortly.
+                Enter your email and we will send a secure Unravler password reset link if the address is eligible.
               </p>
             </div>
           </div>

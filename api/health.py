@@ -99,13 +99,23 @@ async def ready() -> JSONResponse:
             checks["storage"] = "degraded:firebase"
             degraded = True
 
-    # Password-reset Firebase web API key check
-    password_reset_config = get_password_reset_config_status()
-    if password_reset_config["configured"]:
-        checks["auth_password_reset"] = f"ok:{password_reset_config['source']}"
+    # Transactional auth email check (password reset + verification)
+    auth_email_config = get_password_reset_config_status()
+    if auth_email_config["configured"]:
+        if auth_email_config["custom_link_domain_configured"] and auth_email_config["custom_sender_configured"]:
+            checks["auth_password_reset"] = "ok:branded"
+        else:
+            detail = []
+            if not auth_email_config["custom_sender_configured"]:
+                detail.append("custom_sender")
+            if not auth_email_config["custom_link_domain_configured"]:
+                detail.append("custom_link_domain")
+            checks["auth_password_reset"] = f"degraded:{'+'.join(detail) or 'branding'}"
+            degraded = True
     else:
-        logger.warning("Readiness check — password reset Firebase Web API key missing (degraded mode)")
-        checks["auth_password_reset"] = "degraded:missing_firebase_web_api_key"
+        missing = auth_email_config.get("missing") or ["auth_email_config"]
+        logger.warning("Readiness check — auth transactional email config missing (degraded mode): %s", ",".join(missing))
+        checks["auth_password_reset"] = f"degraded:missing_{'_'.join(missing)}"
         degraded = True
 
     status_code = 200 if hard_ok else 503

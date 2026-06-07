@@ -17,7 +17,6 @@ import {
   signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  sendEmailVerification,
   signOut,
   getRedirectResult,
   updateProfile,
@@ -89,14 +88,6 @@ export const enableLegacyBrowserToken = (token) => {
 export const clearAuthData = () => {
   volatileAuthToken = null;
   localStorage.removeItem('token');
-};
-
-const buildActionCodeSettings = (path) => {
-  if (typeof window === 'undefined') return undefined;
-  return {
-    url: `${window.location.origin}${path}`,
-    handleCodeInApp: true,
-  };
 };
 
 /**
@@ -258,10 +249,24 @@ export const emailSignUp = async (email, password, displayName, cfTurnstileToken
         withCredentials: true,
       }
     );
-    await sendEmailVerification(
-      credential.user,
-      buildActionCodeSettings('/verify-email')
-    );
+    try {
+      await axios.post(
+        `${API}/auth/verify-email/request`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${idToken}` },
+          withCredentials: true,
+        }
+      );
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('verification_email_send_failed');
+      }
+    } catch (verificationError) {
+      console.warn('[AuthService] Verification email send failed after signup:', verificationError?.response?.data || verificationError?.message);
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('verification_email_send_failed', '1');
+      }
+    }
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('post_signup_verify_email', '1');
     }
@@ -341,11 +346,25 @@ export const requestPasswordReset = async (email, cfTurnstileToken = null) => {
   return response.data;
 };
 
-export const resendVerificationEmail = async (user) => {
+export const resendVerificationEmail = async (user, returnTo = null) => {
   if (!user) {
     throw new Error('No user logged in');
   }
-  await sendEmailVerification(user, buildActionCodeSettings('/verify-email'));
+  const idToken = await user.getIdToken(true);
+  const response = await axios.post(
+    `${API}/auth/verify-email/request`,
+    {
+      return_to: returnTo || null,
+    },
+    {
+      headers: { Authorization: `Bearer ${idToken}` },
+      withCredentials: true,
+    }
+  );
+  if (typeof window !== 'undefined') {
+    sessionStorage.removeItem('verification_email_send_failed');
+  }
+  return response.data;
 };
 
 /**

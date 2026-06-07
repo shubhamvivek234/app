@@ -15,6 +15,7 @@ const VerifyEmail = () => {
   const { firebaseUser, user, setUser, setToken } = useAuth();
   const [status, setStatus] = useState('idle');
   const [resending, setResending] = useState(false);
+  const [autoSendFailed, setAutoSendFailed] = useState(false);
 
   const mode = searchParams.get('mode');
   const oobCode = searchParams.get('oobCode');
@@ -30,6 +31,12 @@ const VerifyEmail = () => {
   }, [continueTarget, user]);
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setAutoSendFailed(sessionStorage.getItem('verification_email_send_failed') === '1');
+    }
+  }, []);
+
+  useEffect(() => {
     const syncVerifiedSession = async () => {
       if (!firebaseUser) return;
       await reload(firebaseUser);
@@ -38,6 +45,7 @@ const VerifyEmail = () => {
       const profile = await exchangeSession(freshToken);
       setUser(profile);
       sessionStorage.removeItem('post_signup_verify_email');
+      sessionStorage.removeItem('verification_email_send_failed');
       return profile;
     };
 
@@ -72,12 +80,13 @@ const VerifyEmail = () => {
     }
     setResending(true);
     try {
-      await resendVerificationEmail(firebaseUser);
+      await resendVerificationEmail(firebaseUser, continueTarget);
       toast.success('Verification email sent. Check your inbox.');
       setStatus('pending');
+      setAutoSendFailed(false);
     } catch (error) {
       console.error('[VerifyEmail] Resend failed', error);
-      toast.error(error?.message || 'Could not resend verification email.');
+      toast.error(error?.response?.data?.detail || error?.message || 'Could not resend verification email.');
     } finally {
       setResending(false);
     }
@@ -130,6 +139,11 @@ const VerifyEmail = () => {
               <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 Once you verify, refreshing the app will sync your session automatically.
               </div>
+              {autoSendFailed && (
+                <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                  We could not send the first verification email automatically. Use resend below to send a fresh Unravler verification link.
+                </div>
+              )}
               <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                 <Button onClick={handleResend} disabled={resending} className="w-full sm:w-auto">
                   {resending ? 'Sending…' : 'Resend verification email'}

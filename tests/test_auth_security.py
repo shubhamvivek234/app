@@ -8,6 +8,11 @@ from starlette.requests import Request
 from api import health as health_routes
 from api.deps import get_current_user, require_verified_email
 from api.routes import auth as auth_routes
+from utils.auth_emails import (
+    AuthEmailConfigError,
+    AuthEmailDeliveryError,
+    AuthEmailUnknownRecipientError,
+)
 
 
 class _FakeUsersCollection:
@@ -124,20 +129,23 @@ def _fake_create_session_cookie(container):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_error", ["EMAIL_NOT_FOUND", "INVALID_EMAIL"])
-async def test_request_password_reset_hides_unknown_or_invalid_email(monkeypatch, provider_error):
-    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+async def test_request_password_reset_hides_unknown_or_invalid_email(monkeypatch):
     monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
     monkeypatch.setattr(
-        auth_routes.httpx,
-        "AsyncClient",
-        lambda timeout=10.0: _FakeAsyncClient(
-            _FakeAsyncResponse(
-                status_code=400,
-                payload={"error": {"message": provider_error}},
-            )
-        ),
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": True,
+            "missing": [],
+            "sender_email": "contact@unravler.com",
+            "custom_link_domain_configured": True,
+        },
     )
+
+    async def _raise_unknown(email):
+        raise AuthEmailUnknownRecipientError(email)
+
+    monkeypatch.setattr(auth_routes, "send_password_reset_email", _raise_unknown)
 
     result = await auth_routes.request_password_reset(
         request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
@@ -148,11 +156,16 @@ async def test_request_password_reset_hides_unknown_or_invalid_email(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_request_password_reset_returns_503_when_web_api_key_missing(monkeypatch):
-    monkeypatch.delenv("FIREBASE_WEB_API_KEY", raising=False)
-    monkeypatch.delenv("REACT_APP_FIREBASE_API_KEY", raising=False)
-    monkeypatch.delenv("VITE_FIREBASE_API_KEY", raising=False)
+async def test_request_password_reset_returns_503_when_auth_email_config_missing(monkeypatch):
     monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
+    monkeypatch.setattr(
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": False,
+            "missing": ["RESEND_API_KEY", "SENDER_EMAIL"],
+        },
+    )
 
     with pytest.raises(HTTPException) as exc:
         await auth_routes.request_password_reset(
@@ -165,15 +178,24 @@ async def test_request_password_reset_returns_503_when_web_api_key_missing(monke
 
 
 @pytest.mark.asyncio
-async def test_request_password_reset_uses_configured_key_and_calls_provider(monkeypatch):
-    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+async def test_request_password_reset_uses_branded_sender_and_calls_helper(monkeypatch):
     monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
-    call_store = {}
     monkeypatch.setattr(
-        auth_routes.httpx,
-        "AsyncClient",
-        lambda timeout=10.0: _FakeAsyncClient(_FakeAsyncResponse(status_code=200, payload={}), call_store),
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": True,
+            "missing": [],
+            "sender_email": "contact@unravler.com",
+            "custom_link_domain_configured": True,
+        },
     )
+    call_store = {}
+
+    async def _send(email):
+        call_store["email"] = email
+
+    monkeypatch.setattr(auth_routes, "send_password_reset_email", _send)
 
     result = await auth_routes.request_password_reset(
         request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
@@ -181,25 +203,27 @@ async def test_request_password_reset_uses_configured_key_and_calls_provider(mon
     )
 
     assert "reset email" in result["message"].lower()
-    assert "accounts:sendOobCode?key=firebase-web-key" in call_store["last_call"]["url"]
-    assert call_store["last_call"]["json"]["requestType"] == "PASSWORD_RESET"
-    assert call_store["last_call"]["json"]["email"] == "user@example.com"
+    assert call_store["email"] == "user@example.com"
 
 
 @pytest.mark.asyncio
 async def test_request_password_reset_hides_unexpected_provider_failures(monkeypatch):
-    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
     monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
     monkeypatch.setattr(
-        auth_routes.httpx,
-        "AsyncClient",
-        lambda timeout=10.0: _FakeAsyncClient(
-            _FakeAsyncResponse(
-                status_code=500,
-                payload={"error": {"message": "INTERNAL_ERROR"}},
-            )
-        ),
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": True,
+            "missing": [],
+            "sender_email": "contact@unravler.com",
+            "custom_link_domain_configured": True,
+        },
     )
+
+    async def _raise_delivery(email):
+        raise AuthEmailDeliveryError("provider unavailable")
+
+    monkeypatch.setattr(auth_routes, "send_password_reset_email", _raise_delivery)
 
     result = await auth_routes.request_password_reset(
         request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
@@ -207,6 +231,80 @@ async def test_request_password_reset_hides_unexpected_provider_failures(monkeyp
     )
 
     assert "reset email" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_request_verification_email_sends_branded_email(monkeypatch):
+    monkeypatch.setattr(
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": True,
+            "missing": [],
+            "sender_email": "contact@unravler.com",
+            "custom_link_domain_configured": True,
+        },
+    )
+    call_store = {}
+
+    async def _send(email, *, display_name=None, return_to=None):
+        call_store["email"] = email
+        call_store["display_name"] = display_name
+        call_store["return_to"] = return_to
+
+    monkeypatch.setattr(auth_routes, "send_verification_email", _send)
+
+    result = await auth_routes.request_verification_email(
+        request=Request({"type": "http", "method": "POST", "path": "/api/auth/verify-email/request", "headers": []}),
+        current_user={
+            "user_id": "usr_123",
+            "email": "user@example.com",
+            "display_name": "Alice",
+            "email_verified": False,
+        },
+        body=auth_routes.VerifyEmailRequest(return_to="/accept-invite/token"),
+    )
+
+    assert "verification email sent" in result["message"].lower()
+    assert call_store == {
+        "email": "user@example.com",
+        "display_name": "Alice",
+        "return_to": "/accept-invite/token",
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_verification_email_returns_503_when_delivery_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        auth_routes,
+        "get_auth_email_config_status",
+        lambda: {
+            "configured": True,
+            "missing": [],
+            "sender_email": "contact@unravler.com",
+            "custom_link_domain_configured": True,
+        },
+    )
+
+    async def _raise_delivery(email, *, display_name=None, return_to=None):
+        raise AuthEmailDeliveryError("resend down")
+
+    monkeypatch.setattr(auth_routes, "send_verification_email", _raise_delivery)
+
+    with pytest.raises(HTTPException) as exc:
+        await auth_routes.request_verification_email(
+            request=Request({"type": "http", "method": "POST", "path": "/api/auth/verify-email/request", "headers": []}),
+            current_user={
+                "user_id": "usr_123",
+                "email": "user@example.com",
+                "display_name": "Alice",
+                "email_verified": False,
+            },
+            body=auth_routes.VerifyEmailRequest(),
+        )
+
+    assert exc.value.status_code == 503
+    assert "temporarily unavailable" in exc.value.detail.lower()
 
 
 async def _async_noop(*args, **kwargs):
@@ -300,7 +398,12 @@ async def test_ready_reports_password_reset_config_as_degraded_without_failing(m
     monkeypatch.setattr(
         health_routes,
         "get_password_reset_config_status",
-        lambda: {"configured": False, "source": None},
+        lambda: {
+            "configured": False,
+            "missing": ["RESEND_API_KEY", "SENDER_EMAIL"],
+            "custom_link_domain_configured": False,
+            "custom_sender_configured": False,
+        },
     )
 
     response = await health_routes.ready()
@@ -308,4 +411,4 @@ async def test_ready_reports_password_reset_config_as_degraded_without_failing(m
     assert response.status_code == 200
     assert response.body
     assert b'"status":"degraded"' in response.body
-    assert b'"auth_password_reset":"degraded:missing_firebase_web_api_key"' in response.body
+    assert b'"auth_password_reset":"degraded:missing_RESEND_API_KEY_SENDER_EMAIL"' in response.body

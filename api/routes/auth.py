@@ -9,7 +9,6 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from redis.exceptions import RedisError
@@ -17,6 +16,14 @@ from redis.exceptions import RedisError
 from api.deps import CurrentUser, CookieUser, DB, CacheRedis, get_firebase_app
 from api.limiter import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
+from utils.auth_emails import (
+    AuthEmailConfigError,
+    AuthEmailDeliveryError,
+    AuthEmailUnknownRecipientError,
+    get_auth_email_config_status,
+    send_password_reset_email,
+    send_verification_email,
+)
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 from utils.session import clear_session_cookie, create_session_cookie, revoke_session, verify_session_cookie
 
@@ -26,21 +33,9 @@ router = APIRouter(tags=["auth"])
 _TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() == "true"
 
 
-def _resolve_firebase_web_api_key() -> tuple[str | None, str | None]:
-    """Resolve the Firebase Web API key used for password-reset emails."""
-    for source_name in ("FIREBASE_WEB_API_KEY", "REACT_APP_FIREBASE_API_KEY", "VITE_FIREBASE_API_KEY"):
-        value = (os.environ.get(source_name) or "").strip()
-        if value:
-            return value, source_name
-    return None, None
-
-
-def get_password_reset_config_status() -> dict[str, str | bool | None]:
-    api_key, source = _resolve_firebase_web_api_key()
-    return {
-        "configured": bool(api_key),
-        "source": source,
-    }
+def get_password_reset_config_status() -> dict[str, object]:
+    """Backward-compatible alias for readiness checks and health consumers."""
+    return get_auth_email_config_status()
 
 # ── Request models ────────────────────────────────────────────────────────────
 
@@ -71,6 +66,10 @@ class SessionExchangeRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     email: EmailStr
     cf_turnstile_token: str | None = None
+
+
+class VerifyEmailRequest(BaseModel):
+    return_to: str | None = None
 
 
 # ── Turnstile helper ──────────────────────────────────────────────────────────
@@ -356,15 +355,15 @@ async def request_password_reset(
     client_ip = request.client.host if request.client else ""
     await _verify_turnstile_if_enabled(body.cf_turnstile_token, client_ip)
 
-    firebase_web_api_key, key_source = _resolve_firebase_web_api_key()
-    if not firebase_web_api_key:
+    config_status = get_auth_email_config_status()
+    if not config_status["configured"]:
         event_log(
             logger,
             "error",
             "auth.password_reset.unavailable",
             route="/auth/password-reset/request",
-            failure_type="missing_firebase_web_api_key",
-            checked_sources=["FIREBASE_WEB_API_KEY", "REACT_APP_FIREBASE_API_KEY", "VITE_FIREBASE_API_KEY"],
+            failure_type="missing_auth_email_config",
+            missing_config=config_status["missing"],
             outcome="misconfigured",
         )
         raise HTTPException(
@@ -372,49 +371,50 @@ async def request_password_reset(
             detail="Password reset is temporarily unavailable. Please try again later.",
         )
 
-    frontend_base = os.environ.get("FRONTEND_URL", "").strip() or "https://app.unravler.com"
-    continue_url = f"{frontend_base.rstrip('/')}/login?passwordReset=completed"
-    payload = {
-        "requestType": "PASSWORD_RESET",
-        "email": body.email,
-        "continueUrl": continue_url,
-        "canHandleCodeInApp": False,
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={firebase_web_api_key}",
-                json=payload,
-            )
-        if resp.status_code >= 400:
-            try:
-                provider_payload = resp.json() or {}
-            except ValueError:
-                provider_payload = {}
-            error_message = (provider_payload.get("error") or {}).get("message", "unknown")
-            if error_message not in {"EMAIL_NOT_FOUND", "INVALID_EMAIL"}:
-                event_log(
-                    logger,
-                    "warning",
-                    "auth.password_reset.provider_error",
-                    route="/auth/password-reset/request",
-                    email=str(body.email),
-                    firebase_key_source=key_source,
-                    provider_status_code=resp.status_code,
-                    failure_type="provider_error",
-                    provider_error=error_message,
-                    outcome="degraded",
-                )
-    except Exception as exc:
+        await send_password_reset_email(str(body.email))
+        event_log(
+            logger,
+            "info",
+            "auth.password_reset.queued",
+            route="/auth/password-reset/request",
+            email=str(body.email),
+            sender_email=config_status["sender_email"],
+            custom_link_domain_configured=config_status["custom_link_domain_configured"],
+            outcome="queued",
+        )
+    except AuthEmailUnknownRecipientError:
+        event_log(
+            logger,
+            "info",
+            "auth.password_reset.unknown_recipient",
+            route="/auth/password-reset/request",
+            email=str(body.email),
+            outcome="hidden",
+        )
+    except AuthEmailConfigError as exc:
+        event_log(
+            logger,
+            "error",
+            "auth.password_reset.unavailable",
+            route="/auth/password-reset/request",
+            email=str(body.email),
+            failure_type="missing_auth_email_config",
+            provider_error=shorten_provider_error(exc),
+            outcome="misconfigured",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is temporarily unavailable. Please try again later.",
+        ) from exc
+    except AuthEmailDeliveryError as exc:
         event_log(
             logger,
             "warning",
             "auth.password_reset.degraded",
-            exc_info=exc,
             route="/auth/password-reset/request",
             email=str(body.email),
-            firebase_key_source=key_source,
+            sender_email=config_status["sender_email"],
             failure_type=type(exc).__name__,
             provider_error=shorten_provider_error(exc),
             outcome="degraded",
@@ -422,6 +422,104 @@ async def request_password_reset(
 
     return {
         "message": "If the address is eligible for password reset, a reset email will be sent shortly.",
+    }
+
+
+@router.post("/auth/verify-email/request")
+@limiter.limit("10/minute")
+async def request_verification_email(
+    request: Request,
+    current_user: CurrentUser,
+    body: VerifyEmailRequest | None = None,
+) -> dict:
+    if current_user.get("email_verified"):
+        return {"message": "This email address is already verified."}
+
+    config_status = get_auth_email_config_status()
+    if not config_status["configured"]:
+        event_log(
+            logger,
+            "error",
+            "auth.verify_email.unavailable",
+            route="/auth/verify-email/request",
+            user_id=current_user["user_id"],
+            failure_type="missing_auth_email_config",
+            missing_config=config_status["missing"],
+            outcome="misconfigured",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email is temporarily unavailable. Please try again later.",
+        )
+
+    try:
+        await send_verification_email(
+            current_user["email"],
+            display_name=current_user.get("display_name"),
+            return_to=body.return_to if body else None,
+        )
+        event_log(
+            logger,
+            "info",
+            "auth.verify_email.queued",
+            route="/auth/verify-email/request",
+            user_id=current_user["user_id"],
+            email=current_user["email"],
+            sender_email=config_status["sender_email"],
+            custom_link_domain_configured=config_status["custom_link_domain_configured"],
+            outcome="queued",
+        )
+    except AuthEmailConfigError as exc:
+        event_log(
+            logger,
+            "error",
+            "auth.verify_email.unavailable",
+            route="/auth/verify-email/request",
+            user_id=current_user["user_id"],
+            failure_type="missing_auth_email_config",
+            provider_error=shorten_provider_error(exc),
+            outcome="misconfigured",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email is temporarily unavailable. Please try again later.",
+        ) from exc
+    except AuthEmailUnknownRecipientError as exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.verify_email.rejected",
+            route="/auth/verify-email/request",
+            user_id=current_user["user_id"],
+            email=current_user.get("email"),
+            failure_type="firebase_user_not_found",
+            provider_error=shorten_provider_error(exc),
+            outcome="rejected",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="We could not find this account in Firebase. Please sign in again and retry.",
+        ) from exc
+    except AuthEmailDeliveryError as exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.verify_email.degraded",
+            route="/auth/verify-email/request",
+            user_id=current_user["user_id"],
+            email=current_user["email"],
+            sender_email=config_status["sender_email"],
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email is temporarily unavailable. Please try again later.",
+        ) from exc
+
+    return {
+        "message": "Verification email sent. Check your inbox.",
     }
 
 
