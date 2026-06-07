@@ -16,6 +16,7 @@ import {
   getSocialAccounts,
   uploadMedia,
   waitForUploadReady,
+  importRemoteMedia,
   getHashtagGroups,
   generateContent,
 } from '@/lib/api';
@@ -925,6 +926,37 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       reader.readAsDataURL(file);
     });
 
+  const createMediaEntryFromAsset = useCallback(async (asset, { file = null, fallbackName = null } = {}) => {
+    const mediaUrl = asset?.media_url;
+    if (!mediaUrl) {
+      throw new Error('Processed upload did not return a media URL');
+    }
+    const inferredIsVideo = (asset?.mime_type || file?.type || '').startsWith('video/');
+    const dims = inferredIsVideo
+      ? { width: asset?.width || 0, height: asset?.height || 0 }
+      : await getImageDimensions(mediaUrl);
+
+    return {
+      file,
+      sourceFile: file,
+      mediaId: asset.media_id,
+      url: mediaUrl,
+      originalUrl: mediaUrl,
+      sourceUrl: mediaUrl,
+      thumbnailUrl: asset.thumbnail_url || mediaUrl,
+      type: inferredIsVideo ? 'video' : 'image',
+      mimeType: asset.mime_type || file?.type || null,
+      size: asset.file_size_bytes || file?.size || 0,
+      name: fallbackName || file?.name || asset.source_label || asset.source_item_id || 'Imported media',
+      width: dims.width || asset.width || 0,
+      height: dims.height || asset.height || 0,
+      duration: asset.duration_seconds || 0,
+      hasAudio: inferredIsVideo ? undefined : false,
+      sourceProvider: asset.source_provider || null,
+      sourceAttribution: asset.source_attribution || null,
+    };
+  }, []);
+
   const resolveUploadedAsset = useCallback(async (file, onProgress = () => {}) => {
     const uploadJob = await uploadMedia(file, onProgress);
     if (!uploadJob?.media_job_id) {
@@ -1044,37 +1076,54 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       const asset = await resolveUploadedAsset(file, (e) =>
         setUploadProgress(Math.round((e.loaded * 100) / e.total))
       );
-      const mediaUrl = asset.media_url;
-      if (!mediaUrl) {
-        throw new Error('Processed upload did not return a media URL');
+      const entry = await createMediaEntryFromAsset(asset, { file, fallbackName: file.name });
+      if (entry.type === 'video') {
+        const videoMeta = await getVideoMetadata(file);
+        entry.width = videoMeta?.width || entry.width || 0;
+        entry.height = videoMeta?.height || entry.height || 0;
+        entry.duration = videoMeta?.duration || entry.duration || 0;
+        entry.hasAudio = videoMeta?.hasAudio;
       }
-      const inferredIsVideo = (asset.mime_type || file.type || '').startsWith('video/');
-      const videoMeta = inferredIsVideo
-        ? await getVideoMetadata(file)
-        : null;
-      const dims = inferredIsVideo
-        ? { width: videoMeta?.width || asset.width || 0, height: videoMeta?.height || asset.height || 0 }
-        : await getImageDimensions(mediaUrl);
-      arr.push({
-        file,
-        sourceFile: file,
-        mediaId: asset.media_id,
-        url: mediaUrl,
-        originalUrl: mediaUrl,
-        sourceUrl: mediaUrl,
-        thumbnailUrl: asset.thumbnail_url || mediaUrl,
-        type: inferredIsVideo ? 'video' : 'image',
-        mimeType: asset.mime_type || file.type,
-        size: file.size,
-        name: file.name,
-        width: dims.width || asset.width || 0,
-        height: dims.height || asset.height || 0,
-        duration: videoMeta?.duration || 0,
-        hasAudio: videoMeta?.hasAudio,
-      });
+      arr.push(entry);
     }
     return arr;
   };
+
+  const appendImportedMediaAssets = useCallback(async (items, accountId = null) => {
+    setUploading(true);
+    setUploadProgress(5);
+    try {
+      const result = await importRemoteMedia(items);
+      const imports = Array.isArray(result?.imports) ? result.imports : [];
+      const newAssets = [];
+      for (const imported of imports) {
+        const asset = await waitForUploadReady(imported.media_job_id, {
+          onPoll: (polledAsset) => {
+            if (polledAsset?.status === 'processing') {
+              setUploadProgress(85);
+            }
+          },
+        });
+        newAssets.push(await createMediaEntryFromAsset(asset, { fallbackName: imported.name }));
+      }
+
+      if (!accountId) {
+        setUploadedMedia((prev) => [...prev, ...newAssets]);
+        clearDerivedPlatformMediaOverrides();
+      } else {
+        updateAccountOverride(accountId, {
+          media: [...getEffectiveMediaForAccount(accountId), ...newAssets],
+        });
+      }
+      setUploadProgress(100);
+      toast.success('Media imported');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || error?.message || 'Failed to import media');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  }, [clearDerivedPlatformMediaOverrides, createMediaEntryFromAsset, getEffectiveMediaForAccount, updateAccountOverride]);
 
   const handleFilesSelectForPlatform = async (accountId, files) => {
     const arr = Array.isArray(files) ? files : Array.from(files || []);
@@ -1097,6 +1146,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       setUploading(false);
       setUploadProgress(0);
     }
+  };
+
+  const handleImportRemoteMediaForPlatform = async (accountId, items) => {
+    const arr = Array.isArray(items) ? items : [];
+    if (arr.length === 0) return;
+    await appendImportedMediaAssets(arr, accountId || null);
   };
 
   const handleRemoveMediaForPlatform = (accountId, index) => {
@@ -1646,6 +1701,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             uploading={uploading}
             uploadProgress={uploadProgress}
             onFilesSelect={(files) => handleFilesSelectForPlatform(null, files)}
+            onImportRemoteMedia={(items) => handleImportRemoteMediaForPlatform(null, items)}
             onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
             onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
             fileInputRef={fileInputRef}
@@ -1717,6 +1773,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
                 uploading={uploading}
                 uploadProgress={uploadProgress}
                 onFilesSelect={(files) => activePlatformAccount && handleFilesSelectForPlatform(activePlatformAccount.id, files)}
+                onImportRemoteMedia={(items) => activePlatformAccount && handleImportRemoteMediaForPlatform(activePlatformAccount.id, items)}
                 onRemoveMedia={(idx) => activePlatformAccount && handleRemoveMediaForPlatform(activePlatformAccount.id, idx)}
                 onReorderMedia={(from, to) => activePlatformAccount && handleReorderMediaForPlatform(activePlatformAccount.id, from, to)}
                 fileInputRef={undefined}

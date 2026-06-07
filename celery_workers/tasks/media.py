@@ -9,6 +9,7 @@ import logging
 import os
 import pathlib
 import tempfile
+from pathlib import Path
 from datetime import datetime, timezone
 
 from celery_workers.async_runner import run_async
@@ -61,10 +62,137 @@ async def _mark_media_failed(media_job_id: str, error_message: str) -> None:
         _client, db = await _get_db()
         await db.media_assets.update_one(
             {"media_id": media_job_id},
-            {"$set": {"status": "failed", "error_message": error_message}},
+            {"$set": {"status": "failed", "error_message": error_message, "source_stage": "failed"}},
         )
     except Exception as mark_exc:
         logger.error("Failed to mark media %s as failed: %s", media_job_id, mark_exc)
+
+
+@celery_app.task(
+    name="celery_workers.tasks.media.import_remote_media",
+    bind=True,
+    max_retries=1,
+    acks_late=True,
+    queue="media_processing",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def import_remote_media(self, media_job_id: str, user_id: str) -> dict:
+    return run_async(_async_import_remote_media(self, media_job_id, user_id))
+
+
+async def _async_import_remote_media(task, media_job_id: str, user_id: str) -> dict:
+    temp_path: str | None = None
+    cache_redis = None
+    auth_ref = None
+    try:
+        import json
+
+        from api.routes.upload import _mime_to_ext, _release_concurrent_slot
+        from api.task_queue import enqueue_task
+        from db.redis_client import get_cache_redis
+        from utils.media_source_imports import (
+            build_download_url_for_google_photos,
+            stream_remote_file_to_path,
+        )
+        from utils.redis_resilience import safe_get
+        from utils.storage import upload_file_from_path_async
+
+        cache_redis = get_cache_redis()
+        _client, db = await _get_db()
+        asset = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id}, {"_id": 0})
+        if not asset:
+            return {"status": "not_found"}
+
+        provider = asset.get("source_provider")
+        download_url = asset.get("source_download_url")
+        auth_ref = asset.get("source_auth_ref")
+        if provider == "google_photos":
+            download_url = build_download_url_for_google_photos(download_url, asset.get("mime_type"))
+        if not provider or not download_url:
+            raise ValueError("Remote media import is missing provider or download URL")
+
+        headers = {}
+        if auth_ref and cache_redis is not None:
+            raw_auth = await safe_get(cache_redis, auth_ref, default=None, feature="Media source auth read")
+            if raw_auth:
+                auth_payload = raw_auth if isinstance(raw_auth, dict) else json.loads(raw_auth)
+                if auth_payload.get("type") == "bearer" and auth_payload.get("token"):
+                    headers["Authorization"] = f"Bearer {auth_payload['token']}"
+
+        filename_hint = asset.get("original_filename") or f"{media_job_id}{_mime_to_ext(asset.get('mime_type') or '')}"
+        suffix = Path(filename_hint).suffix or _mime_to_ext(asset.get("mime_type") or "application/octet-stream")
+        fd, temp_path = tempfile.mkstemp(prefix=f"media-import-{media_job_id}-", suffix=suffix or ".bin")
+        os.close(fd)
+
+        fetch_result = await stream_remote_file_to_path(
+            provider=provider,
+            url=download_url,
+            destination_path=temp_path,
+            headers=headers,
+            max_bytes=int(asset.get("max_file_size_bytes") or 500 * 1024 * 1024),
+        )
+
+        mime_type = fetch_result["mime_type"]
+        source_storage_key = asset["source_storage_key"]
+        source_folder = str(Path(source_storage_key).parent)
+        source_filename = Path(source_storage_key).name
+        await upload_file_from_path_async(temp_path, source_filename, mime_type, folder=source_folder)
+
+        await db.media_assets.update_one(
+            {"media_id": media_job_id, "user_id": user_id},
+            {
+                "$set": {
+                    "status": "processing",
+                    "source_stage": "processing",
+                    "mime_type": mime_type,
+                    "file_size_bytes": fetch_result["file_size_bytes"],
+                    "remote_fetched_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        enqueue_task(
+            "celery_workers.tasks.media.process_media",
+            args=[media_job_id, user_id],
+            queue="media_processing",
+        )
+        return {"status": "processing"}
+    except Exception as exc:
+        logger.error("Remote media import failed for %s: %s", media_job_id, exc)
+        current_retries = getattr(task.request, "retries", 0)
+        max_retries = getattr(task, "max_retries", 0)
+        if current_retries >= max_retries:
+            await _mark_media_failed(media_job_id, str(exc))
+            try:
+                _client, db = await _get_db()
+                await db.media_assets.update_one(
+                    {"media_id": media_job_id, "user_id": user_id},
+                    {"$set": {"source_stage": "failed"}},
+                )
+            except Exception as mark_exc:
+                logger.error("Failed to mark remote media import %s as failed: %s", media_job_id, mark_exc)
+            raise
+        raise task.retry(countdown=15, exc=exc)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError as cleanup_exc:
+                logger.warning("Could not delete remote import temp file %s: %s", temp_path, cleanup_exc)
+        try:
+            from api.routes.upload import _release_concurrent_slot
+            if cache_redis is None:
+                from db.redis_client import get_cache_redis
+                cache_redis = get_cache_redis()
+            await _release_concurrent_slot(cache_redis, user_id)
+        except Exception as exc:
+            logger.warning("Could not release media import slot for %s: %s", user_id, exc)
+        if auth_ref and cache_redis is not None:
+            try:
+                from utils.redis_resilience import safe_delete
+                await safe_delete(cache_redis, auth_ref, default=0, feature="Media source auth cleanup")
+            except Exception as exc:
+                logger.warning("Could not cleanup media import auth %s: %s", auth_ref, exc)
 
 
 async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
@@ -224,6 +352,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 "duration_seconds": validation_result.get("duration"),
                 "width": validation_result.get("width"),
                 "height": validation_result.get("height"),
+                "source_stage": "ready",
             },
         }
         if source_storage_deleted:

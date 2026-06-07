@@ -42,6 +42,22 @@ class _FakeClient:
         return self._db
 
 
+class _FakeRedis:
+    def __init__(self, seed=None):
+        self.store = dict(seed or {})
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def delete(self, key):
+        self.store.pop(key, None)
+        return 1
+
+    async def setex(self, key, _ttl, value):
+        self.store[key] = value
+        return True
+
+
 @pytest.mark.asyncio
 async def test_process_media_uses_storage_copy_for_passthrough_r2(monkeypatch, tmp_path):
     os.environ["DB_NAME"] = "testdb"
@@ -111,3 +127,35 @@ async def test_process_video_transcodes_when_portrait_height_exceeds_limit(monke
 
     assert output_path.endswith(".mp4")
     run_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_import_remote_media_marks_failed_when_provider_fetch_breaks(monkeypatch):
+    os.environ["DB_NAME"] = "testdb"
+    asset_doc = {
+        "media_id": "media-import-1",
+        "user_id": "user-1",
+        "source_provider": "dropbox",
+        "source_download_url": "https://www.dropbox.com/s/example/file.jpg?dl=1",
+        "source_auth_ref": "media_source_auth:1",
+        "source_storage_key": "raw/user-1/media-import-1.jpg",
+        "mime_type": "image/jpeg",
+        "max_file_size_bytes": 1024,
+        "original_filename": "file.jpg",
+    }
+    fake_db = _FakeDB(asset_doc)
+    fake_task = SimpleNamespace(request=SimpleNamespace(retries=1), max_retries=1)
+    fake_redis = _FakeRedis({"media_source_auth:1": '{"type":"bearer","token":"abc"}'})
+
+    monkeypatch.setattr(media_tasks, "get_client", AsyncMock(return_value=_FakeClient(fake_db)))
+    monkeypatch.setattr("db.redis_client.get_cache_redis", lambda: fake_redis)
+    monkeypatch.setattr("utils.media_source_imports.stream_remote_file_to_path", AsyncMock(side_effect=ValueError("blocked")))
+    monkeypatch.setattr("api.routes.upload._release_concurrent_slot", AsyncMock(return_value=None))
+
+    with pytest.raises(ValueError, match="blocked"):
+        await media_tasks._async_import_remote_media(fake_task, "media-import-1", "user-1")
+
+    assert fake_db.media_assets.asset_doc["status"] == "failed"
+    assert fake_db.media_assets.asset_doc["source_stage"] == "failed"
+    assert fake_db.media_assets.asset_doc["error_message"] == "blocked"
+    assert "media_source_auth:1" not in fake_redis.store

@@ -1,6 +1,7 @@
 import axios from 'axios';
+import env from '@/env';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = env.BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 const SOCIAL_ACCOUNTS_CACHE_KEY = 'social_accounts_cache_v2';
 const SOCIAL_ACCOUNTS_CACHE_TTL_MS = 60 * 1000;
@@ -401,6 +402,79 @@ export const waitForUploadReady = async (
   }
 
   throw new Error('Upload processing timed out');
+};
+
+export const searchUnsplashMedia = async ({ query, page = 1 }) => {
+  const response = await axios.get(`${API}/media-sources/unsplash/search`, {
+    headers: getAuthHeaders(),
+    params: {
+      q: query,
+      page,
+    },
+  });
+  return response.data;
+};
+
+export const importRemoteMedia = async (items) => {
+  const response = await axios.post(
+    `${API}/media-sources/import`,
+    { items },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
+export const getCanvaImportUrl = async () => {
+  const response = await axios.get(`${API}/media-sources/canva/url`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const submitCanvaImportCallback = async (callbackData) => {
+  const response = await axios.post(`${API}/media-sources/canva/callback`, callbackData, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const listCanvaDesigns = async ({ sessionId, query = '', continuation = null } = {}) => {
+  const response = await axios.get(`${API}/media-sources/canva/designs`, {
+    headers: getAuthHeaders(),
+    params: {
+      session_id: sessionId,
+      query: query || undefined,
+      continuation: continuation || undefined,
+    },
+  });
+  return response.data;
+};
+
+export const createCanvaExport = async ({ sessionId, designId, fileType }) => {
+  const response = await axios.post(
+    `${API}/media-sources/canva/exports`,
+    {
+      session_id: sessionId,
+      design_id: designId,
+      file_type: fileType,
+    },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
+export const getCanvaExport = async ({ sessionId, exportId }) => {
+  const response = await axios.get(`${API}/media-sources/canva/exports/${exportId}`, {
+    headers: getAuthHeaders(),
+    params: {
+      session_id: sessionId,
+    },
+  });
+  return response.data;
 };
 
 // Failed Posts (Dead Letter Queue)

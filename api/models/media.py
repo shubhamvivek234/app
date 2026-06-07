@@ -1,7 +1,7 @@
 """Media asset Pydantic models."""
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -14,6 +14,13 @@ class MediaStatus(str, Enum):
     FAILED = "failed"
     CLEANED = "cleaned"
     ARCHIVED = "archived"
+
+
+class MediaSourceStage(str, Enum):
+    FETCHING = "fetching"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
 
 
 class MediaUploadResponse(BaseModel):
@@ -87,3 +94,75 @@ class MediaAssetResponse(BaseModel):
     created_at: datetime
     processed_at: datetime | None = None
     error_message: str | None = None
+    source_provider: str | None = None
+    source_item_id: str | None = None
+    source_label: str | None = None
+    source_attribution: dict[str, Any] | None = None
+    source_stage: MediaSourceStage | None = None
+
+
+class RemoteMediaImportItem(BaseModel):
+    provider: Literal["unsplash", "dropbox", "google_drive", "google_photos", "onedrive", "canva"]
+    download_url: str
+    name: str
+    source_item_id: str | None = None
+    source_label: str | None = None
+    source_attribution: dict[str, Any] | None = None
+    file_size_bytes: int | None = Field(default=None, gt=0)
+    content_type: str | None = None
+    auth_bearer_token: str | None = None
+    tracking_url: str | None = None
+
+
+class RemoteMediaImportRequest(BaseModel):
+    items: list[RemoteMediaImportItem] = Field(min_length=1, max_length=10)
+
+
+class RemoteMediaImportResult(BaseModel):
+    media_job_id: str
+    provider: str
+    name: str
+
+
+class RemoteMediaImportResponse(BaseModel):
+    imports: list[RemoteMediaImportResult]
+
+
+class CanvaAuthUrlResponse(BaseModel):
+    auth_url: str
+    state: str
+
+
+class CanvaCallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+class CanvaCallbackResponse(BaseModel):
+    session_id: str
+    expires_at: datetime
+
+
+class CanvaDesignResponse(BaseModel):
+    id: str
+    title: str | None = None
+    thumbnail_url: str | None = None
+    updated_at: datetime | None = None
+    edit_url: str | None = None
+
+
+class CanvaDesignListResponse(BaseModel):
+    designs: list[CanvaDesignResponse]
+    continuation: str | None = None
+
+
+class CanvaExportRequest(BaseModel):
+    session_id: str
+    design_id: str
+    file_type: Literal["png", "jpg", "mp4"]
+
+
+class CanvaExportResponse(BaseModel):
+    export_id: str
+    status: str
+    download_urls: list[str] = Field(default_factory=list)

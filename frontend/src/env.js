@@ -71,6 +71,28 @@ const env = {
   GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID
     || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID
     || process.env.REACT_APP_GOOGLE_CLIENT_ID,
+
+  GOOGLE_PHOTOS_CLIENT_ID: import.meta.env.VITE_GOOGLE_PHOTOS_CLIENT_ID
+    || import.meta.env.REACT_APP_GOOGLE_PHOTOS_CLIENT_ID
+    || import.meta.env.VITE_GOOGLE_CLIENT_ID
+    || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID
+    || process.env.REACT_APP_GOOGLE_PHOTOS_CLIENT_ID
+    || process.env.REACT_APP_GOOGLE_CLIENT_ID,
+
+  ONEDRIVE_APP_ID: import.meta.env.VITE_ONEDRIVE_APP_ID
+    || import.meta.env.REACT_APP_ONEDRIVE_APP_ID
+    || process.env.REACT_APP_ONEDRIVE_APP_ID,
+
+  ONEDRIVE_REDIRECT_URI: import.meta.env.VITE_ONEDRIVE_REDIRECT_URI
+    || import.meta.env.REACT_APP_ONEDRIVE_REDIRECT_URI
+    || process.env.REACT_APP_ONEDRIVE_REDIRECT_URI,
+
+  CANVA_IMPORT_ENABLED: (
+    import.meta.env.VITE_CANVA_IMPORT_ENABLED
+    || import.meta.env.REACT_APP_CANVA_IMPORT_ENABLED
+    || process.env.REACT_APP_CANVA_IMPORT_ENABLED
+    || 'false'
+  ).toLowerCase(),
 };
 
 export default env;

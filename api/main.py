@@ -49,6 +49,7 @@ from api.routes.api_keys import router as api_keys_router
 from api.routes.team import router as team_router
 from api.routes.recurring import router as recurring_router
 from api.routes.media_assets import router as media_assets_router
+from api.routes.media_sources import router as media_sources_router
 from api.routes.calendar_notes import router as calendar_notes_router
 from api.routes.inbox import router as inbox_router
 from api.routes.support import router as support_router
@@ -173,6 +174,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(team_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(recurring_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(media_assets_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(media_sources_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(calendar_notes_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(inbox_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(support_router, prefix=prefix, include_in_schema=include_in_schema)

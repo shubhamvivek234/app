@@ -22,6 +22,14 @@ import {
 } from 'react-icons/si';
 import { MdPhotoLibrary } from 'react-icons/md';
 import { toast } from 'sonner';
+import env from '@/env';
+import {
+  searchUnsplashMedia,
+  getCanvaImportUrl,
+  listCanvaDesigns,
+  createCanvaExport,
+  getCanvaExport,
+} from '@/lib/api';
 
 const PLATFORM_ICONS = {
   facebook:  { icon: FaFacebook,  color: '#1877F2' },
@@ -141,6 +149,57 @@ const EMOJI_LIST = [
   '🔄','🔃','📌','📍','🔖','🏷️','💬','💭','🗯️','📢','📣','🔔','🔕','🎵','♾️',
 ];
 
+const MEDIA_SOURCE_SETUP = {
+  unsplash: () => Boolean(env.UNSPLASH_ACCESS_KEY),
+  dropbox: () => Boolean(env.DROPBOX_APP_KEY),
+  google_drive: () => Boolean(env.GOOGLE_PICKER_API_KEY && env.GOOGLE_CLIENT_ID),
+  google_photos: () => Boolean(env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID),
+  onedrive: () => Boolean(env.ONEDRIVE_APP_ID && env.ONEDRIVE_REDIRECT_URI),
+  canva: () => env.CANVA_IMPORT_ENABLED === 'true',
+};
+
+const PROVIDER_SETUP_LABELS = {
+  unsplash: 'Backend UNSPLASH access key',
+  dropbox: 'Dropbox app key',
+  google_drive: 'Google Picker API key + client ID',
+  google_photos: 'Google Photos client ID',
+  onedrive: 'OneDrive app ID + redirect URI',
+  canva: 'Backend Canva import config',
+};
+
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+
+const loadExternalScript = (src, id, dataAttributes = {}) => new Promise((resolve, reject) => {
+  const existing = id ? document.getElementById(id) : null;
+  if (existing) {
+    if (existing.dataset.loaded === 'true') {
+      resolve();
+      return;
+    }
+    existing.addEventListener('load', () => resolve(), { once: true });
+    existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = src;
+  script.async = true;
+  if (id) script.id = id;
+  Object.entries(dataAttributes).forEach(([key, value]) => {
+    if (value) {
+      script.setAttribute(key, value);
+    }
+  });
+  script.onload = () => {
+    script.dataset.loaded = 'true';
+    resolve();
+  };
+  script.onerror = () => reject(new Error(`Failed to load ${src}`));
+  document.head.appendChild(script);
+});
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const PlatformEditor = ({
   platform,
   title,
@@ -153,6 +212,7 @@ const PlatformEditor = ({
   uploading,
   uploadProgress,
   onFilesSelect,    // (files: File[]) => void  — only on first platform
+  onImportRemoteMedia, // (items: RemoteImportItem[]) => void
   onRemoveMedia,    // (index: number) => void  — only on first platform
   onReorderMedia,   // (from, to) => void       — only on first platform
   fileInputRef,
@@ -215,12 +275,20 @@ const PlatformEditor = ({
   const [unsplashLoading, setUnsplashLoading] = useState(false);
   const [unsplashPage, setUnsplashPage] = useState(1);
   const [unsplashHasMore, setUnsplashHasMore] = useState(false);
+  const [canvaOpen, setCanvaOpen] = useState(false);
+  const [canvaSessionId, setCanvaSessionId] = useState(null);
+  const [canvaDesigns, setCanvaDesigns] = useState([]);
+  const [canvaQuery, setCanvaQuery] = useState('');
+  const [canvaContinuation, setCanvaContinuation] = useState(null);
+  const [canvaLoading, setCanvaLoading] = useState(false);
+  const [canvaImportingId, setCanvaImportingId] = useState(null);
   const [pollDraft, setPollDraft] = useState(() => createPollDraft(poll, platform));
   const textareaRef = useRef(null);
   const localFileRef = useRef(null);
   const gifFileRef = useRef(null);
   const inputRef = fileInputRef || localFileRef;
   const fileInputId = useId();
+  const canvaPopupRef = useRef(null);
 
   // Drag-to-reorder media thumbnails
   const mediaDragIdx  = useRef(null);
@@ -231,6 +299,7 @@ const PlatformEditor = ({
   const isVideoPlatform = platform === 'youtube' || platform === 'tiktok';
   const isVideo    = postType === 'video' || isVideoPlatform;
   const canAddMore = onFilesSelect && !uploading && !hasVideo && !isVideo;
+  const canImportFromSources = Boolean(onImportRemoteMedia);
 
   // Aspect ratio logic
   const idealInfo = getIdealAspectInfo(platform, postFormat);
@@ -269,11 +338,58 @@ const PlatformEditor = ({
   const hasPoll = Boolean(normalizedPoll?.question);
   const pollOptionCount = normalizedPoll?.options?.length || 0;
 
+  const loadCanvaDesignList = useCallback(async (query = '', continuation = null, append = false) => {
+    if (!canvaSessionId) return;
+    setCanvaLoading(true);
+    try {
+      const payload = await listCanvaDesigns({
+        sessionId: canvaSessionId,
+        query,
+        continuation,
+      });
+      const nextDesigns = Array.isArray(payload?.designs) ? payload.designs : [];
+      setCanvaDesigns((prev) => (append ? [...prev, ...nextDesigns] : nextDesigns));
+      setCanvaContinuation(payload?.continuation || null);
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to load Canva designs');
+    } finally {
+      setCanvaLoading(false);
+    }
+  }, [canvaSessionId]);
+
   useEffect(() => {
     if (!pollDialogOpen) {
       setPollDraft(createPollDraft(poll, platform));
     }
   }, [platform, poll, pollDialogOpen]);
+
+  useEffect(() => {
+    const handleCanvaMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      const payload = event.data;
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.type === 'canva-import-connected' && payload.session_id) {
+        setCanvaSessionId(payload.session_id);
+        setCanvaOpen(true);
+        setCanvaContinuation(null);
+        setCanvaQuery('');
+        setCanvaDesigns([]);
+        toast.success('Canva connected');
+      }
+      if (payload.type === 'canva-import-error') {
+        toast.error(payload.error || 'Canva import failed');
+      }
+    };
+
+    window.addEventListener('message', handleCanvaMessage);
+    return () => window.removeEventListener('message', handleCanvaMessage);
+  }, []);
+
+  useEffect(() => {
+    if (canvaOpen && canvaSessionId && canvaDesigns.length === 0 && !canvaLoading) {
+      loadCanvaDesignList('', null, false);
+    }
+  }, [canvaOpen, canvaSessionId, canvaDesigns.length, canvaLoading, loadCanvaDesignList]);
 
   const insertEmoji = (emoji) => {
     const el = textareaRef.current;
@@ -401,159 +517,380 @@ const PlatformEditor = ({
     }
   };
 
+  const importSelectedRemoteMedia = useCallback(async (items) => {
+    if (!canImportFromSources) return;
+    await Promise.resolve(onImportRemoteMedia(items));
+  }, [canImportFromSources, onImportRemoteMedia]);
+
   // ── Unsplash search ──────────────────────────────────────────────────────
   const searchUnsplash = useCallback(async (query, page = 1) => {
-    const key = process.env.REACT_APP_UNSPLASH_ACCESS_KEY;
-    if (!key || !query.trim()) return;
+    if (!query.trim()) return;
     setUnsplashLoading(true);
     try {
-      const res = await fetch(
-        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=18&page=${page}&client_id=${key}`
-      );
-      const data = await res.json();
-      const photos = (data.results || []).map(p => ({
-        id: p.id,
-        thumb: p.urls.small,
-        full: p.urls.regular,
-        alt: p.alt_description || p.description || query,
-        user: p.user.name,
-        userUrl: p.user.links.html,
-        downloadUrl: p.links.download_location,
-      }));
+      const data = await searchUnsplashMedia({ query, page });
+      const photos = Array.isArray(data?.results) ? data.results : [];
       if (page === 1) setUnsplashResults(photos);
       else setUnsplashResults(prev => [...prev, ...photos]);
       setUnsplashPage(page);
-      setUnsplashHasMore(data.total_pages > page);
-    } catch {
-      toast.error('Failed to search Unsplash');
+      setUnsplashHasMore(Boolean(data?.has_more));
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to search Unsplash');
     } finally {
       setUnsplashLoading(false);
     }
   }, []);
 
   const handlePickUnsplash = async (photo) => {
-    if (!onFilesSelect) return;
+    if (!canImportFromSources) return;
     setUnsplashOpen(false);
     try {
-      // Trigger Unsplash download tracking (required by API guidelines)
-      const key = process.env.REACT_APP_UNSPLASH_ACCESS_KEY;
-      if (key) fetch(`${photo.downloadUrl}?client_id=${key}`).catch(() => {});
-
-      toast.info('Downloading image…');
-      const res = await fetch(photo.full);
-      const blob = await res.blob();
-      const ext = blob.type.includes('png') ? 'png' : 'jpg';
-      const file = new File([blob], `unsplash-${photo.id}.${ext}`, { type: blob.type });
-      onFilesSelect([file]);
+      toast.info('Importing from Unsplash…');
+      await importSelectedRemoteMedia([
+        {
+          provider: 'unsplash',
+          download_url: photo.full,
+          name: `unsplash-${photo.id}.jpg`,
+          source_item_id: photo.id,
+          source_label: photo.description || photo.photographer_name || 'Unsplash image',
+          source_attribution: photo.source_attribution,
+          tracking_url: photo.download_url,
+        },
+      ]);
     } catch {
-      toast.error('Failed to download image');
+      toast.error('Failed to import Unsplash image');
     }
+  };
+
+  const loadDropboxSdk = async () => {
+    if (window.Dropbox) return;
+    await loadExternalScript(
+      'https://www.dropbox.com/static/api/2/dropins.js',
+      'dropboxjs',
+      { 'data-app-key': env.DROPBOX_APP_KEY }
+    );
   };
 
   // ── Dropbox Chooser ───────────────────────────────────────────────────────
-  const openDropboxChooser = () => {
+  const openDropboxChooser = async () => {
     setSourceOpen(false);
-    const appKey = process.env.REACT_APP_DROPBOX_APP_KEY;
-    if (!appKey) {
-      toast.error('Add REACT_APP_DROPBOX_APP_KEY to .env to use Dropbox');
+    if (!MEDIA_SOURCE_SETUP.dropbox()) {
+      toast.error(`Add ${PROVIDER_SETUP_LABELS.dropbox} to use Dropbox`);
       return;
     }
-    if (!window.Dropbox) {
-      // Dynamically load Dropbox SDK
-      const script = document.createElement('script');
-      script.src = 'https://www.dropbox.com/static/api/2/dropins.js';
-      script.setAttribute('data-app-key', appKey);
-      script.id = 'dropboxjs';
-      script.onload = () => launchDropboxChooser();
-      document.head.appendChild(script);
-    } else {
-      launchDropboxChooser();
+    try {
+      await loadDropboxSdk();
+      window.Dropbox.choose({
+        success: async (files) => {
+          if (!canImportFromSources) return;
+          const items = files.map((file) => ({
+            provider: 'dropbox',
+            download_url: file.link,
+            name: file.name,
+            source_item_id: file.id || file.link,
+            source_label: file.name,
+          }));
+          toast.info(`Importing ${items.length} Dropbox file${items.length > 1 ? 's' : ''}…`);
+          await importSelectedRemoteMedia(items);
+        },
+        cancel: () => {},
+        linkType: 'direct',
+        multiselect: !isVideo,
+        extensions: isVideo ? ['video'] : ['images'],
+        folderselect: false,
+      });
+    } catch {
+      toast.error('Failed to open Dropbox');
     }
   };
 
-  const launchDropboxChooser = () => {
-    window.Dropbox.choose({
-      success: async (files) => {
-        if (!onFilesSelect) return;
-        toast.info(`Downloading ${files.length} file${files.length > 1 ? 's' : ''} from Dropbox…`);
-        const fileObjs = [];
-        for (const f of files) {
-          try {
-            const res = await fetch(f.link);
-            const blob = await res.blob();
-            const name = f.name;
-            fileObjs.push(new File([blob], name, { type: blob.type }));
-          } catch {
-            toast.error(`Failed to download ${f.name}`);
-          }
-        }
-        if (fileObjs.length) onFilesSelect(fileObjs);
-      },
-      cancel: () => {},
-      linkType: 'direct',
-      multiselect: !isVideo,
-      extensions: isVideo ? ['video'] : ['images'],
-      folderselect: false,
+  const loadGoogleApis = async () => {
+    await loadExternalScript('https://apis.google.com/js/api.js', 'google-picker-api');
+    await loadExternalScript('https://accounts.google.com/gsi/client', 'google-gsi-client');
+    await new Promise((resolve, reject) => {
+      window.gapi.load('picker', {
+        callback: resolve,
+        onerror: () => reject(new Error('Failed to load Google Picker')),
+      });
     });
   };
+
+  const requestGoogleAccessToken = async (scope, clientId) => new Promise((resolve, reject) => {
+    const tokenClient = window.google?.accounts?.oauth2?.initTokenClient({
+      client_id: clientId,
+      scope,
+      callback: (response) => {
+        if (response?.error) {
+          reject(new Error(response.error));
+          return;
+        }
+        resolve(response.access_token);
+      },
+    });
+
+    if (!tokenClient) {
+      reject(new Error('Google Identity Services unavailable'));
+      return;
+    }
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  });
 
   // ── Google Drive Picker ───────────────────────────────────────────────────
-  const openGoogleDrivePicker = () => {
+  const openGoogleDrivePicker = async () => {
     setSourceOpen(false);
-    const apiKey = process.env.REACT_APP_GOOGLE_PICKER_API_KEY;
-    const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-    if (!apiKey || !clientId) {
-      toast.error('Add REACT_APP_GOOGLE_PICKER_API_KEY and REACT_APP_GOOGLE_CLIENT_ID to .env to use Google Drive');
+    if (!MEDIA_SOURCE_SETUP.google_drive()) {
+      toast.error(`Add ${PROVIDER_SETUP_LABELS.google_drive} to use Google Drive`);
       return;
     }
-    loadGooglePickerScript(() => {
-      window.gapi.load('auth2,picker', () => {
-        window.gapi.auth2.getAuthInstance()?.signIn().then((user) => {
-          const token = user.getAuthResponse().access_token;
-          const view = new window.google.picker.DocsView(window.google.picker.ViewId.DOCS_IMAGES);
-          const picker = new window.google.picker.PickerBuilder()
-            .enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED)
-            .setOAuthToken(token)
-            .setDeveloperKey(apiKey)
-            .addView(view)
-            .setCallback(async (data) => {
-              if (data.action === window.google.picker.Action.PICKED) {
-                const docs = data[window.google.picker.Response.DOCUMENTS];
-                toast.info('Downloading from Google Drive…');
-                const fileObjs = [];
-                for (const doc of docs) {
-                  try {
-                    const res = await fetch(
-                      `https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`,
-                      { headers: { Authorization: `Bearer ${token}` } }
-                    );
-                    const blob = await res.blob();
-                    fileObjs.push(new File([blob], doc.name, { type: blob.type }));
-                  } catch {
-                    toast.error(`Failed to download ${doc.name}`);
-                  }
-                }
-                if (fileObjs.length) onFilesSelect(fileObjs);
-              }
-            })
-            .build();
-          picker.setVisible(true);
-        }).catch(() => toast.error('Google sign-in failed'));
-      });
-    });
+    try {
+      await loadGoogleApis();
+      const token = await requestGoogleAccessToken(GOOGLE_DRIVE_SCOPE, env.GOOGLE_CLIENT_ID);
+      const view = new window.google.picker.DocsView(window.google.picker.ViewId.DOCS);
+      view.setIncludeFolders(false);
+      view.setSelectFolderEnabled(false);
+      view.setMimeTypes(isVideo ? 'video/*' : 'image/*');
+      const pickerBuilder = new window.google.picker.PickerBuilder()
+        .setDeveloperKey(env.GOOGLE_PICKER_API_KEY)
+        .setOAuthToken(token)
+        .addView(view)
+        .setCallback(async (data) => {
+          if (data.action !== window.google.picker.Action.PICKED || !canImportFromSources) {
+            return;
+          }
+          const docs = data[window.google.picker.Response.DOCUMENTS] || [];
+          const items = docs.map((doc) => ({
+            provider: 'google_drive',
+            download_url: `https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`,
+            name: doc.name,
+            source_item_id: doc.id,
+            source_label: doc.name,
+            content_type: doc.mimeType,
+            file_size_bytes: Number(doc.sizeBytes) || undefined,
+            auth_bearer_token: token,
+          }));
+          toast.info(`Importing ${items.length} Google Drive file${items.length > 1 ? 's' : ''}…`);
+          await importSelectedRemoteMedia(items);
+        });
+      if (!isVideo) {
+        pickerBuilder.enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED);
+      }
+      pickerBuilder.build().setVisible(true);
+    } catch (error) {
+      toast.error(error?.message || 'Google Drive import failed');
+    }
   };
 
-  const loadGooglePickerScript = (cb) => {
-    if (window.gapi) { cb(); return; }
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = () => {
-      window.gapi.load('client', () => {
-        window.gapi.client.init({ apiKey: process.env.REACT_APP_GOOGLE_PICKER_API_KEY, clientId: process.env.REACT_APP_GOOGLE_CLIENT_ID, scope: 'https://www.googleapis.com/auth/drive.readonly' }).then(cb);
-      });
-    };
-    document.head.appendChild(script);
+  const parseGoogleDurationMs = (durationValue, fallbackMs) => {
+    if (!durationValue || typeof durationValue !== 'string') return fallbackMs;
+    const match = durationValue.match(/^(\d+(?:\.\d+)?)s$/);
+    if (!match) return fallbackMs;
+    return Math.max(1000, Math.round(Number(match[1]) * 1000));
   };
+
+  const openGooglePhotosPicker = async () => {
+    setSourceOpen(false);
+    if (!MEDIA_SOURCE_SETUP.google_photos()) {
+      toast.error(`Add ${PROVIDER_SETUP_LABELS.google_photos} to use Google Photos`);
+      return;
+    }
+    try {
+      await loadGoogleApis();
+      const clientId = env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID;
+      const token = await requestGoogleAccessToken(GOOGLE_PHOTOS_SCOPE, clientId);
+      const sessionResponse = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      if (!sessionResponse.ok) {
+        throw new Error('Failed to create Google Photos session');
+      }
+      const session = await sessionResponse.json();
+      const pickerWindow = window.open(`${session.pickerUri}/autoclose`, 'google-photos-picker', 'width=1280,height=800');
+      if (!pickerWindow) {
+        throw new Error('Popup blocked while opening Google Photos');
+      }
+      let pollMs = parseGoogleDurationMs(session.pollingConfig?.pollInterval, 2000);
+      const timeoutMs = parseGoogleDurationMs(session.pollingConfig?.timeoutIn, 180000);
+      const startedAt = Date.now();
+      toast.info('Select media in Google Photos…');
+
+      while (Date.now() - startedAt < timeoutMs) {
+        await sleep(pollMs);
+        const statusResponse = await fetch(`https://photospicker.googleapis.com/v1/sessions/${session.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!statusResponse.ok) {
+          throw new Error('Failed to poll Google Photos session');
+        }
+        const statusPayload = await statusResponse.json();
+        pollMs = parseGoogleDurationMs(statusPayload.pollingConfig?.pollInterval, pollMs);
+        if (!statusPayload.mediaItemsSet) {
+          continue;
+        }
+
+        const itemsResponse = await fetch(`https://photospicker.googleapis.com/v1/mediaItems?sessionId=${session.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!itemsResponse.ok) {
+          throw new Error('Failed to load selected Google Photos items');
+        }
+        const itemsPayload = await itemsResponse.json();
+        const selected = (itemsPayload.mediaItems || []).map((item) => ({
+          provider: 'google_photos',
+          download_url: item.mediaFile?.baseUrl,
+          name: item.filename || `google-photos-${item.id}`,
+          source_item_id: item.id,
+          source_label: item.filename || 'Google Photos media',
+          content_type: item.mediaFile?.mimeType || item.mimeType,
+          auth_bearer_token: token,
+          source_attribution: {
+            provider: 'google_photos',
+            product_url: item.productUrl || null,
+          },
+        })).filter((item) => item.download_url);
+
+        const compatible = selected.filter((item) => (
+          isVideo
+            ? (item.content_type || '').startsWith('video/')
+            : (item.content_type || '').startsWith('image/')
+        ));
+        const filteredSelection = isVideo ? compatible.slice(0, 1) : compatible;
+
+        if (filteredSelection.length > 0) {
+          toast.info(`Importing ${filteredSelection.length} Google Photos item${filteredSelection.length > 1 ? 's' : ''}…`);
+          await importSelectedRemoteMedia(filteredSelection);
+        } else if (selected.length > 0) {
+          toast.error(isVideo ? 'Select a video from Google Photos for this post' : 'Select image media from Google Photos for this post');
+        } else {
+          toast.info('No Google Photos items selected');
+        }
+        try {
+          await fetch(`https://photospicker.googleapis.com/v1/sessions/${session.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          // Ignore cleanup failures.
+        }
+        return;
+      }
+
+      toast.info('Google Photos selection was cancelled');
+    } catch (error) {
+      toast.error(error?.message || 'Google Photos import failed');
+    }
+  };
+
+  const openOneDrivePicker = async () => {
+    setSourceOpen(false);
+    if (!MEDIA_SOURCE_SETUP.onedrive()) {
+      toast.error(`Add ${PROVIDER_SETUP_LABELS.onedrive} to use OneDrive`);
+      return;
+    }
+    try {
+      await loadExternalScript('https://js.live.net/v7.2/OneDrive.js', 'onedrive-picker-sdk');
+      window.OneDrive.open({
+        clientId: env.ONEDRIVE_APP_ID,
+        action: 'query',
+        multiSelect: !isVideo,
+        advanced: {
+          redirectUri: env.ONEDRIVE_REDIRECT_URI,
+          queryParameters: 'select=id,name,size,file,photo,video,@microsoft.graph.downloadUrl',
+          filter: isVideo ? 'folder,.mp4,.mov,.avi,.webm,.m4v' : 'folder,.png,.jpg,.jpeg,.webp,.gif',
+        },
+        success: async (files) => {
+          if (!canImportFromSources) return;
+          const values = Array.isArray(files?.value) ? files.value : [];
+          const items = values
+            .map((file) => ({
+              provider: 'onedrive',
+              download_url: file['@microsoft.graph.downloadUrl'] || file.link,
+              name: file.name,
+              source_item_id: file.id,
+              source_label: file.name,
+              file_size_bytes: Number(file.size) || undefined,
+              content_type: file?.file?.mimeType || (file.photo ? 'image/*' : (file.video ? 'video/*' : undefined)),
+            }))
+            .filter((item) => item.download_url);
+          if (!items.length) {
+            toast.info('No OneDrive files selected');
+            return;
+          }
+          toast.info(`Importing ${items.length} OneDrive file${items.length > 1 ? 's' : ''}…`);
+          await importSelectedRemoteMedia(items);
+        },
+        cancel: () => {},
+        error: (error) => {
+          toast.error(error?.message || 'OneDrive import failed');
+        },
+      });
+    } catch (error) {
+      toast.error(error?.message || 'Failed to open OneDrive');
+    }
+  };
+
+  const connectCanva = useCallback(async () => {
+    if (!MEDIA_SOURCE_SETUP.canva()) {
+      toast.error(`Add ${PROVIDER_SETUP_LABELS.canva} to enable Canva import`);
+      return;
+    }
+    try {
+      const payload = await getCanvaImportUrl();
+      canvaPopupRef.current = window.open(payload.auth_url, 'canva-import', 'width=1080,height=760');
+      if (!canvaPopupRef.current) {
+        throw new Error('Popup blocked while connecting Canva');
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || error?.message || 'Failed to start Canva import');
+    }
+  }, []);
+
+  const importCanvaDesign = useCallback(async (design) => {
+    if (!canImportFromSources || !canvaSessionId) return;
+    const fileType = isVideo ? 'mp4' : 'png';
+    setCanvaImportingId(design.id);
+    try {
+      let exportJob = await createCanvaExport({
+        sessionId: canvaSessionId,
+        designId: design.id,
+        fileType,
+      });
+      let attempts = 0;
+      while (exportJob.status !== 'success' && exportJob.status !== 'failed' && attempts < 40) {
+        await sleep(1500);
+        exportJob = await getCanvaExport({
+          sessionId: canvaSessionId,
+          exportId: exportJob.export_id,
+        });
+        attempts += 1;
+      }
+      if (exportJob.status !== 'success' || !Array.isArray(exportJob.download_urls) || exportJob.download_urls.length === 0) {
+        throw new Error('Canva export failed');
+      }
+      const items = exportJob.download_urls.map((downloadUrl, index) => ({
+        provider: 'canva',
+        download_url: downloadUrl,
+        name: `${design.title || 'canva-design'}${exportJob.download_urls.length > 1 ? `-${index + 1}` : ''}.${fileType}`,
+        source_item_id: design.id,
+        source_label: design.title || 'Canva design',
+        source_attribution: {
+          provider: 'canva',
+          design_id: design.id,
+          edit_url: design.edit_url || null,
+        },
+      }));
+      toast.info('Importing Canva design…');
+      await importSelectedRemoteMedia(items);
+      setCanvaOpen(false);
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || error?.message || 'Failed to import Canva design');
+    } finally {
+      setCanvaImportingId(null);
+    }
+  }, [canImportFromSources, canvaSessionId, importSelectedRemoteMedia, isVideo]);
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -1111,26 +1448,32 @@ const PlatformEditor = ({
                       target="_blank"
                       rel="noreferrer"
                       className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
-                      onClick={() => setSourceOpen(false)}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setSourceOpen(false);
+                        setCanvaOpen(true);
+                      }}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         <SiCanva className="text-[#00C4CC] text-base" />
                       </div>
                       <span className="text-sm text-gray-700">Canva</span>
-                      <FaExternalLinkAlt className="text-gray-300 text-[9px] ml-auto" />
+                      {!MEDIA_SOURCE_SETUP.canva() && (
+                        <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
+                      )}
                     </a>
 
                     {/* Unsplash */}
                     <button
                       onClick={() => { setSourceOpen(false); setUnsplashOpen(true); setUnsplashResults([]); setUnsplashQuery(''); }}
                       className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
-                      disabled={!onFilesSelect}
+                      disabled={!canImportFromSources || !MEDIA_SOURCE_SETUP.unsplash()}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         <SiUnsplash className="text-gray-800 text-base" />
                       </div>
                       <span className="text-sm text-gray-700">Unsplash</span>
-                      {!process.env.REACT_APP_UNSPLASH_ACCESS_KEY && (
+                      {!MEDIA_SOURCE_SETUP.unsplash() && (
                         <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
                       )}
                     </button>
@@ -1139,13 +1482,13 @@ const PlatformEditor = ({
                     <button
                       onClick={openDropboxChooser}
                       className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
-                      disabled={!onFilesSelect}
+                      disabled={!canImportFromSources || !MEDIA_SOURCE_SETUP.dropbox()}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         <SiDropbox className="text-[#0061FF] text-base" />
                       </div>
                       <span className="text-sm text-gray-700">Dropbox</span>
-                      {!process.env.REACT_APP_DROPBOX_APP_KEY && (
+                      {!MEDIA_SOURCE_SETUP.dropbox() && (
                         <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
                       )}
                     </button>
@@ -1154,35 +1497,37 @@ const PlatformEditor = ({
                     <button
                       onClick={openGoogleDrivePicker}
                       className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
-                      disabled={!onFilesSelect}
+                      disabled={!canImportFromSources || !MEDIA_SOURCE_SETUP.google_drive()}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         <SiGoogledrive className="text-[#4285F4] text-base" />
                       </div>
                       <span className="text-sm text-gray-700">Google Drive</span>
-                      {(!process.env.REACT_APP_GOOGLE_PICKER_API_KEY || !process.env.REACT_APP_GOOGLE_CLIENT_ID) && (
+                      {!MEDIA_SOURCE_SETUP.google_drive() && (
                         <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
                       )}
                     </button>
 
                     {/* Google Photos */}
                     <button
-                      className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left opacity-50 cursor-not-allowed"
-                      title="Coming soon"
-                      disabled
+                      onClick={openGooglePhotosPicker}
+                      className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
+                      disabled={!canImportFromSources || !MEDIA_SOURCE_SETUP.google_photos()}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         <MdPhotoLibrary className="text-[#EA4335] text-base" />
                       </div>
                       <span className="text-sm text-gray-700">Google Photos</span>
-                      <span className="text-[10px] text-gray-400 ml-auto">Soon</span>
+                      {!MEDIA_SOURCE_SETUP.google_photos() && (
+                        <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
+                      )}
                     </button>
 
                     {/* OneDrive */}
                     <button
-                      className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left opacity-50 cursor-not-allowed"
-                      title="Coming soon"
-                      disabled
+                      onClick={openOneDrivePicker}
+                      className="flex items-center gap-2.5 px-2 py-2 rounded hover:bg-gray-50 transition-colors w-full text-left"
+                      disabled={!canImportFromSources || !MEDIA_SOURCE_SETUP.onedrive()}
                     >
                       <div className="w-5 h-5 flex items-center justify-center">
                         {/* Microsoft OneDrive icon */}
@@ -1192,7 +1537,9 @@ const PlatformEditor = ({
                         </svg>
                       </div>
                       <span className="text-sm text-gray-700">OneDrive</span>
-                      <span className="text-[10px] text-gray-400 ml-auto">Soon</span>
+                      {!MEDIA_SOURCE_SETUP.onedrive() && (
+                        <span className="text-[10px] text-amber-500 ml-auto">Setup</span>
+                      )}
                     </button>
                   </PopoverContent>
                 </Popover>
@@ -1602,6 +1949,159 @@ const PlatformEditor = ({
       )}
     </div>
 
+    <Dialog open={canvaOpen} onOpenChange={setCanvaOpen}>
+      <DialogContent className="sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SiCanva className="text-[#00C4CC] text-lg" />
+            <span>Import from Canva</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Use exported Canva designs in this post</p>
+              <p className="mt-1 text-xs text-gray-500">
+                Import recent Canva designs as {isVideo ? 'MP4 video' : 'PNG image'} assets, or open Canva in a new tab.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href="https://www.canva.com"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+              >
+                <FaExternalLinkAlt className="text-[10px]" />
+                Open Canva
+              </a>
+              <button
+                type="button"
+                onClick={connectCanva}
+                className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700"
+              >
+                {canvaSessionId ? 'Reconnect Canva' : 'Connect Canva'}
+              </button>
+            </div>
+          </div>
+
+          {!MEDIA_SOURCE_SETUP.canva() && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              <p className="font-semibold">Setup required</p>
+              <p className="mt-1 text-xs">
+                Enable Canva import in <code className="rounded bg-amber-100 px-1">frontend/.env</code> with
+                {' '}<code className="rounded bg-amber-100 px-1">REACT_APP_CANVA_IMPORT_ENABLED=true</code>, and configure
+                {' '}<code className="rounded bg-amber-100 px-1">CANVA_CLIENT_ID</code>,
+                {' '}<code className="rounded bg-amber-100 px-1">CANVA_CLIENT_SECRET</code>, and
+                {' '}<code className="rounded bg-amber-100 px-1">CANVA_REDIRECT_URI</code> on the backend.
+              </p>
+            </div>
+          )}
+
+          {canvaSessionId && (
+            <>
+              <div className="flex flex-col gap-2 md:flex-row">
+                <div className="relative flex-1">
+                  <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-sm" />
+                  <input
+                    type="text"
+                    value={canvaQuery}
+                    onChange={(event) => setCanvaQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        setCanvaContinuation(null);
+                        loadCanvaDesignList(canvaQuery, null, false);
+                      }
+                    }}
+                    placeholder="Search recent Canva designs…"
+                    className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCanvaContinuation(null);
+                    loadCanvaDesignList(canvaQuery, null, false);
+                  }}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+                >
+                  Search
+                </button>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {canvaDesigns.map((design) => (
+                  <div key={design.id} className="rounded-xl border border-gray-200 bg-white p-3">
+                    <div className="flex gap-3">
+                      <div className="h-20 w-20 overflow-hidden rounded-lg bg-gray-100">
+                        {design.thumbnail_url ? (
+                          <img src={design.thumbnail_url} alt={design.title || 'Canva design'} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-xs text-gray-400">No preview</div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-gray-900">{design.title || 'Untitled design'}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {design.updated_at ? `Updated ${new Date(design.updated_at).toLocaleDateString()}` : 'Recent Canva design'}
+                        </p>
+                        <div className="mt-3 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => importCanvaDesign(design)}
+                            disabled={canvaImportingId === design.id}
+                            className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                          >
+                            {canvaImportingId === design.id ? 'Exporting…' : `Import ${isVideo ? 'MP4' : 'PNG'}`}
+                          </button>
+                          {design.edit_url && (
+                            <a
+                              href={design.edit_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700"
+                            >
+                              Edit
+                              <FaExternalLinkAlt className="text-[9px]" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {!canvaLoading && canvaDesigns.length === 0 && (
+                <div className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500">
+                  Connect Canva to load recent designs, then import them directly into this composer.
+                </div>
+              )}
+
+              {canvaLoading && (
+                <div className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500">
+                  Loading Canva designs…
+                </div>
+              )}
+
+              {canvaContinuation && !canvaLoading && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => loadCanvaDesignList(canvaQuery, canvaContinuation, true)}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+                  >
+                    Load more
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+
     {/* ── Unsplash Modal ───────────────────────────────────────────────────── */}
     {unsplashOpen && (
       <div
@@ -1626,7 +2126,7 @@ const PlatformEditor = ({
 
           {/* Search bar */}
           <div className="px-5 py-3 border-b border-gray-100">
-            {!process.env.REACT_APP_UNSPLASH_ACCESS_KEY ? (
+            {!MEDIA_SOURCE_SETUP.unsplash() ? (
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
                 <p className="font-semibold mb-1">Setup required</p>
                 <p className="text-xs">
@@ -1634,8 +2134,8 @@ const PlatformEditor = ({
                   <a href="https://unsplash.com/developers" target="_blank" rel="noreferrer" className="underline font-medium">
                     unsplash.com/developers
                   </a>{' '}
-                  and add <code className="bg-amber-100 px-1 rounded">REACT_APP_UNSPLASH_ACCESS_KEY=your_key</code>{' '}
-                  to <code className="bg-amber-100 px-1 rounded">frontend/.env</code>
+                  and add <code className="bg-amber-100 px-1 rounded">UNSPLASH_ACCESS_KEY=your_key</code>{' '}
+                  to the backend environment.
                 </p>
               </div>
             ) : (
@@ -1673,9 +2173,9 @@ const PlatformEditor = ({
               <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
                 <FaImages className="text-4xl opacity-30" />
                 <p className="text-sm">
-                  {process.env.REACT_APP_UNSPLASH_ACCESS_KEY
+                  {MEDIA_SOURCE_SETUP.unsplash()
                     ? 'Search for beautiful free photos'
-                    : 'Add your API key to start searching'}
+                    : 'Add the backend access key to start searching'}
                 </p>
               </div>
             ) : (
@@ -1689,7 +2189,7 @@ const PlatformEditor = ({
                     >
                       <img
                         src={photo.thumb}
-                        alt={photo.alt}
+                        alt={photo.description || 'Unsplash image'}
                         className="w-full object-cover block"
                         loading="lazy"
                       />
@@ -1698,9 +2198,17 @@ const PlatformEditor = ({
                           by{' '}
                           <span
                             className="underline"
-                            onClick={(e) => { e.stopPropagation(); window.open(photo.userUrl + '?utm_source=socialentangler&utm_medium=referral', '_blank'); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const profileUrl = photo.photographer_profile
+                                ? `${photo.photographer_profile}${photo.photographer_profile.includes('?') ? '&' : '?'}utm_source=socialentangler&utm_medium=referral`
+                                : null;
+                              if (profileUrl) {
+                                window.open(profileUrl, '_blank');
+                              }
+                            }}
                           >
-                            {photo.user}
+                            {photo.photographer_name}
                           </span>
                         </p>
                       </div>
