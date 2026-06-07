@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from api.deps import get_firebase_app
+from api.routes.auth import get_password_reset_config_status
 from db.mongo import get_client as get_mongo_client
 from db.redis_client import get_queue_redis, get_cache_redis
 from utils.storage import get_storage_backend, validate_storage_backend_async
@@ -97,6 +98,15 @@ async def ready() -> JSONResponse:
             logger.warning("Readiness check — Firebase storage unavailable (degraded mode): %s", exc)
             checks["storage"] = "degraded:firebase"
             degraded = True
+
+    # Password-reset Firebase web API key check
+    password_reset_config = get_password_reset_config_status()
+    if password_reset_config["configured"]:
+        checks["auth_password_reset"] = f"ok:{password_reset_config['source']}"
+    else:
+        logger.warning("Readiness check — password reset Firebase Web API key missing (degraded mode)")
+        checks["auth_password_reset"] = "degraded:missing_firebase_web_api_key"
+        degraded = True
 
     status_code = 200 if hard_ok else 503
     return JSONResponse(

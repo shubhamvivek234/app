@@ -24,11 +24,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
 
 _TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() == "true"
-_FIREBASE_WEB_API_KEY = (
-    os.environ.get("FIREBASE_WEB_API_KEY")
-    or os.environ.get("REACT_APP_FIREBASE_API_KEY")
-    or os.environ.get("VITE_FIREBASE_API_KEY")
-)
+
+
+def _resolve_firebase_web_api_key() -> tuple[str | None, str | None]:
+    """Resolve the Firebase Web API key used for password-reset emails."""
+    for source_name in ("FIREBASE_WEB_API_KEY", "REACT_APP_FIREBASE_API_KEY", "VITE_FIREBASE_API_KEY"):
+        value = (os.environ.get(source_name) or "").strip()
+        if value:
+            return value, source_name
+    return None, None
+
+
+def get_password_reset_config_status() -> dict[str, str | bool | None]:
+    api_key, source = _resolve_firebase_web_api_key()
+    return {
+        "configured": bool(api_key),
+        "source": source,
+    }
 
 # ── Request models ────────────────────────────────────────────────────────────
 
@@ -344,13 +356,15 @@ async def request_password_reset(
     client_ip = request.client.host if request.client else ""
     await _verify_turnstile_if_enabled(body.cf_turnstile_token, client_ip)
 
-    if not _FIREBASE_WEB_API_KEY:
+    firebase_web_api_key, key_source = _resolve_firebase_web_api_key()
+    if not firebase_web_api_key:
         event_log(
             logger,
             "error",
             "auth.password_reset.unavailable",
             route="/auth/password-reset/request",
             failure_type="missing_firebase_web_api_key",
+            checked_sources=["FIREBASE_WEB_API_KEY", "REACT_APP_FIREBASE_API_KEY", "VITE_FIREBASE_API_KEY"],
             outcome="misconfigured",
         )
         raise HTTPException(
@@ -370,11 +384,15 @@ async def request_password_reset(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
-                f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={_FIREBASE_WEB_API_KEY}",
+                f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={firebase_web_api_key}",
                 json=payload,
             )
         if resp.status_code >= 400:
-            error_message = ((resp.json() or {}).get("error") or {}).get("message", "unknown")
+            try:
+                provider_payload = resp.json() or {}
+            except ValueError:
+                provider_payload = {}
+            error_message = (provider_payload.get("error") or {}).get("message", "unknown")
             if error_message not in {"EMAIL_NOT_FOUND", "INVALID_EMAIL"}:
                 event_log(
                     logger,
@@ -382,6 +400,8 @@ async def request_password_reset(
                     "auth.password_reset.provider_error",
                     route="/auth/password-reset/request",
                     email=str(body.email),
+                    firebase_key_source=key_source,
+                    provider_status_code=resp.status_code,
                     failure_type="provider_error",
                     provider_error=error_message,
                     outcome="degraded",
@@ -394,6 +414,7 @@ async def request_password_reset(
             exc_info=exc,
             route="/auth/password-reset/request",
             email=str(body.email),
+            firebase_key_source=key_source,
             failure_type=type(exc).__name__,
             provider_error=shorten_provider_error(exc),
             outcome="degraded",

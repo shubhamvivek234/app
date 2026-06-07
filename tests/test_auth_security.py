@@ -5,6 +5,7 @@ from fastapi import HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
+from api import health as health_routes
 from api.deps import get_current_user, require_verified_email
 from api.routes import auth as auth_routes
 
@@ -47,8 +48,9 @@ class _FakeAsyncResponse:
 
 
 class _FakeAsyncClient:
-    def __init__(self, response):
+    def __init__(self, response, call_store=None):
         self.response = response
+        self.call_store = call_store
 
     async def __aenter__(self):
         return self
@@ -58,6 +60,8 @@ class _FakeAsyncClient:
 
     async def post(self, url, json):
         self.last_call = {"url": url, "json": json}
+        if self.call_store is not None:
+            self.call_store["last_call"] = self.last_call
         return self.response
 
 
@@ -120,8 +124,9 @@ def _fake_create_session_cookie(container):
 
 
 @pytest.mark.asyncio
-async def test_request_password_reset_hides_email_not_found(monkeypatch):
-    monkeypatch.setattr(auth_routes, "_FIREBASE_WEB_API_KEY", "firebase-web-key")
+@pytest.mark.parametrize("provider_error", ["EMAIL_NOT_FOUND", "INVALID_EMAIL"])
+async def test_request_password_reset_hides_unknown_or_invalid_email(monkeypatch, provider_error):
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
     monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
     monkeypatch.setattr(
         auth_routes.httpx,
@@ -129,7 +134,7 @@ async def test_request_password_reset_hides_email_not_found(monkeypatch):
         lambda timeout=10.0: _FakeAsyncClient(
             _FakeAsyncResponse(
                 status_code=400,
-                payload={"error": {"message": "EMAIL_NOT_FOUND"}},
+                payload={"error": {"message": provider_error}},
             )
         ),
     )
@@ -137,6 +142,68 @@ async def test_request_password_reset_hides_email_not_found(monkeypatch):
     result = await auth_routes.request_password_reset(
         request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
         body=auth_routes.PasswordResetRequest(email="missing@example.com"),
+    )
+
+    assert "reset email" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_request_password_reset_returns_503_when_web_api_key_missing(monkeypatch):
+    monkeypatch.delenv("FIREBASE_WEB_API_KEY", raising=False)
+    monkeypatch.delenv("REACT_APP_FIREBASE_API_KEY", raising=False)
+    monkeypatch.delenv("VITE_FIREBASE_API_KEY", raising=False)
+    monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
+
+    with pytest.raises(HTTPException) as exc:
+        await auth_routes.request_password_reset(
+            request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
+            body=auth_routes.PasswordResetRequest(email="missing@example.com"),
+        )
+
+    assert exc.value.status_code == 503
+    assert "temporarily unavailable" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_request_password_reset_uses_configured_key_and_calls_provider(monkeypatch):
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+    monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
+    call_store = {}
+    monkeypatch.setattr(
+        auth_routes.httpx,
+        "AsyncClient",
+        lambda timeout=10.0: _FakeAsyncClient(_FakeAsyncResponse(status_code=200, payload={}), call_store),
+    )
+
+    result = await auth_routes.request_password_reset(
+        request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
+        body=auth_routes.PasswordResetRequest(email="user@example.com"),
+    )
+
+    assert "reset email" in result["message"].lower()
+    assert "accounts:sendOobCode?key=firebase-web-key" in call_store["last_call"]["url"]
+    assert call_store["last_call"]["json"]["requestType"] == "PASSWORD_RESET"
+    assert call_store["last_call"]["json"]["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_request_password_reset_hides_unexpected_provider_failures(monkeypatch):
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+    monkeypatch.setattr(auth_routes, "_verify_turnstile_if_enabled", _async_noop)
+    monkeypatch.setattr(
+        auth_routes.httpx,
+        "AsyncClient",
+        lambda timeout=10.0: _FakeAsyncClient(
+            _FakeAsyncResponse(
+                status_code=500,
+                payload={"error": {"message": "INTERNAL_ERROR"}},
+            )
+        ),
+    )
+
+    result = await auth_routes.request_password_reset(
+        request=Request({"type": "http", "method": "POST", "path": "/api/auth/password-reset/request", "headers": []}),
+        body=auth_routes.PasswordResetRequest(email="user@example.com"),
     )
 
     assert "reset email" in result["message"].lower()
@@ -199,3 +266,46 @@ async def test_require_verified_email_rejects_unverified_user():
         await require_verified_email({"user_id": "usr_1", "email_verified": False})
 
     assert exc.value.status_code == 403
+
+
+class _FakeAdmin:
+    async def command(self, name):
+        assert name == "ping"
+        return {"ok": 1}
+
+
+class _FakeMongoClient:
+    def __init__(self):
+        self.admin = _FakeAdmin()
+
+
+class _FakeRedis:
+    async def ping(self):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_password_reset_config_as_degraded_without_failing(monkeypatch):
+    async def _fake_get_mongo_client():
+        return _FakeMongoClient()
+
+    async def _fake_validate_storage():
+        return {"backend": "r2"}
+
+    monkeypatch.setattr(health_routes, "get_mongo_client", _fake_get_mongo_client)
+    monkeypatch.setattr(health_routes, "get_queue_redis", lambda: _FakeRedis())
+    monkeypatch.setattr(health_routes, "get_cache_redis", lambda: _FakeRedis())
+    monkeypatch.setattr(health_routes, "get_firebase_app", lambda: object())
+    monkeypatch.setattr(health_routes, "validate_storage_backend_async", _fake_validate_storage)
+    monkeypatch.setattr(
+        health_routes,
+        "get_password_reset_config_status",
+        lambda: {"configured": False, "source": None},
+    )
+
+    response = await health_routes.ready()
+
+    assert response.status_code == 200
+    assert response.body
+    assert b'"status":"degraded"' in response.body
+    assert b'"auth_password_reset":"degraded:missing_firebase_web_api_key"' in response.body
