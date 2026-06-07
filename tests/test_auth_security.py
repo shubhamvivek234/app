@@ -8,6 +8,7 @@ from starlette.requests import Request
 from api import health as health_routes
 from api.deps import get_current_user, require_verified_email
 from api.routes import auth as auth_routes
+from utils import auth_emails as auth_emails_utils
 from utils.auth_emails import (
     AuthEmailConfigError,
     AuthEmailDeliveryError,
@@ -231,6 +232,54 @@ async def test_request_password_reset_hides_unexpected_provider_failures(monkeyp
     )
 
     assert "reset email" in result["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_send_password_reset_email_falls_back_to_firebase_managed_email(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "resend_test")
+    monkeypatch.setenv("SENDER_EMAIL", "contact@unravler.com")
+    monkeypatch.setenv("FRONTEND_URL", "https://www.unravler.com")
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+
+    monkeypatch.setattr(auth_emails_utils, "get_firebase_app", lambda: object())
+
+    def _raise_invalid_signature(*args, **kwargs):
+        raise RuntimeError("invalid_grant: Invalid JWT Signature.")
+
+    monkeypatch.setattr(auth_emails_utils.firebase_auth, "generate_password_reset_link", _raise_invalid_signature)
+    call_store = {}
+
+    async def _fallback(email):
+        call_store["email"] = email
+
+    monkeypatch.setattr(auth_emails_utils, "_send_password_reset_via_firebase", _fallback)
+
+    await auth_emails_utils.send_password_reset_email("user@example.com")
+
+    assert call_store["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_send_password_reset_email_raises_when_branded_and_fallback_both_fail(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "resend_test")
+    monkeypatch.setenv("SENDER_EMAIL", "contact@unravler.com")
+    monkeypatch.setenv("FRONTEND_URL", "https://www.unravler.com")
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+
+    monkeypatch.setattr(auth_emails_utils, "get_firebase_app", lambda: object())
+
+    def _raise_invalid_signature(*args, **kwargs):
+        raise RuntimeError("invalid_grant: Invalid JWT Signature.")
+
+    monkeypatch.setattr(auth_emails_utils.firebase_auth, "generate_password_reset_link", _raise_invalid_signature)
+
+    async def _fallback(email):
+        raise AuthEmailDeliveryError("firebase fallback failed")
+
+    monkeypatch.setattr(auth_emails_utils, "_send_password_reset_via_firebase", _fallback)
+
+    with pytest.raises(AuthEmailDeliveryError):
+        await auth_emails_utils.send_password_reset_email("user@example.com")
 
 
 @pytest.mark.asyncio
