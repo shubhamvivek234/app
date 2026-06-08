@@ -58,6 +58,8 @@ def test_doc_to_response_preserves_account_identifiers_for_calendar_views():
             "platform_account_ids": ["acct-1"],
             "social_account_id": "acct-1",
             "scheduled_time": datetime.now(timezone.utc),
+            "timezone": "Asia/Kolkata",
+            "scheduled_timezone_explicit": True,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
         }
@@ -67,6 +69,8 @@ def test_doc_to_response_preserves_account_identifiers_for_calendar_views():
     assert response.social_account_ids == ["acct-1", "acct-2"]
     assert response.platform_account_ids == ["acct-1"]
     assert response.social_account_id == "acct-1"
+    assert response.timezone == "Asia/Kolkata"
+    assert response.scheduled_timezone_explicit is True
 
 
 def test_doc_to_response_accepts_extended_runtime_statuses():
@@ -175,6 +179,33 @@ async def test_delete_processing_post_revokes_parent_and_child_tasks(monkeypatch
     assert set_updates["platform_results.youtube.status"] == "cancelled"
     assert set_updates["account_results.youtube-account-1.status"] == "cancelled"
     enqueue_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_scheduled_post_enqueues_orphan_cleanup_immediately(monkeypatch):
+    existing = {
+        "id": "post-2",
+        "user_id": "user-1",
+        "workspace_id": "ws-1",
+        "status": "scheduled",
+        "queue_job_id": None,
+        "media_ids": ["media-1"],
+        "platform_results": {},
+        "account_results": {},
+    }
+    db = _FakeDB(existing)
+    enqueue_mock = Mock()
+
+    monkeypatch.setattr(posts_route, "revoke_task", Mock())
+    monkeypatch.setattr(posts_route, "enqueue_task", enqueue_mock)
+    monkeypatch.setattr(posts_route, "log_audit_event", AsyncMock())
+
+    await posts_route.delete_post("post-2", {"user_id": "user-1"}, db)
+
+    enqueue_mock.assert_called_once_with(
+        "celery_workers.tasks.cleanup.cleanup_deleted_post_media",
+        args=["post-2"],
+    )
 
 
 @pytest.mark.asyncio

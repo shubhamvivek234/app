@@ -1,0 +1,189 @@
+- generic [ref=e3]:
+  - generic [ref=e228]:
+    - banner [ref=e229]:
+      - button "Unravler" [ref=e231] [cursor=pointer]:
+        - img "Unravler" [ref=e233]
+      - generic [ref=e234]:
+        - link "Publish" [ref=e235] [cursor=pointer]:
+          - /url: /publish
+          - img [ref=e236]
+          - text: Publish
+        - link "Analytics" [ref=e238] [cursor=pointer]:
+          - /url: /analytics
+          - img [ref=e239]
+          - text: Analytics
+      - generic [ref=e241]:
+        - button "Switch to dark mode" [ref=e242] [cursor=pointer]:
+          - img [ref=e243]
+        - button [ref=e246] [cursor=pointer]:
+          - img [ref=e247]
+        - button "AU Access User" [ref=e250] [cursor=pointer]:
+          - generic [ref=e251]: AU
+          - generic [ref=e252]: Access User
+    - generic [ref=e254]:
+      - generic [ref=e255]:
+        - paragraph [ref=e256]: Workspace
+        - generic [ref=e257]:
+          - link "Dashboard" [ref=e258] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e259]
+            - text: Dashboard
+          - button "Collapse sidebar" [ref=e261] [cursor=pointer]:
+            - img [ref=e262]
+      - button "Create post" [ref=e265] [cursor=pointer]:
+        - img [ref=e266]
+        - text: Create post
+      - generic [ref=e268]:
+        - paragraph [ref=e269]: Create
+        - navigation [ref=e270]:
+          - link "New post" [ref=e271] [cursor=pointer]:
+            - /url: /create-post
+            - img [ref=e272]
+            - text: New post
+          - link "Bulk Upload" [ref=e274] [cursor=pointer]:
+            - /url: /bulk-upload
+            - img [ref=e275]
+            - text: Bulk Upload
+          - link "Hashtag Groups" [ref=e277] [cursor=pointer]:
+            - /url: /hashtags
+            - img [ref=e278]
+            - text: Hashtag Groups
+          - link "Media Library" [ref=e280] [cursor=pointer]:
+            - /url: /media-library
+            - img [ref=e281]
+            - text: Media Library
+          - link "Social Tools" [ref=e283] [cursor=pointer]:
+            - /url: /social-tools
+            - img [ref=e284]
+            - text: Social Tools
+          - link "Timeslots" [ref=e286] [cursor=pointer]:
+            - /url: /timeslots
+            - img [ref=e287]
+            - text: Timeslots
+      - generic [ref=e289]:
+        - paragraph [ref=e290]: Posts
+        - navigation [ref=e291]:
+          - link "Calendar" [ref=e292] [cursor=pointer]:
+            - /url: /calendar
+            - img [ref=e293]
+            - text: Calendar
+          - link "All" [ref=e295] [cursor=pointer]:
+            - /url: /content-library
+            - img [ref=e296]
+            - text: All
+          - link "Scheduled" [ref=e298] [cursor=pointer]:
+            - /url: /content-library?status=scheduled
+            - img [ref=e299]
+            - text: Scheduled
+          - link "Posted" [ref=e301] [cursor=pointer]:
+            - /url: /content-library?status=published
+            - img [ref=e302]
+            - text: Posted
+          - link "Drafts" [ref=e304] [cursor=pointer]:
+            - /url: /content-library?status=draft
+            - img [ref=e305]
+            - text: Drafts
+          - link "Approvals" [ref=e307] [cursor=pointer]:
+            - /url: /approvals
+            - img [ref=e308]
+            - text: Approvals
+          - link "Inbox" [ref=e310] [cursor=pointer]:
+            - /url: /inbox
+            - img [ref=e311]
+            - text: Inbox
+      - generic [ref=e313]:
+        - paragraph [ref=e314]: Configuration
+        - navigation [ref=e315]:
+          - link "Connections" [ref=e316] [cursor=pointer]:
+            - /url: /accounts
+            - img [ref=e317]
+            - text: Connections
+          - link "Team" [ref=e319] [cursor=pointer]:
+            - /url: /team
+            - img [ref=e320]
+            - text: Team
+          - link "Settings" [ref=e322] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e323]
+            - text: Settings
+          - link "Api" [ref=e325] [cursor=pointer]:
+            - /url: /api-keys
+            - img [ref=e326]
+            - text: Api
+      - generic [ref=e328]:
+        - paragraph [ref=e329]: Support
+        - navigation [ref=e330]:
+          - link "Support" [ref=e331] [cursor=pointer]:
+            - /url: /support
+            - img [ref=e332]
+            - text: Support
+        - button "Logout" [ref=e335] [cursor=pointer]:
+          - img [ref=e336]
+          - text: Logout
+    - main [ref=e339]:
+      - generic [ref=e340]:
+        - generic [ref=e341]:
+          - heading "Create a new post" [level=1] [ref=e342]
+          - paragraph [ref=e343]: Choose a content type to get started
+        - generic [ref=e344]:
+          - button "Text Post Share thoughts & updates Compatible with" [ref=e345] [cursor=pointer]:
+            - generic [ref=e346]:
+              - img [ref=e349]
+              - heading "Text Post" [level=3] [ref=e352]
+              - paragraph [ref=e353]: Share thoughts & updates
+              - generic [ref=e354]:
+                - paragraph [ref=e355]: Compatible with
+                - generic [ref=e356]:
+                  - img [ref=e358]
+                  - img [ref=e361]
+                  - img [ref=e364]
+                  - img [ref=e367]
+                  - img [ref=e370]
+          - button "Image Post Upload photos & graphics Compatible with" [ref=e372] [cursor=pointer]:
+            - generic [ref=e373]:
+              - img [ref=e376]
+              - heading "Image Post" [level=3] [ref=e380]
+              - paragraph [ref=e381]: Upload photos & graphics
+              - generic [ref=e382]:
+                - paragraph [ref=e383]: Compatible with
+                - generic [ref=e384]:
+                  - img [ref=e386]
+                  - img [ref=e389]
+                  - img [ref=e392]
+                  - img [ref=e395]
+                  - img [ref=e398]
+                  - img [ref=e401]
+                  - img [ref=e404]
+          - button "Video Post Post videos & reels Compatible with" [ref=e406] [cursor=pointer]:
+            - generic [ref=e407]:
+              - img [ref=e410]
+              - heading "Video Post" [level=3] [ref=e413]
+              - paragraph [ref=e414]: Post videos & reels
+              - generic [ref=e415]:
+                - paragraph [ref=e416]: Compatible with
+                - generic [ref=e417]:
+                  - img [ref=e419]
+                  - img [ref=e422]
+                  - img [ref=e425]
+                  - img [ref=e428]
+                  - img [ref=e431]
+                  - img [ref=e434]
+                  - img [ref=e437]
+                  - img [ref=e440]
+          - button "Mixed Media Post images & videos together Compatible with" [ref=e442] [cursor=pointer]:
+            - generic [ref=e443]:
+              - img [ref=e446]
+              - heading "Mixed Media" [level=3] [ref=e452]
+              - paragraph [ref=e453]: Post images & videos together
+              - generic [ref=e454]:
+                - paragraph [ref=e455]: Compatible with
+                - generic [ref=e456]:
+                  - img [ref=e458]
+                  - img [ref=e461]
+                  - img [ref=e464]
+        - generic [ref=e467]:
+          - generic [ref=e468]: ✦
+          - paragraph [ref=e469]:
+            - text: Ready to post? Connect more social accounts to expand your reach.
+            - button "Add accounts now →" [ref=e470] [cursor=pointer]
+  - region "Notifications alt+T"

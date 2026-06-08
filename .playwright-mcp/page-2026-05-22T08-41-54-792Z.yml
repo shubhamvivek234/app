@@ -1,0 +1,108 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]: NEW
+        - heading "Schedule posts across your favorite platforms" [level=2] [ref=e7]:
+          - text: Schedule posts across
+          - text: your favorite platforms
+        - paragraph [ref=e8]: and grow your audience ↗
+        - generic [ref=e10]:
+          - generic [ref=e16]: app.socialentangle.io
+          - generic [ref=e17]:
+            - generic [ref=e18] [cursor=pointer]: Queue
+            - generic [ref=e19] [cursor=pointer]: Calendar
+            - generic [ref=e20] [cursor=pointer]: Analytics
+            - generic [ref=e21] [cursor=pointer]: Community
+            - generic [ref=e22] [cursor=pointer]: Ideas
+          - generic [ref=e23]:
+            - generic [ref=e24]:
+              - generic [ref=e25] [cursor=pointer]:
+                - generic [ref=e27]: All Channels
+                - generic [ref=e28]: "29"
+              - generic [ref=e29] [cursor=pointer]:
+                - generic [ref=e31]: Creator Studio
+                - generic [ref=e32]: "5"
+              - generic [ref=e33] [cursor=pointer]:
+                - generic [ref=e35]: Tech News
+                - generic [ref=e36]: "7"
+              - generic [ref=e37] [cursor=pointer]:
+                - generic [ref=e39]: Marketing
+                - generic [ref=e40]: "12"
+              - generic [ref=e41] [cursor=pointer]:
+                - generic [ref=e43]: Personal
+                - generic [ref=e44]: "2"
+            - generic [ref=e45]:
+              - generic [ref=e46]:
+                - generic [ref=e48]:
+                  - generic [ref=e49]: Creator Studio
+                  - generic [ref=e50]: 4 posts scheduled today
+                - generic [ref=e51]: Active
+              - generic [ref=e52]:
+                - generic [ref=e53]: 9:00 AM
+                - img [ref=e55]
+                - generic [ref=e57]: Golden hour vibes ✨ Swipe to see all the photos from our shoot today…
+              - generic [ref=e59]:
+                - generic [ref=e60]: 1:30 PM
+                - img [ref=e62]
+                - generic [ref=e64]: Just dropped our latest blog post on social media trends for 2026 🔥 Thread below…
+              - generic [ref=e65]:
+                - generic [ref=e66]: 5:00 PM
+                - img [ref=e68]
+                - generic [ref=e70]: Excited to announce we've hit 10K followers! Thank you to our amazing community…
+              - generic [ref=e71]:
+                - generic [ref=e72]: 8:00 PM
+                - img [ref=e74]
+                - generic [ref=e76]: New YouTube video is live! Watch our full breakdown of content strategy for Q2 2026…
+              - button "+ Schedule a Post" [ref=e78] [cursor=pointer]
+      - generic [ref=e79]:
+        - generic [ref=e80]:
+          - img "Unravler" [ref=e82]
+          - button "Back to home" [ref=e83] [cursor=pointer]:
+            - img [ref=e84]
+            - text: Back to home
+        - generic [ref=e86]:
+          - heading "Log in" [level=1] [ref=e87]
+          - button "Continue with Google" [disabled] [ref=e88] [cursor=pointer]:
+            - img [ref=e89]
+            - text: Continue with Google
+          - generic [ref=e94]: or
+          - generic [ref=e97]:
+            - generic [ref=e98]:
+              - generic [ref=e99]: Email Address
+              - textbox [ref=e100]
+            - generic [ref=e101]:
+              - generic [ref=e102]: Password
+              - generic [ref=e103]:
+                - textbox [ref=e104]
+                - button [ref=e105] [cursor=pointer]:
+                  - img [ref=e106]
+            - button "Signing in…" [disabled] [ref=e128]
+          - generic [ref=e110]:
+            - link "Create an account" [ref=e111] [cursor=pointer]:
+              - /url: /signup
+            - link "Forgot your password?" [ref=e112] [cursor=pointer]:
+              - /url: /forgot-password
+        - generic [ref=e113]:
+          - link "Terms of Service" [ref=e114] [cursor=pointer]:
+            - /url: /terms
+          - generic [ref=e115]: ·
+          - link "Privacy Policy" [ref=e116] [cursor=pointer]:
+            - /url: /privacy
+          - generic [ref=e117]: ·
+          - link "Security" [ref=e118] [cursor=pointer]:
+            - /url: /security
+    - region "Notifications alt+T"
+    - generic [ref=e120]:
+      - generic [ref=e121]:
+        - paragraph [ref=e122]: We use cookies
+        - paragraph [ref=e123]:
+          - text: We use essential cookies to make our site work and analytics cookies to understand how you use it. See our
+          - link "Privacy Policy" [ref=e124] [cursor=pointer]:
+            - /url: /privacy
+          - text: .
+      - generic [ref=e125]:
+        - button "Essential Only" [ref=e126] [cursor=pointer]
+        - button "Accept All" [ref=e127] [cursor=pointer]
+  - iframe [ref=e129]:
+    

@@ -1,4 +1,10 @@
 import { format, formatDistance } from 'date-fns';
+import {
+  formatScheduledCompactDateTime,
+  getPostScheduledTimeZone,
+} from '@/lib/scheduledTime';
+
+export { getPostScheduledTimeZone };
 
 export const PLATFORM_LABELS = {
   instagram: 'Instagram',
@@ -48,10 +54,13 @@ export const primaryThumbnail = (post) => (
   || null
 );
 
-export const formatAbsoluteDate = (value) => {
+export const formatAbsoluteDate = (value, timeZone = null) => {
   if (!value) return 'Unknown time';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 'Unknown time';
+  if (timeZone) {
+    return formatScheduledCompactDateTime(parsed, timeZone, { includeTimeZone: true });
+  }
   return format(parsed, 'MMM d, h:mm a');
 };
 

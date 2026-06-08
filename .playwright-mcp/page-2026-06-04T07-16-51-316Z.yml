@@ -1,0 +1,59 @@
+- generic [ref=e3]:
+  - generic [ref=e180]:
+    - generic [ref=e182]:
+      - generic [ref=e183]:
+        - img "Unravler" [ref=e185]
+        - button "Back to home" [ref=e186] [cursor=pointer]:
+          - img [ref=e187]
+          - text: Back to home
+      - heading "Welcome back" [level=1] [ref=e189]
+      - paragraph [ref=e190]: Sign in to your account to continue
+      - button "Continue with Google" [ref=e191] [cursor=pointer]:
+        - img [ref=e192]
+        - text: Continue with Google
+      - generic [ref=e197]: or continue with email
+      - generic [ref=e198]:
+        - generic [ref=e199]:
+          - generic [ref=e200]: Email
+          - textbox "Email" [ref=e201]:
+            - /placeholder: you@example.com
+            - text: access-8a8ac246@unravler.dev
+        - generic [ref=e202]:
+          - generic [ref=e203]: Password
+          - textbox "Password" [ref=e204]:
+            - /placeholder: ••••••••
+            - text: mcBKQdSzPnjOXhwdsE
+          - link "Forgot password?" [ref=e205] [cursor=pointer]:
+            - /url: /forgot-password
+        - button "Sign in" [ref=e208] [cursor=pointer]
+        - paragraph [ref=e209]:
+          - text: Don't have an account?
+          - link "Sign up free" [ref=e210] [cursor=pointer]:
+            - /url: /signup
+    - generic [ref=e211]:
+      - paragraph [ref=e212]: Connect to all your Platform from one place
+      - paragraph [ref=e213]: Schedule, publish & analyze across every platform
+      - generic [ref=e214]:
+        - img "Unravler" [ref=e217]
+        - generic [ref=e218]:
+          - img
+          - img [ref=e221]
+          - img [ref=e225]
+          - img [ref=e229]
+          - img [ref=e233]
+          - img [ref=e237]
+          - img [ref=e241]
+          - img [ref=e245]
+          - img [ref=e249]
+        - generic [ref=e252]:
+          - img
+          - img [ref=e255]
+          - img [ref=e259]:
+            - generic [ref=e261]: C
+          - img [ref=e264]
+          - img [ref=e268]
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e273]:
+        - img [ref=e275]
+        - generic [ref=e278]: Failed to load dashboard data

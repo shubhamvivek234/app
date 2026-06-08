@@ -1,0 +1,327 @@
+- generic [ref=e3]:
+  - generic [ref=e228]:
+    - banner [ref=e229]:
+      - button "Unravler" [ref=e231] [cursor=pointer]:
+        - img "Unravler" [ref=e233]
+      - generic [ref=e234]:
+        - link "Publish" [ref=e235] [cursor=pointer]:
+          - /url: /publish
+          - img [ref=e236]
+          - text: Publish
+        - link "Analytics" [ref=e238] [cursor=pointer]:
+          - /url: /analytics
+          - img [ref=e239]
+          - text: Analytics
+      - generic [ref=e241]:
+        - button "Switch to dark mode" [ref=e242] [cursor=pointer]:
+          - img [ref=e243]
+        - button [ref=e246] [cursor=pointer]:
+          - img [ref=e247]
+        - button "AU Access User" [ref=e250] [cursor=pointer]:
+          - generic [ref=e251]: AU
+          - generic [ref=e252]: Access User
+    - generic [ref=e254]:
+      - generic [ref=e255]:
+        - paragraph [ref=e256]: Workspace
+        - generic [ref=e257]:
+          - link "Dashboard" [ref=e258] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e259]
+            - text: Dashboard
+          - button "Collapse sidebar" [ref=e261] [cursor=pointer]:
+            - img [ref=e262]
+      - button "Create post" [ref=e265] [cursor=pointer]:
+        - img [ref=e266]
+        - text: Create post
+      - generic [ref=e268]:
+        - paragraph [ref=e269]: Create
+        - navigation [ref=e270]:
+          - link "New post" [ref=e471] [cursor=pointer]:
+            - /url: /create-post
+            - img [ref=e472]
+            - text: New post
+          - link "Bulk Upload" [ref=e474] [cursor=pointer]:
+            - /url: /bulk-upload
+            - img [ref=e475]
+            - text: Bulk Upload
+          - link "Hashtag Groups" [ref=e477] [cursor=pointer]:
+            - /url: /hashtags
+            - img [ref=e478]
+            - text: Hashtag Groups
+          - link "Media Library" [ref=e480] [cursor=pointer]:
+            - /url: /media-library
+            - img [ref=e481]
+            - text: Media Library
+          - link "Social Tools" [ref=e483] [cursor=pointer]:
+            - /url: /social-tools
+            - img [ref=e484]
+            - text: Social Tools
+          - link "Timeslots" [ref=e486] [cursor=pointer]:
+            - /url: /timeslots
+            - img [ref=e487]
+            - text: Timeslots
+      - generic [ref=e289]:
+        - paragraph [ref=e290]: Posts
+        - navigation [ref=e291]:
+          - link "Calendar" [ref=e489] [cursor=pointer]:
+            - /url: /calendar
+            - img [ref=e490]
+            - text: Calendar
+          - link "All" [ref=e492] [cursor=pointer]:
+            - /url: /content-library
+            - img [ref=e493]
+            - text: All
+          - link "Scheduled" [ref=e495] [cursor=pointer]:
+            - /url: /content-library?status=scheduled
+            - img [ref=e496]
+            - text: Scheduled
+          - link "Posted" [ref=e498] [cursor=pointer]:
+            - /url: /content-library?status=published
+            - img [ref=e499]
+            - text: Posted
+          - link "Drafts" [ref=e501] [cursor=pointer]:
+            - /url: /content-library?status=draft
+            - img [ref=e502]
+            - text: Drafts
+          - link "Approvals" [ref=e504] [cursor=pointer]:
+            - /url: /approvals
+            - img [ref=e505]
+            - text: Approvals
+          - link "Inbox" [ref=e507] [cursor=pointer]:
+            - /url: /inbox
+            - img [ref=e508]
+            - text: Inbox
+      - generic [ref=e313]:
+        - paragraph [ref=e314]: Configuration
+        - navigation [ref=e315]:
+          - link "Connections" [ref=e510] [cursor=pointer]:
+            - /url: /accounts
+            - img [ref=e511]
+            - text: Connections
+          - link "Team" [ref=e513] [cursor=pointer]:
+            - /url: /team
+            - img [ref=e514]
+            - text: Team
+          - link "Settings" [ref=e516] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e517]
+            - text: Settings
+          - link "Api" [ref=e519] [cursor=pointer]:
+            - /url: /api-keys
+            - img [ref=e520]
+            - text: Api
+      - generic [ref=e328]:
+        - paragraph [ref=e329]: Support
+        - navigation [ref=e330]:
+          - link "Support" [ref=e522] [cursor=pointer]:
+            - /url: /support
+            - img [ref=e523]
+            - text: Support
+        - button "Logout" [ref=e335] [cursor=pointer]:
+          - img [ref=e336]
+          - text: Logout
+    - main [ref=e339]:
+      - generic [ref=e340]:
+        - generic [ref=e341]:
+          - heading "Create a new post" [level=1] [ref=e342]
+          - paragraph [ref=e343]: Choose a content type to get started
+        - generic [ref=e344]:
+          - button "Text Post Share thoughts & updates Compatible with" [ref=e345] [cursor=pointer]:
+            - generic [ref=e346]:
+              - img [ref=e349]
+              - heading "Text Post" [level=3] [ref=e352]
+              - paragraph [ref=e353]: Share thoughts & updates
+              - generic [ref=e354]:
+                - paragraph [ref=e355]: Compatible with
+                - generic [ref=e356]:
+                  - img [ref=e358]
+                  - img [ref=e361]
+                  - img [ref=e364]
+                  - img [ref=e367]
+                  - img [ref=e370]
+          - button "Image Post Upload photos & graphics Compatible with" [ref=e372] [cursor=pointer]:
+            - generic [ref=e373]:
+              - img [ref=e376]
+              - heading "Image Post" [level=3] [ref=e380]
+              - paragraph [ref=e381]: Upload photos & graphics
+              - generic [ref=e382]:
+                - paragraph [ref=e383]: Compatible with
+                - generic [ref=e384]:
+                  - img [ref=e386]
+                  - img [ref=e389]
+                  - img [ref=e392]
+                  - img [ref=e395]
+                  - img [ref=e398]
+                  - img [ref=e401]
+                  - img [ref=e404]
+          - button "Video Post Post videos & reels Compatible with" [ref=e406] [cursor=pointer]:
+            - generic [ref=e407]:
+              - img [ref=e410]
+              - heading "Video Post" [level=3] [ref=e413]
+              - paragraph [ref=e414]: Post videos & reels
+              - generic [ref=e415]:
+                - paragraph [ref=e416]: Compatible with
+                - generic [ref=e417]:
+                  - img [ref=e419]
+                  - img [ref=e422]
+                  - img [ref=e425]
+                  - img [ref=e428]
+                  - img [ref=e431]
+                  - img [ref=e434]
+                  - img [ref=e437]
+                  - img [ref=e440]
+          - button "Mixed Media Post images & videos together Compatible with" [ref=e442] [cursor=pointer]:
+            - generic [ref=e443]:
+              - img [ref=e446]
+              - heading "Mixed Media" [level=3] [ref=e452]
+              - paragraph [ref=e453]: Post images & videos together
+              - generic [ref=e454]:
+                - paragraph [ref=e455]: Compatible with
+                - generic [ref=e456]:
+                  - img [ref=e458]
+                  - img [ref=e461]
+                  - img [ref=e464]
+        - generic [ref=e467]:
+          - generic [ref=e468]: ✦
+          - paragraph [ref=e469]:
+            - text: Ready to post? Connect more social accounts to expand your reach.
+            - button "Add accounts now →" [ref=e470] [cursor=pointer]
+      - generic [ref=e527]:
+        - generic [ref=e528]:
+          - generic [ref=e529]:
+            - button [ref=e530] [cursor=pointer]:
+              - img [ref=e531]
+            - generic [ref=e533]:
+              - heading "Create Post" [level=1] [ref=e534]
+              - generic [ref=e574]: 1 account selected
+          - generic [ref=e535]:
+            - button "AI" [ref=e536] [cursor=pointer]:
+              - img
+              - text: AI
+            - button "Preview" [ref=e537] [cursor=pointer]:
+              - img
+              - text: Preview
+            - button [ref=e538] [cursor=pointer]:
+              - img [ref=e539]
+        - generic [ref=e542]:
+          - generic [ref=e543]: Post to
+          - generic [ref=e544]:
+            - button "Prodcaster" [active] [ref=e545] [cursor=pointer]:
+              - img "Prodcaster" [ref=e546]
+              - img [ref=e548]
+            - generic: "youtube: Prodcaster"
+        - generic [ref=e550]:
+          - generic [ref=e551]:
+            - generic [ref=e576] [cursor=pointer]:
+              - img [ref=e577]
+              - img [ref=e580]
+              - generic [ref=e582]: Common Post
+              - button "Expand" [ref=e583]:
+                - img [ref=e584]
+            - generic [ref=e586]:
+              - generic [ref=e587] [cursor=pointer]:
+                - img [ref=e588]
+                - img [ref=e591]
+                - generic [ref=e593]: youtube
+                - button "Collapse" [ref=e594]:
+                  - img [ref=e595]
+              - button "Prodcaster" [ref=e598] [cursor=pointer]:
+                - img "Prodcaster" [ref=e599]
+              - generic [ref=e601]:
+                - paragraph [ref=e602]: Add media in Common Post or upload it directly in YouTube before publishing there.
+                - paragraph [ref=e603]: Add a caption, media, or both when you're ready to publish to YouTube.
+                - paragraph [ref=e604]: "Videos: max 256 GB — no duration limit"
+              - textbox "What would you like to share?" [ref=e606]
+              - generic [ref=e607]:
+                - button "select video" [ref=e608]
+                - button "Drag & drop or select video" [ref=e610] [cursor=pointer]:
+                  - img [ref=e611]
+                  - paragraph [ref=e614]: Drag & drop or select video
+              - generic [ref=e615]:
+                - generic [ref=e616]:
+                  - generic [ref=e617]:
+                    - link "C" [ref=e618] [cursor=pointer]:
+                      - /url: https://www.canva.com
+                    - button "More image sources" [ref=e619] [cursor=pointer]:
+                      - img [ref=e620]
+                  - button "Emoji" [ref=e622] [cursor=pointer]:
+                    - img [ref=e623]
+                  - button "Hashtag Groups" [ref=e625] [cursor=pointer]:
+                    - img [ref=e626]
+                - generic [ref=e628]: "5000"
+              - generic [ref=e629]:
+                - generic [ref=e631] [cursor=pointer]:
+                  - img [ref=e632]
+                  - text: Automatic
+                  - img [ref=e635]
+                - generic [ref=e637]:
+                  - generic [ref=e638]: Title
+                  - textbox "Enter a title for your video" [ref=e639]
+                - generic [ref=e640]:
+                  - generic [ref=e641]: Category
+                  - generic [ref=e642]:
+                    - combobox [ref=e643] [cursor=pointer]:
+                      - generic: Entertainment
+                      - img [ref=e644]
+                    - generic [ref=e646]: Visibility
+                    - combobox [ref=e647] [cursor=pointer]:
+                      - generic: Public
+                      - img [ref=e648]
+                - generic [ref=e650]:
+                  - generic [ref=e651]: License
+                  - combobox [ref=e652] [cursor=pointer]:
+                    - generic: Standard YouTube License
+                    - img [ref=e653]
+                - generic [ref=e655]:
+                  - generic [ref=e656] [cursor=pointer]:
+                    - checkbox "Notify Subscribers" [checked] [ref=e657]:
+                      - generic:
+                        - img
+                    - generic [ref=e658]: Notify Subscribers
+                  - generic [ref=e659] [cursor=pointer]:
+                    - checkbox "Allow Embedding" [checked] [ref=e660]:
+                      - generic:
+                        - img
+                    - generic [ref=e661]: Allow Embedding
+                  - generic [ref=e662] [cursor=pointer]:
+                    - checkbox "Made for Kids" [ref=e663]
+                    - generic [ref=e664]: Made for Kids
+          - generic [ref=e559]:
+            - generic [ref=e560]:
+              - generic [ref=e665]: youtube Preview
+              - img [ref=e666]
+            - generic [ref=e668]:
+              - generic [ref=e670]:
+                - img [ref=e671]
+                - paragraph [ref=e673]: Add a video to preview your YouTube upload
+              - generic [ref=e674]:
+                - img "Prodcaster" [ref=e675]
+                - generic [ref=e676]:
+                  - paragraph [ref=e677]: Your video title
+                  - paragraph [ref=e678] [cursor=pointer]: Prodcaster
+                  - paragraph [ref=e679]: 0 views · Just now
+                - img [ref=e680]
+              - generic [ref=e682]:
+                - generic [ref=e683]:
+                  - button "0" [ref=e684] [cursor=pointer]:
+                    - img [ref=e685]
+                    - generic [ref=e687]: "0"
+                  - button [ref=e688] [cursor=pointer]:
+                    - img [ref=e689]
+                - button "Share" [ref=e691] [cursor=pointer]:
+                  - img [ref=e692]
+                  - text: Share
+                - button "Download" [ref=e694] [cursor=pointer]:
+                  - img [ref=e695]
+                  - text: Download
+        - generic [ref=e566]:
+          - generic [ref=e567] [cursor=pointer]:
+            - checkbox "Create Another" [ref=e568]
+            - generic [ref=e569]: Create Another
+          - generic [ref=e570]:
+            - button "Save Drafts" [ref=e571] [cursor=pointer]
+            - button "Post Now" [ref=e572] [cursor=pointer]
+            - button "Schedule" [ref=e573] [cursor=pointer]:
+              - img
+              - text: Schedule
+  - region "Notifications alt+T"

@@ -1,0 +1,64 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - img "Unravler" [ref=e10]
+        - button "Back to home" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: Back to home
+      - heading "Welcome back" [level=1] [ref=e14]
+      - paragraph [ref=e15]: Sign in to your account to continue
+      - button "Continue with Google" [ref=e16] [cursor=pointer]:
+        - img [ref=e17]
+        - text: Continue with Google
+      - generic [ref=e22]: or continue with email
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Email
+          - textbox "Email" [ref=e26]:
+            - /placeholder: you@example.com
+        - generic [ref=e27]:
+          - generic [ref=e28]: Password
+          - textbox "Password" [ref=e29]:
+            - /placeholder: ••••••••
+          - link "Forgot password?" [ref=e30] [cursor=pointer]:
+            - /url: /forgot-password
+        - button "Sign in" [ref=e33] [cursor=pointer]
+        - paragraph [ref=e34]:
+          - text: Don't have an account?
+          - link "Sign up free" [ref=e35] [cursor=pointer]:
+            - /url: /signup
+    - generic [ref=e36]:
+      - paragraph [ref=e37]: Connect to all your Platform from one place
+      - paragraph [ref=e38]: Schedule, publish & analyze across every platform
+      - generic [ref=e39]:
+        - img "Unravler" [ref=e43]
+        - generic [ref=e44]:
+          - img
+          - img [ref=e47]
+          - img [ref=e51]
+          - img [ref=e55]
+          - img [ref=e59]
+          - img [ref=e63]
+          - img [ref=e67]
+          - img [ref=e71]
+          - img [ref=e75]
+        - generic [ref=e78]:
+          - img
+          - img [ref=e81]
+          - img [ref=e85]:
+            - generic [ref=e87]: C
+          - img [ref=e90]
+          - img [ref=e94]
+  - region "Notifications alt+T"
+  - generic [ref=e100]:
+    - generic [ref=e101]:
+      - paragraph [ref=e102]: We use cookies
+      - paragraph [ref=e103]:
+        - text: We use essential cookies to make our site work and analytics cookies to understand how you use it. See our
+        - link "Privacy Policy" [ref=e104] [cursor=pointer]:
+          - /url: /privacy
+        - text: .
+    - generic [ref=e105]:
+      - button "Essential Only" [ref=e106] [cursor=pointer]
+      - button "Accept All" [ref=e107] [cursor=pointer]

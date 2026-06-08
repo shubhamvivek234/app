@@ -1,4 +1,10 @@
-import { format } from 'date-fns';
+import {
+  formatScheduledDateTime as formatScheduledDateTimeForZone,
+  getPostScheduledTimeZone,
+  formatScheduledTime as formatScheduledTimeForZone,
+} from '@/lib/scheduledTime';
+
+export { getPostScheduledTimeZone };
 
 export const NOTE_COLORS = ['green', 'blue', 'yellow', 'red'];
 
@@ -162,15 +168,13 @@ export const getPostMediaMeta = (post) => {
   };
 };
 
-export const formatScheduledTime = (value) => {
-  if (!value) return 'No time';
-  return format(new Date(value), 'h:mm a');
-};
+export const formatScheduledTime = (value, timeZone = null) => (
+  formatScheduledTimeForZone(value, timeZone)
+);
 
-export const formatScheduledDateTime = (value) => {
-  if (!value) return 'No scheduled time';
-  return format(new Date(value), 'MMMM d, yyyy h:mm a');
-};
+export const formatScheduledDateTime = (value, timeZone = null, options = {}) => (
+  formatScheduledDateTimeForZone(value, timeZone, options)
+);
 
 export const getDaySummaryLabel = (postCount, noteCount) => {
   const segments = [];

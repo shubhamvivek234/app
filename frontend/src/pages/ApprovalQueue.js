@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import {
   FaCheck,
   FaCheckDouble,
@@ -22,6 +22,7 @@ import {
   resubmitPost,
   returnPostToDraft,
 } from '@/lib/api';
+import { formatScheduledDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
 
 const PLATFORM_STYLES = {
   instagram: 'border-pink-200 bg-pink-50 text-pink-700',
@@ -33,10 +34,10 @@ const PLATFORM_STYLES = {
   threads: 'border-slate-300 bg-white text-slate-700',
 };
 
-const formatScheduled = (value) => {
+const formatScheduled = (value, timeZone = null) => {
   if (!value) return 'No scheduled time';
   try {
-    return format(new Date(value), 'MMM d, yyyy, h:mm a');
+    return formatScheduledDateTime(value, timeZone, { includeTimeZone: Boolean(timeZone) });
   } catch {
     return 'No scheduled time';
   }
@@ -86,6 +87,7 @@ const ApprovalCard = ({
   const isVideo = post.post_type === 'video';
   const isOwner = post.user_id === currentUserId;
   const isBusy = busyId === post.id;
+  const scheduledTimeZone = getPostScheduledTimeZone(post);
 
   const creatorLabel = post.creator_display_name || post.creator_email || 'Workspace member';
   const reasonText = post.rejection_reason || post.rejection_note;
@@ -141,7 +143,7 @@ const ApprovalCard = ({
             </div>
             <div>
               <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Scheduled</span>
-              <span>{formatScheduled(post.scheduled_time)}</span>
+              <span>{formatScheduled(post.scheduled_time, scheduledTimeZone)}</span>
             </div>
             <div>
               <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Updated</span>

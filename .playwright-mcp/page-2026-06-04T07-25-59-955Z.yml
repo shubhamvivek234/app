@@ -1,0 +1,170 @@
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - paragraph [ref=e6]: Verify your email before connecting accounts, publishing, scheduling posts, or inviting teammates.
+    - link "Verify email" [ref=e7] [cursor=pointer]:
+      - /url: /verify-email?returnTo=%2Fdashboard
+  - generic [ref=e8]:
+    - banner [ref=e9]:
+      - button "Unravler" [ref=e11] [cursor=pointer]:
+        - img "Unravler" [ref=e13]
+      - generic [ref=e14]:
+        - link "Publish" [ref=e15] [cursor=pointer]:
+          - /url: /publish
+          - img [ref=e16]
+          - text: Publish
+        - link "Analytics" [ref=e18] [cursor=pointer]:
+          - /url: /analytics
+          - img [ref=e19]
+          - text: Analytics
+      - generic [ref=e21]:
+        - button "Switch to dark mode" [ref=e22] [cursor=pointer]:
+          - img [ref=e23]
+        - button "9+" [ref=e26] [cursor=pointer]:
+          - img [ref=e27]
+          - generic [ref=e29]: 9+
+        - button "AU Access User" [ref=e31] [cursor=pointer]:
+          - generic [ref=e32]: AU
+          - generic [ref=e33]: Access User
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - paragraph [ref=e37]: Workspace
+        - generic [ref=e38]:
+          - link "Dashboard" [ref=e39] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e40]
+            - text: Dashboard
+          - button "Collapse sidebar" [ref=e42] [cursor=pointer]:
+            - img [ref=e43]
+      - button "Create post" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - text: Create post
+      - generic [ref=e49]:
+        - paragraph [ref=e50]: Create
+        - navigation [ref=e51]:
+          - link "New post" [ref=e52] [cursor=pointer]:
+            - /url: /create-post
+            - img [ref=e53]
+            - text: New post
+          - link "Bulk Upload" [ref=e55] [cursor=pointer]:
+            - /url: /bulk-upload
+            - img [ref=e56]
+            - text: Bulk Upload
+          - link "Hashtag Groups" [ref=e58] [cursor=pointer]:
+            - /url: /hashtags
+            - img [ref=e59]
+            - text: Hashtag Groups
+          - link "Media Library" [ref=e61] [cursor=pointer]:
+            - /url: /media-library
+            - img [ref=e62]
+            - text: Media Library
+          - link "Social Tools" [ref=e64] [cursor=pointer]:
+            - /url: /social-tools
+            - img [ref=e65]
+            - text: Social Tools
+          - link "Timeslots" [ref=e67] [cursor=pointer]:
+            - /url: /timeslots
+            - img [ref=e68]
+            - text: Timeslots
+      - generic [ref=e70]:
+        - paragraph [ref=e71]: Posts
+        - navigation [ref=e72]:
+          - link "Calendar" [ref=e73] [cursor=pointer]:
+            - /url: /calendar
+            - img [ref=e74]
+            - text: Calendar
+          - link "All" [ref=e76] [cursor=pointer]:
+            - /url: /content-library
+            - img [ref=e77]
+            - text: All
+          - link "Scheduled" [ref=e79] [cursor=pointer]:
+            - /url: /content-library?status=scheduled
+            - img [ref=e80]
+            - text: Scheduled
+          - link "Posted" [ref=e82] [cursor=pointer]:
+            - /url: /content-library?status=published
+            - img [ref=e83]
+            - text: Posted
+          - link "Drafts" [ref=e85] [cursor=pointer]:
+            - /url: /content-library?status=draft
+            - img [ref=e86]
+            - text: Drafts
+          - link "Approvals" [ref=e88] [cursor=pointer]:
+            - /url: /approvals
+            - img [ref=e89]
+            - text: Approvals
+          - link "Inbox" [ref=e91] [cursor=pointer]:
+            - /url: /inbox
+            - img [ref=e92]
+            - text: Inbox
+      - generic [ref=e94]:
+        - paragraph [ref=e95]: Configuration
+        - navigation [ref=e96]:
+          - link "Connections" [ref=e97] [cursor=pointer]:
+            - /url: /accounts
+            - img [ref=e98]
+            - text: Connections
+          - link "Team" [ref=e100] [cursor=pointer]:
+            - /url: /team
+            - img [ref=e101]
+            - text: Team
+          - link "Settings" [ref=e103] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e104]
+            - text: Settings
+          - link "Api" [ref=e106] [cursor=pointer]:
+            - /url: /api-keys
+            - img [ref=e107]
+            - text: Api
+      - generic [ref=e109]:
+        - paragraph [ref=e110]: Support
+        - navigation [ref=e111]:
+          - link "Support" [ref=e112] [cursor=pointer]:
+            - /url: /support
+            - img [ref=e113]
+            - text: Support
+        - button "Logout" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+          - text: Logout
+    - main [ref=e120]:
+      - generic [ref=e121]:
+        - generic [ref=e122]:
+          - generic [ref=e123]:
+            - generic [ref=e124]:
+              - heading "Dashboard" [level=1] [ref=e125]
+              - generic [ref=e126]: Live
+            - paragraph [ref=e128]: Welcome back! Here's your overview.
+          - generic [ref=e129]:
+            - button "Notifications" [ref=e130] [cursor=pointer]:
+              - img [ref=e131]
+            - button "Create Post" [ref=e133] [cursor=pointer]:
+              - img
+              - text: Create Post
+        - generic [ref=e134]:
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - paragraph [ref=e138]: Total Posts
+              - paragraph [ref=e139]: "0"
+            - img [ref=e141]
+          - generic [ref=e144]:
+            - generic [ref=e145]:
+              - paragraph [ref=e146]: Scheduled
+              - paragraph [ref=e147]: "0"
+            - img [ref=e149]
+          - generic [ref=e152]:
+            - generic [ref=e153]:
+              - paragraph [ref=e154]: Published
+              - paragraph [ref=e155]: "0"
+            - img [ref=e157]
+          - generic [ref=e160]:
+            - generic [ref=e161]:
+              - paragraph [ref=e162]: Connected Accounts
+              - paragraph [ref=e163]: "0"
+            - img [ref=e165]
+        - generic [ref=e167]:
+          - heading "Recent Posts" [level=2] [ref=e169]
+          - generic [ref=e171]:
+            - paragraph [ref=e172]: No published posts yet. Publish your first post to populate this feed.
+            - button "Create Post" [ref=e173] [cursor=pointer]:
+              - img
+              - text: Create Post
+  - region "Notifications alt+T"

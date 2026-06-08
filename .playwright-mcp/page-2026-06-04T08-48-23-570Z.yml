@@ -1,0 +1,254 @@
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - paragraph [ref=e6]: Verify your email before connecting accounts, publishing, scheduling posts, or inviting teammates.
+    - link "Verify email" [ref=e7] [cursor=pointer]:
+      - /url: /verify-email?returnTo=%2Faccounts
+  - generic [ref=e180]:
+    - banner [ref=e181]:
+      - button "Unravler" [ref=e183] [cursor=pointer]:
+        - img "Unravler" [ref=e185]
+      - generic [ref=e186]:
+        - link "Publish" [ref=e187] [cursor=pointer]:
+          - /url: /publish
+          - img [ref=e188]
+          - text: Publish
+        - link "Analytics" [ref=e190] [cursor=pointer]:
+          - /url: /analytics
+          - img [ref=e191]
+          - text: Analytics
+      - generic [ref=e193]:
+        - button "Switch to dark mode" [ref=e194] [cursor=pointer]:
+          - img [ref=e195]
+        - button "9+" [ref=e198] [cursor=pointer]:
+          - img [ref=e199]
+          - generic [ref=e201]: 9+
+        - button "AU Access User" [ref=e203] [cursor=pointer]:
+          - generic [ref=e204]: AU
+          - generic [ref=e205]: Access User
+    - generic [ref=e207]:
+      - generic [ref=e208]:
+        - paragraph [ref=e209]: Workspace
+        - generic [ref=e210]:
+          - link "Dashboard" [ref=e211] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e212]
+            - text: Dashboard
+          - button "Collapse sidebar" [ref=e214] [cursor=pointer]:
+            - img [ref=e215]
+      - button "Create post" [ref=e218] [cursor=pointer]:
+        - img [ref=e219]
+        - text: Create post
+      - generic [ref=e221]:
+        - paragraph [ref=e222]: Create
+        - navigation [ref=e223]:
+          - link "New post" [ref=e502] [cursor=pointer]:
+            - /url: /create-post
+            - img [ref=e503]
+            - text: New post
+          - link "Bulk Upload" [ref=e505] [cursor=pointer]:
+            - /url: /bulk-upload
+            - img [ref=e506]
+            - text: Bulk Upload
+          - link "Hashtag Groups" [ref=e508] [cursor=pointer]:
+            - /url: /hashtags
+            - img [ref=e509]
+            - text: Hashtag Groups
+          - link "Media Library" [ref=e511] [cursor=pointer]:
+            - /url: /media-library
+            - img [ref=e512]
+            - text: Media Library
+          - link "Social Tools" [ref=e514] [cursor=pointer]:
+            - /url: /social-tools
+            - img [ref=e515]
+            - text: Social Tools
+          - link "Timeslots" [ref=e517] [cursor=pointer]:
+            - /url: /timeslots
+            - img [ref=e518]
+            - text: Timeslots
+      - generic [ref=e242]:
+        - paragraph [ref=e243]: Posts
+        - navigation [ref=e244]:
+          - link "Calendar" [ref=e520] [cursor=pointer]:
+            - /url: /calendar
+            - img [ref=e521]
+            - text: Calendar
+          - link "All" [ref=e523] [cursor=pointer]:
+            - /url: /content-library
+            - img [ref=e524]
+            - text: All
+          - link "Scheduled" [ref=e526] [cursor=pointer]:
+            - /url: /content-library?status=scheduled
+            - img [ref=e527]
+            - text: Scheduled
+          - link "Posted" [ref=e529] [cursor=pointer]:
+            - /url: /content-library?status=published
+            - img [ref=e530]
+            - text: Posted
+          - link "Drafts" [ref=e532] [cursor=pointer]:
+            - /url: /content-library?status=draft
+            - img [ref=e533]
+            - text: Drafts
+          - link "Approvals" [ref=e535] [cursor=pointer]:
+            - /url: /approvals
+            - img [ref=e536]
+            - text: Approvals
+          - link "Inbox" [ref=e538] [cursor=pointer]:
+            - /url: /inbox
+            - img [ref=e539]
+            - text: Inbox
+      - generic [ref=e266]:
+        - paragraph [ref=e267]: Configuration
+        - navigation [ref=e268]:
+          - link "Connections" [ref=e541] [cursor=pointer]:
+            - /url: /accounts
+            - img [ref=e542]
+            - text: Connections
+          - link "Team" [ref=e544] [cursor=pointer]:
+            - /url: /team
+            - img [ref=e545]
+            - text: Team
+          - link "Settings" [ref=e547] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e548]
+            - text: Settings
+          - link "Api" [ref=e550] [cursor=pointer]:
+            - /url: /api-keys
+            - img [ref=e551]
+            - text: Api
+      - generic [ref=e281]:
+        - paragraph [ref=e282]: Support
+        - navigation [ref=e283]:
+          - link "Support" [ref=e553] [cursor=pointer]:
+            - /url: /support
+            - img [ref=e554]
+            - text: Support
+        - button "Logout" [ref=e288] [cursor=pointer]:
+          - img [ref=e289]
+          - text: Logout
+    - main [ref=e292]:
+      - generic [ref=e293]:
+        - generic [ref=e294]:
+          - heading "Connected Accounts" [level=1] [ref=e295]
+          - paragraph [ref=e296]: Manage your social accounts and channels. Connect as many as you need.
+        - generic [ref=e297]:
+          - generic [ref=e298]:
+            - generic [ref=e301]:
+              - img [ref=e303]
+              - paragraph [ref=e306]: Instagram
+            - paragraph [ref=e308]: No accounts connected
+            - button "Connect Instagram" [ref=e310] [cursor=pointer]:
+              - img [ref=e556]
+              - text: Connect Instagram
+          - generic [ref=e313]:
+            - generic [ref=e316]:
+              - img [ref=e318]
+              - paragraph [ref=e321]: Facebook
+            - paragraph [ref=e323]: No accounts connected
+            - button "Connect Facebook" [ref=e325] [cursor=pointer]:
+              - img [ref=e326]
+              - text: Connect Facebook
+          - generic [ref=e328]:
+            - generic [ref=e331]:
+              - img [ref=e333]
+              - paragraph [ref=e336]: X (Twitter)
+            - paragraph [ref=e338]: No accounts connected
+            - button "Connect X (Twitter)" [ref=e340] [cursor=pointer]:
+              - img [ref=e341]
+              - text: Connect X (Twitter)
+          - generic [ref=e343]:
+            - generic [ref=e346]:
+              - img [ref=e348]
+              - paragraph [ref=e351]: LinkedIn
+            - paragraph [ref=e353]: No accounts connected
+            - button "Connect LinkedIn" [ref=e355] [cursor=pointer]:
+              - img [ref=e356]
+              - text: Connect LinkedIn
+          - generic [ref=e358]:
+            - generic [ref=e361]:
+              - img [ref=e363]
+              - paragraph [ref=e366]: YouTube
+            - paragraph [ref=e368]: No accounts connected
+            - button "Connect YouTube" [ref=e370] [cursor=pointer]:
+              - img [ref=e371]
+              - text: Connect YouTube
+          - generic [ref=e373]:
+            - generic [ref=e376]:
+              - img [ref=e378]
+              - paragraph [ref=e381]: TikTok
+            - paragraph [ref=e383]: No accounts connected
+            - button "Connect TikTok" [ref=e385] [cursor=pointer]:
+              - img [ref=e386]
+              - text: Connect TikTok
+          - generic [ref=e388]:
+            - generic [ref=e391]:
+              - img [ref=e393]
+              - paragraph [ref=e396]: Threads
+            - paragraph [ref=e398]: No accounts connected
+            - button "Connect Threads" [ref=e400] [cursor=pointer]:
+              - img [ref=e401]
+              - text: Connect Threads
+          - generic [ref=e403]:
+            - generic [ref=e406]:
+              - img [ref=e408]
+              - paragraph [ref=e411]: Pinterest
+            - paragraph [ref=e413]: No accounts connected
+            - button "Connect Pinterest" [ref=e415] [cursor=pointer]:
+              - img [ref=e416]
+              - text: Connect Pinterest
+          - generic [ref=e418]:
+            - generic [ref=e421]:
+              - img [ref=e423]
+              - paragraph [ref=e426]: Reddit
+            - paragraph [ref=e428]: No accounts connected
+            - button "Connect Reddit" [ref=e430] [cursor=pointer]:
+              - img [ref=e431]
+              - text: Connect Reddit
+          - generic [ref=e433]:
+            - generic [ref=e436]:
+              - img [ref=e438]
+              - generic [ref=e440]:
+                - paragraph [ref=e441]: Snapchat
+                - text: Spotlight only
+            - paragraph [ref=e443]: No accounts connected
+            - button "Connect Snapchat" [ref=e445] [cursor=pointer]:
+              - img [ref=e446]
+              - text: Connect Snapchat
+          - generic [ref=e448]:
+            - generic [ref=e451]:
+              - img [ref=e453]
+              - generic [ref=e455]:
+                - paragraph [ref=e456]: Bluesky
+                - text: App Password
+            - paragraph [ref=e458]: No accounts connected
+            - button "Connect Bluesky" [ref=e460] [cursor=pointer]:
+              - img [ref=e461]
+              - text: Connect Bluesky
+          - generic [ref=e463]:
+            - generic [ref=e466]:
+              - img [ref=e468]
+              - generic [ref=e470]:
+                - paragraph [ref=e471]: Discord
+                - text: Webhook
+            - paragraph [ref=e473]: No accounts connected
+            - button "Connect Discord" [ref=e475] [cursor=pointer]:
+              - img [ref=e476]
+              - text: Connect Discord
+          - generic [ref=e478]:
+            - generic [ref=e481]:
+              - img [ref=e483]
+              - generic [ref=e485]:
+                - paragraph [ref=e486]: Mastodon
+                - text: Access token
+            - paragraph [ref=e488]: No accounts connected
+            - button "Connect Mastodon" [ref=e490] [cursor=pointer]:
+              - img [ref=e491]
+              - text: Connect Mastodon
+        - link "i Need help connecting an account?" [ref=e494] [cursor=pointer]:
+          - /url: /support
+          - generic [ref=e495]: i
+          - text: Need help connecting an account?
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e558]:
+        - img [ref=e560]
+        - generic [ref=e563]: Email verification required before connecting accounts, publishing, or inviting teammates.

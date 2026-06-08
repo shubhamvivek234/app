@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import {
   countdownLabel,
   formatAbsoluteDate,
+  getPostScheduledTimeZone,
   platformLabel,
   platformPillClass,
   primaryPostTitle,
@@ -44,6 +45,7 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {posts.map((post) => {
               const thumbnail = primaryThumbnail(post);
+              const scheduledTimeZone = getPostScheduledTimeZone(post);
               return (
                 <button
                   key={post.id}
@@ -77,7 +79,7 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
                         <FaClock className="text-slate-400" />
                         {countdownLabel(post.scheduled_time, now)}
                       </span>
-                      <span>{formatAbsoluteDate(post.scheduled_time)}</span>
+                      <span>{formatAbsoluteDate(post.scheduled_time, scheduledTimeZone)}</span>
                       {post.account_labels?.length ? (
                         <span>{post.account_labels.slice(0, 2).join(', ')}{post.account_labels.length > 2 ? ` +${post.account_labels.length - 2}` : ''}</span>
                       ) : null}

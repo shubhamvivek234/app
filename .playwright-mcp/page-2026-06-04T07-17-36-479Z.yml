@@ -1,0 +1,55 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - img "Unravler" [ref=e9]
+        - button "Back to home" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+          - text: Back to home
+      - heading "Welcome back" [level=1] [ref=e13]
+      - paragraph [ref=e14]: Sign in to your account to continue
+      - button "Continue with Google" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+        - text: Continue with Google
+      - generic [ref=e21]: or continue with email
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: Email
+          - textbox "Email" [ref=e25]:
+            - /placeholder: you@example.com
+            - text: access-8a8ac246@unravler.dev
+        - generic [ref=e26]:
+          - generic [ref=e27]: Password
+          - textbox "Password" [ref=e28]:
+            - /placeholder: ••••••••
+            - text: mcBKQdSzPnjOXhwdsE
+          - link "Forgot password?" [ref=e29] [cursor=pointer]:
+            - /url: /forgot-password
+        - button "Sign in" [ref=e32] [cursor=pointer]
+        - paragraph [ref=e33]:
+          - text: Don't have an account?
+          - link "Sign up free" [ref=e34] [cursor=pointer]:
+            - /url: /signup
+    - generic [ref=e35]:
+      - paragraph [ref=e36]: Connect to all your Platform from one place
+      - paragraph [ref=e37]: Schedule, publish & analyze across every platform
+      - generic [ref=e38]:
+        - img "Unravler" [ref=e41]
+        - generic [ref=e42]:
+          - img
+          - img [ref=e45]
+          - img [ref=e49]
+          - img [ref=e53]
+          - img [ref=e57]
+          - img [ref=e61]
+          - img [ref=e65]
+          - img [ref=e69]
+          - img [ref=e73]
+        - generic [ref=e76]:
+          - img
+          - img [ref=e79]
+          - img [ref=e83]:
+            - generic [ref=e85]: C
+          - img [ref=e88]
+          - img [ref=e92]
+  - region "Notifications alt+T"

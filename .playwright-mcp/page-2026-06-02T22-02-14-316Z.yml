@@ -1,0 +1,44 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e36]:
+      - link "Terms" [ref=e37] [cursor=pointer]:
+        - /url: /terms
+      - link "Privacy" [ref=e38] [cursor=pointer]:
+        - /url: /privacy
+      - link "Security" [ref=e39] [cursor=pointer]:
+        - /url: /security
+    - generic [ref=e40]:
+      - generic [ref=e41]:
+        - img "Unravler" [ref=e44]
+        - button "Back to home" [ref=e45] [cursor=pointer]:
+          - img [ref=e46]
+          - text: Back to home
+      - generic [ref=e48]:
+        - heading "Welcome back!" [level=1] [ref=e49]
+        - paragraph [ref=e50]: Log in to your account
+        - button "Continue with Google" [ref=e51] [cursor=pointer]:
+          - img [ref=e52]
+          - text: Continue with Google
+        - generic [ref=e57]: or
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e62]: Email Address
+            - textbox [ref=e63]
+          - generic [ref=e64]:
+            - generic [ref=e65]: Password
+            - generic [ref=e66]:
+              - textbox [ref=e67]
+              - button [ref=e68] [cursor=pointer]:
+                - img [ref=e70]
+          - generic [ref=e73]:
+            - generic [ref=e74] [cursor=pointer]:
+              - checkbox "Remember for 30 days" [ref=e75]
+              - text: Remember for 30 days
+            - link "Forgot password?" [ref=e76] [cursor=pointer]:
+              - /url: /forgot-password
+          - button "Log In" [ref=e77] [cursor=pointer]
+        - paragraph [ref=e78]:
+          - text: Don't have an account?
+          - link "Sign up" [ref=e79] [cursor=pointer]:
+            - /url: /signup
+  - region "Notifications alt+T"

@@ -807,6 +807,7 @@ async def create_post(
         "disable_comment": body.disable_comment,
         "disable_stitch": body.disable_stitch,
         "timezone": body.timezone,
+        "scheduled_timezone_explicit": bool(body.scheduled_time),
         "timeslot_category": timeslot_category,
         "scheduled_time": scheduled_time,
         "status": post_status,
@@ -1404,12 +1405,11 @@ async def delete_post(
         except Exception as exc:
             logger.warning("Failed to revoke child Celery task %s: %s", child_task_id, exc)
 
-    # Schedule media cleanup with 5-minute delay
+    # Schedule near-immediate orphan cleanup for deleted post media.
     try:
         enqueue_task(
-            "celery_workers.tasks.cleanup.schedule_media_cleanup",
+            "celery_workers.tasks.cleanup.cleanup_deleted_post_media",
             args=[post_id],
-            countdown=300,
         )
     except Exception as exc:
         logger.warning("Failed to schedule media cleanup for %s: %s", post_id, exc)

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getPublicCalendar } from '@/lib/api';
+import { getPostScheduledTimeZone, getScheduledDateKey } from '@/lib/scheduledTime';
 import {
   format,
   startOfMonth,
@@ -43,7 +44,7 @@ const PublicCalendar = () => {
   const days = eachDayOfInterval({ start: calStart, end: calEnd });
 
   const getPostsForDay = (day) =>
-    posts.filter((p) => p.scheduled_time && isSameDay(new Date(p.scheduled_time), day));
+    posts.filter((p) => p.scheduled_time && getScheduledDateKey(p.scheduled_time, getPostScheduledTimeZone(p)) === format(day, 'yyyy-MM-dd'));
 
   const isToday = (day) => isSameDay(day, new Date());
 

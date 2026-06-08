@@ -10,6 +10,7 @@ import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, 
 import { FaXTwitter } from 'react-icons/fa6';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
+import { formatScheduledCompactDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
 
 // 18.7 — Per-platform status colours and icons
 const PLATFORM_ICON_MAP = {
@@ -499,6 +500,10 @@ const ContentLibrary = () => {
               const postDate = initialStatus === 'published'
                 ? new Date(post.published_at || post.updated_at || post.created_at)
                 : (post.scheduled_time ? new Date(post.scheduled_time) : new Date(post.created_at));
+              const scheduledTimeZone = getPostScheduledTimeZone(post);
+              const postDateLabel = initialStatus === 'published'
+                ? `${format(postDate, 'MM/dd/yyyy')} • ${format(postDate, 'h:mm a')}`
+                : formatScheduledCompactDateTime(postDate, scheduledTimeZone, { includeTimeZone: Boolean(scheduledTimeZone) });
               
               // Only taking the first associated platform to represent the pill if we want, or map them all
               const primaryPlatform = post.platforms?.[0] || 'unknown';
@@ -566,7 +571,7 @@ const ContentLibrary = () => {
                       )}
                     </div>
                     <div className="text-slate-500 font-medium">
-                      {format(postDate, 'MM/dd/yyyy')} • {format(postDate, 'h:mm a')}
+                      {postDateLabel}
                     </div>
                   </div>
 

@@ -1,0 +1,412 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - navigation [ref=e5]:
+      - generic [ref=e7]:
+        - img "Unravler" [ref=e11] [cursor=pointer]
+        - generic [ref=e12]:
+          - button "Pricing" [ref=e13] [cursor=pointer]
+          - button "Reviews" [ref=e14] [cursor=pointer]
+          - button "Features" [ref=e15] [cursor=pointer]
+          - button "Platforms" [ref=e16] [cursor=pointer]
+          - button "Connect with AI Agent" [ref=e17] [cursor=pointer]
+          - button "FAQ" [ref=e18] [cursor=pointer]
+          - button "Support" [ref=e19] [cursor=pointer]
+        - generic [ref=e21]:
+          - button "Login" [ref=e22] [cursor=pointer]
+          - button "Get Started" [ref=e23] [cursor=pointer]
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "Post to all your social accounts from one dashboard" [level=1] [ref=e29]
+        - paragraph [ref=e30]: Join thousands of creators using Unravler to write highly engaging content, schedule posts across Twitter, Instagram, and LinkedIn, and grow their audience at scale.
+        - button "Try it for free" [ref=e32] [cursor=pointer]
+        - generic [ref=e40]: Used by 1,000+ content creators
+      - iframe [ref=e43]:
+        - generic [active] [ref=f1e1]:
+          - generic "YouTube Video Player" [ref=f1e3]
+          - generic [ref=f1e5]:
+            - generic:
+              - generic:
+                - button "Play video" [ref=f1e10] [cursor=pointer]:
+                  - generic [ref=f1e13]:
+                    - img
+                - button "Hide player controls" [ref=f1e14] [cursor=pointer]
+                - generic [ref=f1e16]:
+                  - generic [ref=f1e21]:
+                    - generic [ref=f1e22]:
+                      - 'link "YouTube Developers Live: Embedded Web Player Customization" [ref=f1e23] [cursor=pointer]':
+                        - /url: https://www.youtube.com/watch?v=M7lc1UVf-VE
+                      - link "Google for Developers" [ref=f1e24] [cursor=pointer]:
+                        - /url: /channel/UC_x5XG1OV2P6uZZ5FSM9Ttw
+                        - generic [ref=f1e25]: Google for Developers
+                    - generic [ref=f1e26]:
+                      - button "thumbnail-image" [ref=f1e27] [cursor=pointer]:
+                        - img "thumbnail-image" [ref=f1e28]
+                      - generic [ref=f1e30]:
+                        - generic: Google for Developers
+                        - generic: 2.65m subscribers
+                  - generic [ref=f1e31]:
+                    - button "Share" [ref=f1e34] [cursor=pointer]:
+                      - generic [ref=f1e38]:
+                        - img
+                    - link "Watch on YouTube" [ref=f1e45] [cursor=pointer]:
+                      - /url: https://www.youtube.com/watch?v=M7lc1UVf-VE
+                      - generic [ref=f1e48]:
+                        - text: Watch on
+                        - img [ref=f1e50]:
+                          - generic [ref=f1e52]:
+                            - img
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - paragraph [ref=e48]: 1,400+
+        - paragraph [ref=e49]: Happy Users
+      - generic [ref=e51]:
+        - paragraph [ref=e52]: 50k+
+        - paragraph [ref=e53]: Posts Published
+      - generic [ref=e55]:
+        - paragraph [ref=e56]: 10+
+        - paragraph [ref=e57]: Platforms Supported
+    - generic [ref=e59]:
+      - generic [ref=e60]:
+        - heading "From idea to published in minutes" [level=2] [ref=e61]
+        - paragraph [ref=e62]: A simple workflow designed for content creators
+      - generic [ref=e63]:
+        - generic [ref=e65]:
+          - generic [ref=e67]: "1"
+          - heading "Connect" [level=3] [ref=e68]
+          - paragraph [ref=e69]: Link your social media profiles. We support all major platforms including Instagram, TikTok, LinkedIn, and YouTube.
+        - generic [ref=e70]:
+          - generic [ref=e72]: "2"
+          - heading "Create" [level=3] [ref=e73]
+          - paragraph [ref=e74]: Write the posts you need to grow. Use our AI tools to outline, write, and polish 100% of your posts tailored for each platform.
+        - generic [ref=e75]:
+          - generic [ref=e77]: "3"
+          - heading "Schedule" [level=3] [ref=e78]
+          - paragraph [ref=e79]: Post to all platforms instantly. Connect your accounts and hit publish everywhere with a single click.
+    - generic [ref=e81]:
+      - generic [ref=e82]:
+        - heading "Supported Platforms" [level=2] [ref=e83]
+        - paragraph [ref=e84]: These are all the platforms you can post to from within Unravler.
+      - generic [ref=e85]:
+        - generic [ref=e86]:
+          - img [ref=e88]
+          - generic [ref=e90]: Twitter/X
+        - generic [ref=e91]:
+          - img [ref=e92]
+          - generic [ref=e94]: Instagram
+        - generic [ref=e95]:
+          - img [ref=e96]
+          - generic [ref=e98]: LinkedIn
+        - generic [ref=e99]:
+          - img [ref=e100]
+          - generic [ref=e102]: Facebook
+        - generic [ref=e103]:
+          - img [ref=e105]
+          - generic [ref=e107]: TikTok
+        - generic [ref=e108]:
+          - img [ref=e110]
+          - generic [ref=e112]: YouTube
+        - generic [ref=e113]:
+          - img [ref=e114]
+          - generic [ref=e116]: Bluesky
+        - generic [ref=e117]:
+          - img [ref=e118]
+          - generic [ref=e120]: Threads
+        - generic [ref=e121]:
+          - img [ref=e123]
+          - generic [ref=e125]: Pinterest
+        - generic [ref=e126]:
+          - img [ref=e127]
+          - generic [ref=e129]: More to come
+      - img
+    - generic [ref=e131]:
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - img [ref=e135]
+          - heading "Manage everything in one place" [level=3] [ref=e137]
+          - paragraph [ref=e138]: Centralize your social growth. Stop switching between tabs and use a single dashboard to view, edit, and schedule posts across all your active platforms. Streamline your workflow so you can spend less time managing and more time growing.
+          - list [ref=e139]:
+            - generic [ref=e140]:
+              - listitem [ref=e141]: Single Upload Interface
+              - listitem [ref=e143]: Unified Content Calendar
+              - listitem [ref=e145]: Drag & Drop Scheduling
+        - generic [ref=e148]:
+          - generic [ref=e157]: Drag & Drop Content
+          - img [ref=e162]
+          - img [ref=e165]
+          - img [ref=e168]
+          - img [ref=e171]
+      - generic [ref=e175]:
+        - generic [ref=e177]:
+          - img [ref=e179]
+          - img [ref=e182]
+          - generic [ref=e184]:
+            - generic [ref=e186]: AI Assistant
+            - img [ref=e196]
+        - generic [ref=e203]:
+          - img [ref=e205]
+          - heading "AI that helps you go viral" [level=3] [ref=e207]
+          - paragraph [ref=e208]: Struggling with writer's block? Use our AI to outline, write, and refine 100% of your posts. Generate highly engaging captions and trending hashtags tailored perfectly to each platform's audience algorithm.
+          - list [ref=e209]:
+            - generic [ref=e210]:
+              - listitem [ref=e211]: Smart Caption Generator
+              - listitem [ref=e213]: Hashtag Recommendations
+              - listitem [ref=e215]: Tone of Voice Customization
+    - generic [ref=e218]:
+      - generic [ref=e219]:
+        - heading "Loved by creators worldwide" [level=2] [ref=e220]
+        - paragraph [ref=e221]: Join thousands of users who trust Unravler to manage their social presence
+      - generic [ref=e222]:
+        - generic [ref=e223]:
+          - generic [ref=e225]:
+            - img [ref=e226]
+            - img [ref=e228]
+            - img [ref=e230]
+            - img [ref=e232]
+            - img [ref=e234]
+          - paragraph [ref=e236]: "\"Unravler has completely transformed how I manage my social media. I used to spend hours copy-pasting content, now it takes seconds.\""
+          - generic [ref=e237]:
+            - generic [ref=e238]: JS
+            - generic [ref=e239]:
+              - heading "James Smith" [level=4] [ref=e240]
+              - paragraph [ref=e241]: Content Creator
+        - generic [ref=e242]:
+          - generic [ref=e244]:
+            - img [ref=e245]
+            - img [ref=e247]
+            - img [ref=e249]
+            - img [ref=e251]
+            - img [ref=e253]
+          - paragraph [ref=e255]: "\"The AI content generation is a game changer. It helps me come up with captions that actually convert. Highly recommended!\""
+          - generic [ref=e256]:
+            - generic [ref=e257]: SJ
+            - generic [ref=e258]:
+              - heading "Sarah Johnson" [level=4] [ref=e259]
+              - paragraph [ref=e260]: Digital Marketer
+        - generic [ref=e261]:
+          - generic [ref=e263]:
+            - img [ref=e264]
+            - img [ref=e266]
+            - img [ref=e268]
+            - img [ref=e270]
+            - img [ref=e272]
+          - paragraph [ref=e274]: "\"Best value for money in the market. The ability to schedule months of content in advance is incredible.\""
+          - generic [ref=e275]:
+            - generic [ref=e276]: MR
+            - generic [ref=e277]:
+              - heading "Mike Ross" [level=4] [ref=e278]
+              - paragraph [ref=e279]: Agency Owner
+    - generic [ref=e281]:
+      - generic [ref=e282]:
+        - heading "Simple, transparent pricing" [level=2] [ref=e283]
+        - paragraph [ref=e284]: Start free, upgrade when you're ready
+      - generic [ref=e285]:
+        - generic [ref=e286]:
+          - generic [ref=e287]:
+            - heading "Monthly" [level=3] [ref=e288]
+            - generic [ref=e289]:
+              - generic [ref=e290]: ₹500
+              - generic [ref=e291]: /month
+          - list [ref=e292]:
+            - listitem [ref=e293]:
+              - generic [ref=e294]: ✓
+              - text: Connect 3 social accounts
+            - listitem [ref=e295]:
+              - generic [ref=e296]: ✓
+              - text: Unlimited posts
+            - listitem [ref=e297]:
+              - generic [ref=e298]: ✓
+              - text: Schedule posts
+            - listitem [ref=e299]:
+              - generic [ref=e300]: ✓
+              - text: AI content generation
+          - button "Get Started" [ref=e301] [cursor=pointer]
+        - generic [ref=e302]:
+          - generic [ref=e303]: Best Value
+          - generic [ref=e304]:
+            - heading "Yearly" [level=3] [ref=e305]
+            - generic [ref=e306]:
+              - generic [ref=e307]: ₹3,000
+              - generic [ref=e308]: /year
+            - paragraph [ref=e309]: Save ₹3,000 per year
+          - list [ref=e310]:
+            - listitem [ref=e311]:
+              - generic [ref=e312]: ✓
+              - text: Everything in Monthly
+            - listitem [ref=e313]:
+              - generic [ref=e314]: ✓
+              - text: 50% discount
+            - listitem [ref=e315]:
+              - generic [ref=e316]: ✓
+              - text: Priority support
+            - listitem [ref=e317]:
+              - generic [ref=e318]: ✓
+              - text: Early access to features
+          - button "Get Started" [ref=e319] [cursor=pointer]
+    - generic [ref=e321]:
+      - generic [ref=e322]:
+        - generic [ref=e323]:
+          - img [ref=e324]
+          - text: MCP Server + REST API
+        - heading "Control social media from any AI agent" [level=2] [ref=e326]
+        - paragraph [ref=e327]: Connect Unravler to Claude, Cursor, or any MCP-compatible AI. Schedule posts, generate captions, and check analytics — all from a conversation.
+      - generic [ref=e328]:
+        - generic [ref=e329]:
+          - generic [ref=e334]: Unravler Public API
+          - generic [ref=e335]:
+            - paragraph [ref=e336]: "# claude_desktop_config.json"
+            - generic [ref=e337]: "{ \"mcpServers\": { \"socialentangler\": { \"command\": \"node\", \"args\": [\"/path/to/mcp-server/index.js\"], \"env\": { \"SOCIALENTANGLER_API_KEY\": \"sk-...\" } } } }"
+            - paragraph [ref=e338]: "# Then just ask Claude naturally"
+            - paragraph [ref=e339]: "\"Schedule 3 Instagram posts about our product launch for Mon/Wed/Fri at 9am with an excited tone\""
+        - generic [ref=e341]:
+          - generic [ref=e342]:
+            - img [ref=e343]
+            - heading "MCP Native" [level=4] [ref=e345]
+            - paragraph [ref=e346]: Works out of the box with Claude Desktop, Cursor, and any MCP-compatible client.
+          - generic [ref=e347]:
+            - img [ref=e348]
+            - heading "11+ Platforms" [level=4] [ref=e350]
+            - paragraph [ref=e351]: Post to Instagram, LinkedIn, Twitter, TikTok, YouTube, and more.
+          - generic [ref=e352]:
+            - img [ref=e353]
+            - heading "Schedule by voice" [level=4] [ref=e355]
+            - paragraph [ref=e356]: Just say "schedule for Friday 9am" — the agent handles the rest.
+          - generic [ref=e357]:
+            - img [ref=e358]
+            - heading "AI content gen" [level=4] [ref=e360]
+            - paragraph [ref=e361]: Generate platform-optimized captions in any tone, ready to publish.
+          - generic [ref=e362]:
+            - img [ref=e363]
+            - heading "Draft or publish" [level=4] [ref=e365]
+            - paragraph [ref=e366]: Create drafts for review or publish instantly — fully agent-controlled.
+          - generic [ref=e367]:
+            - img [ref=e368]
+            - heading "Secure API Keys" [level=4] [ref=e370]
+            - paragraph [ref=e371]: Bearer-token auth with revocable keys, managed from your dashboard.
+      - generic [ref=e372]:
+        - button "View MCP Setup Guide →" [ref=e373] [cursor=pointer]
+        - paragraph [ref=e374]: Compatible with Claude Desktop, Cursor, and any MCP client
+    - generic [ref=e376]:
+      - generic [ref=e377]:
+        - heading "Frequently asked questions" [level=2] [ref=e378]
+        - paragraph [ref=e379]: Everything you need to know about Unravler
+      - generic [ref=e380]:
+        - generic [ref=e381]:
+          - heading "Can I cancel my subscription anytime?" [level=3] [ref=e382]
+          - paragraph [ref=e383]: Yes, you can cancel your subscription at any time. You will continue to have access until the end of your billing period.
+        - generic [ref=e384]:
+          - heading "Do you offer a free trial?" [level=3] [ref=e385]
+          - paragraph [ref=e386]: Yes, we offer a 7-day free trial on all paid plans. No credit card required to start.
+        - generic [ref=e387]:
+          - heading "What platforms do you support?" [level=3] [ref=e388]
+          - paragraph [ref=e389]: We currently support Twitter/X, Instagram, and LinkedIn. We are working on adding more platforms soon.
+        - generic [ref=e390]:
+          - heading "Can I manage multiple accounts?" [level=3] [ref=e391]
+          - paragraph [ref=e392]: Yes, depending on your plan you can manage multiple accounts for each platform.
+    - generic [ref=e395]:
+      - heading "Ready to get started?" [level=2] [ref=e396]
+      - paragraph [ref=e397]: Join thousands of content creators who save hours every week with Unravler
+      - button "Start Free Trial" [ref=e398] [cursor=pointer]
+    - contentinfo [ref=e399]:
+      - generic [ref=e401]:
+        - generic [ref=e402]:
+          - img "Unravler" [ref=e406]
+          - paragraph [ref=e407]:
+            - text: Post content to multiple social media platforms at the same time, all-in one place.
+            - generic [ref=e408]: Cross posting made easy.
+          - paragraph [ref=e409]: Copyright © 2026 - All rights reserved
+        - generic [ref=e410]:
+          - heading "Links" [level=3] [ref=e411]
+          - list [ref=e412]:
+            - listitem [ref=e413]:
+              - button "Support" [ref=e414] [cursor=pointer]
+            - listitem [ref=e415]:
+              - link "Pricing" [ref=e416] [cursor=pointer]:
+                - /url: /#pricing
+            - listitem [ref=e417]:
+              - link "Blog" [ref=e418] [cursor=pointer]:
+                - /url: /blog
+            - listitem [ref=e419]:
+              - link "Affiliates" [ref=e420] [cursor=pointer]:
+                - /url: /affiliates
+        - generic [ref=e421]:
+          - heading "Platforms" [level=3] [ref=e422]
+          - list [ref=e423]:
+            - listitem [ref=e424]:
+              - link "Twitter/X scheduler" [ref=e425] [cursor=pointer]:
+                - /url: /platforms/twitter
+            - listitem [ref=e426]:
+              - link "Instagram scheduler" [ref=e427] [cursor=pointer]:
+                - /url: /platforms/instagram
+            - listitem [ref=e428]:
+              - link "LinkedIn scheduler" [ref=e429] [cursor=pointer]:
+                - /url: /platforms/linkedin
+            - listitem [ref=e430]:
+              - link "Facebook scheduler" [ref=e431] [cursor=pointer]:
+                - /url: /platforms/facebook
+            - listitem [ref=e432]:
+              - link "TikTok scheduler" [ref=e433] [cursor=pointer]:
+                - /url: /platforms/tiktok
+            - listitem [ref=e434]:
+              - link "YouTube scheduler" [ref=e435] [cursor=pointer]:
+                - /url: /platforms/youtube
+            - listitem [ref=e436]:
+              - link "Bluesky scheduler" [ref=e437] [cursor=pointer]:
+                - /url: /platforms/bluesky
+            - listitem [ref=e438]:
+              - link "Threads scheduler" [ref=e439] [cursor=pointer]:
+                - /url: /platforms/threads
+            - listitem [ref=e440]:
+              - link "Pinterest scheduler" [ref=e441] [cursor=pointer]:
+                - /url: /platforms/pinterest
+        - generic [ref=e442]:
+          - heading "Free Tools" [level=3] [ref=e443]
+          - list [ref=e444]:
+            - listitem [ref=e445]:
+              - link "Growth Guide" [ref=e446] [cursor=pointer]:
+                - /url: /tools/growth-guide
+            - listitem [ref=e447]:
+              - link "Instagram Grid Maker" [ref=e448] [cursor=pointer]:
+                - /url: /tools/instagram-grid
+            - listitem [ref=e449]:
+              - link "Instagram Carousel Splitter" [ref=e450] [cursor=pointer]:
+                - /url: /tools/carousel-splitter
+            - listitem [ref=e451]:
+              - link "Instagram Handle Checker" [ref=e452] [cursor=pointer]:
+                - /url: /tools/handle-checker
+            - listitem [ref=e453]:
+              - link "TikTok Username Checker" [ref=e454] [cursor=pointer]:
+                - /url: /tools/tiktok-username
+            - listitem [ref=e455]:
+              - link "TikTok Caption Generator" [ref=e456] [cursor=pointer]:
+                - /url: /tools/tiktok-caption
+            - listitem [ref=e457]:
+              - link "LinkedIn Text Formatter" [ref=e458] [cursor=pointer]:
+                - /url: /tools/linkedin-formatter
+            - listitem [ref=e459]:
+              - link "YouTube Title Checker" [ref=e460] [cursor=pointer]:
+                - /url: /tools/youtube-title
+            - listitem [ref=e461]:
+              - link "YouTube Tag Generator" [ref=e462] [cursor=pointer]:
+                - /url: /tools/youtube-tags
+        - generic [ref=e463]:
+          - heading "Resources" [level=3] [ref=e464]
+          - list [ref=e465]:
+            - listitem [ref=e466]:
+              - link "Social Media Image Guide" [ref=e467] [cursor=pointer]:
+                - /url: /resources/social-media-image-guide
+            - listitem [ref=e468]:
+              - link "Social Media Video Guide" [ref=e469] [cursor=pointer]:
+                - /url: /resources/social-media-video-guide
+        - generic [ref=e470]:
+          - heading "Legal" [level=3] [ref=e471]
+          - list [ref=e472]:
+            - listitem [ref=e473]:
+              - link "Terms of services" [ref=e474] [cursor=pointer]:
+                - /url: /terms
+            - listitem [ref=e475]:
+              - link "Privacy policy" [ref=e476] [cursor=pointer]:
+                - /url: /privacy
+            - listitem [ref=e477]:
+              - link "Data deletion" [ref=e478] [cursor=pointer]:
+                - /url: /data-deletion
+  - region "Notifications alt+T"

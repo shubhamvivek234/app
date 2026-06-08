@@ -47,6 +47,15 @@ def schedule_media_cleanup(self, post_id: str) -> dict:
     return run_async(_async_cleanup(post_id))
 
 
+@celery_app.task(
+    name="celery_workers.tasks.cleanup.cleanup_deleted_post_media",
+    bind=True,
+    acks_late=True,
+)
+def cleanup_deleted_post_media(self, post_id: str) -> dict:
+    return run_async(_async_cleanup_deleted_post_media(post_id))
+
+
 async def _async_cleanup(post_id: str) -> dict:
     from db.mongo import get_client
     from celery_workers.tasks.publish import should_cleanup_media
@@ -159,6 +168,55 @@ async def _async_cleanup(post_id: str) -> dict:
     }
 
 
+async def _async_cleanup_deleted_post_media(post_id: str) -> dict:
+    from db.mongo import get_client
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    post = await db.posts.find_one(
+        {"id": post_id},
+        {"_id": 0, "id": 1, "user_id": 1, "workspace_id": 1, "media_ids": 1, "platform_overrides": 1, "account_overrides": 1, "deleted_at": 1},
+    )
+    if not post:
+        return {"status": "post_not_found"}
+    if not post.get("deleted_at"):
+        return {"status": "post_not_deleted"}
+
+    deleted_media = 0
+    retained_media = 0
+    failed_media = 0
+
+    for media_id in sorted(_collect_post_media_ids(post)):
+        outcome = await _delete_media_asset_if_orphaned(
+            db,
+            media_id=media_id,
+            user_id=post["user_id"],
+            workspace_id=post.get("workspace_id"),
+            excluding_post_id=post_id,
+        )
+        if outcome == "deleted":
+            deleted_media += 1
+        elif outcome == "still_referenced":
+            retained_media += 1
+        elif outcome == "storage_delete_failed":
+            failed_media += 1
+
+    logger.info(
+        "Deleted-post media cleanup finished for post %s: deleted=%s retained=%s failed=%s",
+        post_id,
+        deleted_media,
+        retained_media,
+        failed_media,
+    )
+    return {
+        "status": "cleaned",
+        "deleted_media": deleted_media,
+        "retained_media": retained_media,
+        "failed_media": failed_media,
+    }
+
+
 async def _delete_from_storage(storage_key: str) -> None:
     """Delete a media file from R2 (or Firebase) using its storage key."""
     if not storage_key:
@@ -227,18 +285,20 @@ async def _delete_media_asset_if_orphaned(
     user_id: str,
     workspace_id: str | None,
     excluding_post_id: str,
-) -> None:
+) -> str:
     if await _media_id_still_referenced(db, media_id, user_id, workspace_id, excluding_post_id):
-        return
+        return "still_referenced"
 
     asset = await db.media_assets.find_one({"media_id": media_id}, {"_id": 0})
     if not asset:
-        return
+        return "missing"
 
+    deletion_failed = False
     for storage_ref in _collect_asset_storage_refs(asset):
         try:
             await _delete_from_storage(storage_ref)
         except Exception as exc:
+            deletion_failed = True
             logger.warning(
                 "Failed to delete orphaned media ref %s for media_id=%s: %s",
                 storage_ref,
@@ -246,7 +306,11 @@ async def _delete_media_asset_if_orphaned(
                 exc,
             )
 
+    if deletion_failed:
+        return "storage_delete_failed"
+
     await db.media_assets.delete_one({"media_id": media_id})
+    return "deleted"
 
 
 async def prune_recent_published_posts(

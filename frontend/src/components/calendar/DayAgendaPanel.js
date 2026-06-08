@@ -8,6 +8,7 @@ import CalendarNotesSection from './CalendarNotesSection';
 import CalendarPostChip from './CalendarPostChip';
 import {
   formatScheduledDateTime,
+  getPostScheduledTimeZone,
   getAccountLabel,
   getPostMediaMeta,
   getPostPlatforms,
@@ -62,6 +63,7 @@ const DayAgendaPanel = ({
                 const postAccounts = getPostDisplayAccounts(post);
                 const platformLabels = getPostPlatforms(post).map((platform) => PLATFORM_LABELS[platform] || platform);
                 const media = getPostMediaMeta(post);
+                const scheduledTimeZone = getPostScheduledTimeZone(post);
 
                 return (
                   <div key={post.id} className="rounded-[28px] border border-slate-200 bg-slate-50/70 p-4">
@@ -72,7 +74,7 @@ const DayAgendaPanel = ({
                           <FaRegClock className="mt-0.5 text-slate-400" />
                           <div>
                             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Scheduled</div>
-                            <div className="mt-1 text-slate-900">{formatScheduledDateTime(post?.scheduled_time)}</div>
+                            <div className="mt-1 text-slate-900">{formatScheduledDateTime(post?.scheduled_time, scheduledTimeZone, { includeTimeZone: true })}</div>
                           </div>
                         </div>
                       </div>

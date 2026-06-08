@@ -10,6 +10,14 @@ const getAuthHeaders = () => {
   return {};
 };
 
+const getDefaultScheduleTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
 const normalizeSocialAccount = (account) => {
   if (!account || typeof account !== 'object') return null;
 
@@ -175,7 +183,11 @@ const uploadMultipartToCloud = async (file, upload, onProgress) => {
 
 // Posts
 export const createPost = async (postData) => {
-  const response = await axios.post(`${API}/posts`, postData, {
+  const normalizedPostData = {
+    ...postData,
+    ...(postData?.scheduled_time && !postData?.timezone ? { timezone: getDefaultScheduleTimezone() } : {}),
+  };
+  const response = await axios.post(`${API}/posts`, normalizedPostData, {
     headers: getAuthHeaders(),
   });
   return response.data;

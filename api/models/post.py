@@ -222,6 +222,8 @@ class PostResponse(BaseModel):
     platform_account_ids: list[str] = Field(default_factory=list)
     social_account_id: str | None = None
     scheduled_time: datetime | None = None
+    timezone: str | None = Field(default=None, max_length=100)
+    scheduled_timezone_explicit: bool = False
     published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

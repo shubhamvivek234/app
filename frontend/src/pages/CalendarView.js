@@ -33,6 +33,7 @@ import {
   getPosts,
   getSocialAccounts,
 } from '@/lib/api';
+import { getPostScheduledTimeZone, getScheduledDateKey } from '@/lib/scheduledTime';
 import { toast } from 'sonner';
 
 const CalendarView = () => {
@@ -143,10 +144,12 @@ const CalendarView = () => {
     return deduped;
   };
 
-  const getPostsForDay = (day) =>
-    posts
-      .filter((post) => isSameDay(new Date(post.scheduled_time), day))
+  const getPostsForDay = (day) => {
+    const dayKey = format(day, 'yyyy-MM-dd');
+    return posts
+      .filter((post) => getScheduledDateKey(post.scheduled_time, getPostScheduledTimeZone(post)) === dayKey)
       .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time));
+  };
 
   const getNotesForDay = (day) =>
     notes.filter((note) => note.date === format(day, 'yyyy-MM-dd'));

@@ -18,6 +18,7 @@ import {
   formatPostLabel,
   formatPostPreview,
   formatScheduledTime,
+  getPostScheduledTimeZone,
   getAccountInitials,
   getAccountLabel,
   getPostMediaMeta,
@@ -105,7 +106,8 @@ const CalendarPostChip = ({
   const statusClass = statusBadgeClasses[status] || statusBadgeClasses.scheduled;
   const label = formatPostLabel(post);
   const preview = formatPostPreview(post, compact ? 84 : 160);
-  const timeValue = formatScheduledTime(post?.scheduled_time);
+  const scheduledTimeZone = getPostScheduledTimeZone(post);
+  const timeValue = formatScheduledTime(post?.scheduled_time, scheduledTimeZone);
   const platforms = getPostPlatforms(post);
   const primaryAccountLabel = accounts.length > 0 ? getAccountLabel(accounts[0]) : 'No account info';
   const media = getPostMediaMeta(post);
