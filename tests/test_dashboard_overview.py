@@ -110,7 +110,17 @@ def _post(
     }
 
 
-def _account(account_id, *, platform="instagram", expires_at=None, token_error=None, restriction_type=None):
+def _account(
+    account_id,
+    *,
+    platform="instagram",
+    expires_at=None,
+    token_error=None,
+    restriction_type=None,
+    refresh_token=None,
+    requires_reconnect=False,
+    reconnect_reason=None,
+):
     return {
         "id": account_id,
         "account_id": account_id,
@@ -125,6 +135,9 @@ def _account(account_id, *, platform="instagram", expires_at=None, token_error=N
         "connected_at": datetime.now(timezone.utc) - timedelta(days=30),
         "expires_at": expires_at,
         "token_error": token_error,
+        "refresh_token": refresh_token,
+        "requires_reconnect": requires_reconnect,
+        "reconnect_reason": reconnect_reason,
         "publish_restriction_type": restriction_type,
         "publish_action_required": "Reconnect TikTok in app settings." if restriction_type else None,
         "publish_error_code": "public_posting_blocked" if restriction_type else None,
@@ -331,6 +344,67 @@ async def test_dashboard_health_uses_stored_state_by_default_and_hydrates_missin
     assert refresh_result["sections_returned"] == ["health"]
     assert calls == ["acct_missing"]
     assert any(account["display_name"] == "Refreshed account" for account in refresh_result["account_health"])
+
+
+@pytest.mark.asyncio
+async def test_dashboard_health_matches_connected_accounts_logic_for_refreshable_expired_tokens():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        social_accounts=[
+            _account("acct_refreshable", expires_at=now - timedelta(hours=2), refresh_token="encrypted-refresh"),
+            _account("acct_reconnect", expires_at=now - timedelta(hours=1)),
+        ],
+    )
+
+    result = await dashboard_routes.dashboard_overview(
+        current_user={
+            "user_id": "user_1",
+            "default_workspace_id": "ws_1",
+            "email_verified": True,
+            "subscription_status": "active",
+        },
+        db=db,
+        days=7,
+        refresh=False,
+        sections="core,health",
+    )
+
+    states = {account["account_id"]: account["health_state"] for account in result["account_health"]}
+    assert states["acct_refreshable"] == "healthy"
+    assert states["acct_reconnect"] == "reconnect_required"
+    action_ids = [item["id"] for item in result["action_items"]]
+    assert "reconnect-accounts" in action_ids
+
+
+@pytest.mark.asyncio
+async def test_dashboard_queue_is_sorted_nearest_first_after_hydration(monkeypatch):
+    now = datetime.now(timezone.utc)
+    posts = [
+        _post("sched-later", status="scheduled", created_at=now - timedelta(hours=3), scheduled_time=now + timedelta(hours=6)),
+        _post("sched-soon", status="scheduled", created_at=now - timedelta(hours=1), scheduled_time=now + timedelta(minutes=20)),
+        _post("sched-middle", status="scheduled", created_at=now - timedelta(hours=2), scheduled_time=now + timedelta(hours=2)),
+    ]
+    db = FakeDB(posts=posts)
+
+    async def reverse_hydrate(_db, docs):
+        return list(reversed(docs))
+
+    monkeypatch.setattr(dashboard_routes, "_hydrate_post_card_fields_for_docs", reverse_hydrate)
+
+    result = await dashboard_routes.dashboard_overview(
+        current_user={
+            "user_id": "user_1",
+            "default_workspace_id": "ws_1",
+            "email_verified": True,
+            "subscription_status": "active",
+        },
+        db=db,
+        days=7,
+        refresh=False,
+        sections="queue",
+    )
+
+    assert [post["id"] for post in result["upcoming_posts"]] == ["sched-soon", "sched-middle", "sched-later"]
 
 
 @pytest.mark.asyncio

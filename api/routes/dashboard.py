@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from api.deps import CurrentUser, DB, require_permission
-from api.routes.accounts import _hydrate_social_account_metadata
+from api.routes.accounts import _connection_health, _hydrate_social_account_metadata
 from api.routes.posts import _hydrate_post_card_fields_for_docs
 
 router = APIRouter(tags=["dashboard"])
@@ -185,29 +185,8 @@ def _normalize_activity(notification: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_account_health(account: dict[str, Any], now: datetime) -> dict[str, Any]:
+    connection_health = _connection_health(account, now)
     expires_at = _coerce_datetime(account.get("expires_at") or account.get("token_expiry"))
-    token_error = account.get("token_error")
-    publish_restriction_type = account.get("publish_restriction_type")
-    publish_action_required = account.get("publish_action_required")
-    publish_error_code = account.get("publish_error_code")
-
-    health_state = "healthy"
-    health_message = None
-
-    if publish_restriction_type or publish_action_required or publish_error_code:
-        health_state = "restricted"
-        health_message = (
-            publish_action_required
-            or publish_restriction_type
-            or publish_error_code
-            or "This account has a publish restriction."
-        )
-    elif token_error or (expires_at and expires_at <= now):
-        health_state = "reconnect_required"
-        health_message = token_error or "Access token expired. Reconnect the account."
-    elif expires_at and (expires_at - now).total_seconds() <= 7 * 24 * 3600:
-        health_state = "expiring"
-        health_message = "Access token expires soon. Reconnect proactively to avoid interruptions."
 
     return {
         "id": str(account.get("id") or account.get("account_id") or ""),
@@ -217,17 +196,17 @@ def _normalize_account_health(account: dict[str, Any], now: datetime) -> dict[st
         "platform_username": account.get("platform_username"),
         "picture_url": account.get("picture_url"),
         "expires_at": expires_at,
-        "token_error": token_error,
+        "token_error": account.get("token_error"),
         "followers_count": account.get("followers_count"),
         "following_count": account.get("following_count"),
         "posts_count": account.get("posts_count"),
-        "publish_error_code": publish_error_code,
+        "publish_error_code": account.get("publish_error_code"),
         "publish_error_category": account.get("publish_error_category"),
-        "publish_action_required": publish_action_required,
-        "publish_restriction_type": publish_restriction_type,
+        "publish_action_required": account.get("publish_action_required"),
+        "publish_restriction_type": account.get("publish_restriction_type"),
         "publish_blocked_at": account.get("publish_blocked_at"),
-        "health_state": health_state,
-        "health_message": health_message,
+        "health_state": str(connection_health["connection_state"]),
+        "health_message": connection_health["connection_message"],
     }
 
 
@@ -542,6 +521,14 @@ async def _build_queue_section(
         {"_id": 0},
     ).sort([("scheduled_time", 1), ("created_at", 1)]).limit(8).to_list(length=8)
     upcoming_hydrated = await _hydrate_post_card_fields_for_docs(db, upcoming_docs)
+    max_utc = datetime.max.replace(tzinfo=timezone.utc)
+    upcoming_hydrated = sorted(
+        upcoming_hydrated,
+        key=lambda doc: (
+            _coerce_datetime(doc.get("scheduled_time")) or max_utc,
+            _coerce_datetime(doc.get("created_at")) or max_utc,
+        ),
+    )
     return {
         "upcoming_posts": [_compact_post_card(doc, account_lookup) for doc in upcoming_hydrated],
     }
