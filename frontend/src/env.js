@@ -92,7 +92,7 @@ const env = {
     import.meta.env.VITE_CANVA_IMPORT_ENABLED
     || import.meta.env.REACT_APP_CANVA_IMPORT_ENABLED
     || process.env.REACT_APP_CANVA_IMPORT_ENABLED
-    || 'false'
+    || 'true'
   ).toLowerCase(),
 };
 
