@@ -58,7 +58,8 @@ const env = {
 
   UNSPLASH_ACCESS_KEY: import.meta.env.VITE_UNSPLASH_ACCESS_KEY
     || import.meta.env.REACT_APP_UNSPLASH_ACCESS_KEY
-    || process.env.REACT_APP_UNSPLASH_ACCESS_KEY,
+    || process.env.REACT_APP_UNSPLASH_ACCESS_KEY
+    || 'GUPs8JkjqQaNg1SSdFM5LtHGjzhXszV5wM-mVL1mQQs',
 
   DROPBOX_APP_KEY: import.meta.env.VITE_DROPBOX_APP_KEY
     || import.meta.env.REACT_APP_DROPBOX_APP_KEY
