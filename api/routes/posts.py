@@ -250,11 +250,22 @@ def _plan_post_limit(plan: str) -> int:
     return {"starter": 30, "pro": 200, "agency": 2000}.get(plan, 30)
 
 
+def _normalize_post_datetime_value(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, list):
+        return [_normalize_post_datetime_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_post_datetime_value(item) for key, item in value.items()}
+    return value
+
+
 def _doc_to_response(doc: dict) -> PostResponse:
-    doc.setdefault("id", str(doc.get("_id", "")))
-    doc.pop("_id", None)
-    doc.pop("deleted_at", None)
-    return PostResponse(**doc)
+    normalized_doc = _normalize_post_datetime_value(dict(doc))
+    normalized_doc.setdefault("id", str(normalized_doc.get("_id", "")))
+    normalized_doc.pop("_id", None)
+    normalized_doc.pop("deleted_at", None)
+    return PostResponse(**normalized_doc)
 
 
 def _post_workspace_id(current_user: dict) -> str:
@@ -280,7 +291,7 @@ async def _enrich_approval_docs(db, docs: list[dict]) -> list[dict]:
             doc["creator_email"] = creator.get("email")
         if doc.get("rejection_reason") and not doc.get("rejection_note"):
             doc["rejection_note"] = doc["rejection_reason"]
-    return hydrated_docs
+    return [_normalize_post_datetime_value(doc) for doc in hydrated_docs]
 
 
 def _social_account_identifier(account_doc: dict) -> str | None:

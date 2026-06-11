@@ -73,7 +73,19 @@ class FakeDB:
         self.social_accounts = FakeCollection(social_accounts or [])
 
 
-def _post(post_id, *, status, created_at, scheduled_time=None, published_at=None, account_ids=None, platforms=None, title=None):
+def _post(
+    post_id,
+    *,
+    status,
+    created_at,
+    scheduled_time=None,
+    published_at=None,
+    account_ids=None,
+    platforms=None,
+    title=None,
+    timezone_name="UTC",
+    scheduled_timezone_explicit=False,
+):
     return {
         "id": post_id,
         "workspace_id": "ws_1",
@@ -93,6 +105,8 @@ def _post(post_id, *, status, created_at, scheduled_time=None, published_at=None
         "updated_at": created_at,
         "scheduled_time": scheduled_time,
         "published_at": published_at,
+        "timezone": timezone_name,
+        "scheduled_timezone_explicit": scheduled_timezone_explicit,
     }
 
 
@@ -122,12 +136,12 @@ async def test_dashboard_overview_returns_full_normalized_sections_from_db(monke
     now = datetime.now(timezone.utc)
     db = FakeDB(
         posts=[
-            _post("sched-2", status="scheduled", created_at=now - timedelta(days=1), scheduled_time=now + timedelta(hours=4), account_ids=["acct_2"], platforms=["tiktok"], title="TikTok launch"),
+            _post("sched-2", status="scheduled", created_at=now - timedelta(days=1), scheduled_time=now + timedelta(hours=4), account_ids=["acct_2"], platforms=["tiktok"], title="TikTok launch", timezone_name="Asia/Kolkata", scheduled_timezone_explicit=True),
             _post("draft-1", status="draft", created_at=now - timedelta(days=2), title="Draft"),
             _post("pub-1", status="published", created_at=now - timedelta(days=3), published_at=now - timedelta(hours=5), title="Published 1"),
             _post("failed-1", status="failed", created_at=now - timedelta(days=1), title="Failed"),
             _post("partial-1", status="partial", created_at=now - timedelta(hours=6), title="Partial"),
-            _post("sched-1", status="scheduled", created_at=now - timedelta(hours=2), scheduled_time=now + timedelta(hours=1), account_ids=["acct_1"], platforms=["instagram"], title="Instagram queue"),
+            _post("sched-1", status="scheduled", created_at=now - timedelta(hours=2), scheduled_time=now + timedelta(hours=1), account_ids=["acct_1"], platforms=["instagram"], title="Instagram queue", timezone_name="Asia/Kolkata", scheduled_timezone_explicit=True),
         ],
         notifications=[
             {
@@ -201,6 +215,9 @@ async def test_dashboard_overview_returns_full_normalized_sections_from_db(monke
 
     assert [post["id"] for post in result["upcoming_posts"]] == ["sched-1", "sched-2"]
     assert result["upcoming_posts"][0]["account_labels"] == ["Instagram acct_1"]
+    assert result["upcoming_posts"][0]["timezone"] == "Asia/Kolkata"
+    assert result["upcoming_posts"][0]["scheduled_timezone_explicit"] is True
+    assert result["upcoming_posts"][0]["scheduled_time"].tzinfo is not None
     assert result["recent_published"][0]["id"] == "pub-1"
     assert result["recent_published"][0]["account_labels"] == ["Instagram acct_1"]
 

@@ -73,6 +73,33 @@ def test_doc_to_response_preserves_account_identifiers_for_calendar_views():
     assert response.scheduled_timezone_explicit is True
 
 
+def test_doc_to_response_normalizes_naive_datetimes_to_utc_for_serialization():
+    response = posts_route._doc_to_response(
+        {
+            "_id": "mongo-id",
+            "id": "post-utc",
+            "user_id": "user-1",
+            "workspace_id": "ws-1",
+            "content": "Caption",
+            "platforms": ["instagram"],
+            "status": "scheduled",
+            "scheduled_time": datetime(2026, 6, 11, 10, 37, 0),
+            "timezone": "Asia/Calcutta",
+            "scheduled_timezone_explicit": True,
+            "created_at": datetime(2026, 6, 11, 10, 35, 2, 339000),
+            "updated_at": datetime(2026, 6, 11, 10, 35, 2, 339000),
+            "status_history": [{"status": "scheduled", "timestamp": datetime(2026, 6, 11, 10, 35, 2, 339000)}],
+        }
+    )
+
+    payload = response.model_dump(mode="json")
+
+    assert payload["scheduled_time"].endswith("Z")
+    assert payload["created_at"].endswith("Z")
+    assert payload["updated_at"].endswith("Z")
+    assert payload["status_history"][0]["timestamp"].endswith("Z")
+
+
 def test_doc_to_response_accepts_extended_runtime_statuses():
     response = posts_route._doc_to_response(
         {
