@@ -63,7 +63,8 @@ const env = {
 
   DROPBOX_APP_KEY: import.meta.env.VITE_DROPBOX_APP_KEY
     || import.meta.env.REACT_APP_DROPBOX_APP_KEY
-    || process.env.REACT_APP_DROPBOX_APP_KEY,
+    || process.env.REACT_APP_DROPBOX_APP_KEY
+    || '12r9kfe7r3xewc2',
 
   GOOGLE_PICKER_API_KEY: import.meta.env.VITE_GOOGLE_PICKER_API_KEY
     || import.meta.env.REACT_APP_GOOGLE_PICKER_API_KEY
