@@ -152,7 +152,7 @@ const EMOJI_LIST = [
 const MEDIA_SOURCE_SETUP = {
   unsplash: () => Boolean(env.UNSPLASH_ACCESS_KEY),
   dropbox: () => Boolean(env.DROPBOX_APP_KEY),
-  google_drive: () => Boolean(env.GOOGLE_PICKER_API_KEY && env.GOOGLE_CLIENT_ID),
+  google_drive: () => Boolean(env.GOOGLE_CLIENT_ID),
   google_photos: () => Boolean(env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID),
   onedrive: () => Boolean(env.ONEDRIVE_APP_ID && env.ONEDRIVE_REDIRECT_URI),
   canva: () => env.CANVA_IMPORT_ENABLED === 'true',
@@ -161,7 +161,7 @@ const MEDIA_SOURCE_SETUP = {
 const PROVIDER_SETUP_LABELS = {
   unsplash: 'Backend UNSPLASH access key',
   dropbox: 'Dropbox app key',
-  google_drive: 'Google Picker API key + client ID',
+  google_drive: 'Google client ID',
   google_photos: 'Google Photos client ID',
   onedrive: 'OneDrive app ID + redirect URI',
   canva: 'Backend Canva import config',
@@ -169,6 +169,7 @@ const PROVIDER_SETUP_LABELS = {
 
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+const GOOGLE_DRIVE_PAGE_SIZE = 24;
 
 const loadExternalScript = (src, id, dataAttributes = {}) => new Promise((resolve, reject) => {
   const existing = id ? document.getElementById(id) : null;
@@ -199,6 +200,24 @@ const loadExternalScript = (src, id, dataAttributes = {}) => new Promise((resolv
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const formatFileSize = (bytes) => {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return null;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = size;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1);
+  return `${rounded} ${units[unitIndex]}`;
+};
+
+const escapeGoogleDriveQuery = (value = '') => (
+  String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+);
 
 const PlatformEditor = ({
   platform,
@@ -275,6 +294,13 @@ const PlatformEditor = ({
   const [unsplashLoading, setUnsplashLoading] = useState(false);
   const [unsplashPage, setUnsplashPage] = useState(1);
   const [unsplashHasMore, setUnsplashHasMore] = useState(false);
+  const [googleDriveOpen, setGoogleDriveOpen] = useState(false);
+  const [googleDriveToken, setGoogleDriveToken] = useState('');
+  const [googleDriveQuery, setGoogleDriveQuery] = useState('');
+  const [googleDriveItems, setGoogleDriveItems] = useState([]);
+  const [googleDriveSelectedIds, setGoogleDriveSelectedIds] = useState([]);
+  const [googleDriveNextPageToken, setGoogleDriveNextPageToken] = useState(null);
+  const [googleDriveLoading, setGoogleDriveLoading] = useState(false);
   const [canvaOpen, setCanvaOpen] = useState(false);
   const [canvaSessionId, setCanvaSessionId] = useState(null);
   const [canvaDesigns, setCanvaDesigns] = useState([]);
@@ -603,15 +629,8 @@ const PlatformEditor = ({
     }
   };
 
-  const loadGoogleApis = async () => {
-    await loadExternalScript('https://apis.google.com/js/api.js', 'google-picker-api');
+  const loadGoogleIdentityClient = async () => {
     await loadExternalScript('https://accounts.google.com/gsi/client', 'google-gsi-client');
-    await new Promise((resolve, reject) => {
-      window.gapi.load('picker', {
-        callback: resolve,
-        onerror: () => reject(new Error('Failed to load Google Picker')),
-      });
-    });
   };
 
   const requestGoogleAccessToken = async (scope, clientId) => new Promise((resolve, reject) => {
@@ -634,6 +653,58 @@ const PlatformEditor = ({
     tokenClient.requestAccessToken({ prompt: 'consent' });
   });
 
+  const loadGoogleDriveItems = useCallback(async ({ token, query = '', pageToken = null, append = false }) => {
+    setGoogleDriveLoading(true);
+    try {
+      const queryParts = [
+        'trashed = false',
+        isVideo ? "mimeType contains 'video/'" : "mimeType contains 'image/'",
+      ];
+      if (query.trim()) {
+        queryParts.push(`name contains '${escapeGoogleDriveQuery(query.trim())}'`);
+      }
+
+      const params = new URLSearchParams({
+        pageSize: String(GOOGLE_DRIVE_PAGE_SIZE),
+        orderBy: 'modifiedTime desc',
+        fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,thumbnailLink,iconLink,webViewLink)',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+        q: queryParts.join(' and '),
+      });
+      if (pageToken) {
+        params.set('pageToken', pageToken);
+      }
+
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to load Google Drive files');
+      }
+
+      const payload = await response.json();
+      const files = Array.isArray(payload?.files) ? payload.files : [];
+      setGoogleDriveItems((prev) => (append ? [...prev, ...files] : files));
+      setGoogleDriveNextPageToken(payload?.nextPageToken || null);
+    } finally {
+      setGoogleDriveLoading(false);
+    }
+  }, [isVideo]);
+
+  const toggleGoogleDriveSelection = useCallback((fileId) => {
+    setGoogleDriveSelectedIds((prev) => {
+      if (isVideo) {
+        return prev[0] === fileId ? [] : [fileId];
+      }
+      return prev.includes(fileId)
+        ? prev.filter((id) => id !== fileId)
+        : [...prev, fileId];
+    });
+  }, [isVideo]);
+
   // ── Google Drive Picker ───────────────────────────────────────────────────
   const openGoogleDrivePicker = async () => {
     setSourceOpen(false);
@@ -642,42 +713,47 @@ const PlatformEditor = ({
       return;
     }
     try {
-      await loadGoogleApis();
+      await loadGoogleIdentityClient();
       const token = await requestGoogleAccessToken(GOOGLE_DRIVE_SCOPE, env.GOOGLE_CLIENT_ID);
-      const view = new window.google.picker.DocsView(window.google.picker.ViewId.DOCS);
-      view.setIncludeFolders(false);
-      view.setSelectFolderEnabled(false);
-      view.setMimeTypes(isVideo ? 'video/*' : 'image/*');
-      const pickerBuilder = new window.google.picker.PickerBuilder()
-        .setDeveloperKey(env.GOOGLE_PICKER_API_KEY)
-        .setOAuthToken(token)
-        .addView(view)
-        .setCallback(async (data) => {
-          if (data.action !== window.google.picker.Action.PICKED || !canImportFromSources) {
-            return;
-          }
-          const docs = data[window.google.picker.Response.DOCUMENTS] || [];
-          const items = docs.map((doc) => ({
-            provider: 'google_drive',
-            download_url: `https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`,
-            name: doc.name,
-            source_item_id: doc.id,
-            source_label: doc.name,
-            content_type: doc.mimeType,
-            file_size_bytes: Number(doc.sizeBytes) || undefined,
-            auth_bearer_token: token,
-          }));
-          toast.info(`Importing ${items.length} Google Drive file${items.length > 1 ? 's' : ''}…`);
-          await importSelectedRemoteMedia(items);
-        });
-      if (!isVideo) {
-        pickerBuilder.enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED);
-      }
-      pickerBuilder.build().setVisible(true);
+      setGoogleDriveToken(token);
+      setGoogleDriveQuery('');
+      setGoogleDriveSelectedIds([]);
+      setGoogleDriveNextPageToken(null);
+      setGoogleDriveItems([]);
+      setGoogleDriveOpen(true);
+      await loadGoogleDriveItems({ token, query: '', pageToken: null, append: false });
     } catch (error) {
       toast.error(error?.message || 'Google Drive import failed');
     }
   };
+
+  const importGoogleDriveSelection = useCallback(async () => {
+    if (!canImportFromSources || !googleDriveToken) return;
+    const selectedFiles = googleDriveItems.filter((file) => googleDriveSelectedIds.includes(file.id));
+    if (!selectedFiles.length) {
+      toast.info('Select at least one Google Drive file to import');
+      return;
+    }
+
+    try {
+      const items = selectedFiles.map((file) => ({
+        provider: 'google_drive',
+        download_url: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+        name: file.name,
+        source_item_id: file.id,
+        source_label: file.name,
+        content_type: file.mimeType,
+        file_size_bytes: Number(file.size) || undefined,
+        auth_bearer_token: googleDriveToken,
+      }));
+      toast.info(`Importing ${items.length} Google Drive file${items.length > 1 ? 's' : ''}…`);
+      await importSelectedRemoteMedia(items);
+      setGoogleDriveOpen(false);
+      setGoogleDriveSelectedIds([]);
+    } catch (error) {
+      toast.error(error?.message || 'Google Drive import failed');
+    }
+  }, [canImportFromSources, googleDriveItems, googleDriveSelectedIds, googleDriveToken, importSelectedRemoteMedia]);
 
   const parseGoogleDurationMs = (durationValue, fallbackMs) => {
     if (!durationValue || typeof durationValue !== 'string') return fallbackMs;
@@ -692,8 +768,15 @@ const PlatformEditor = ({
       toast.error(`Add ${PROVIDER_SETUP_LABELS.google_photos} to use Google Photos`);
       return;
     }
+    const pickerWindow = window.open('', 'google-photos-picker', 'width=1280,height=800');
+    if (!pickerWindow) {
+      toast.error('Popup blocked while opening Google Photos');
+      return;
+    }
     try {
-      await loadGoogleApis();
+      pickerWindow.document.title = 'Google Photos';
+      pickerWindow.document.body.innerHTML = '<div style="font-family:system-ui,-apple-system,sans-serif;padding:32px;color:#111827">Opening Google Photos…</div>';
+      await loadGoogleIdentityClient();
       const clientId = env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID;
       const token = await requestGoogleAccessToken(GOOGLE_PHOTOS_SCOPE, clientId);
       const sessionResponse = await fetch('https://photospicker.googleapis.com/v1/sessions', {
@@ -708,10 +791,10 @@ const PlatformEditor = ({
         throw new Error('Failed to create Google Photos session');
       }
       const session = await sessionResponse.json();
-      const pickerWindow = window.open(`${session.pickerUri}/autoclose`, 'google-photos-picker', 'width=1280,height=800');
-      if (!pickerWindow) {
-        throw new Error('Popup blocked while opening Google Photos');
+      if (pickerWindow.closed) {
+        throw new Error('Google Photos window was closed before it could finish loading');
       }
+      pickerWindow.location.replace(`${session.pickerUri}/autoclose`);
       let pollMs = parseGoogleDurationMs(session.pollingConfig?.pollInterval, 2000);
       const timeoutMs = parseGoogleDurationMs(session.pollingConfig?.timeoutIn, 180000);
       const startedAt = Date.now();
@@ -775,11 +858,20 @@ const PlatformEditor = ({
         } catch {
           // Ignore cleanup failures.
         }
+        if (!pickerWindow.closed) {
+          pickerWindow.close();
+        }
         return;
       }
 
+      if (!pickerWindow.closed) {
+        pickerWindow.close();
+      }
       toast.info('Google Photos selection was cancelled');
     } catch (error) {
+      if (!pickerWindow.closed) {
+        pickerWindow.close();
+      }
       toast.error(error?.message || 'Google Photos import failed');
     }
   };
@@ -837,13 +929,24 @@ const PlatformEditor = ({
       toast.error(`Add ${PROVIDER_SETUP_LABELS.canva} to enable Canva import`);
       return;
     }
+    const popup = window.open('', 'canva-import', 'width=1080,height=760');
+    if (!popup) {
+      toast.error('Popup blocked while connecting Canva');
+      return;
+    }
     try {
+      popup.document.title = 'Connecting Canva';
+      popup.document.body.innerHTML = '<div style="font-family:system-ui,-apple-system,sans-serif;padding:32px;color:#111827">Connecting Canva…</div>';
       const payload = await getCanvaImportUrl();
-      canvaPopupRef.current = window.open(payload.auth_url, 'canva-import', 'width=1080,height=760');
-      if (!canvaPopupRef.current) {
-        throw new Error('Popup blocked while connecting Canva');
+      if (popup.closed) {
+        throw new Error('Canva window was closed before it could finish loading');
       }
+      popup.location.replace(payload.auth_url);
+      canvaPopupRef.current = popup;
     } catch (error) {
+      if (!popup.closed) {
+        popup.close();
+      }
       toast.error(error?.response?.data?.detail || error?.message || 'Failed to start Canva import');
     }
   }, []);
@@ -1948,6 +2051,167 @@ const PlatformEditor = ({
         </>
       )}
     </div>
+
+    <Dialog
+      open={googleDriveOpen}
+      onOpenChange={(open) => {
+        setGoogleDriveOpen(open);
+        if (!open) {
+          setGoogleDriveSelectedIds([]);
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SiGoogledrive className="text-[#4285F4] text-lg" />
+            <span>Import from Google Drive</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex flex-col gap-2 md:flex-row">
+            <div className="relative flex-1">
+              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-sm" />
+              <input
+                type="text"
+                value={googleDriveQuery}
+                onChange={(event) => setGoogleDriveQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && googleDriveToken) {
+                    loadGoogleDriveItems({
+                      token: googleDriveToken,
+                      query: googleDriveQuery,
+                      pageToken: null,
+                      append: false,
+                    }).catch(() => {
+                      toast.error('Failed to load Google Drive files');
+                    });
+                  }
+                }}
+                placeholder={`Search ${isVideo ? 'videos' : 'images'} in Google Drive…`}
+                className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!googleDriveToken) return;
+                loadGoogleDriveItems({
+                  token: googleDriveToken,
+                  query: googleDriveQuery,
+                  pageToken: null,
+                  append: false,
+                }).catch(() => {
+                  toast.error('Failed to load Google Drive files');
+                });
+              }}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+            >
+              Search
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <p className="text-sm font-medium text-gray-900">
+                {isVideo ? 'Pick one video to import' : 'Pick one or more images to import'}
+              </p>
+              <span className="text-xs text-gray-500">
+                {googleDriveSelectedIds.length} selected
+              </span>
+            </div>
+
+            <div className="max-h-[420px] overflow-y-auto">
+              {googleDriveItems.map((file) => {
+                const isSelected = googleDriveSelectedIds.includes(file.id);
+                const fileSize = formatFileSize(file.size);
+                const modifiedDate = file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : null;
+                return (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={() => toggleGoogleDriveSelection(file.id)}
+                    className={`flex w-full items-center gap-3 border-b border-gray-100 px-4 py-3 text-left last:border-b-0 ${
+                      isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <Checkbox checked={isSelected} className="pointer-events-none data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600" />
+                    <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg bg-gray-100">
+                      {file.iconLink ? (
+                        <img src={file.iconLink} alt="" className="h-6 w-6 object-contain" />
+                      ) : (
+                        <FaImages className="text-gray-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-gray-900">{file.name || 'Untitled file'}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                        {file.mimeType && <span>{file.mimeType}</span>}
+                        {fileSize && <span>{fileSize}</span>}
+                        {modifiedDate && <span>Updated {modifiedDate}</span>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+
+              {!googleDriveLoading && googleDriveItems.length === 0 && (
+                <div className="px-4 py-12 text-center text-sm text-gray-500">
+                  No matching Google Drive media found.
+                </div>
+              )}
+
+              {googleDriveLoading && (
+                <div className="px-4 py-12 text-center text-sm text-gray-500">
+                  Loading Google Drive files…
+                </div>
+              )}
+            </div>
+          </div>
+
+          {googleDriveNextPageToken && !googleDriveLoading && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!googleDriveToken) return;
+                  loadGoogleDriveItems({
+                    token: googleDriveToken,
+                    query: googleDriveQuery,
+                    pageToken: googleDriveNextPageToken,
+                    append: true,
+                  }).catch(() => {
+                    toast.error('Failed to load more Google Drive files');
+                  });
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+              >
+                Load more
+              </button>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2">
+          <button
+            type="button"
+            onClick={() => setGoogleDriveOpen(false)}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-300"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={importGoogleDriveSelection}
+            disabled={googleDriveSelectedIds.length === 0}
+            className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+          >
+            Import {googleDriveSelectedIds.length > 0 ? googleDriveSelectedIds.length : ''} {googleDriveSelectedIds.length === 1 ? 'file' : 'files'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={canvaOpen} onOpenChange={setCanvaOpen}>
       <DialogContent className="sm:max-w-4xl">
