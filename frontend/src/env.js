@@ -68,18 +68,21 @@ const env = {
 
   GOOGLE_PICKER_API_KEY: import.meta.env.VITE_GOOGLE_PICKER_API_KEY
     || import.meta.env.REACT_APP_GOOGLE_PICKER_API_KEY
-    || process.env.REACT_APP_GOOGLE_PICKER_API_KEY,
+    || process.env.REACT_APP_GOOGLE_PICKER_API_KEY
+    || 'AIzaSyComimUXiPgXOdyXaztwSNp6GRxquxVzdU',
 
   GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID
     || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID
-    || process.env.REACT_APP_GOOGLE_CLIENT_ID,
+    || process.env.REACT_APP_GOOGLE_CLIENT_ID
+    || '973333038336-fjic3rr6ug35kgr2s2k4f2jock5vo4o8.apps.googleusercontent.com',
 
   GOOGLE_PHOTOS_CLIENT_ID: import.meta.env.VITE_GOOGLE_PHOTOS_CLIENT_ID
     || import.meta.env.REACT_APP_GOOGLE_PHOTOS_CLIENT_ID
     || import.meta.env.VITE_GOOGLE_CLIENT_ID
     || import.meta.env.REACT_APP_GOOGLE_CLIENT_ID
     || process.env.REACT_APP_GOOGLE_PHOTOS_CLIENT_ID
-    || process.env.REACT_APP_GOOGLE_CLIENT_ID,
+    || process.env.REACT_APP_GOOGLE_CLIENT_ID
+    || '973333038336-fjic3rr6ug35kgr2s2k4f2jock5vo4o8.apps.googleusercontent.com',
 
   ONEDRIVE_APP_ID: import.meta.env.VITE_ONEDRIVE_APP_ID
     || import.meta.env.REACT_APP_ONEDRIVE_APP_ID
