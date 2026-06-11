@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { getSocialAccounts, uploadMedia, waitForUploadReady } from '@/lib/api';
+import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
 import MediaValidationErrorModal from '@/components/MediaValidationErrorModal';
@@ -87,36 +88,6 @@ const buildTimezoneList = () => {
     value: tz,
     label: `${tz} (${getUTCOffsetLabel(tz)})`,
   }));
-};
-
-// Convert a user's chosen date + time in a named IANA timezone → UTC ISO string
-// e.g. ("2025-03-29", "10:00", "Asia/Kolkata") → "2025-03-29T04:30:00.000Z"
-const convertToUTC = (dateStr, timeStr, tzName) => {
-  // Treat the input as if it were UTC to get a reference Date
-  const dtAsUTC = new Date(`${dateStr}T${timeStr}:00Z`);
-  if (isNaN(dtAsUTC.getTime())) return null;
-
-  // Format that UTC instant in the target timezone — this tells us what the
-  // "local wall clock" would read in that zone for that UTC instant
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tzName,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(dtAsUTC);
-  const p = {};
-  parts.forEach((pt) => (p[pt.type] = pt.value));
-
-  // Clamp hour "24" → "00" (Intl edge case at midnight)
-  const hour = p.hour === '24' ? '00' : p.hour;
-  const localAsUTC = new Date(`${p.year}-${p.month}-${p.day}T${hour}:${p.minute}:${p.second}Z`);
-
-  // The offset in ms between "target tz local time read as UTC" and our reference UTC
-  const offsetMs = localAsUTC.getTime() - dtAsUTC.getTime();
-
-  // Subtract the offset to get the true UTC instant
-  return new Date(dtAsUTC.getTime() - offsetMs).toISOString();
 };
 
 const formatFileSize = (bytes) => {
@@ -407,7 +378,7 @@ const BulkVideoUpload = () => {
         let scheduledTime = null;
         if (video.date && video.time) {
           // Convert date+time in the selected timezone → UTC ISO string
-          scheduledTime = convertToUTC(video.date, video.time, bulkTimezone);
+          scheduledTime = convertWallClockToUtcIso(video.date, video.time, bulkTimezone);
         }
 
         await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v1/posts`, {

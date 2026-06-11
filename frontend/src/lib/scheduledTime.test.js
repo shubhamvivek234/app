@@ -1,4 +1,5 @@
 import {
+  convertWallClockToUtcIso,
   formatScheduledCompactDateTime,
   formatScheduledDateTime,
   formatScheduledTime,
@@ -26,5 +27,21 @@ describe('scheduledTime helpers', () => {
       timezone: 'UTC',
       scheduled_timezone_explicit: false,
     })).toBeNull();
+  });
+
+  it('round-trips a selected wall-clock time for the stored timezone', () => {
+    const utcValue = convertWallClockToUtcIso('2026-06-11', '10:00', 'Asia/Kolkata');
+
+    expect(utcValue).toBe('2026-06-11T04:30:00.000Z');
+    expect(formatScheduledTime(utcValue, 'Asia/Kolkata')).toBe('10:00 AM');
+    expect(getScheduledDateKey(utcValue, 'Asia/Kolkata')).toBe('2026-06-11');
+  });
+
+  it('keeps the same scheduled clock time for DST-aware zones', () => {
+    const utcValue = convertWallClockToUtcIso('2026-06-11', '10:00', 'America/New_York');
+
+    expect(utcValue).toBe('2026-06-11T14:00:00.000Z');
+    expect(formatScheduledTime(utcValue, 'America/New_York')).toBe('10:00 AM');
+    expect(getScheduledDateKey(utcValue, 'America/New_York')).toBe('2026-06-11');
   });
 });

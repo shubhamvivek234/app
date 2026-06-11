@@ -6,6 +6,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { getSocialAccounts } from '@/lib/api';
+import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
 import {
@@ -131,22 +132,6 @@ const getUTCOffsetLabel = (tzName) => {
 const buildTimezoneList = () => {
   const names = (typeof Intl.supportedValuesOf === 'function') ? Intl.supportedValuesOf('timeZone') : FALLBACK_TIMEZONES;
   return names.map((tz) => ({ value: tz, label: `${tz} (${getUTCOffsetLabel(tz)})` }));
-};
-
-const convertToUTC = (dateStr, timeStr, tzName) => {
-  const dtAsUTC = new Date(`${dateStr}T${timeStr}:00Z`);
-  if (isNaN(dtAsUTC.getTime())) return null;
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tzName, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
-  const parts = formatter.formatToParts(dtAsUTC);
-  const p = {};
-  parts.forEach((pt) => (p[pt.type] = pt.value));
-  const hour = p.hour === '24' ? '00' : p.hour;
-  const localAsUTC = new Date(`${p.year}-${p.month}-${p.day}T${hour}:${p.minute}:${p.second}Z`);
-  const offsetMs = localAsUTC.getTime() - dtAsUTC.getTime();
-  return new Date(dtAsUTC.getTime() - offsetMs).toISOString();
 };
 
 // ── Client-side row validation (format only, no URL/platform checks) ──────────
@@ -552,7 +537,7 @@ const BulkCSVUpload = () => {
       const payload = posts.map((item) => {
         let scheduledTime = null;
         if (item.date && item.time) {
-          scheduledTime = convertToUTC(item.date, item.time, bulkTimezone);
+          scheduledTime = convertWallClockToUtcIso(item.date, item.time, bulkTimezone);
         }
         return {
           content: item.content,

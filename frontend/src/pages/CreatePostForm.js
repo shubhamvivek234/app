@@ -20,6 +20,7 @@ import {
   getHashtagGroups,
   generateContent,
 } from '@/lib/api';
+import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
 import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
@@ -294,15 +295,6 @@ const TIMEZONES = [
   // UTC+14
   { value: 'Pacific/Kiritimati',              label: 'GMT+14   Kiritimati (Christmas Island), Kiribati' },
 ];
-
-// Convert a local date+time string in a specific timezone to UTC ISO string
-const localToUTC = (dateStr, timeStr, timezone) => {
-  const fakeUTC = new Date(`${dateStr}T${timeStr}:00Z`);
-  const localStr = fakeUTC.toLocaleString('en-US', { timeZone: timezone });
-  const localAsUTC = new Date(localStr + ' UTC');
-  const offsetMs = localAsUTC - fakeUTC;
-  return new Date(fakeUTC.getTime() - offsetMs).toISOString();
-};
 
 const formatLocalDateInput = (date = new Date()) => {
   const year = date.getFullYear();
@@ -1471,7 +1463,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         if (!scheduledDate || !scheduledTime) {
           toast.error('Please pick a date and time'); setLoading(false); return;
         }
-        scheduledDateTime = localToUTC(scheduledDate, scheduledTime, selectedTimezone);
+        scheduledDateTime = convertWallClockToUtcIso(scheduledDate, scheduledTime, selectedTimezone);
         if (!scheduledDateTime) { toast.error('Invalid date / time'); setLoading(false); return; }
       } else if (mode === 'timeslot') {
         if (selectedAccounts.length !== 1) {

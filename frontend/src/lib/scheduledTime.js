@@ -51,6 +51,58 @@ const formatParts = (value, timeZone) => {
   return `${partMap.year}-${partMap.month}-${partMap.day}`;
 };
 
+const getZonedDateTimeParts = (value, timeZone) => {
+  const parsed = parseDate(value);
+  const resolvedTimeZone = normalizeTimeZone(timeZone);
+  if (!parsed || !resolvedTimeZone) return null;
+  const formatter = getFormatter({
+    timeZone: resolvedTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const partMap = {};
+  formatter.formatToParts(parsed).forEach((part) => {
+    if (part.type !== 'literal') {
+      partMap[part.type] = part.value;
+    }
+  });
+  if (!partMap.year || !partMap.month || !partMap.day || !partMap.hour || !partMap.minute || !partMap.second) {
+    return null;
+  }
+  return {
+    year: partMap.year,
+    month: partMap.month,
+    day: partMap.day,
+    hour: partMap.hour === '24' ? '00' : partMap.hour,
+    minute: partMap.minute,
+    second: partMap.second,
+  };
+};
+
+export const convertWallClockToUtcIso = (dateStr, timeStr, timeZone) => {
+  const resolvedTimeZone = normalizeTimeZone(timeZone);
+  if (!resolvedTimeZone || !dateStr || !timeStr) return null;
+
+  const utcReference = new Date(`${dateStr}T${timeStr}:00Z`);
+  if (Number.isNaN(utcReference.getTime())) return null;
+
+  const zonedParts = getZonedDateTimeParts(utcReference, resolvedTimeZone);
+  if (!zonedParts) return null;
+
+  const zonedAsUtc = new Date(
+    `${zonedParts.year}-${zonedParts.month}-${zonedParts.day}T${zonedParts.hour}:${zonedParts.minute}:${zonedParts.second}Z`
+  );
+  if (Number.isNaN(zonedAsUtc.getTime())) return null;
+
+  const offsetMs = zonedAsUtc.getTime() - utcReference.getTime();
+  return new Date(utcReference.getTime() - offsetMs).toISOString();
+};
+
 export const getPostScheduledTimeZone = (post) => {
   if (!post?.scheduled_timezone_explicit) return null;
   return normalizeTimeZone(post?.timezone);
