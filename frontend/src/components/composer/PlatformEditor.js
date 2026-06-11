@@ -315,6 +315,8 @@ const PlatformEditor = ({
   const inputRef = fileInputRef || localFileRef;
   const fileInputId = useId();
   const canvaPopupRef = useRef(null);
+  const googleIdentityLoadPromiseRef = useRef(null);
+  const googleIdentityReadyRef = useRef(false);
 
   // Drag-to-reorder media thumbnails
   const mediaDragIdx  = useRef(null);
@@ -629,9 +631,20 @@ const PlatformEditor = ({
     }
   };
 
-  const loadGoogleIdentityClient = async () => {
-    await loadExternalScript('https://accounts.google.com/gsi/client', 'google-gsi-client');
-  };
+  const loadGoogleIdentityClient = useCallback(() => {
+    if (googleIdentityReadyRef.current) {
+      return Promise.resolve();
+    }
+    if (!googleIdentityLoadPromiseRef.current) {
+      googleIdentityLoadPromiseRef.current = loadExternalScript(
+        'https://accounts.google.com/gsi/client',
+        'google-gsi-client'
+      ).then(() => {
+        googleIdentityReadyRef.current = true;
+      });
+    }
+    return googleIdentityLoadPromiseRef.current;
+  }, []);
 
   const requestGoogleAccessToken = async (scope, clientId) => new Promise((resolve, reject) => {
     const tokenClient = window.google?.accounts?.oauth2?.initTokenClient({
@@ -644,6 +657,14 @@ const PlatformEditor = ({
         }
         resolve(response.access_token);
       },
+      error_callback: (error) => {
+        const message = error?.type === 'popup_failed_to_open'
+          ? 'Google authorization popup was blocked'
+          : error?.type === 'popup_closed'
+            ? 'Google authorization popup was closed before it finished'
+            : 'Google authorization failed';
+        reject(new Error(message));
+      },
     });
 
     if (!tokenClient) {
@@ -652,6 +673,10 @@ const PlatformEditor = ({
     }
     tokenClient.requestAccessToken({ prompt: 'consent' });
   });
+
+  useEffect(() => {
+    loadGoogleIdentityClient().catch(() => {});
+  }, [loadGoogleIdentityClient]);
 
   const loadGoogleDriveItems = useCallback(async ({ token, query = '', pageToken = null, append = false }) => {
     setGoogleDriveLoading(true);
@@ -713,7 +738,9 @@ const PlatformEditor = ({
       return;
     }
     try {
-      await loadGoogleIdentityClient();
+      if (!googleIdentityReadyRef.current) {
+        await loadGoogleIdentityClient();
+      }
       const token = await requestGoogleAccessToken(GOOGLE_DRIVE_SCOPE, env.GOOGLE_CLIENT_ID);
       setGoogleDriveToken(token);
       setGoogleDriveQuery('');
@@ -776,7 +803,9 @@ const PlatformEditor = ({
     try {
       pickerWindow.document.title = 'Google Photos';
       pickerWindow.document.body.innerHTML = '<div style="font-family:system-ui,-apple-system,sans-serif;padding:32px;color:#111827">Opening Google Photos…</div>';
-      await loadGoogleIdentityClient();
+      if (!googleIdentityReadyRef.current) {
+        await loadGoogleIdentityClient();
+      }
       const clientId = env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID;
       const token = await requestGoogleAccessToken(GOOGLE_PHOTOS_SCOPE, clientId);
       const sessionResponse = await fetch('https://photospicker.googleapis.com/v1/sessions', {
