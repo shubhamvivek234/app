@@ -60,8 +60,21 @@ class FakeCollection:
     async def count_documents(self, query):
         return sum(1 for doc in self.docs if _matches_query(doc, query))
 
-    def find(self, query=None, *_args, **_kwargs):
+    def find(self, query=None, projection=None, *_args, **_kwargs):
         filtered = [doc for doc in self.docs if _matches_query(doc, query or {})]
+        if isinstance(projection, dict) and projection:
+            excludes = {key for key, value in projection.items() if value == 0}
+            includes = {key for key, value in projection.items() if value and key != "_id"}
+            projected = []
+            for doc in filtered:
+                if includes:
+                    next_doc = {key: doc.get(key) for key in includes}
+                else:
+                    next_doc = dict(doc)
+                for key in excludes:
+                    next_doc.pop(key, None)
+                projected.append(next_doc)
+            filtered = projected
         return FakeCursor(filtered)
 
 
@@ -374,6 +387,24 @@ async def test_dashboard_health_matches_connected_accounts_logic_for_refreshable
     assert states["acct_reconnect"] == "reconnect_required"
     action_ids = [item["id"] for item in result["action_items"]]
     assert "reconnect-accounts" in action_ids
+
+
+@pytest.mark.asyncio
+async def test_dashboard_raw_account_loader_keeps_refresh_capability_without_exposing_token():
+    db = FakeDB(
+        social_accounts=[
+            _account("acct_refreshable", refresh_token="encrypted-refresh"),
+            _account("acct_manual", refresh_token=None),
+        ],
+    )
+
+    result = await dashboard_routes._load_raw_accounts(db, "user_1")
+
+    mapped = {account["account_id"]: account for account in result}
+    assert mapped["acct_refreshable"]["has_refresh_token"] is True
+    assert mapped["acct_manual"]["has_refresh_token"] is False
+    assert "refresh_token" not in mapped["acct_refreshable"]
+    assert "refresh_token" not in mapped["acct_manual"]
 
 
 @pytest.mark.asyncio

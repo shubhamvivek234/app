@@ -50,7 +50,7 @@ def _connection_health(doc: dict, now: datetime) -> dict[str, object]:
     reconnect_reason = doc.get("reconnect_reason")
     reconnect_required_at = _coerce_datetime(doc.get("reconnect_required_at"))
     token_error = doc.get("token_error")
-    has_refresh_token = bool(doc.get("refresh_token"))
+    has_refresh_token = bool(doc.get("refresh_token") or doc.get("has_refresh_token"))
     stored_reconnect_flag = bool(doc.get("requires_reconnect"))
 
     if publish_restriction_type or publish_action_required or publish_error_code:

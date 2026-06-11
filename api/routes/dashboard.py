@@ -334,10 +334,14 @@ async def _count_documents(collection, query: dict[str, Any]) -> int:
 
 
 async def _load_raw_accounts(db: DB, user_id: str) -> list[dict[str, Any]]:
-    return await db.social_accounts.find(
+    docs = await db.social_accounts.find(
         {"user_id": user_id, "is_active": True},
-        {"_id": 0, "refresh_token": 0},
+        {"_id": 0},
     ).to_list(length=100)
+    for doc in docs:
+        doc["has_refresh_token"] = bool(doc.get("refresh_token"))
+        doc.pop("refresh_token", None)
+    return docs
 
 
 def _dashboard_account_needs_hydration(account: dict[str, Any]) -> bool:

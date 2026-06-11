@@ -16,6 +16,14 @@ import {
 } from './helpers';
 
 const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
+  const sortedPosts = [...posts].sort((left, right) => {
+    const leftTime = new Date(left?.scheduled_time || 0).getTime();
+    const rightTime = new Date(right?.scheduled_time || 0).getTime();
+    const normalizedLeft = Number.isNaN(leftTime) ? Number.MAX_SAFE_INTEGER : leftTime;
+    const normalizedRight = Number.isNaN(rightTime) ? Number.MAX_SAFE_INTEGER : rightTime;
+    return normalizedLeft - normalizedRight;
+  });
+
   return (
     <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[560px]">
       <CardHeader className="border-b border-slate-100 pb-5">
@@ -30,7 +38,7 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
-        {posts.length === 0 ? (
+        {sortedPosts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
               <FaCalendarAlt />
@@ -43,7 +51,7 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
           </div>
         ) : (
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-            {posts.map((post) => {
+            {sortedPosts.map((post) => {
               const thumbnail = primaryThumbnail(post);
               const scheduledTimeZone = getPostScheduledTimeZone(post);
               return (
