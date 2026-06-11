@@ -4,6 +4,7 @@ Two Redis instances: redis-queue (broker, noeviction) + redis-cache (backend, LR
 Four priority queues with dedicated worker pools.
 Sentry SDK integration for task error tracking (Phase 4).
 """
+import importlib
 import os
 import logging
 from urllib.parse import urlparse
@@ -106,6 +107,25 @@ CELERY_QUEUES = (
     Queue("dead_letter", default_exchange, routing_key="dead_letter"),
 )
 
+_TASK_MODULES = (
+    "celery_workers.tasks.publish",
+    "celery_workers.tasks.media",
+    "celery_workers.tasks.scheduler",
+    "celery_workers.tasks.cleanup",
+    "celery_workers.tasks.tokens",
+    "celery_workers.tasks.reconcile",
+    "celery_workers.tasks.poll_status",
+    "celery_workers.tasks.recurring",
+    "celery_workers.tasks.analytics",
+    "celery_workers.tasks.bulk_import",
+    "celery_workers.tasks.ai_caption",
+    "celery_workers.tasks.gdpr",
+    "celery_workers.tasks.subscription_check",
+    "celery_workers.tasks.api_version_monitor",
+    "celery_workers.tasks.container_status",
+    "celery_workers.tasks.grace_period_reminders",
+)
+
 # ── App factory ──────────────────────────────────────────────────────────────
 def create_celery_app() -> Celery:
     broker_url = os.environ.get("REDIS_QUEUE_URL", "redis://redis-queue:6379/0")
@@ -154,28 +174,14 @@ def create_celery_app() -> Celery:
 
         # Beat schedule (populated in tasks/scheduler.py)
         beat_schedule={},
+        imports=_TASK_MODULES,
     )
-
-    # Auto-discover task modules
-    app.autodiscover_tasks([
-        "celery_workers.tasks.publish",
-        "celery_workers.tasks.media",
-        "celery_workers.tasks.scheduler",
-        "celery_workers.tasks.cleanup",
-        "celery_workers.tasks.tokens",
-        "celery_workers.tasks.reconcile",
-        "celery_workers.tasks.poll_status",        # Phase 5 — polling fallback
-        "celery_workers.tasks.recurring",          # Phase 5.5 — recurring post instances
-        "celery_workers.tasks.analytics",          # Phase 6 — analytics collection
-        "celery_workers.tasks.bulk_import",        # Phase 6 — bulk CSV import
-        "celery_workers.tasks.ai_caption",         # Phase 7.5 — AI caption generation
-        "celery_workers.tasks.gdpr",               # Phase 8 — GDPR erasure + export
-        "celery_workers.tasks.subscription_check", # EC15 — subscription expiry grace period
-        "celery_workers.tasks.api_version_monitor",# Phase 10.2 — platform API version monitoring
-        "celery_workers.tasks.container_status",   # EC12 — non-blocking Instagram container check
-    ])
 
     return app
 
 
 celery_app = create_celery_app()
+
+
+for module_name in _TASK_MODULES:
+    importlib.import_module(module_name)
