@@ -19,6 +19,18 @@ from db.mongo import get_client
 logger = logging.getLogger(__name__)
 
 
+def _coerce_utc_datetime(value):
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return value
+
+
 def _schedule_scan_interval_secs() -> float:
     return float(os.environ.get("SCHEDULE_SCAN_INTERVAL_SECS", "15"))
 
@@ -33,6 +45,10 @@ def _schedule_scan_batch_size() -> int:
 
 def _schedule_scan_max_batches() -> int:
     return max(1, int(os.environ.get("SCHEDULE_SCAN_MAX_BATCHES", "5")))
+
+
+def _scheduler_claim_recovery_secs() -> int:
+    return max(30, int(os.environ.get("SCHEDULER_CLAIM_RECOVERY_SECS", "300")))
 
 
 _SCHEDULE_SCAN_INTERVAL_SECS = _schedule_scan_interval_secs()
@@ -152,7 +168,51 @@ async def _async_scan_and_enqueue() -> dict:
 
     enqueued = 0
     batches_processed = 0
+    recovered = 0
     high_priority_threshold = now + timedelta(minutes=5)
+    claim_recovery_threshold = now - timedelta(seconds=_scheduler_claim_recovery_secs())
+
+    recovery_cursor = db.posts.find(
+        {
+            "status": "queued",
+            "deleted_at": {"$exists": False},
+            "processing_started_at": {"$exists": False},
+            "queue_job_id": None,
+            "scheduler_claimed_at": {"$lte": claim_recovery_threshold},
+        },
+        {"_id": 0, "id": 1},
+        limit=batch_size,
+    )
+    async for post in recovery_cursor:
+        reset = await db.posts.find_one_and_update(
+            {
+                "id": post["id"],
+                "status": "queued",
+                "processing_started_at": {"$exists": False},
+                "queue_job_id": None,
+            },
+            {
+                "$set": {
+                    "status": "scheduled",
+                    "updated_at": now,
+                    "scheduler_recovered_at": now,
+                },
+                "$unset": {
+                    "scheduler_claimed_at": "",
+                },
+                "$push": {
+                    "status_history": {
+                        "status": "scheduled",
+                        "timestamp": now.isoformat(),
+                        "actor": "beat_scheduler_recovery",
+                        "message": "Recovered queued post after parent task was never enqueued",
+                    }
+                },
+            },
+            return_document=True,
+        )
+        if reset is not None:
+            recovered += 1
 
     while batches_processed < max_batches:
         cursor = db.posts.find(
@@ -167,6 +227,17 @@ async def _async_scan_and_enqueue() -> dict:
 
         for post in batch_posts:
             post_id = post["id"]
+            scheduled = _coerce_utc_datetime(post.get("scheduled_time"))
+            queue = (
+                "high_priority"
+                if isinstance(scheduled, datetime) and scheduled <= high_priority_threshold
+                else "default"
+            )
+            countdown = (
+                max(0.0, (scheduled - now).total_seconds())
+                if isinstance(scheduled, datetime)
+                else 0.0
+            )
 
             # Atomic claim — prevents double-enqueue from concurrent Beat instances (EC2)
             result = await db.posts.find_one_and_update(
@@ -189,18 +260,51 @@ async def _async_scan_and_enqueue() -> dict:
                 logger.debug("Post %s already claimed — skipping", post_id)
                 continue
 
-            scheduled = post.get("scheduled_time", now)
-            queue = "high_priority" if scheduled <= high_priority_threshold else "default"
-            countdown = max(0.0, (scheduled - now).total_seconds()) if isinstance(scheduled, datetime) else 0.0
+            try:
+                async_result = publish_post.apply_async(
+                    kwargs={
+                        "post_id": post_id,
+                        "version": post.get("version", 1),
+                    },
+                    countdown=countdown,
+                    queue=queue,
+                )
+            except Exception:
+                rollback_time = datetime.now(timezone.utc)
+                await db.posts.update_one(
+                    {
+                        "id": post_id,
+                        "status": "queued",
+                        "processing_started_at": {"$exists": False},
+                    },
+                    {
+                        "$set": {
+                            "status": "scheduled",
+                            "queue_job_id": None,
+                            "updated_at": rollback_time,
+                        },
+                        "$unset": {
+                            "scheduler_claimed_at": "",
+                        },
+                        "$push": {
+                            "status_history": {
+                                "status": "scheduled",
+                                "timestamp": rollback_time.isoformat(),
+                                "actor": "beat_scheduler",
+                                "message": "Parent publish enqueue failed; reverted to scheduled for retry",
+                            }
+                        },
+                    },
+                )
+                logger.exception("Failed to enqueue scheduled post %s; reverted to scheduled", post_id)
+                continue
 
-            publish_post.apply_async(
-                kwargs={
-                    "post_id": post_id,
-                    "version": post.get("version", 1),
-                },
-                countdown=countdown,
-                queue=queue,
-            )
+            queue_job_id = getattr(async_result, "id", None)
+            if isinstance(queue_job_id, str) and queue_job_id:
+                await db.posts.update_one(
+                    {"id": post_id, "status": "queued"},
+                    {"$set": {"queue_job_id": queue_job_id, "updated_at": now}},
+                )
             enqueued += 1
             logger.info(
                 "Enqueued post %s to %s queue with countdown=%ss (scheduled_lag_target)",
@@ -294,7 +398,8 @@ async def _async_scan_and_enqueue() -> dict:
 
     if batches_processed >= max_batches:
         logger.warning(
-            "Scheduled scan hit batch cap: enqueued=%s batches=%s batch_size=%s lookahead=%ss",
+            "Scheduled scan hit batch cap: recovered=%s enqueued=%s batches=%s batch_size=%s lookahead=%ss",
+            str(recovered),
             str(enqueued),
             str(batches_processed),
             str(batch_size),
@@ -302,7 +407,8 @@ async def _async_scan_and_enqueue() -> dict:
         )
     else:
         logger.info(
-            "Scheduled scan complete: enqueued=%s pre_uploads=%s batches=%s batch_size=%s lookahead=%ss",
+            "Scheduled scan complete: recovered=%s enqueued=%s pre_uploads=%s batches=%s batch_size=%s lookahead=%ss",
+            str(recovered),
             str(enqueued),
             str(pre_uploads_triggered),
             str(batches_processed),
@@ -311,6 +417,7 @@ async def _async_scan_and_enqueue() -> dict:
         )
 
     return {
+        "recovered": recovered,
         "enqueued": enqueued,
         "pre_uploads": pre_uploads_triggered,
         "batches_processed": batches_processed,
@@ -349,6 +456,8 @@ def scan_pre_upload_timeouts() -> dict:
 async def _async_scan_pre_upload_timeouts() -> dict:
     from celery_workers.tasks.publish import (
         _get_publish_targets,
+        _get_platform_pre_upload_started_at,
+        _get_platform_pre_upload_status,
         _move_to_dlq,
         _pre_upload_result_path,
         _sync_pre_upload_aggregate,
