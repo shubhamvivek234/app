@@ -126,6 +126,13 @@ _TASK_MODULES = (
     "celery_workers.tasks.grace_period_reminders",
 )
 
+_SCHEDULE_MODULES = (
+    "celery_workers.tasks.scheduler",
+    "celery_workers.tasks.recurring",
+    "celery_workers.tasks.analytics",
+    "celery_workers.tasks.poll_status",
+)
+
 # ── App factory ──────────────────────────────────────────────────────────────
 def create_celery_app() -> Celery:
     broker_url = os.environ.get("REDIS_QUEUE_URL", "redis://redis-queue:6379/0")
@@ -174,8 +181,9 @@ def create_celery_app() -> Celery:
 
         # Beat schedule (populated in tasks/scheduler.py)
         beat_schedule={},
-        imports=_TASK_MODULES,
     )
+
+    app.autodiscover_tasks(_TASK_MODULES)
 
     return app
 
@@ -183,5 +191,5 @@ def create_celery_app() -> Celery:
 celery_app = create_celery_app()
 
 
-for module_name in _TASK_MODULES:
+for module_name in _SCHEDULE_MODULES:
     importlib.import_module(module_name)
