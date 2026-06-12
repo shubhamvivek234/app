@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { validateCommonPostPlatform } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,8 +19,11 @@ import {
   importRemoteMedia,
   getHashtagGroups,
   generateContent,
+  createPost,
+  getPost,
+  updatePost,
 } from '@/lib/api';
-import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
+import { convertWallClockToUtcIso, getScheduledWallClockParts } from '@/lib/scheduledTime';
 import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
 import {
   FaTwitter, FaInstagram, FaLinkedin, FaFacebook,
@@ -389,6 +392,28 @@ const isTikTokPrivateVisibility = (value) => {
   return normalized === 'private' || normalized === 'self_only';
 };
 
+const guessMediaTypeFromUrl = (url, fallback = 'image') => {
+  const normalized = String(url || '').toLowerCase();
+  if (/\.(mp4|mov|m4v|webm|avi|mkv)(\?|#|$)/.test(normalized)) {
+    return 'video';
+  }
+  return fallback;
+};
+
+const buildLoadedMediaItems = (mediaUrls = [], mediaIds = [], fallbackType = 'image', thumbnailUrls = []) => (
+  (mediaUrls || []).map((url, index) => ({
+    mediaId: mediaIds[index] || mediaIds[0] || null,
+    url,
+    originalUrl: url,
+    sourceUrl: url,
+    thumbnailUrl: thumbnailUrls[index] || thumbnailUrls[0] || url,
+    type: guessMediaTypeFromUrl(url, fallbackType),
+    name: `media-${index + 1}`,
+    width: 0,
+    height: 0,
+  }))
+);
+
 // ── Scroll Time Picker ────────────────────────────────────────────────────────
 /** One drum-wheel column with ▲ / ▼ arrows and low-sensitivity scroll. */
 const DrumColumn = ({ items, selected, onSelect, fmt, wrap = true }) => {
@@ -503,14 +528,20 @@ const ScrollTimePicker = ({ value, onChange }) => {
  *   asModal          – bool   – render as 80%-screen modal overlay
  *   onClose          – fn     – called when back/close is clicked in modal mode
  */
-const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
+const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId: editPostIdProp = null }) => {
   const cachedAccountsRef = useRef(getCachedSocialAccounts());
   const cachedAccounts = cachedAccountsRef.current;
   const { type: typeFromParam } = useParams();
-  const type = postTypeOverride || typeFromParam;
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const coverImageInputRef = useRef(null);
+  const hydratedEditPostRef = useRef(null);
+  const [editingPost, setEditingPost] = useState(null);
+  const [editLoading, setEditLoading] = useState(() => Boolean(editPostIdProp || searchParams.get('edit')));
+  const editPostId = editPostIdProp || searchParams.get('edit') || null;
+  const isEditMode = Boolean(editPostId);
+  const type = postTypeOverride || typeFromParam || editingPost?.post_type;
 
   // Drag-to-reorder refs
   const dragItemIdx    = useRef(null);
@@ -625,6 +656,108 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     loadHashtagGroups();
     setScheduledDate(formatLocalDateInput(new Date()));
   }, [loadAccounts, loadHashtagGroups]);
+
+  useEffect(() => {
+    if (!editPostId) {
+      setEditLoading(false);
+      setEditingPost(null);
+      hydratedEditPostRef.current = null;
+      return undefined;
+    }
+
+    let active = true;
+    setEditLoading(true);
+
+    getPost(editPostId)
+      .then((post) => {
+        if (!active) return;
+        setEditingPost(post);
+        hydratedEditPostRef.current = null;
+      })
+      .catch((error) => {
+        if (!active) return;
+        toast.error(error?.response?.data?.detail || 'Failed to load this draft for editing');
+        navigate('/content-library');
+      })
+      .finally(() => {
+        if (active) setEditLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [editPostId, navigate]);
+
+  useEffect(() => {
+    if (!editingPost || hydratedEditPostRef.current === editingPost.id) return;
+
+    const nextSelectedAccounts = Array.from(new Set(
+      editingPost.account_ids
+      || editingPost.social_account_ids
+      || []
+    ));
+    const nextUploadedMedia = buildLoadedMediaItems(
+      editingPost.media_urls || [],
+      editingPost.media_ids || [],
+      editingPost.post_type === 'video' ? 'video' : 'image',
+      editingPost.thumbnail_urls || [],
+    );
+
+    const nextAccountOverrides = {};
+    Object.entries(editingPost.account_overrides || {}).forEach(([accountId, override]) => {
+      const account = availableAccounts.find((candidate) => (
+        candidate.id === accountId || candidate.account_id === accountId
+      ));
+      const platform = account?.platform || null;
+      const nextOverride = createDefaultAccountOverrides();
+
+      if (override?.content !== undefined) nextOverride.content = override.content || '';
+      if (override?.media_urls?.length || override?.media_ids?.length) {
+        nextOverride.media = buildLoadedMediaItems(
+          override.media_urls || [],
+          override.media_ids || [],
+          editingPost.post_type === 'video' ? 'video' : 'image',
+          override.thumbnail_urls || [],
+        );
+      }
+      if (override?.title !== undefined) nextOverride.videoTitle = override.title || '';
+      if (override?.youtube_privacy !== undefined) nextOverride.youtubePrivacy = override.youtube_privacy;
+      if (override?.linkedin_document_url !== undefined) nextOverride.linkedinDocumentUrl = override.linkedin_document_url || null;
+      if (override?.linkedin_document_title !== undefined) nextOverride.linkedinDocumentTitle = override.linkedin_document_title || null;
+      if (override?.tiktok_privacy !== undefined) nextOverride.tiktokPrivacy = override.tiktok_privacy;
+      if (override?.tiktok_allow_duet !== undefined) nextOverride.tiktokAllowDuet = override.tiktok_allow_duet;
+      if (override?.tiktok_allow_stitch !== undefined) nextOverride.tiktokAllowStitch = override.tiktok_allow_stitch;
+      if (override?.tiktok_allow_comment !== undefined) nextOverride.tiktokAllowComments = override.tiktok_allow_comment;
+      if (override?.poll) nextOverride.poll = override.poll;
+      if (override?.first_comment !== undefined) {
+        if (platform === 'linkedin') {
+          nextOverride.linkedinFirstComment = override.first_comment || '';
+        } else {
+          nextOverride.firstComment = override.first_comment || '';
+        }
+      }
+
+      nextAccountOverrides[accountId] = nextOverride;
+    });
+
+    const scheduledTimeZone = editingPost.scheduled_timezone_explicit ? editingPost.timezone : null;
+    const scheduledWallClock = editingPost.scheduled_time
+      ? getScheduledWallClockParts(editingPost.scheduled_time, scheduledTimeZone)
+      : null;
+
+    setSelectedAccounts(nextSelectedAccounts);
+    setCommonCaption(editingPost.content || '');
+    setAccountOverrides(nextAccountOverrides);
+    setUploadedMedia(nextUploadedMedia);
+    setVideoTitle(editingPost.title || '');
+    setSelectedTimezone(editingPost.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata');
+    if (scheduledWallClock) {
+      setScheduledDate(scheduledWallClock.date);
+      setScheduledTime(scheduledWallClock.time);
+    }
+
+    hydratedEditPostRef.current = editingPost.id;
+  }, [availableAccounts, editingPost]);
 
   // ── Keep platformOrder and expandedPlatform in sync ───────────────────────
   useEffect(() => {
@@ -1452,12 +1585,15 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
 
     setLoading(true);
     try {
-      const apiUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-
       let scheduledDateTime = null;
       let publishNow = false;
 
       if (mode === 'now') {
+        if (isEditMode) {
+          toast.error('Open the existing draft, save your changes, then schedule or submit it for review from the library.');
+          setLoading(false);
+          return;
+        }
         publishNow = true;
       } else if (mode === 'scheduled') {
         if (!scheduledDate || !scheduledTime) {
@@ -1468,6 +1604,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       } else if (mode === 'timeslot') {
         if (selectedAccounts.length !== 1) {
           toast.error('Add to Timeslot works with exactly one selected account');
+          setLoading(false);
+          return;
+        }
+        if (isEditMode) {
+          toast.error('Timeslot scheduling is only available when creating a new post.');
           setLoading(false);
           return;
         }
@@ -1532,7 +1673,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         })
       );
 
-      await axios.post(`${apiUrl}/api/posts`, {
+      const postPayload = {
         content: primaryContent,
         platforms: selectedPlatforms,
         post_type: !hasAnyMedia && hasPoll ? 'text' : effectivePostType,
@@ -1552,23 +1693,42 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
         tiktok_allow_comment: tiktokAllowComments,
         platform_overrides: {},
         account_overrides: accountOverridesPayload,
-      }, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-        withCredentials: true,
-        timeout: 15000,
-      });
+      };
+
+      if (isEditMode && editingPost?.id) {
+        const updatePayload = {
+          version: editingPost.version,
+          content: primaryContent,
+          platforms: selectedPlatforms,
+          account_ids: selectedAccounts,
+          media_ids: mediaIds,
+          media_urls: mediaUrls,
+          post_type: postPayload.post_type,
+          title: fallbackTitle || null,
+          timezone: selectedTimezone,
+          account_overrides: accountOverridesPayload,
+          platform_overrides: {},
+          ...(mode === 'scheduled' ? { scheduled_time: scheduledDateTime } : {}),
+        };
+        const updatedPost = await updatePost(editingPost.id, updatePayload);
+        setEditingPost(updatedPost);
+      } else {
+        await createPost(postPayload);
+      }
 
       toast.success(
-        mode === 'draft' ? 'Draft saved!' :
+        isEditMode
+          ? (mode === 'scheduled' ? 'Post updated and rescheduled!' : 'Draft updated!')
+          : mode === 'draft' ? 'Draft saved!' :
         mode === 'now'   ? 'Post published!' :
         mode === 'timeslot' ? 'Post added to timeslot!' :
         'Post scheduled!'
       );
 
-      if (createAnother) {
+      if (!isEditMode && createAnother) {
         resetForm();
       } else {
-        navigate('/content');
+        navigate('/content-library');
         onClose?.();
       }
     } catch (err) {
@@ -1587,9 +1747,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
     if (onClose) {
       onClose();
     } else {
-      navigate('/create');
+      navigate('/create-post');
     }
   };
+
+  if (editLoading) {
+    return (
+      <div className="flex h-full min-h-[60vh] items-center justify-center bg-offwhite">
+        <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 text-sm font-medium text-gray-600 shadow-sm">
+          Loading draft…
+        </div>
+      </div>
+    );
+  }
 
   // ── Build reusable JSX sections ───────────────────────────────────────────
 
@@ -1601,7 +1771,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
           <FaArrowLeft className="text-lg" />
         </button>
         <div>
-          <h1 className="text-lg font-bold text-gray-900">Create Post</h1>
+          <h1 className="text-lg font-bold text-gray-900">{isEditMode ? 'Edit Post' : 'Create Post'}</h1>
           {selectedAccounts.length > 0 && (
             <span className="text-xs text-gray-500">
               {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''} selected
@@ -2131,14 +2301,20 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
       )}
 
       <div className="flex items-center justify-between gap-4">
-        <label className="flex items-center gap-2.5 cursor-pointer hover:opacity-70 transition-opacity">
-          <Checkbox
-            checked={createAnother}
-            onCheckedChange={(v) => setCreateAnother(!!v)}
-            className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-          />
-          <span className="text-sm font-medium text-gray-700">Create Another</span>
-        </label>
+        {isEditMode ? (
+          <div className="text-sm font-medium text-gray-500">
+            Editing existing post
+          </div>
+        ) : (
+          <label className="flex items-center gap-2.5 cursor-pointer hover:opacity-70 transition-opacity">
+            <Checkbox
+              checked={createAnother}
+              onCheckedChange={(v) => setCreateAnother(!!v)}
+              className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+            />
+            <span className="text-sm font-medium text-gray-700">Create Another</span>
+          </label>
+        )}
 
         <div className="flex items-center gap-3">
           <Button
@@ -2147,28 +2323,32 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             disabled={loading}
             className="text-gray-700 border-2 border-gray-300 h-9 font-semibold hover:border-gray-400 hover:bg-gray-50 transition-colors"
           >
-            Save Drafts
+            {isEditMode ? 'Save changes' : 'Save Drafts'}
           </Button>
 
-          <Button
-            size="sm"
-            onClick={() => handleSubmit('now')}
-            disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
-            className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
-          >
-            {loading ? 'Posting…' : 'Post Now'}
-          </Button>
+          {!isEditMode ? (
+            <>
+              <Button
+                size="sm"
+                onClick={() => handleSubmit('now')}
+                disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
+                className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+              >
+                {loading ? 'Posting…' : 'Post Now'}
+              </Button>
 
-          <Button
-            variant="outline" size="sm"
-            onClick={() => setShowTimeslotPicker(true)}
-            disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
-            className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
-            title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
-          >
-            <FaClock className="text-xs" />
-            Add to Timeslot
-          </Button>
+              <Button
+                variant="outline" size="sm"
+                onClick={() => setShowTimeslotPicker(true)}
+                disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
+                className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
+                title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
+              >
+                <FaClock className="text-xs" />
+                Add to Timeslot
+              </Button>
+            </>
+          ) : null}
 
           <Button
             variant="outline" size="sm"
@@ -2177,7 +2357,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose }) => {
             className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
           >
             <FaClock className="text-xs" />
-            Schedule
+            {isEditMode ? 'Update schedule' : 'Schedule'}
           </Button>
         </div>
       </div>

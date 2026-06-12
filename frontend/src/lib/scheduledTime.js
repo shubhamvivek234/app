@@ -155,3 +155,12 @@ export const formatScheduledCompactDateTime = (value, timeZone = null, { include
 };
 
 export const getScheduledDateKey = (value, timeZone = null) => formatParts(value, normalizeTimeZone(timeZone));
+
+export const getScheduledWallClockParts = (value, timeZone = null) => {
+  const parts = getZonedDateTimeParts(value, normalizeTimeZone(timeZone));
+  if (!parts) return null;
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+};

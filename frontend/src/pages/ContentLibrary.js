@@ -512,6 +512,7 @@ const ContentLibrary = () => {
               const MediaKindIcon = mediaKindMeta.icon;
               const cardThumbnail = post.published_card_thumbnail_url || post.thumbnail_urls?.[0] || post.cover_image || post.media_urls?.[0] || null;
               const showCardMediaMeta = initialStatus === 'published' || initialStatus === 'scheduled';
+              const canEditPost = ['draft', 'scheduled', 'pending_approval'].includes(post.status);
 
               return (
                 <div
@@ -520,9 +521,11 @@ const ContentLibrary = () => {
                 >
                   {/* Action Dropdown Hover (Top Right) */}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 rounded border border-slate-100 px-1 py-1 backdrop-blur-sm shadow-sm">
-                    <button onClick={() => navigate(`/create?edit=${post.id}`)} className="p-1 px-2 text-slate-500 hover:text-indigo-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
-                      Edit
-                    </button>
+                    {canEditPost ? (
+                      <button onClick={() => navigate(`/create-post?edit=${encodeURIComponent(post.id)}`)} className="p-1 px-2 text-slate-500 hover:text-indigo-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
+                        Edit
+                      </button>
+                    ) : null}
                     <button
                       onClick={() => handleDuplicate(post.id)}
                       title="Duplicate as draft"

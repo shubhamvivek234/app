@@ -47,10 +47,11 @@ def _build_invite_url(token: str) -> str:
 
 def _parse_timestamp(value):
     if isinstance(value, datetime):
-        return value
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
         except ValueError:
             return None
     return None
@@ -92,8 +93,8 @@ async def _serialize_invite(db: DB, invite: dict, workspace_name: str | None = N
         "email": invite["email"],
         "role": invite["role"],
         "status": invite.get("status", "pending"),
-        "created_at": invite.get("created_at"),
-        "expires_at": invite.get("expires_at"),
+        "created_at": _parse_timestamp(invite.get("created_at")),
+        "expires_at": _parse_timestamp(invite.get("expires_at")),
         "invite_url": _build_invite_url(invite["token"]),
         "workspace_id": invite.get("workspace_id"),
         "workspace_name": workspace_name,
@@ -316,7 +317,7 @@ async def get_invite_details(token: str, db: DB):
         "invited_email": invite["email"],
         "role": invite["role"],
         "workspace_name": (workspace or {}).get("name") or "Workspace",
-        "expires_at": invite.get("expires_at"),
+        "expires_at": _parse_timestamp(invite.get("expires_at")),
         "user_exists": existing_user is not None,
         "invited_by_name": (inviter or {}).get("display_name") or (inviter or {}).get("email"),
         "invite_url": _build_invite_url(token),

@@ -82,6 +82,7 @@ const TeamMembers = () => {
   const { user } = useAuth();
   const [workspace, setWorkspace] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadErrorStatus, setLoadErrorStatus] = useState(null);
   const [inviting, setInviting] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('viewer');
@@ -91,11 +92,16 @@ const TeamMembers = () => {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadErrorStatus(null);
     try {
       const data = await getWorkspaceMembers();
       setWorkspace(data);
     } catch (error) {
-      toast.error(error?.response?.data?.detail || 'Failed to load team workspace');
+      const status = error?.response?.status || null;
+      setLoadErrorStatus(status);
+      if (status !== 403) {
+        toast.error(error?.response?.data?.detail || 'Failed to load team workspace');
+      }
     } finally {
       setLoading(false);
     }
@@ -110,6 +116,24 @@ const TeamMembers = () => {
   const permissions = workspace?.permissions || {};
   const currentUserId = user?.user_id;
   const currentMember = members.find((member) => member.user_id === currentUserId) || null;
+
+  if (!loading && loadErrorStatus === 403) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+          <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
+              <FaUsers className="text-sm" />
+            </div>
+            <h1 className="mt-5 text-2xl font-semibold text-slate-950">Team access is limited in this workspace</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+              Your current role can’t open the Team workspace surface. Ask an admin or owner to grant a role with workspace access if you need to review members or manage invites.
+            </p>
+          </section>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   const handleInvite = async () => {
     if (!inviteEmail.trim()) return;

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import CreatePostForm from '@/pages/CreatePostForm';
 import {
@@ -15,6 +15,8 @@ import { SiBluesky, SiThreads } from 'react-icons/si';
 
 const CreatePost = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editPostId = useMemo(() => searchParams.get('edit') || null, [searchParams]);
 
   // null = closed, 'text' | 'image' | 'video' | 'mixed' = composer open for that type
   const [composerType, setComposerType] = useState(null);
@@ -87,6 +89,14 @@ const CreatePost = () => {
     bluesky:   <SiBluesky   className="text-gray-500" />,
     threads:   <SiThreads   className="text-gray-500" />,
   };
+
+  if (editPostId) {
+    return (
+      <DashboardLayout>
+        <CreatePostForm editPostId={editPostId} />
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

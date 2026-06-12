@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
 import { useTheme } from '@/context/ThemeContext';
+import { canReadApprovalsWorkspace, canReadTeamWorkspace } from '@/lib/workspacePermissions';
 
 const UserMenu = ({ user, onLogout }) => {
   const [open, setOpen] = useState(false);
@@ -109,6 +110,8 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { isDarkMode, toggleDarkMode } = useTheme();
+  const showApprovalsNav = canReadApprovalsWorkspace(user);
+  const showTeamNav = canReadTeamWorkspace(user);
 
   const navigation = {
     workspace: [
@@ -128,12 +131,12 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       { name: 'Scheduled', path: '/content-library?status=scheduled', icon: FaClock },
       { name: 'Posted', path: '/content-library?status=published', icon: FaCheckCircle },
       { name: 'Drafts', path: '/content-library?status=draft', icon: FaFileAlt },
-      { name: 'Approvals', path: '/approvals', icon: FaCheckDouble },
+      ...(showApprovalsNav ? [{ name: 'Approvals', path: '/approvals', icon: FaCheckDouble }] : []),
       { name: 'Inbox', path: '/inbox', icon: FaInbox },
     ],
     configuration: [
       { name: 'Connections', path: '/accounts', icon: FaUsers },
-      { name: 'Team', path: '/team', icon: FaUsers },
+      ...(showTeamNav ? [{ name: 'Team', path: '/team', icon: FaUsers }] : []),
       { name: 'Settings', path: '/settings', icon: FaCog },
       { name: 'Api', path: '/api-keys', icon: FaKey },
     ],

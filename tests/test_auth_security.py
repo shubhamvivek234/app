@@ -17,8 +17,8 @@ from utils.auth_emails import (
 
 
 class _FakeUsersCollection:
-    def __init__(self):
-        self.docs = []
+    def __init__(self, docs=None):
+        self.docs = [dict(doc) for doc in (docs or [])]
 
     async def find_one(self, query, projection=None):
         for doc in self.docs:
@@ -35,13 +35,45 @@ class _FakeUsersCollection:
             if all(doc.get(key) == value for key, value in query.items()):
                 for key, value in update.get("$set", {}).items():
                     doc[key] = value
+                for key, value in update.get("$addToSet", {}).items():
+                    current = list(doc.get(key) or [])
+                    if value not in current:
+                        current.append(value)
+                    doc[key] = current
+                return type("UpdateResult", (), {"matched_count": 1})()
+        return type("UpdateResult", (), {"matched_count": 0})()
+
+
+class _FakeGenericCollection(_FakeUsersCollection):
+    async def find_one(self, query, projection=None):
+        for doc in self.docs:
+            if all(doc.get(key) == value for key, value in query.items()):
+                result = dict(doc)
+                if projection and projection.get("_id") == 0:
+                    result.pop("_id", None)
+                return result
+        return None
+
+    async def update_one(self, query, update):
+        for doc in self.docs:
+            if all(doc.get(key) == value for key, value in query.items()):
+                for key, value in update.get("$set", {}).items():
+                    doc[key] = value
+                for key, value in update.get("$addToSet", {}).items():
+                    current = list(doc.get(key) or [])
+                    if value not in current:
+                        current.append(value)
+                    doc[key] = current
                 return type("UpdateResult", (), {"matched_count": 1})()
         return type("UpdateResult", (), {"matched_count": 0})()
 
 
 class _FakeDB:
     def __init__(self):
+        self.docs = []
         self.users = _FakeUsersCollection()
+        self.workspaces = _FakeGenericCollection()
+        self.workspace_members = _FakeGenericCollection()
 
 
 class _FakeAsyncResponse:
@@ -117,7 +149,51 @@ async def test_exchange_session_sets_cookie_and_returns_email_verified(monkeypat
     assert created["token"] == "firebase-id-token"
     assert result.email_verified is True
     assert result.display_name == "Alice"
+    assert result.workspace_role == "owner"
+    assert "workspace:invite" in result.workspace_permissions
     assert db.users.docs[0]["email_verified"] is True
+    assert len(db.workspace_members.docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_me_returns_workspace_role_and_permissions():
+    db = _FakeDB()
+    now = datetime.now(timezone.utc)
+    db.users.docs.append(
+        {
+            "user_id": "user-1",
+            "email": "viewer@example.com",
+            "email_verified": True,
+            "display_name": "Viewer User",
+            "plan": "starter",
+            "subscription_status": "free",
+            "timezone": "UTC",
+            "mfa_enabled": False,
+            "role": "user",
+            "onboarding_completed": False,
+            "workspace_ids": ["ws-1"],
+            "default_workspace_id": "ws-1",
+            "created_at": now,
+        }
+    )
+    db.workspace_members.docs.append(
+        {
+            "workspace_id": "ws-1",
+            "user_id": "user-1",
+            "role": "viewer",
+            "joined_at": now,
+        }
+    )
+
+    result = await auth_routes.get_me(
+        request=Request({"type": "http", "method": "GET", "path": "/api/auth/me", "headers": []}),
+        current_user=dict(db.users.docs[0]),
+        db=db,
+    )
+
+    assert result.workspace_role == "viewer"
+    assert "post:read" in result.workspace_permissions
+    assert "post:update" not in result.workspace_permissions
 
 
 def _fake_create_session_cookie(container):

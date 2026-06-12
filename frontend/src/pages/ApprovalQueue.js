@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 import {
   FaCheck,
   FaCheckDouble,
@@ -79,7 +80,9 @@ const ApprovalCard = ({
   onReject,
   onResubmit,
   onReturnToDraft,
+  onOpenDraft,
   busyId,
+  permissions,
 }) => {
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');
@@ -88,6 +91,8 @@ const ApprovalCard = ({
   const isOwner = post.user_id === currentUserId;
   const isBusy = busyId === post.id;
   const scheduledTimeZone = getPostScheduledTimeZone(post);
+  const canReview = Boolean(permissions?.can_review);
+  const canResubmit = Boolean(permissions?.can_resubmit) && isOwner;
 
   const creatorLabel = post.creator_display_name || post.creator_email || 'Workspace member';
   const reasonText = post.rejection_reason || post.rejection_note;
@@ -199,39 +204,57 @@ const ApprovalCard = ({
 
           {mode === 'awaiting' && !showReject ? (
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onApprove(post.id)}
-                disabled={isBusy}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
-              >
-                <FaCheck className="text-xs" />
-                {isBusy ? 'Approving…' : 'Approve'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowReject(true)}
-                disabled={isBusy}
-                className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
-              >
-                <FaTimes className="text-xs" />
-                Request changes
-              </button>
+              {canReview ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onApprove(post.id)}
+                    disabled={isBusy}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    <FaCheck className="text-xs" />
+                    {isBusy ? 'Approving…' : 'Approve'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReject(true)}
+                    disabled={isBusy}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                  >
+                    <FaTimes className="text-xs" />
+                    Request changes
+                  </button>
+                </>
+              ) : (
+                <span className="text-sm text-slate-500">
+                  Your role can view this queue, but it cannot approve or request changes.
+                </span>
+              )}
             </div>
           ) : null}
 
           {mode === 'changes_requested' ? (
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              {isOwner ? (
-                <button
-                  type="button"
-                  onClick={() => onResubmit(post.id)}
-                  disabled={isBusy}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-                >
-                  <FaRedo className="text-xs" />
-                  {isBusy ? 'Resubmitting…' : 'Resubmit for review'}
-                </button>
+              {canResubmit ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onOpenDraft(post.id)}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    <FaRedo className="text-xs" />
+                    Edit draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onResubmit(post.id)}
+                    disabled={isBusy}
+                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    <FaCheckDouble className="text-xs" />
+                    {isBusy ? 'Resubmitting…' : 'Resubmit for review'}
+                  </button>
+                </>
               ) : (
                 <span className="text-sm text-slate-500">Waiting on the creator to update and resubmit this draft.</span>
               )}
@@ -240,15 +263,21 @@ const ApprovalCard = ({
 
           {mode === 'expired' ? (
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onReturnToDraft(post.id)}
-                disabled={isBusy}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
-              >
-                <FaPaperPlane className="text-xs" />
-                {isBusy ? 'Returning…' : 'Return to draft'}
-              </button>
+              {canReview ? (
+                <button
+                  type="button"
+                  onClick={() => onReturnToDraft(post.id, { openAfterReturn: isOwner })}
+                  disabled={isBusy}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  <FaPaperPlane className="text-xs" />
+                  {isBusy ? 'Returning…' : isOwner ? 'Return to draft & edit' : 'Return to draft'}
+                </button>
+              ) : (
+                <span className="text-sm text-slate-500">
+                  An editor or admin needs to return this item to draft before it can be rescheduled.
+                </span>
+              )}
             </div>
           ) : null}
         </div>
@@ -267,20 +296,26 @@ const EmptyState = ({ icon: Icon, title, description }) => (
 
 const ApprovalQueue = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [queue, setQueue] = useState({ awaiting: [], changes_requested: [], expired: [], summary: {} });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('awaiting');
   const [busyId, setBusyId] = useState(null);
+  const [loadErrorStatus, setLoadErrorStatus] = useState(null);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
+    setLoadErrorStatus(null);
     try {
       const data = await getApprovalQueue();
       setQueue(data);
     } catch (error) {
+      setLoadErrorStatus(error?.response?.status || null);
       if (!silent) {
-        toast.error(error?.response?.data?.detail || 'Failed to load approval queue');
+        if (error?.response?.status !== 403) {
+          toast.error(error?.response?.data?.detail || 'Failed to load approval queue');
+        }
       }
     } finally {
       if (!silent) setLoading(false);
@@ -342,18 +377,25 @@ const ApprovalQueue = () => {
     }
   };
 
-  const handleReturnToDraft = async (postId) => {
+  const handleReturnToDraft = async (postId, { openAfterReturn = false } = {}) => {
     setBusyId(postId);
     try {
       await returnPostToDraft(postId);
       await load({ silent: true });
-      toast.success('Post returned to draft');
+      toast.success(openAfterReturn ? 'Post returned to draft. Opening the editor…' : 'Post returned to draft');
+      if (openAfterReturn) {
+        navigate(`/create-post?edit=${encodeURIComponent(postId)}`);
+      }
     } catch (error) {
       toast.error(error?.response?.data?.detail || 'Failed to return post to draft');
     } finally {
       setBusyId(null);
     }
   };
+
+  const handleOpenDraft = useCallback((postId) => {
+    navigate(`/create-post?edit=${encodeURIComponent(postId)}`);
+  }, [navigate]);
 
   const tabs = useMemo(() => ([
     { key: 'awaiting', label: 'Awaiting Review', count: queue.summary?.awaiting || 0 },
@@ -362,6 +404,25 @@ const ApprovalQueue = () => {
   ]), [queue.summary]);
 
   const activeItems = queue[activeTab] || [];
+  const queuePermissions = queue.permissions || {};
+
+  if (!loading && loadErrorStatus === 403) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+          <section className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
+              <FaCheckDouble className="text-sm" />
+            </div>
+            <h1 className="mt-5 text-2xl font-semibold text-slate-950">Approval access is limited in this workspace</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+              Your current workspace role can’t open the Approvals queue. Ask an admin or owner to grant content review access if you need to inspect or approve scheduled posts.
+            </p>
+          </section>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -380,6 +441,10 @@ const ApprovalQueue = () => {
               </div>
               <p className="max-w-2xl text-sm leading-6 text-slate-600">
                 Review pending posts, track requested changes, and pull expired approvals back into draft before they miss the publish window.
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+                Current role: {queue.current_user_role || user?.workspace_role || 'viewer'}
+                {queuePermissions.can_review ? ' • can review and recover items' : ' • read-only queue access'}
               </p>
             </div>
 
@@ -463,7 +528,9 @@ const ApprovalQueue = () => {
                 onReject={handleReject}
                 onResubmit={handleResubmit}
                 onReturnToDraft={handleReturnToDraft}
+                onOpenDraft={handleOpenDraft}
                 busyId={busyId}
+                permissions={queuePermissions}
               />
             ))
           )}

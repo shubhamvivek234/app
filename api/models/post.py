@@ -186,9 +186,15 @@ class BulkCreateResponse(BaseModel):
 class UpdatePostRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    content: str | None = Field(None, min_length=1, max_length=10000)
+    content: str | None = Field(None, max_length=10000)
     scheduled_time: datetime | None = None
     platforms: list[str] | None = Field(None, max_length=10)
+    account_ids: list[str] | None = Field(None, max_length=20)
+    media_ids: list[str] | None = Field(None, max_length=10)
+    media_urls: list[str] | None = Field(None, max_length=10)
+    post_type: str | None = Field(None, max_length=50)
+    title: str | None = Field(None, max_length=500)
+    timezone: str | None = Field(None, max_length=100)
     platform_overrides: dict[str, PlatformOverride] | None = None
     account_overrides: dict[str, PlatformOverride] | None = None
     version: int = Field(..., description="Optimistic lock version — must match current DB version")

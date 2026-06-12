@@ -25,6 +25,7 @@ from utils.auth_emails import (
     send_verification_email,
 )
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
+from utils.roles import has_permission
 from utils.session import clear_session_cookie, create_session_cookie, revoke_session, verify_session_cookie
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,14 @@ _IP_MAX_LOGIN_ATTEMPTS = 20   # higher threshold for IP — shared NAT/proxies
 _LOGIN_LOCKOUT_SECONDS = 15 * 60  # 15 minutes
 
 _DEFAULT_WORKSPACE_NAME = "Personal Workspace"
+_ACTIVE_WORKSPACE_PERMISSION_KEYS = (
+    "workspace:read",
+    "workspace:invite",
+    "workspace:remove_member",
+    "workspace:update",
+    "post:read",
+    "post:update",
+)
 
 
 # ── Brute-force helpers ───────────────────────────────────────────────────────
@@ -186,6 +195,62 @@ async def _clear_login_attempts(cache_redis, email: str) -> None:
         )
 
 
+def _coerce_user_defaults(user: dict) -> dict:
+    user = dict(user)
+    if user.get("plan") is None:
+        user["plan"] = "starter"
+    if user.get("subscription_status") is None:
+        user["subscription_status"] = "free"
+    return user
+
+
+async def _build_user_response(db: DB, user: dict) -> UserResponse:
+    hydrated_user = dict(user)
+
+    if not hydrated_user.get("workspace_ids"):
+        ws_id = await _ensure_personal_workspace(db, hydrated_user["user_id"], hydrated_user.get("display_name"))
+        await db.users.update_one(
+            {"user_id": hydrated_user["user_id"]},
+            {
+                "$set": {"default_workspace_id": ws_id},
+                "$addToSet": {"workspace_ids": ws_id},
+            },
+        )
+        refreshed = await db.users.find_one({"user_id": hydrated_user["user_id"]}, {"_id": 0})
+        if refreshed:
+            hydrated_user = refreshed
+        else:
+            hydrated_user["default_workspace_id"] = ws_id
+            hydrated_user["workspace_ids"] = [ws_id]
+
+    hydrated_user = _coerce_user_defaults(hydrated_user)
+
+    workspace_id = hydrated_user.get("default_workspace_id")
+    workspace_role = None
+    if workspace_id:
+        membership = await db.workspace_members.find_one(
+            {"workspace_id": workspace_id, "user_id": hydrated_user["user_id"]},
+            {"_id": 0, "role": 1},
+        )
+        workspace_role = (membership or {}).get("role")
+
+        if workspace_role is None:
+            workspace = await db.workspaces.find_one(
+                {"workspace_id": workspace_id},
+                {"_id": 0, "owner_id": 1},
+            )
+            if workspace and workspace.get("owner_id") == hydrated_user["user_id"]:
+                workspace_role = "owner"
+
+    hydrated_user["workspace_role"] = workspace_role
+    hydrated_user["workspace_permissions"] = [
+        permission
+        for permission in _ACTIVE_WORKSPACE_PERMISSION_KEYS
+        if workspace_role and has_permission(workspace_role, permission)
+    ]
+    return UserResponse(**hydrated_user)
+
+
 # ── /me ──────────────────────────────────────────────────────────────────────
 
 @router.get("/auth/me", response_model=UserResponse)
@@ -200,28 +265,7 @@ async def get_me(
     get_current_user dep verifies the Firebase JWT and fetches from MongoDB.
     If user doesn't exist yet (new Firebase signup), create it here.
     """
-    # deps.get_current_user already guarantees user exists; but handle bootstrap
-    # for deployments where user creation is deferred to this endpoint.
-    user = current_user
-
-    if not user.get("workspace_ids"):
-        ws_id = await _ensure_personal_workspace(db, user["user_id"], user.get("display_name"))
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {
-                "$set": {"default_workspace_id": ws_id},
-                "$addToSet": {"workspace_ids": ws_id},
-            },
-        )
-        user = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-
-    # Coerce legacy DB null values so Pydantic validation doesn't crash on log-in
-    if user.get("plan") is None:
-        user["plan"] = "starter"
-    if user.get("subscription_status") is None:
-        user["subscription_status"] = "free"
-
-    return UserResponse(**user)
+    return await _build_user_response(db, current_user)
 
 
 @router.post("/auth/session", response_model=UserResponse)
@@ -255,11 +299,6 @@ async def exchange_session(
     request.state.user_id = user["user_id"]
     request.state.jti = decoded.get("jti") or decoded.get("sub")
 
-    if user.get("plan") is None:
-        user["plan"] = "starter"
-    if user.get("subscription_status") is None:
-        user["subscription_status"] = "free"
-
     event_log(
         logger,
         "info",
@@ -268,7 +307,7 @@ async def exchange_session(
         user_id=user["user_id"],
         outcome="succeeded",
     )
-    return UserResponse(**user)
+    return await _build_user_response(db, user)
 
 
 @router.post("/auth/session/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -337,13 +376,7 @@ async def patch_me(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    # Coerce legacy DB null values so Pydantic validation doesn't crash.
-    if user.get("plan") is None:
-        user["plan"] = "starter"
-    if user.get("subscription_status") is None:
-        user["subscription_status"] = "free"
-
-    return UserResponse(**user)
+    return await _build_user_response(db, user)
 
 
 @router.post("/auth/password-reset/request")
@@ -643,7 +676,7 @@ async def login(
         _check_account_takeover(db, user["user_id"], client_ip)
     )
 
-    return UserResponse(**user)
+    return await _build_user_response(db, user)
 
 
 # ── /signup ───────────────────────────────────────────────────────────────────
@@ -731,7 +764,7 @@ async def signup(
         email=email,
         outcome="verified",
     )
-    return UserResponse(**user)
+    return await _build_user_response(db, user)
 
 
 # ── /logout ───────────────────────────────────────────────────────────────────

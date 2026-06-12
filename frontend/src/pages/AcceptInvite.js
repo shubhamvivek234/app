@@ -8,16 +8,16 @@ const ROLE_LABELS = {
   owner:  'Owner',
   admin:  'Admin',
   editor: 'Editor',
-  member: 'Member',
   viewer: 'Viewer',
+  client: 'Client',
 };
 
 const ROLE_CAPABILITIES = {
   owner:  'full access to everything in the workspace',
   admin:  'manage team members, connect social accounts, create and publish posts',
   editor: 'create, edit, and publish posts',
-  member: 'create, edit, and schedule posts for publication',
-  viewer: 'view scheduled posts and analytics',
+  viewer: 'view scheduled posts, approvals, and analytics in read-only mode',
+  client: 'review workspace content with limited operational access',
 };
 
 // ── Style constants ──────────────────────────────────────────────────────────
@@ -221,7 +221,7 @@ const AcceptInvite = () => {
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <span style={{ fontSize: '20px', fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.5px' }}>
-            Social<span style={{ color: '#6366f1' }}>Entangler</span>
+            Unravler
           </span>
         </div>
 

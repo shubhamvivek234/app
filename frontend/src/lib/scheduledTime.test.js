@@ -5,6 +5,7 @@ import {
   formatScheduledTime,
   getPostScheduledTimeZone,
   getScheduledDateKey,
+  getScheduledWallClockParts,
 } from './scheduledTime';
 
 describe('scheduledTime helpers', () => {
@@ -35,6 +36,10 @@ describe('scheduledTime helpers', () => {
     expect(utcValue).toBe('2026-06-11T04:30:00.000Z');
     expect(formatScheduledTime(utcValue, 'Asia/Kolkata')).toBe('10:00 AM');
     expect(getScheduledDateKey(utcValue, 'Asia/Kolkata')).toBe('2026-06-11');
+    expect(getScheduledWallClockParts(utcValue, 'Asia/Kolkata')).toEqual({
+      date: '2026-06-11',
+      time: '10:00',
+    });
   });
 
   it('keeps the same scheduled clock time for DST-aware zones', () => {

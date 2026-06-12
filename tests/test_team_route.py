@@ -193,6 +193,75 @@ async def test_invite_member_returns_shareable_invite_and_blocks_duplicates():
 
 
 @pytest.mark.asyncio
+async def test_invite_member_expires_legacy_pending_invite_before_creating_new_one():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        workspace_members=[{"workspace_id": "ws-1", "user_id": "owner-1", "role": "owner", "joined_at": now}],
+        workspace_invites=[
+            {
+                "invite_id": "legacy-invite",
+                "workspace_id": "ws-1",
+                "invited_by": "owner-1",
+                "email": "client@example.com",
+                "role": "client",
+                "token": "expired-token",
+                "status": "pending",
+                "created_at": (now - timedelta(days=10)).replace(tzinfo=None),
+                "updated_at": (now - timedelta(days=10)).replace(tzinfo=None),
+                "expires_at": (now - timedelta(days=1)).replace(tzinfo=None),
+            }
+        ],
+        users=[{"user_id": "owner-1", "email": "owner@example.com", "display_name": "Owner One"}],
+        workspaces=[{"workspace_id": "ws-1", "name": "Marketing"}],
+    )
+    current_user = {
+        "user_id": "owner-1",
+        "default_workspace_id": "ws-1",
+        "email_verified": True,
+    }
+
+    created = await team_route.invite_member(
+        team_route.InviteRequest(email="client@example.com", role="client"),
+        current_user,
+        db,
+    )
+
+    assert created["invited"] is True
+    expired_invite = await db.workspace_invites.find_one({"invite_id": "legacy-invite"})
+    assert expired_invite["status"] == "expired"
+    assert len(db.workspace_invites.docs) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_members_normalizes_naive_invite_timestamps():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        workspace_members=[{"workspace_id": "ws-1", "user_id": "owner-1", "role": "owner", "joined_at": now}],
+        workspace_invites=[
+            {
+                "invite_id": "invite-1",
+                "workspace_id": "ws-1",
+                "invited_by": "owner-1",
+                "email": "client@example.com",
+                "role": "client",
+                "token": "invite-token",
+                "status": "pending",
+                "created_at": (now - timedelta(hours=2)).replace(tzinfo=None),
+                "expires_at": (now + timedelta(days=6)).replace(tzinfo=None),
+            }
+        ],
+        users=[{"user_id": "owner-1", "display_name": "Owner One", "email": "owner@example.com"}],
+        workspaces=[{"workspace_id": "ws-1", "name": "Marketing"}],
+    )
+
+    result = await team_route.list_members({"user_id": "owner-1", "default_workspace_id": "ws-1"}, db)
+
+    invite = result["pending_invites"][0]
+    assert invite["created_at"].tzinfo == timezone.utc
+    assert invite["expires_at"].tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
 async def test_accept_invite_requires_matching_verified_email_and_switches_workspace():
     now = datetime.now(timezone.utc)
     db = FakeDB(
@@ -208,7 +277,7 @@ async def test_accept_invite_requires_matching_verified_email_and_switches_works
                 "status": "pending",
                 "created_at": now - timedelta(hours=1),
                 "updated_at": now - timedelta(hours=1),
-                "expires_at": now + timedelta(days=7),
+                "expires_at": (now + timedelta(days=7)).replace(tzinfo=None),
             }
         ],
         users=[

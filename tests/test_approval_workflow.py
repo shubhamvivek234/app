@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import re
 
 import pytest
 from fastapi import HTTPException
@@ -17,10 +18,15 @@ def _matches_value(value, expected):
             return False
         if "$gte" in expected and not (value is not None and value >= expected["$gte"]):
             return False
+        if "$lt" in expected and not (value is not None and value < expected["$lt"]):
+            return False
         if "$lte" in expected and not (value is not None and value <= expected["$lte"]):
             return False
         if "$in" in expected and value not in expected["$in"]:
             return False
+        if "$regex" in expected:
+            if value is None or re.search(expected["$regex"], str(value)) is None:
+                return False
         return True
     return value == expected
 
@@ -83,6 +89,9 @@ class FakeCollection:
                 return result
         return None
 
+    async def count_documents(self, query):
+        return sum(1 for doc in self.docs if _matches_query(doc, query or {}))
+
     async def find_one_and_update(self, query, update, return_document=True, projection=None):
         for doc in self.docs:
             if _matches_query(doc, query):
@@ -102,9 +111,10 @@ class FakeCollection:
 
 
 class FakeDB:
-    def __init__(self, *, posts=None, users=None):
+    def __init__(self, *, posts=None, users=None, workspace_members=None):
         self.posts = FakeCollection(posts or [])
         self.users = FakeCollection(users or [])
+        self.workspace_members = FakeCollection(workspace_members or [])
 
 
 def _post(
@@ -163,6 +173,22 @@ async def test_list_approval_queue_buckets_workspace_posts_and_preserves_rejecti
                 updated_at=now - timedelta(minutes=10),
             ),
             _post(
+                "awaiting-2",
+                user_id="author-6",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=5),
+                updated_at=now - timedelta(minutes=20),
+            ),
+            _post(
+                "unscheduled-awaiting",
+                user_id="author-7",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=None,
+                updated_at=now - timedelta(minutes=5),
+            ),
+            _post(
                 "changes-1",
                 user_id="author-2",
                 workspace_id="ws-1",
@@ -170,6 +196,15 @@ async def test_list_approval_queue_buckets_workspace_posts_and_preserves_rejecti
                 rejection_reason="Needs a clearer CTA",
                 rejected_at=now - timedelta(hours=2),
                 updated_at=now - timedelta(hours=2),
+            ),
+            _post(
+                "changes-2",
+                user_id="author-8",
+                workspace_id="ws-1",
+                status=PostStatus.DRAFT,
+                rejection_reason="Add approval-safe legal copy",
+                rejected_at=now - timedelta(hours=3),
+                updated_at=now - timedelta(hours=3),
             ),
             _post(
                 "expired-1",
@@ -200,22 +235,36 @@ async def test_list_approval_queue_buckets_workspace_posts_and_preserves_rejecti
             {"user_id": "author-2", "display_name": "Author Two", "email": "two@example.com"},
             {"user_id": "author-3", "display_name": "Author Three", "email": "three@example.com"},
         ],
+        workspace_members=[
+            {"workspace_id": "ws-1", "user_id": "reviewer-1", "role": "viewer"},
+        ],
     )
     monkeypatch.setattr(posts_route, "_hydrate_post_card_fields_for_docs", _identity_hydrate)
 
     result = await posts_route.list_approval_queue(
         current_user={"user_id": "reviewer-1", "default_workspace_id": "ws-1"},
         db=db,
-        limit=10,
+        limit=1,
     )
 
+    assert result["current_user_role"] == "viewer"
+    assert result["permissions"] == {
+        "can_read": True,
+        "can_review": False,
+        "can_resubmit": False,
+        "can_return_to_draft": False,
+    }
     assert result["summary"] == {
-        "awaiting": 1,
-        "changes_requested": 1,
+        "awaiting": 2,
+        "changes_requested": 2,
         "expired": 1,
     }
+    assert len(result["awaiting"]) == 1
+    assert len(result["changes_requested"]) == 1
+    assert len(result["expired"]) == 1
     assert result["awaiting"][0]["id"] == "awaiting-1"
     assert result["awaiting"][0]["creator_display_name"] == "Author One"
+    assert all(post["id"] != "unscheduled-awaiting" for post in result["awaiting"])
     assert result["changes_requested"][0]["id"] == "changes-1"
     assert result["changes_requested"][0]["rejection_reason"] == "Needs a clearer CTA"
     assert result["changes_requested"][0]["rejection_note"] == "Needs a clearer CTA"
@@ -239,6 +288,7 @@ async def test_reject_resubmit_submit_review_and_return_to_draft_update_post_sta
                 user_id="author-1",
                 workspace_id="ws-1",
                 status=PostStatus.DRAFT,
+                scheduled_time=now + timedelta(hours=4),
             ),
             _post(
                 "expired-1",
@@ -293,6 +343,67 @@ async def test_reject_resubmit_submit_review_and_return_to_draft_update_post_sta
     returned_doc = await db.posts.find_one({"id": "expired-1"})
     assert returned_doc["status"] == PostStatus.DRAFT
     assert returned_doc["status_history"][-1]["reason"] == "Returned to draft after approval window expired"
+
+
+@pytest.mark.asyncio
+async def test_submit_review_and_resubmit_require_future_schedule_and_creator_access():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "draft-no-schedule",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.DRAFT,
+                scheduled_time=None,
+            ),
+            _post(
+                "draft-past-schedule",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.DRAFT,
+                scheduled_time=now - timedelta(minutes=5),
+                rejection_reason="Please revise",
+            ),
+            _post(
+                "draft-other-author",
+                user_id="author-2",
+                workspace_id="ws-1",
+                status=PostStatus.DRAFT,
+                scheduled_time=now + timedelta(hours=3),
+                rejection_reason="Please revise",
+            ),
+        ]
+    )
+
+    with pytest.raises(HTTPException) as unscheduled_exc:
+        await posts_route.submit_post_for_review(
+            "draft-no-schedule",
+            posts_route.ApprovalResubmitBody(),
+            {"user_id": "author-1", "default_workspace_id": "ws-1"},
+            db,
+        )
+    assert unscheduled_exc.value.status_code == 409
+    assert "future scheduled time" in unscheduled_exc.value.detail.lower()
+
+    with pytest.raises(HTTPException) as past_exc:
+        await posts_route.resubmit_post(
+            "draft-past-schedule",
+            posts_route.ApprovalResubmitBody(),
+            {"user_id": "author-1", "default_workspace_id": "ws-1"},
+            db,
+        )
+    assert past_exc.value.status_code == 409
+
+    with pytest.raises(HTTPException) as creator_exc:
+        await posts_route.resubmit_post(
+            "draft-other-author",
+            posts_route.ApprovalResubmitBody(),
+            {"user_id": "author-1", "default_workspace_id": "ws-1"},
+            db,
+        )
+    assert creator_exc.value.status_code == 403
+    assert "creator" in creator_exc.value.detail.lower()
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ import io
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Annotated
 
 from bson import ObjectId
@@ -36,6 +37,7 @@ from utils.schedule_density import check_schedule_density
 from utils.ssrf_guard import assert_safe_url
 from utils.storage import public_url_for_key
 from utils.timeslots import normalize_timeslot_category, resolve_next_timeslot_for_account
+from utils.roles import has_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -253,6 +255,12 @@ def _plan_post_limit(plan: str) -> int:
 def _normalize_post_datetime_value(value):
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     if isinstance(value, list):
         return [_normalize_post_datetime_value(item) for item in value]
     if isinstance(value, dict):
@@ -274,6 +282,21 @@ def _post_workspace_id(current_user: dict) -> str:
         or current_user.get("workspace_id")
         or current_user["user_id"]
     )
+
+
+def _approval_permission_flags(role: str) -> dict[str, bool]:
+    can_review = has_permission(role, "post:update")
+    return {
+        "can_read": has_permission(role, "post:read"),
+        "can_review": can_review,
+        "can_resubmit": can_review,
+        "can_return_to_draft": can_review,
+    }
+
+
+def _normalized_schedule_datetime(value) -> datetime | None:
+    normalized = _normalize_post_datetime_value(value)
+    return normalized if isinstance(normalized, datetime) else None
 
 
 async def _enrich_approval_docs(db, docs: list[dict]) -> list[dict]:
@@ -1156,37 +1179,42 @@ async def list_approval_queue(
 ):
     workspace_id = _post_workspace_id(current_user)
     now = datetime.now(timezone.utc)
+    membership = await db.workspace_members.find_one(
+        {"workspace_id": workspace_id, "user_id": current_user["user_id"]},
+        {"_id": 0, "role": 1},
+    )
+    current_role = (membership or {}).get("role") or current_user.get("workspace_role") or "viewer"
+    permission_flags = _approval_permission_flags(current_role)
     base_query = {
         "workspace_id": workspace_id,
         "deleted_at": {"$exists": False},
     }
+    awaiting_query = {
+        **base_query,
+        "status": PostStatus.PENDING_APPROVAL,
+        "scheduled_time": {"$gt": now},
+    }
+    changes_requested_query = {
+        **base_query,
+        "status": PostStatus.DRAFT,
+        "rejection_reason": {"$regex": r"\S"},
+    }
+    expired_query = {
+        **base_query,
+        "status": PostStatus.PENDING_APPROVAL,
+        "scheduled_time": {"$lte": now},
+    }
 
     awaiting_cursor = db.posts.find(
-        {
-            **base_query,
-            "status": PostStatus.PENDING_APPROVAL,
-            "$or": [
-                {"scheduled_time": {"$exists": False}},
-                {"scheduled_time": None},
-                {"scheduled_time": {"$gt": now}},
-            ],
-        },
+        awaiting_query,
         {"_id": 0},
     ).sort([("scheduled_time", 1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
     changes_requested_cursor = db.posts.find(
-        {
-            **base_query,
-            "status": PostStatus.DRAFT,
-            "rejection_reason": {"$exists": True, "$ne": None},
-        },
+        changes_requested_query,
         {"_id": 0},
     ).sort([("rejected_at", -1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
     expired_cursor = db.posts.find(
-        {
-            **base_query,
-            "status": PostStatus.PENDING_APPROVAL,
-            "scheduled_time": {"$lte": now},
-        },
+        expired_query,
         {"_id": 0},
     ).sort([("scheduled_time", -1), ("updated_at", -1), ("created_at", -1)]).limit(limit)
 
@@ -1202,13 +1230,15 @@ async def list_approval_queue(
     expired = await _enrich_approval_docs(db, expired_docs)
 
     return {
+        "current_user_role": current_role,
+        "permissions": permission_flags,
         "awaiting": awaiting,
         "changes_requested": changes_requested,
         "expired": expired,
         "summary": {
-            "awaiting": len(awaiting),
-            "changes_requested": len(changes_requested),
-            "expired": len(expired),
+            "awaiting": await db.posts.count_documents(awaiting_query),
+            "changes_requested": await db.posts.count_documents(changes_requested_query),
+            "expired": await db.posts.count_documents(expired_query),
         },
     }
 
@@ -1259,7 +1289,16 @@ async def update_post(
 
     existing = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "workspace_id": 1},
+        {
+            "_id": 0,
+            "status": 1,
+            "workspace_id": 1,
+            "platforms": 1,
+            "account_ids": 1,
+            "social_account_ids": 1,
+            "platform_results": 1,
+            "post_type": 1,
+        },
     )
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
@@ -1274,10 +1313,67 @@ async def update_post(
     updates: dict = {"updated_at": now}
     if body.content is not None:
         updates["content"] = body.content
-    if body.scheduled_time is not None:
+    if "scheduled_time" in body.model_fields_set:
         updates["scheduled_time"] = body.scheduled_time
-    if body.platforms is not None:
-        updates["platforms"] = body.platforms
+
+    next_platforms = list(body.platforms) if body.platforms is not None else list(existing.get("platforms") or [])
+    next_account_ids = list(body.account_ids) if body.account_ids is not None else list(existing.get("account_ids") or existing.get("social_account_ids") or [])
+    selected_accounts = None
+    if body.platforms is not None or body.account_ids is not None or body.account_overrides is not None:
+        selected_accounts = await _resolve_selected_accounts(
+            db,
+            user_id,
+            SimpleNamespace(account_ids=next_account_ids, platforms=next_platforms),
+        )
+        social_account_ids = [account["account_id"] for account in selected_accounts]
+        updates["platforms"] = next_platforms
+        updates["publish_targets"] = selected_accounts
+        updates["account_ids"] = social_account_ids
+        updates["social_account_ids"] = social_account_ids
+        updates["platform_results"] = {
+            platform: {"status": "pending"}
+            for platform in next_platforms
+        }
+        updates["account_results"] = {
+            account["account_id"]: {
+                "status": "pending",
+                "platform": account["platform"],
+                "account_id": account["account_id"],
+            }
+            for account in selected_accounts
+        }
+
+    next_post_type = body.post_type if body.post_type is not None else existing.get("post_type")
+    if body.platforms is not None or body.post_type is not None:
+        for platform in next_platforms:
+            try:
+                validate_platform_content_type(platform, next_post_type)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    if body.media_urls is not None:
+        for url in body.media_urls:
+            try:
+                assert_safe_url(url)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    if body.media_ids is not None or body.media_urls is not None:
+        media_urls, thumbnail_urls, primary_media_url, _ = await _resolve_media_payload(
+            db, user_id, body.media_ids or [], body.media_urls or []
+        )
+        updates["media_ids"] = list(body.media_ids or [])
+        updates["media_urls"] = media_urls
+        updates["media_url"] = primary_media_url
+        updates["thumbnail_urls"] = thumbnail_urls
+    if body.post_type is not None:
+        updates["post_type"] = body.post_type
+    if "title" in body.model_fields_set:
+        updates["title"] = body.title
+    if "timezone" in body.model_fields_set:
+        updates["timezone"] = body.timezone
+    if "scheduled_time" in body.model_fields_set:
+        updates["scheduled_timezone_explicit"] = bool(body.scheduled_time)
+
     if body.platform_overrides is not None:
         normalized_platform_overrides: dict[str, dict] = {}
         for platform, override in body.platform_overrides.items():
@@ -1303,7 +1399,18 @@ async def update_post(
         updates["platform_overrides"] = normalized_platform_overrides
     if body.account_overrides is not None:
         normalized_account_overrides: dict[str, dict] = {}
+        selected_accounts = selected_accounts or await _resolve_selected_accounts(
+            db,
+            user_id,
+            SimpleNamespace(account_ids=next_account_ids, platforms=next_platforms),
+        )
+        valid_account_ids = {account["account_id"] for account in selected_accounts}
         for account_id, override in body.account_overrides.items():
+            if account_id not in valid_account_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Account override is not valid for this post: {account_id}",
+                )
             for url in (override.media_urls or []):
                 try:
                     assert_safe_url(url)
@@ -1635,11 +1742,11 @@ async def approve_post(post_id: str, current_user: VerifiedUser, db: DB):
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Post not found or not pending approval")
-    scheduled_time = existing.get("scheduled_time")
-    if isinstance(scheduled_time, datetime) and scheduled_time <= now:
+    scheduled_time = _normalized_schedule_datetime(existing.get("scheduled_time"))
+    if scheduled_time is None or scheduled_time <= now:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Approval window expired. Move this post back to draft and reschedule it before approval.",
+            detail="Approval requires a future scheduled time. Move this post back to draft and reschedule it before approval.",
         )
     result = await db.posts.find_one_and_update(
         {
@@ -1694,6 +1801,28 @@ async def resubmit_post(post_id: str, body: ApprovalResubmitBody, current_user: 
     user_id = current_user["user_id"]
     workspace_id = current_user.get("default_workspace_id") or user_id
     now = datetime.now(timezone.utc)
+    existing = await db.posts.find_one(
+        {
+            "id": post_id,
+            "workspace_id": workspace_id,
+            "status": PostStatus.DRAFT,
+            "deleted_at": {"$exists": False},
+        },
+        {"_id": 0, "user_id": 1, "scheduled_time": 1},
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Post not found or not eligible for resubmission")
+    if existing.get("user_id") != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the draft creator can resubmit this post for review.",
+        )
+    scheduled_time = _normalized_schedule_datetime(existing.get("scheduled_time"))
+    if scheduled_time is None or scheduled_time <= now:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Set a future scheduled time before submitting this draft for review.",
+        )
     updates: dict = {"status": PostStatus.PENDING_APPROVAL, "updated_at": now}
     if body.content:
         updates["content"] = body.content

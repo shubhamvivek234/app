@@ -37,6 +37,8 @@ class UserResponse(BaseModel):
     mfa_enabled: bool = False
     role: str = "user"
     onboarding_completed: bool = False
+    workspace_role: str | None = None
+    workspace_permissions: list[str] = Field(default_factory=list)
 
     @computed_field  # FE-2: alias for frontend compatibility
     @property
