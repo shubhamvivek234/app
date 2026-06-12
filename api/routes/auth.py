@@ -55,6 +55,7 @@ class UpdateMeRequest(BaseModel):
     Patchable user fields used by onboarding and billing flows.
     Keep this narrow: it's not a general profile editor.
     """
+    display_name: str | None = None
     user_type: str | None = None
     timezone: str | None = None
     onboarding_completed: bool | None = None
@@ -328,10 +329,18 @@ async def patch_me(
 ) -> UserResponse:
     """
     Update a small set of profile fields.
-    Required for onboarding (user_type/timezone) and payment completion
-    (onboarding_completed=true).
+    Required for onboarding (user_type/timezone), account settings
+    (display_name/timezone), and payment completion (onboarding_completed=true).
     """
     set_fields: dict = {}
+    if body.display_name is not None:
+        normalized_display_name = " ".join(body.display_name.split()).strip()
+        if not normalized_display_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Display name cannot be blank",
+            )
+        set_fields["display_name"] = normalized_display_name
     if body.user_type is not None:
         # Keep in Mongo for segmentation/analytics; FE can choose to use or ignore.
         set_fields["user_type"] = body.user_type

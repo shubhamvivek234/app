@@ -84,7 +84,7 @@ const Billing = () => {
   const [loading, setLoading] = useState(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
 
-  const currentPlanId = user?.subscription_plan || null;
+  const currentPlanId = user?.plan || null;
   const isActive = user?.subscription_status === 'active';
 
   useEffect(() => {

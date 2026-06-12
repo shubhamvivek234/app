@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from api.deps import DB, CacheRedis
 from api.limiter import limiter
+from utils.notification_prefs import insert_notification_if_enabled
 from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,38 @@ _META_VERIFY_TOKEN = (
 
 class WebhookAckResponse(BaseModel):
     received: bool = True
+
+
+async def _emit_billing_failed_notifications(
+    db,
+    *,
+    user_id: str,
+    provider: str,
+    attempt_count: int,
+    now: datetime,
+) -> None:
+    if attempt_count > 1:
+        retry_copy = f"Attempt {attempt_count} failed. Please check your payment method."
+    else:
+        retry_copy = "Your latest payment attempt failed. Please check your payment method."
+
+    message = f"{provider} billing issue: {retry_copy}"
+    metadata = {
+        "provider": provider.lower(),
+        "attempt_count": attempt_count,
+    }
+    for channel in ("in_app", "email"):
+        await insert_notification_if_enabled(
+            db,
+            user_id=user_id,
+            event="billing.failed",
+            channel=channel,
+            notification_type="billing.payment_failed",
+            message=message,
+            metadata=metadata,
+            created_at=now,
+            extra_fields={"is_read": False},
+        )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -554,6 +587,7 @@ async def _process_stripe_event(event_type: str, event: dict, db) -> None:
         customer_id = data_obj.get("customer", "")
         attempt_count = data_obj.get("attempt_count", 1)
         if customer_id:
+            user = await db.users.find_one({"stripe_customer_id": customer_id}, {"user_id": 1})
             await db.users.update_one(
                 {"stripe_customer_id": customer_id},
                 {"$set": {
@@ -562,6 +596,14 @@ async def _process_stripe_event(event_type: str, event: dict, db) -> None:
                     "updated_at": now,
                 }},
             )
+            if user and user.get("user_id"):
+                await _emit_billing_failed_notifications(
+                    db,
+                    user_id=user["user_id"],
+                    provider="Stripe",
+                    attempt_count=attempt_count,
+                    now=now,
+                )
             logger.info("Payment failed for customer %s (attempt %d)", customer_id, attempt_count)
 
     elif event_type == "customer.subscription.deleted":
@@ -694,6 +736,7 @@ async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
     elif event_type == "payment.failed":
         email = entity.get("email", "")
         if email:
+            user = await db.users.find_one({"email": email}, {"user_id": 1})
             await db.users.update_one(
                 {"email": email},
                 {
@@ -701,6 +744,16 @@ async def _process_razorpay_event(event_type: str, payload: dict, db) -> None:
                     "$set": {"last_payment_failure_at": now, "updated_at": now},
                 },
             )
+            if user and user.get("user_id"):
+                updated_user = await db.users.find_one({"email": email}, {"payment_failure_count": 1})
+                attempt_count = int((updated_user or {}).get("payment_failure_count", 1) or 1)
+                await _emit_billing_failed_notifications(
+                    db,
+                    user_id=user["user_id"],
+                    provider="Razorpay",
+                    attempt_count=attempt_count,
+                    now=now,
+                )
             logger.info("Razorpay payment failed for %s", email)
 
     elif event_type == "subscription.cancelled":

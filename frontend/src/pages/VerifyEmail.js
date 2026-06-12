@@ -120,7 +120,7 @@ const VerifyEmail = () => {
               </div>
               <h2 className="text-2xl font-semibold text-slate-900">Email verified</h2>
               <p className="mt-3 text-sm text-slate-500">
-                Your email is confirmed. You can now connect accounts, publish, schedule posts, and invite teammates.
+                Your email is confirmed. You can now publish, schedule posts, and use workspace approval or invite flows normally.
               </p>
               <Button onClick={() => navigate(nextHref)} className="mt-6 w-full">
                 Continue
@@ -133,7 +133,7 @@ const VerifyEmail = () => {
               <h2 className="text-2xl font-semibold text-slate-900">Verify your email</h2>
               <p className="mt-3 text-sm leading-6 text-slate-500">
                 {sent
-                  ? 'We sent a verification email. Open the link in that message to unlock account connections, publishing, scheduling, and team invites.'
+                  ? 'We sent a verification email. Open the link in that message to unlock publishing, scheduling, and workspace invite or approval actions.'
                   : 'Your account is signed in, but sensitive actions stay locked until your email is verified.'}
               </p>
               <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

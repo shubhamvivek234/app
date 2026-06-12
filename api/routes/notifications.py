@@ -29,7 +29,13 @@ async def list_notifications(
     unread_only: bool = Query(False),
 ):
     user_id = current_user["user_id"]
-    query: dict = {"user_id": user_id}
+    query: dict = {
+        "user_id": user_id,
+        "$or": [
+            {"channel": {"$exists": False}},
+            {"channel": {"$ne": "email"}},
+        ],
+    }
     if unread_only:
         query["is_read"] = False
     cursor = db.notifications.find(query, {"_id": 0}).sort("created_at", -1).limit(limit)

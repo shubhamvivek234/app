@@ -10,11 +10,35 @@ from datetime import datetime, timedelta, timezone
 from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
+from utils.notification_prefs import insert_notification_if_enabled
 
 logger = logging.getLogger(__name__)
 
 _GRACE_PERIOD_DAYS = 7
 _WARNING_DAYS_BEFORE = 7
+
+
+async def _emit_account_expiring_notifications(
+    db,
+    *,
+    user_id: str,
+    notification_type: str,
+    message: str,
+    now: datetime,
+    metadata: dict | None = None,
+) -> None:
+    for channel in ("in_app", "email"):
+        await insert_notification_if_enabled(
+            db,
+            user_id=user_id,
+            event="account.expiring",
+            channel=channel,
+            notification_type=notification_type,
+            message=message,
+            metadata=metadata,
+            created_at=now,
+            extra_fields={"is_read": False},
+        )
 
 
 @celery_app.task(
@@ -57,15 +81,14 @@ async def _async_check() -> dict:
             "status": "scheduled",
             "scheduled_time": {"$gt": user.get("subscription_expires_at", now)},
         })
-        # Send warning notification
-        await db.notifications.insert_one({
-            "user_id": user["user_id"],
-            "type": "subscription_expiring",
-            "message": f"Your subscription expires soon. {post_count} scheduled posts may be affected.",
-            "post_count": post_count,
-            "created_at": now,
-            "is_read": False,
-        })
+        await _emit_account_expiring_notifications(
+            db,
+            user_id=user["user_id"],
+            notification_type="subscription_expiring",
+            message=f"Your subscription expires soon. {post_count} scheduled posts may be affected.",
+            now=now,
+            metadata={"post_count": post_count},
+        )
         await db.users.update_one(
             {"user_id": user["user_id"]},
             {"$set": {"expiry_warning_sent": True}},
@@ -106,13 +129,14 @@ async def _async_check() -> dict:
         )
         if result.modified_count > 0:
             paused_users += 1
-            await db.notifications.insert_one({
-                "user_id": user_id,
-                "type": "posts_paused",
-                "message": f"{result.modified_count} posts paused due to expired subscription.",
-                "created_at": now,
-                "is_read": False,
-            })
+            await _emit_account_expiring_notifications(
+                db,
+                user_id=user_id,
+                notification_type="posts_paused",
+                message=f"{result.modified_count} posts paused due to expired subscription.",
+                now=now,
+                metadata={"paused_posts": result.modified_count},
+            )
 
     # 3. CLEANUP PHASE: Delete paused posts 20+ days after subscription end date
     cleanup_cursor = db.users.find(
@@ -180,20 +204,20 @@ async def _async_check() -> dict:
                 {"user_id": user_id},
                 {"$set": {"subscription_cleanup_date": None}},
             )
-            await db.notifications.insert_one({
-                "user_id": user_id,
-                "type": "subscription.posts_deleted",
-                "channel": "email",
-                "message": (
+            await _emit_account_expiring_notifications(
+                db,
+                user_id=user_id,
+                notification_type="subscription.posts_deleted",
+                message=(
                     f"Your {user_cleanup_posts} scheduled posts have been permanently deleted "
                     f"to free up storage. Resubscribe to schedule new posts."
                 ),
-                "metadata": {
+                now=now,
+                metadata={
                     "posts_deleted": user_cleanup_posts,
                     "media_deleted": user_media_deleted,
                 },
-                "created_at": now,
-            })
+            )
 
             logger.info(
                 "Cleanup complete: user=%s posts_deleted=%d media_deleted=%d",

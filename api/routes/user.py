@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from api.deps import CurrentUser, DB
 from api.limiter import limiter
 from api.task_queue import enqueue_task
+from utils.notification_prefs import get_user_prefs, sanitize_preferences
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["user"])
@@ -137,13 +138,7 @@ async def get_notification_preferences(
 ) -> NotificationPreferencesResponse:
     """Section 20.12 — Fetch per-channel notification preferences for the current user."""
     user_id = current_user["user_id"]
-
-    doc = await db.notification_prefs.find_one(
-        {"user_id": user_id},
-        {"_id": 0, "prefs": 1},
-    )
-
-    prefs: dict[str, Any] = doc["prefs"] if doc and "prefs" in doc else {}
+    prefs = await get_user_prefs(db, user_id)
     return NotificationPreferencesResponse(preferences=prefs)
 
 
@@ -157,15 +152,17 @@ async def update_notification_preferences(
 ) -> NotificationPreferencesResponse:
     """Section 20.12 — Update per-channel notification preferences."""
     user_id = current_user["user_id"]
+    sanitized_preferences = sanitize_preferences(body.preferences)
 
     await db.notification_prefs.update_one(
         {"user_id": user_id},
         {"$set": {
-            "prefs": body.preferences,
+            "prefs": sanitized_preferences,
             "updated_at": datetime.now(timezone.utc),
         }},
         upsert=True,
     )
 
     logger.info("Notification prefs updated: user=%s", user_id)
-    return NotificationPreferencesResponse(preferences=body.preferences)
+    prefs = await get_user_prefs(db, user_id)
+    return NotificationPreferencesResponse(preferences=prefs)

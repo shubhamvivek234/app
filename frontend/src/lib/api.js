@@ -687,28 +687,56 @@ export const deleteRecurringRule = async (ruleId) => {
   return response.data;
 };
 
-// ── User Profile (Stub - to be implemented) ──
-export const uploadProfilePhoto = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await axios.post(`${API}/profile/photo`, formData, {
-    headers: {
-      ...getAuthHeaders(),
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-  return response.data;
-};
-
-export const updateProfile = async (data) => {
-  const response = await axios.patch(`${API}/profile`, data, {
+// ── Account Settings ─────────────────────────────────────────────────────────
+export const updateCurrentUser = async (data) => {
+  const response = await axios.patch(`${API}/auth/me`, data, {
     headers: getAuthHeaders(),
   });
   return response.data;
 };
 
-export const changePassword = async (data) => {
-  const response = await axios.post(`${API}/profile/change-password`, data, {
+export const requestVerificationEmail = async (returnTo = null) => {
+  const response = await axios.post(
+    `${API}/auth/verify-email/request`,
+    { return_to: returnTo },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
+export const getNotificationPreferences = async () => {
+  const response = await axios.get(`${API}/user/notification-preferences`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const updateNotificationPreferences = async (preferences) => {
+  const response = await axios.patch(
+    `${API}/user/notification-preferences`,
+    { preferences },
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
+export const requestDataExport = async () => {
+  const response = await axios.post(
+    `${API}/user/data-export`,
+    {},
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return response.data;
+};
+
+export const requestAccountDeletion = async () => {
+  const response = await axios.delete(`${API}/user/account`, {
     headers: getAuthHeaders(),
   });
   return response.data;

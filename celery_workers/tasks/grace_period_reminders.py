@@ -11,6 +11,7 @@ from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_cache_redis
+from utils.notification_prefs import should_notify
 from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
@@ -67,124 +68,106 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
 
         # REMINDER LOGIC: Send on odd-numbered days (1, 3, 5, 7, 9, 11, 13, 15, 17, 19...)
         if days_since_expiry > 0 and days_since_expiry % 2 == 1:
-            dedup_key = f"grace_reminder:{user_id}:day_{days_since_expiry}"
-            is_new = await safe_set(
-                cache_redis,
-                dedup_key,
-                "1",
-                ex=86400 * 21,
-                nx=True,
-                default=True,
-                feature="Grace reminder dedup",
-            )
-
-            inserted = await _ensure_notification_once(
-                db,
-                dedup_key=dedup_key,
-                payload_builder=lambda posts_at_risk, days_until_cleanup: {
-                    "user_id": user_id,
-                    "type": "subscription.grace_reminder",
-                    "channel": "email",
-                    "message": (
-                        f"Your subscription has expired. Your scheduled posts are paused. "
-                        f"Please renew your subscription to resume publishing. "
-                        f"Your posts will be permanently deleted in {days_until_cleanup} days."
-                    ),
-                    "metadata": {
-                        "days_past_expiry": days_since_expiry,
-                        "posts_at_risk": posts_at_risk,
-                        "days_until_cleanup": days_until_cleanup,
-                    },
-                    "created_at": now,
-                    "dedup_key": dedup_key,
-                },
-                user_id=user_id,
-                now=now,
-                subscription_cleanup_date=subscription_cleanup_date,
-                days_since_expiry=days_since_expiry,
-            )
-            if is_new and inserted:
-                # Use count_documents instead of fetching all posts — no memory allocation
-                posts_at_risk = await db.posts.count_documents({
-                    "user_id": user_id,
-                    "status": "paused",
-                    "paused_reason": "subscription_expired",
-                })
-
-                # Calculate days remaining until cleanup (should be set by subscription_check.py)
-                if subscription_cleanup_date:
-                    days_until_cleanup = (subscription_cleanup_date - now).days
-                else:
-                    # Fallback: assume 20 days from subscription expiry if cleanup_date not set
-                    # This shouldn't happen in normal operation
-                    days_until_cleanup = 20 - days_since_expiry
-
-                reminders_sent += 1
-                logger.info(
-                    "Grace period reminder sent: user=%s days_past_expiry=%d posts_at_risk=%d",
-                    user_id, days_since_expiry, posts_at_risk
+            for channel in ("email", "in_app"):
+                dedup_key = f"grace_reminder:{user_id}:day_{days_since_expiry}:{channel}"
+                is_new = await safe_set(
+                    cache_redis,
+                    dedup_key,
+                    "1",
+                    ex=86400 * 21,
+                    nx=True,
+                    default=True,
+                    feature="Grace reminder dedup",
                 )
+
+                inserted = await _ensure_notification_once(
+                    db,
+                    event="account.expiring",
+                    channel=channel,
+                    dedup_key=dedup_key,
+                    payload_builder=lambda posts_at_risk, days_until_cleanup, *, current_channel=channel, current_dedup_key=dedup_key: {
+                        "user_id": user_id,
+                        "type": "subscription.grace_reminder",
+                        "channel": current_channel,
+                        "message": (
+                            f"Your subscription has expired. Your scheduled posts are paused. "
+                            f"Please renew your subscription to resume publishing. "
+                            f"Your posts will be permanently deleted in {days_until_cleanup} days."
+                        ),
+                        "metadata": {
+                            "days_past_expiry": days_since_expiry,
+                            "posts_at_risk": posts_at_risk,
+                            "days_until_cleanup": days_until_cleanup,
+                        },
+                        "created_at": now,
+                        "dedup_key": current_dedup_key,
+                    },
+                    user_id=user_id,
+                    now=now,
+                    subscription_cleanup_date=subscription_cleanup_date,
+                    days_since_expiry=days_since_expiry,
+                )
+                if is_new and inserted:
+                    reminders_sent += 1
+                    logger.info(
+                        "Grace period reminder queued: user=%s channel=%s days_past_expiry=%d",
+                        user_id, channel, days_since_expiry
+                    )
 
         # FINAL WARNING: 1 day before cleanup date
         if subscription_cleanup_date:
             days_until_cleanup = (subscription_cleanup_date - now).days
 
             if days_until_cleanup == 1:
-                # Anchor dedup key to cleanup date to ensure it fires only once, even if redis fails
-                cleanup_date_str = subscription_cleanup_date.date().isoformat()
-                dedup_key = f"grace_final_warning:{user_id}:{cleanup_date_str}"
-                is_new = await safe_set(
-                    cache_redis,
-                    dedup_key,
-                    "1",
-                    ex=86400 * 30,
-                    nx=True,
-                    default=True,
-                    feature="Grace final-warning dedup",
-                )
+                for channel in ("email", "in_app"):
+                    cleanup_date_str = subscription_cleanup_date.date().isoformat()
+                    dedup_key = f"grace_final_warning:{user_id}:{cleanup_date_str}:{channel}"
+                    is_new = await safe_set(
+                        cache_redis,
+                        dedup_key,
+                        "1",
+                        ex=86400 * 30,
+                        nx=True,
+                        default=True,
+                        feature="Grace final-warning dedup",
+                    )
 
-                if is_new:
-                    inserted = await _ensure_notification_once(
-                        db,
-                        dedup_key=dedup_key,
-                        payload_builder=lambda posts_at_risk, _days_until_cleanup: {
-                            "user_id": user_id,
-                            "type": "subscription.grace_final_warning",
-                            "channel": "email",
-                            "message": (
-                                f"⚠️ URGENT: Your scheduled posts will be PERMANENTLY DELETED tomorrow. "
-                                f"{posts_at_risk} posts and their media will be removed to free up storage. "
-                                f"Purchase now to save your posts and resume publishing."
-                            ),
-                            "metadata": {
-                                "posts_at_risk": posts_at_risk,
-                                "final_warning": True,
-                                "cleanup_date": subscription_cleanup_date.isoformat(),
+                    if is_new:
+                        inserted = await _ensure_notification_once(
+                            db,
+                            event="account.expiring",
+                            channel=channel,
+                            dedup_key=dedup_key,
+                            payload_builder=lambda posts_at_risk, _days_until_cleanup, *, current_channel=channel, current_dedup_key=dedup_key: {
+                                "user_id": user_id,
+                                "type": "subscription.grace_final_warning",
+                                "channel": current_channel,
+                                "message": (
+                                    f"Your scheduled posts will be permanently deleted tomorrow. "
+                                    f"{posts_at_risk} posts and their media will be removed unless you renew in time."
+                                ),
+                                "metadata": {
+                                    "posts_at_risk": posts_at_risk,
+                                    "final_warning": True,
+                                    "cleanup_date": subscription_cleanup_date.isoformat(),
+                                },
+                                "created_at": now,
+                                "dedup_key": current_dedup_key,
                             },
-                            "created_at": now,
-                            "dedup_key": dedup_key,
-                        },
-                        user_id=user_id,
-                        now=now,
-                        subscription_cleanup_date=subscription_cleanup_date,
-                        days_since_expiry=days_since_expiry,
-                    )
-                else:
-                    inserted = False
+                            user_id=user_id,
+                            now=now,
+                            subscription_cleanup_date=subscription_cleanup_date,
+                            days_since_expiry=days_since_expiry,
+                        )
+                    else:
+                        inserted = False
 
-                if inserted:
-                    # Count future posts at risk — no need to fetch full documents
-                    posts_at_risk = await db.posts.count_documents({
-                        "user_id": user_id,
-                        "status": "paused",
-                        "paused_reason": "subscription_expired",
-                        "scheduled_time": {"$gt": now},
-                    })
-                    final_warnings_sent += 1
-                    logger.warning(
-                        "Final grace period warning sent: user=%s posts_at_risk=%d cleanup_date=%s",
-                        user_id, posts_at_risk, subscription_cleanup_date
-                    )
+                    if inserted:
+                        final_warnings_sent += 1
+                        logger.warning(
+                            "Final grace period warning queued: user=%s channel=%s cleanup_date=%s",
+                            user_id, channel, subscription_cleanup_date
+                        )
 
     logger.info("Grace period reminders complete: sent=%d final_warnings=%d", reminders_sent, final_warnings_sent)
     return {
@@ -196,6 +179,8 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
 async def _ensure_notification_once(
     db,
     *,
+    event: str,
+    channel: str,
     dedup_key: str,
     payload_builder,
     user_id: str,
@@ -203,6 +188,9 @@ async def _ensure_notification_once(
     subscription_cleanup_date,
     days_since_expiry: int,
 ) -> bool:
+    if not await should_notify(db, user_id, event, channel):
+        return False
+
     posts_at_risk = await db.posts.count_documents({
         "user_id": user_id,
         "status": "paused",

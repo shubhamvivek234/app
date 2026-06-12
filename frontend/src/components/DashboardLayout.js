@@ -49,16 +49,11 @@ const UserMenu = ({ user, onLogout }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Get the actual picture URL if available
-  const backendUrl = process.env.REACT_APP_BACKEND_URL;
-  const avatarSrc = user?.picture
-    ? (user.picture.startsWith('/uploads')
-        ? `${backendUrl}${user.picture}`
-        : user.picture)
-    : null;
+  const avatarSrc = typeof user?.avatar_url === 'string' ? user.avatar_url : null;
+  const resolvedDisplayName = user?.display_name || user?.name || user?.email || 'Unravler user';
 
   // Initials fallback
-  const initials = (user?.display_name || 'U')
+  const initials = resolvedDisplayName
     .split(' ')
     .map((w) => w[0])
     .join('')
@@ -74,7 +69,7 @@ const UserMenu = ({ user, onLogout }) => {
         {avatarSrc && !imageError ? (
           <img
             src={avatarSrc}
-            alt={user?.display_name}
+            alt={resolvedDisplayName}
             className="w-8 h-8 rounded-full object-cover"
             onError={() => setImageError(true)}
           />
@@ -83,13 +78,13 @@ const UserMenu = ({ user, onLogout }) => {
             {initials}
           </div>
         )}
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block">{user?.display_name}</span>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block">{resolvedDisplayName}</span>
       </button>
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-48 bg-offwhite dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
           <div className="px-4 py-2 border-b border-gray-100 dark:border-gray-700">
-            <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">{user?.display_name}</p>
+            <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">{resolvedDisplayName}</p>
             <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{user?.email}</p>
           </div>
           <button

@@ -1,612 +1,780 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { EmailAuthProvider, reauthenticateWithCredential, updatePassword as updateFirebasePassword } from 'firebase/auth';
+import {
+  FaBell,
+  FaClock,
+  FaEnvelope,
+  FaExclamationTriangle,
+  FaExternalLinkAlt,
+  FaShieldAlt,
+  FaTrashAlt,
+  FaUser,
+} from 'react-icons/fa';
+
 import DashboardLayout from '@/components/DashboardLayout';
-import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { useAuth } from '@/context/AuthContext';
+import {
+  getNotificationPreferences,
+  requestAccountDeletion,
+  requestDataExport,
+  requestVerificationEmail,
+  updateCurrentUser,
+  updateNotificationPreferences,
+} from '@/lib/api';
 import { toast } from 'sonner';
-import { updateProfile, uploadProfilePhoto, changePassword } from '@/lib/api';
-import axios from 'axios';
-import { FaCamera, FaLock, FaUser, FaCrown, FaEye, FaEyeSlash, FaGoogle } from 'react-icons/fa';
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 const COMMON_TIMEZONES = [
-  "UTC",
-  "Asia/Kolkata",
-  "Asia/Dubai",
-  "Asia/Singapore",
-  "Asia/Tokyo",
-  "Asia/Shanghai",
-  "Europe/London",
-  "Europe/Paris",
-  "Europe/Berlin",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-  "America/Sao_Paulo",
-  "Australia/Sydney",
-  "Pacific/Auckland",
+  'UTC',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Sao_Paulo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
 ];
 
-// ─── Avatar with upload overlay ───────────────────────────────────────────────
-const AvatarUpload = ({ user, onUploaded }) => {
-  const inputRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-  // preview holds a local data-URL shown immediately while uploading.
-  // It is cleared on success (so the refreshed user.picture takes over)
-  // and on failure (to revert the optimistic display).
-  const [preview, setPreview] = useState(null);
+const NOTIFICATION_EVENTS = [
+  {
+    key: 'post.published',
+    label: 'Published posts',
+    description: 'Successful publishing confirmations.',
+    defaultChannels: ['in_app'],
+  },
+  {
+    key: 'post.failed',
+    label: 'Post failures',
+    description: 'Retries exhausted or platform publish failures.',
+    defaultChannels: ['email', 'in_app'],
+  },
+  {
+    key: 'post.dlq',
+    label: 'Permanent failures',
+    description: 'Posts moved to dead-letter recovery.',
+    defaultChannels: ['email', 'in_app'],
+  },
+  {
+    key: 'account.expiring',
+    label: 'Subscription and access issues',
+    description: 'Expiry warnings, paused posts, and grace-period notices.',
+    defaultChannels: ['email', 'in_app'],
+  },
+  {
+    key: 'billing.failed',
+    label: 'Billing failures',
+    description: 'Payment failures that need action.',
+    defaultChannels: ['email'],
+  },
+];
 
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Reset input value via ref — safer than e.target in async context
-    const inputEl = inputRef.current;
-
-    if (file.size > 1 * 1024 * 1024) {
-      toast.error('Image too large. Maximum size is 1 MB.');
-      if (inputEl) inputEl.value = '';
-      return;
-    }
-    if (!file.type.startsWith('image/')) {
-      toast.error('Only image files are allowed.');
-      if (inputEl) inputEl.value = '';
-      return;
-    }
-
-    // Show local preview immediately (optimistic UI)
-    const reader = new FileReader();
-    reader.onload = (ev) => setPreview(ev.target.result);
-    reader.readAsDataURL(file);
-
-    setUploading(true);
-    try {
-      const data = await uploadProfilePhoto(file);
-      // Clear the local blob preview — let the refreshed user.picture take over
-      setPreview(null);
-      await onUploaded(data.picture);
-      toast.success('Profile photo updated');
-    } catch (err) {
-      const msg = err.response?.data?.detail || 'Upload failed. Please try again.';
-      toast.error(msg);
-      setPreview(null);
-    } finally {
-      setUploading(false);
-      if (inputEl) inputEl.value = '';
-    }
-  };
-
-  const resolvedPicture = user?.picture
-    ? (user.picture.startsWith('/uploads') ? `${BACKEND_URL}${user.picture}` : user.picture)
-    : null;
-
-  // During upload show the local blob preview; afterwards show the server URL
-  const avatarSrc = preview || resolvedPicture;
-
-  const initials = (user?.name || 'U')
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
-  return (
-    <div className="relative group w-24 h-24 cursor-pointer" onClick={() => inputRef.current?.click()}>
-      {/* Avatar circle */}
-      {avatarSrc ? (
-        <img
-          src={avatarSrc}
-          alt="Profile"
-          className="w-24 h-24 rounded-full object-cover ring-4 ring-white shadow-md"
-        />
-      ) : (
-        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center text-white text-2xl font-bold ring-4 ring-white shadow-md select-none">
-          {initials}
-        </div>
-      )}
-
-      {/* Hover overlay */}
-      <div className={`absolute inset-0 rounded-full bg-black/40 flex flex-col items-center justify-center transition-opacity ${uploading ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-        {uploading ? (
-          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <>
-            <FaCamera className="text-white text-lg" />
-            <span className="text-white text-[10px] mt-1 font-medium">Change</span>
-          </>
-        )}
-      </div>
-
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFile}
-      />
-    </div>
-  );
-};
-
-// ─── Show/hide password input ─────────────────────────────────────────────────
-const PasswordInput = ({ id, placeholder, value, onChange, ...props }) => {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <Input
-        id={id}
-        type={show ? 'text' : 'password'}
-        placeholder={placeholder}
-        value={value}
-        onChange={onChange}
-        className="pr-10"
-        {...props}
-      />
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={() => setShow((v) => !v)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-      >
-        {show ? <FaEyeSlash size={14} /> : <FaEye size={14} />}
-      </button>
-    </div>
-  );
-};
-
-// ─── Section card ─────────────────────────────────────────────────────────────
-const Card = ({ icon: Icon, title, subtitle, children }) => (
-  <div className="bg-offwhite rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-    <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-center gap-3">
-      <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-500">
-        <Icon size={14} />
-      </div>
-      <div>
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-        {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-      </div>
-    </div>
-    <div className="px-6 py-5">{children}</div>
-  </div>
+const buildNotificationDefaults = () => (
+  NOTIFICATION_EVENTS.reduce((accumulator, event) => ({
+    ...accumulator,
+    [event.key]: {
+      channels: [...event.defaultChannels],
+      digest: 'immediate',
+    },
+  }), {})
 );
 
-// ─── Main page ────────────────────────────────────────────────────────────────
+const normalizeNotificationPreferences = (preferences) => {
+  const defaults = buildNotificationDefaults();
+  if (!preferences || typeof preferences !== 'object') {
+    return defaults;
+  }
+
+  const next = { ...defaults };
+  NOTIFICATION_EVENTS.forEach((event) => {
+    const raw = preferences[event.key];
+    if (!raw || typeof raw !== 'object') {
+      return;
+    }
+    const rawChannels = Array.isArray(raw.channels) ? raw.channels : next[event.key].channels;
+    const channels = [];
+    rawChannels.forEach((channel) => {
+      if ((channel === 'email' || channel === 'in_app') && !channels.includes(channel)) {
+        channels.push(channel);
+      }
+    });
+    next[event.key] = {
+      channels,
+      digest: raw.digest === 'hourly' || raw.digest === 'daily' ? raw.digest : 'immediate',
+    };
+  });
+  return next;
+};
+
+const buildInitials = (displayName, email) => {
+  const source = (displayName || email || 'Unravler')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return source
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+};
+
+const statusBadgeClassName = (status) => {
+  switch (status) {
+    case 'active':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'expired':
+    case 'cancelled':
+      return 'bg-rose-50 text-rose-700 border-rose-200';
+    case 'grace':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
+    default:
+      return 'bg-slate-100 text-slate-700 border-slate-200';
+  }
+};
+
+const mapPasswordError = (error) => {
+  switch (error?.code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+      return 'Current password is incorrect.';
+    case 'auth/weak-password':
+      return 'Choose a stronger password.';
+    case 'auth/requires-recent-login':
+      return 'Please sign in again before changing your password.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Please wait and try again.';
+    default:
+      return 'Unable to update your password right now.';
+  }
+};
+
 const Settings = () => {
-  const { user, refreshUser, logout } = useAuth();
-
-  // ── Profile form ──
-  const [name, setName] = useState(user?.name || '');
-  const [timezone, setTimezone] = useState(user?.timezone || 'UTC');
+  const { user, firebaseUser, refreshUser, logout } = useAuth();
+  const [displayName, setDisplayName] = useState('');
+  const [timezone, setTimezone] = useState('UTC');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(true);
+  const [notificationPreferences, setNotificationPreferences] = useState(buildNotificationDefaults());
+  const [savingNotifications, setSavingNotifications] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
+  const [updatingPassword, setUpdatingPassword] = useState(false);
 
-  const handleProfileSave = async (e) => {
-    e.preventDefault();
-    if (!name.trim()) return;
+  useEffect(() => {
+    setDisplayName(user?.display_name || user?.name || '');
+    setTimezone(user?.timezone || 'UTC');
+  }, [user?.display_name, user?.name, user?.timezone]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPreferences = async () => {
+      setLoadingNotifications(true);
+      try {
+        const response = await getNotificationPreferences();
+        if (!cancelled) {
+          setNotificationPreferences(normalizeNotificationPreferences(response.preferences));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error?.response?.data?.detail || 'Failed to load notification preferences.');
+          setNotificationPreferences(buildNotificationDefaults());
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingNotifications(false);
+        }
+      }
+    };
+
+    loadPreferences();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const timezoneOptions = useMemo(() => {
+    const values = new Set(COMMON_TIMEZONES);
+    if (user?.timezone) values.add(user.timezone);
+    try {
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (browserTimezone) values.add(browserTimezone);
+    } catch {
+      // Ignore environments without Intl timezone support.
+    }
+    return Array.from(values);
+  }, [user?.timezone]);
+
+  const avatarInitials = useMemo(
+    () => buildInitials(user?.display_name || user?.name || '', user?.email || ''),
+    [user?.display_name, user?.name, user?.email],
+  );
+
+  const resolvedDisplayName = user?.display_name || user?.name || '';
+  const profileDirty = displayName.trim() !== resolvedDisplayName || timezone !== (user?.timezone || 'UTC');
+  const providerIds = useMemo(
+    () => Array.from(new Set((firebaseUser?.providerData || []).map((provider) => provider?.providerId).filter(Boolean))),
+    [firebaseUser],
+  );
+  const hasPasswordProvider = providerIds.includes('password');
+  const hasGoogleProvider = providerIds.includes('google.com');
+  const securityMode = !firebaseUser ? 'reset-guidance' : hasPasswordProvider ? 'password' : hasGoogleProvider ? 'google' : 'provider';
+
+  const handleProfileSave = async (event) => {
+    event.preventDefault();
+    const nextDisplayName = displayName.trim();
+    if (!nextDisplayName) {
+      toast.error('Display name cannot be blank.');
+      return;
+    }
+
     setSavingProfile(true);
     try {
-      await updateProfile({ name: name.trim(), timezone });
+      await updateCurrentUser({
+        display_name: nextDisplayName,
+        timezone,
+      });
       await refreshUser();
-      toast.success('Profile updated');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to update profile');
+      toast.success('Account settings saved.');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to save account settings.');
     } finally {
       setSavingProfile(false);
     }
   };
 
-  const handleAvatarUploaded = async (newPictureUrl) => {
-    // Refresh the user object so the new picture URL is reflected everywhere
-    try {
-      await refreshUser();
-    } catch (_) {
-      // refreshUser failed silently — not a blocking error
-    }
-  };
-
-  // ── GDPR state ──
-  const [exportingData, setExportingData] = useState(false);
-
-  // ── Notification preferences ──
-  const NOTIF_EVENTS = [
-    { key: 'post.published',   label: 'Post published',        desc: 'When a post successfully publishes to a platform' },
-    { key: 'post.failed',      label: 'Post failed',           desc: 'When a post fails to publish after retries' },
-    { key: 'post.dlq',         label: 'Post permanently failed', desc: 'When a post is moved to dead letter queue' },
-    { key: 'account.expiring', label: 'Subscription expiring', desc: 'Reminder before your plan expires' },
-    { key: 'billing.failed',   label: 'Billing failed',        desc: 'When a payment attempt fails' },
-    { key: 'analytics.weekly', label: 'Weekly analytics',      desc: 'Weekly performance digest' },
-  ];
-  const [notifPrefs, setNotifPrefs] = useState({});
-  const [savingNotif, setSavingNotif] = useState(false);
-
-  useEffect(() => {
-    axios.get(`${BACKEND_URL}/api/v1/user/notification-preferences`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    }).then(res => setNotifPrefs(res.data.preferences || {})).catch(() => {});
-  }, []);
-
-  const toggleNotifChannel = (eventKey, channel) => {
-    setNotifPrefs(prev => {
-      const current = prev[eventKey] || { channels: [], digest: 'immediate' };
-      const channels = current.channels.includes(channel)
-        ? current.channels.filter(c => c !== channel)
-        : [...current.channels, channel];
-      return { ...prev, [eventKey]: { ...current, channels } };
+  const toggleNotificationChannel = (eventKey, channel, enabled) => {
+    setNotificationPreferences((current) => {
+      const existing = current[eventKey] || { channels: [], digest: 'immediate' };
+      const nextChannels = enabled
+        ? Array.from(new Set([...existing.channels, channel]))
+        : existing.channels.filter((value) => value !== channel);
+      return {
+        ...current,
+        [eventKey]: {
+          ...existing,
+          channels: nextChannels,
+        },
+      };
     });
   };
 
-  const handleSaveNotifPrefs = async () => {
-    setSavingNotif(true);
+  const handleNotificationSave = async () => {
+    setSavingNotifications(true);
     try {
-      await axios.patch(
-        `${BACKEND_URL}/api/v1/user/notification-preferences`,
-        { preferences: notifPrefs },
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
-      );
-      toast.success('Notification preferences saved');
-    } catch {
-      toast.error('Failed to save preferences');
+      const response = await updateNotificationPreferences(notificationPreferences);
+      setNotificationPreferences(normalizeNotificationPreferences(response.preferences));
+      toast.success('Notification preferences saved.');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to save notification preferences.');
     } finally {
-      setSavingNotif(false);
+      setSavingNotifications(false);
     }
   };
 
-  // ── Password form ──
-  // Guard: treat as indeterminate (null) while user is still loading,
-  // so we don't flash the "Google user" panel for email users.
-  const isGoogleUser = user === null ? null : !user.has_password;
-  const [pwForm, setPwForm] = useState({ old: '', new: '', confirm: '' });
-  const [savingPw, setSavingPw] = useState(false);
+  const handleResendVerification = async () => {
+    setResendingVerification(true);
+    try {
+      await requestVerificationEmail('/settings');
+      toast.success('Verification email sent. Check your inbox.');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Could not send a verification email right now.');
+    } finally {
+      setResendingVerification(false);
+    }
+  };
 
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
-    if (pwForm.new !== pwForm.confirm) {
+  const handlePasswordChange = async (event) => {
+    event.preventDefault();
+    if (!firebaseUser || !firebaseUser.email) {
+      toast.error('Sign in again before changing your password.');
+      return;
+    }
+    if (passwordForm.next !== passwordForm.confirm) {
       toast.error('New passwords do not match.');
       return;
     }
-    if (pwForm.new.length < 8) {
+    if (passwordForm.next.length < 8) {
       toast.error('New password must be at least 8 characters.');
       return;
     }
-    setSavingPw(true);
+
+    setUpdatingPassword(true);
     try {
-      await changePassword({ old_password: pwForm.old, new_password: pwForm.new });
-      toast.success('Password updated successfully');
-      setPwForm({ old: '', new: '', confirm: '' });
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to change password');
+      const credential = EmailAuthProvider.credential(firebaseUser.email, passwordForm.current);
+      await reauthenticateWithCredential(firebaseUser, credential);
+      await updateFirebasePassword(firebaseUser, passwordForm.next);
+      setPasswordForm({ current: '', next: '', confirm: '' });
+      toast.success('Password updated.');
+    } catch (error) {
+      toast.error(mapPasswordError(error));
     } finally {
-      setSavingPw(false);
+      setUpdatingPassword(false);
     }
   };
 
   const handleExportData = async () => {
     setExportingData(true);
     try {
-      // Export is async — backend queues a Celery task and emails the download link.
-      // Correct endpoint: POST /api/v1/user/data-export
-      await axios.post(
-        `${process.env.REACT_APP_BACKEND_URL}/api/v1/user/data-export`,
-        {},
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
-      );
-      toast.success('Export queued! You will receive an email with your download link within 15 minutes.');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to request data export. Please try again.');
+      await requestDataExport();
+      toast.success('Export queued. We will email you the download link when it is ready.');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to queue your data export.');
     } finally {
       setExportingData(false);
     }
   };
 
   const handleDeleteAccount = async () => {
-    const confirmed = window.confirm(
-      'Are you absolutely sure? This will permanently delete your account, all posts, and connected accounts. This CANNOT be undone.'
-    );
-    if (!confirmed) return;
-    const doubleConfirmed = window.confirm('Final warning: Delete your account permanently?');
-    if (!doubleConfirmed) return;
+    setDeletingAccount(true);
     try {
-      // Correct endpoint: DELETE /api/v1/user/account
-      await axios.delete(
-        `${process.env.REACT_APP_BACKEND_URL}/api/v1/user/account`,
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
-      );
-      toast.success('Account deletion queued. All your data will be removed within 30 days.');
-      logout();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to delete account. Please contact support.');
+      await requestAccountDeletion();
+      toast.success('Account deletion queued. Your data will be removed within 30 days.');
+      await logout();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to queue account deletion.');
+    } finally {
+      setDeletingAccount(false);
     }
   };
 
+  if (!user) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-4xl">
+          <Card className="border-slate-200 shadow-sm">
+            <CardContent className="flex h-48 items-center justify-center">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
-      <div className="max-w-2xl space-y-6">
-
-        {/* ── Page header ── */}
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
-          <p className="text-sm text-slate-500 mt-1">Manage your account and preferences</p>
+      <div className="mx-auto max-w-5xl space-y-6">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Settings</h1>
+          <p className="max-w-2xl text-sm text-slate-500 dark:text-slate-400">
+            Keep your account details, verification state, and notification preferences aligned with how you publish inside Unravler.
+          </p>
         </div>
 
-        {/* ── Profile card ── */}
-        <Card icon={FaUser} title="Profile" subtitle="Your public profile information">
-          <div className="flex items-start gap-6">
-            {/* Avatar */}
-            <AvatarUpload user={user} onUploaded={handleAvatarUploaded} />
-
-            {/* Form */}
-            <form onSubmit={handleProfileSave} className="flex-1 space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="name" className="text-xs font-medium text-slate-600">Full Name</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Your name"
-                  data-testid="name-input"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-xs font-medium text-slate-600">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={user?.email || ''}
-                  disabled
-                  className="bg-slate-50 text-slate-500 cursor-not-allowed"
-                  data-testid="email-input"
-                />
-                <p className="text-[11px] text-slate-400">Email cannot be changed.</p>
-              </div>
-
-              {/* Timezone Setting */}
-              <div className="space-y-1.5">
-                <Label htmlFor="timezone" className="text-xs font-medium text-slate-600">Timezone</Label>
-                <select
-                  id="timezone"
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  data-testid="timezone-select"
-                >
-                  {COMMON_TIMEZONES.map((tz) => (
-                    <option key={tz} value={tz}>{tz}</option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-slate-400">
-                  Used for scheduling posts. All times are stored in UTC and displayed in your local timezone.
-                </p>
-              </div>
-
-              <div className="pt-1">
-                <Button
-                  type="submit"
-                  disabled={savingProfile || !name.trim() || (name === user?.name && timezone === (user?.timezone || 'UTC'))}
-                  size="sm"
-                  data-testid="save-settings-button"
-                >
-                  {savingProfile ? 'Saving…' : 'Save changes'}
-                </Button>
-              </div>
-            </form>
-          </div>
-
-          <p className="text-[11px] text-slate-400 mt-4 flex items-center gap-1">
-            <FaCamera size={10} />
-            Click the photo to upload a new one. Max 1 MB · JPEG, PNG, GIF, WebP.
-          </p>
-        </Card>
-
-        {/* ── Password card ── */}
-        <Card
-          icon={FaLock}
-          title="Password"
-          subtitle={
-            isGoogleUser === null ? 'Loading…'
-            : isGoogleUser ? 'Not available for Google sign-in accounts'
-            : 'Change your login password'
-          }
-        >
-          {isGoogleUser === null ? (
-            <div className="h-10 flex items-center">
-              <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-            </div>
-          ) : isGoogleUser ? (
-            <div className="flex items-center gap-3 py-3 px-4 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="w-8 h-8 rounded-full bg-offwhite border border-slate-200 flex items-center justify-center shadow-sm">
-                <FaGoogle className="text-slate-500" size={13} />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-slate-700">Signed in with Google</p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Password change isn't available for Google accounts. Manage your password at{' '}
-                  <a
-                    href="https://myaccount.google.com/security"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-green-600 hover:underline"
-                  >
-                    myaccount.google.com
-                  </a>
-                </p>
-              </div>
-            </div>
-          ) : (
-            <form onSubmit={handlePasswordChange} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="old-password" className="text-xs font-medium text-slate-600">Current password</Label>
-                <PasswordInput
-                  id="old-password"
-                  placeholder="Enter current password"
-                  value={pwForm.old}
-                  onChange={(e) => setPwForm((p) => ({ ...p, old: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="new-password" className="text-xs font-medium text-slate-600">New password</Label>
-                <PasswordInput
-                  id="new-password"
-                  placeholder="Min. 8 characters"
-                  value={pwForm.new}
-                  onChange={(e) => setPwForm((p) => ({ ...p, new: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="confirm-password" className="text-xs font-medium text-slate-600">Confirm new password</Label>
-                <PasswordInput
-                  id="confirm-password"
-                  placeholder="Repeat new password"
-                  value={pwForm.confirm}
-                  onChange={(e) => setPwForm((p) => ({ ...p, confirm: e.target.value }))}
-                />
-              </div>
-
-              {/* Strength hint */}
-              {pwForm.new && (
-                <div className="flex gap-1.5">
-                  {[4, 8, 12].map((len, i) => (
-                    <div
-                      key={i}
-                      className={`h-1 flex-1 rounded-full transition-colors ${
-                        pwForm.new.length >= len
-                          ? i === 0 ? 'bg-red-400' : i === 1 ? 'bg-yellow-400' : 'bg-green-500'
-                          : 'bg-slate-200'
-                      }`}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <FaUser className="text-sm text-slate-500" />
+                Account profile
+              </CardTitle>
+              <CardDescription>
+                Update the display name and timezone the scheduler should use. Email stays read-only here.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-6 sm:flex-row">
+                <div className="flex items-center gap-4 sm:w-48 sm:flex-col sm:items-start">
+                  {user.avatar_url ? (
+                    <img
+                      src={user.avatar_url}
+                      alt={resolvedDisplayName || user.email}
+                      className="h-20 w-20 rounded-2xl object-cover ring-1 ring-slate-200"
                     />
-                  ))}
-                  <span className="text-[11px] text-slate-400 ml-1">
-                    {pwForm.new.length < 4 ? 'Too short' : pwForm.new.length < 8 ? 'Weak' : pwForm.new.length < 12 ? 'Good' : 'Strong'}
-                  </span>
+                  ) : (
+                    <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-slate-900 text-lg font-semibold text-white shadow-sm">
+                      {avatarInitials}
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {resolvedDisplayName || 'Unravler user'}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Profile photos are read from your sign-in provider. Avatar uploads are not managed here.
+                    </p>
+                  </div>
                 </div>
-              )}
 
-              {pwForm.confirm && pwForm.new !== pwForm.confirm && (
-                <p className="text-xs text-red-500">Passwords do not match.</p>
-              )}
+                <form onSubmit={handleProfileSave} className="flex-1 space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-display-name">Display name</Label>
+                    <Input
+                      id="settings-display-name"
+                      value={displayName}
+                      onChange={(event) => setDisplayName(event.target.value)}
+                      placeholder="Your name"
+                    />
+                  </div>
 
-              <div className="pt-1">
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={savingPw || !pwForm.old || !pwForm.new || !pwForm.confirm}
-                >
-                  {savingPw ? 'Updating…' : 'Update password'}
-                </Button>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-email">Email</Label>
+                    <Input
+                      id="settings-email"
+                      type="email"
+                      value={user.email || ''}
+                      disabled
+                      className="bg-slate-50 text-slate-500 dark:bg-slate-900/40"
+                    />
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Email changes are not supported from Settings.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-timezone">Timezone</Label>
+                    <select
+                      id="settings-timezone"
+                      value={timezone}
+                      onChange={(event) => setTimezone(event.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      {timezoneOptions.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Scheduler and calendar times are rendered in this timezone.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 pt-2">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Current plan: <span className="font-medium capitalize text-slate-700 dark:text-slate-300">{user.plan || 'starter'}</span>
+                    </p>
+                    <Button type="submit" disabled={!profileDirty || savingProfile}>
+                      {savingProfile ? 'Saving…' : 'Save changes'}
+                    </Button>
+                  </div>
+                </form>
               </div>
-            </form>
-          )}
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* ── Subscription card ── */}
-        <Card icon={FaCrown} title="Subscription" subtitle="Your current plan">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                  user?.subscription_status === 'active'
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-slate-100 text-slate-600'
-                }`}>
-                  {user?.subscription_status === 'active' ? 'Active' : 'Free'}
-                </span>
-                {user?.subscription_plan && (
-                  <span className="text-sm font-medium text-slate-700 capitalize">
-                    {user.subscription_plan} plan
-                  </span>
+          <div className="space-y-6">
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-4">
+                <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                  <FaShieldAlt className="text-sm text-slate-500" />
+                  Verification and security
+                </CardTitle>
+                <CardDescription>
+                  Confirm your email and manage password access based on how this account signs in.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/40">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Badge className={user.email_verified ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'} variant="outline">
+                          {user.email_verified ? 'Verified' : 'Verification required'}
+                        </Badge>
+                        {!user.email_verified && <FaClock className="text-xs text-amber-600" />}
+                      </div>
+                      <p className="text-sm text-slate-700 dark:text-slate-300">
+                        {user.email_verified
+                          ? 'Your email is confirmed. Publishing, scheduling, and team approvals can proceed normally.'
+                          : 'Verify this email before publishing, scheduling, and team invite or approval actions.'}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        We can resend a fresh verification link to <span className="font-medium">{user.email}</span>.
+                      </p>
+                    </div>
+                    {!user.email_verified && (
+                      <Button variant="outline" onClick={handleResendVerification} disabled={resendingVerification}>
+                        {resendingVerification ? 'Sending…' : 'Resend email'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {securityMode === 'password' && (
+                  <form onSubmit={handlePasswordChange} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="settings-current-password">Current password</Label>
+                      <Input
+                        id="settings-current-password"
+                        type="password"
+                        value={passwordForm.current}
+                        onChange={(event) => setPasswordForm((current) => ({ ...current, current: event.target.value }))}
+                        placeholder="Enter your current password"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="settings-new-password">New password</Label>
+                      <Input
+                        id="settings-new-password"
+                        type="password"
+                        value={passwordForm.next}
+                        onChange={(event) => setPasswordForm((current) => ({ ...current, next: event.target.value }))}
+                        placeholder="At least 8 characters"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="settings-confirm-password">Confirm new password</Label>
+                      <Input
+                        id="settings-confirm-password"
+                        type="password"
+                        value={passwordForm.confirm}
+                        onChange={(event) => setPasswordForm((current) => ({ ...current, confirm: event.target.value }))}
+                        placeholder="Repeat the new password"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Password changes use Firebase re-authentication for security.
+                      </p>
+                      <Button
+                        type="submit"
+                        disabled={updatingPassword || !passwordForm.current || !passwordForm.next || !passwordForm.confirm}
+                      >
+                        {updatingPassword ? 'Updating…' : 'Update password'}
+                      </Button>
+                    </div>
+                  </form>
                 )}
-              </div>
-              {user?.subscription_end_date && (
-                <p className="text-xs text-slate-500">
-                  Renews on {new Date(user.subscription_end_date).toLocaleDateString()}
-                </p>
-              )}
-            </div>
-          </div>
-        </Card>
 
-        {/* ── Notification Preferences ── */}
-        <div className="bg-offwhite rounded-xl border border-slate-200 p-6">
-          <h2 className="text-lg font-semibold text-slate-800 mb-1">Notification Preferences</h2>
-          <p className="text-sm text-slate-500 mb-5">Choose how you receive updates for each event type.</p>
-          <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wide px-2 mb-1">
+                {securityMode === 'google' && (
+                  <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-700 dark:border-slate-800 dark:text-slate-300">
+                    This account signs in through Google. Password changes are managed by Google rather than inside Unravler.
+                  </div>
+                )}
+
+                {securityMode === 'provider' && (
+                  <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-700 dark:border-slate-800 dark:text-slate-300">
+                    This sign-in method is provider-managed. If you need to change credentials, update them through the provider you used to log in.
+                  </div>
+                )}
+
+                {securityMode === 'reset-guidance' && (
+                  <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+                    <p className="text-sm text-slate-700 dark:text-slate-300">
+                      Password changes require an active Firebase session. If you signed in from another browser or only have a server session right now, use reset password instead.
+                    </p>
+                    <Button asChild variant="outline" className="mt-4">
+                      <Link to="/forgot-password">Open reset password</Link>
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-4">
+                <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                  <FaExternalLinkAlt className="text-sm text-slate-500" />
+                  Billing
+                </CardTitle>
+                <CardDescription>
+                  Subscription changes stay on the dedicated billing surface.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex items-center justify-between gap-4">
+                <div className="space-y-2">
+                  <Badge className={statusBadgeClassName(user.subscription_status)} variant="outline">
+                    {(user.subscription_status || 'free').replace('_', ' ')}
+                  </Badge>
+                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                    <span className="font-medium capitalize">{user.plan || 'starter'}</span> plan
+                  </p>
+                </div>
+                <Button asChild variant="outline">
+                  <Link to="/billing">Manage billing</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+              <FaBell className="text-sm text-slate-500" />
+              Notification preferences
+            </CardTitle>
+            <CardDescription>
+              Control the supported events Unravler can send by email or show inside the app.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 border-b border-slate-200 pb-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:border-slate-800">
               <span>Event</span>
               <span className="text-center">Email</span>
-              <span className="text-center">In-App</span>
+              <span className="text-center">In-app</span>
             </div>
-            {NOTIF_EVENTS.map(({ key, label, desc }) => {
-              const pref = notifPrefs[key] || { channels: [] };
-              return (
-                <div key={key} className="grid grid-cols-3 items-center gap-2 px-2 py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800">{label}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{desc}</p>
+
+            {loadingNotifications ? (
+              <div className="space-y-3">
+                {NOTIFICATION_EVENTS.map((event) => (
+                  <div key={event.key} className="grid grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+                    <div className="space-y-2">
+                      <div className="h-4 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+                      <div className="h-3 w-64 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+                    </div>
+                    <div className="mx-auto h-5 w-9 animate-pulse rounded-full bg-slate-200 dark:bg-slate-800" />
+                    <div className="mx-auto h-5 w-9 animate-pulse rounded-full bg-slate-200 dark:bg-slate-800" />
                   </div>
-                  <div className="flex justify-center">
-                    <button
-                      onClick={() => toggleNotifChannel(key, 'email')}
-                      className={`w-10 h-5 rounded-full transition-colors relative ${pref.channels.includes('email') ? 'bg-purple-500' : 'bg-slate-200'}`}
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {NOTIFICATION_EVENTS.map((event) => {
+                  const channels = notificationPreferences[event.key]?.channels || [];
+                  return (
+                    <div
+                      key={event.key}
+                      className="grid grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 rounded-2xl border border-slate-200 px-4 py-4 dark:border-slate-800"
                     >
-                      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pref.channels.includes('email') ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                    </button>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{event.label}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{event.description}</p>
+                      </div>
+                      <div className="flex justify-center">
+                        <Switch
+                          checked={channels.includes('email')}
+                          onCheckedChange={(checked) => toggleNotificationChannel(event.key, 'email', checked)}
+                          aria-label={`${event.label} email notifications`}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <Switch
+                          checked={channels.includes('in_app')}
+                          onCheckedChange={(checked) => toggleNotificationChannel(event.key, 'in_app', checked)}
+                          aria-label={`${event.label} in-app notifications`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button onClick={handleNotificationSave} disabled={savingNotifications || loadingNotifications}>
+                {savingNotifications ? 'Saving…' : 'Save preferences'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.85fr)]">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <FaEnvelope className="text-sm text-slate-500" />
+                Privacy and data
+              </CardTitle>
+              <CardDescription>
+                Export your account data or review how Unravler handles privacy and deletion requests.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">Export my data</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Queue a portable export of your account, scheduling, and workspace data.
+                    </p>
                   </div>
-                  <div className="flex justify-center">
-                    <button
-                      onClick={() => toggleNotifChannel(key, 'in_app')}
-                      className={`w-10 h-5 rounded-full transition-colors relative ${pref.channels.includes('in_app') ? 'bg-purple-500' : 'bg-slate-200'}`}
-                    >
-                      <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pref.channels.includes('in_app') ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                    </button>
+                  <Button variant="outline" onClick={handleExportData} disabled={exportingData}>
+                    {exportingData ? 'Preparing…' : 'Request export'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
+                <Link to="/privacy" className="inline-flex items-center gap-2 hover:text-slate-900 dark:hover:text-slate-100">
+                  Privacy policy <FaExternalLinkAlt className="text-xs" />
+                </Link>
+                <Link to="/data-deletion" className="inline-flex items-center gap-2 hover:text-slate-900 dark:hover:text-slate-100">
+                  Data deletion instructions <FaExternalLinkAlt className="text-xs" />
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-rose-200 shadow-sm dark:border-rose-900/60">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+                <FaTrashAlt className="text-sm" />
+                Danger zone
+              </CardTitle>
+              <CardDescription>
+                Queue permanent account deletion. This removes your workspace data and cannot be undone.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-200">
+                <div className="flex items-start gap-3">
+                  <FaExclamationTriangle className="mt-0.5 text-sm" />
+                  <div className="space-y-1">
+                    <p className="font-medium">Delete account</p>
+                    <p className="text-xs leading-5 text-rose-700 dark:text-rose-300">
+                      Connected accounts, scheduled posts, and workspace data enter the deletion pipeline immediately after confirmation.
+                    </p>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          <div className="mt-4 flex justify-end">
-            <Button onClick={handleSaveNotifPrefs} disabled={savingNotif} size="sm">
-              {savingNotif ? 'Saving…' : 'Save Preferences'}
-            </Button>
-          </div>
-        </div>
-
-        {/* Privacy & Data (GDPR) */}
-        <div className="bg-offwhite rounded-xl border border-slate-200 p-6">
-          <h2 className="text-lg font-semibold text-slate-800 mb-1">Privacy &amp; Data</h2>
-          <p className="text-sm text-slate-500 mb-5">Manage your personal data in compliance with GDPR.</p>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-              <div>
-                <p className="font-medium text-slate-800 text-sm">Export My Data</p>
-                <p className="text-xs text-slate-500 mt-0.5">Download all your posts, accounts, and profile data as JSON.</p>
               </div>
-              <button
-                onClick={handleExportData}
-                disabled={exportingData}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
-                {exportingData ? 'Preparing...' : 'Export Data'}
-              </button>
-            </div>
-            <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg border border-red-100">
-              <div>
-                <p className="font-medium text-red-800 text-sm">Delete Account</p>
-                <p className="text-xs text-red-500 mt-0.5">Permanently delete your account and all data. Cannot be undone.</p>
-              </div>
-              <button
-                onClick={handleDeleteAccount}
-                className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors"
-              >
-                Delete Account
-              </button>
-            </div>
-          </div>
-        </div>
 
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" className="w-full">
+                    Delete account
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader className="text-left sm:text-left">
+                    <AlertDialogTitle>Delete your Unravler account?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This queues permanent deletion of your account, scheduled posts, media, and workspace data. The request cannot be undone after it is submitted.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deletingAccount}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDeleteAccount}
+                      disabled={deletingAccount}
+                      className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
+                    >
+                      {deletingAccount ? 'Deleting…' : 'Yes, queue deletion'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </DashboardLayout>
   );

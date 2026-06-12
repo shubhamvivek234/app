@@ -240,6 +240,49 @@ async def test_get_me_recovers_permissions_when_default_workspace_missing():
     assert db.users.docs[0]["default_workspace_id"] == "ws-team"
 
 
+@pytest.mark.asyncio
+async def test_patch_me_updates_display_name_and_timezone():
+    db = _FakeDB()
+    now = datetime.now(timezone.utc)
+    db.users.docs.append(
+        {
+            "user_id": "user-1",
+            "email": "user@example.com",
+            "email_verified": True,
+            "display_name": "Old Name",
+            "plan": "starter",
+            "subscription_status": "free",
+            "timezone": "UTC",
+            "mfa_enabled": False,
+            "role": "user",
+            "onboarding_completed": False,
+            "workspace_ids": ["ws-1"],
+            "default_workspace_id": "ws-1",
+            "created_at": now,
+        }
+    )
+    db.workspace_members.docs.append(
+        {
+            "workspace_id": "ws-1",
+            "user_id": "user-1",
+            "role": "owner",
+            "joined_at": now,
+        }
+    )
+
+    result = await auth_routes.patch_me(
+        request=Request({"type": "http", "method": "PATCH", "path": "/api/auth/me", "headers": []}),
+        body=auth_routes.UpdateMeRequest(display_name="  New   Name  ", timezone="Asia/Kolkata"),
+        current_user=dict(db.users.docs[0]),
+        db=db,
+    )
+
+    assert result.display_name == "New Name"
+    assert result.timezone == "Asia/Kolkata"
+    assert db.users.docs[0]["display_name"] == "New Name"
+    assert db.users.docs[0]["timezone"] == "Asia/Kolkata"
+
+
 def _fake_create_session_cookie(container):
     async def _create(response, id_token, expires_in=0):
         container["token"] = id_token
