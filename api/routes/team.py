@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
 from api.deps import CurrentUser, DB, VerifiedUser, require_permission
+from utils.frontend_urls import build_frontend_url, resolve_frontend_base_url
 from utils.roles import has_permission
 
 logger = logging.getLogger(__name__)
@@ -38,11 +39,11 @@ def _workspace_id_for(current_user: dict) -> str:
 
 
 def _frontend_base_url() -> str:
-    return os.environ.get("FRONTEND_URL", "").strip() or "https://www.unravler.com"
+    return resolve_frontend_base_url(os.environ.get("FRONTEND_URL"))
 
 
 def _build_invite_url(token: str) -> str:
-    return f"{_frontend_base_url().rstrip('/')}/accept-invite/{token}"
+    return build_frontend_url(f"/accept-invite/{token}", raw_base_url=_frontend_base_url())
 
 
 def _parse_timestamp(value):

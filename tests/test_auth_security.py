@@ -377,6 +377,19 @@ async def test_send_password_reset_email_falls_back_to_firebase_managed_email(mo
     assert call_store["email"] == "user@example.com"
 
 
+def test_auth_email_config_canonicalizes_preview_or_apex_frontend_url(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "resend_test")
+    monkeypatch.setenv("SENDER_EMAIL", "contact@unravler.com")
+
+    monkeypatch.setenv("FRONTEND_URL", "https://app-fgv2-git-main-user-projects.vercel.app")
+    status = auth_emails_utils.get_auth_email_config_status()
+    assert status["frontend_url"] == "https://www.unravler.com"
+
+    monkeypatch.setenv("FRONTEND_URL", "https://unravler.com")
+    status = auth_emails_utils.get_auth_email_config_status()
+    assert status["frontend_url"] == "https://www.unravler.com"
+
+
 @pytest.mark.asyncio
 async def test_send_password_reset_email_raises_when_branded_and_fallback_both_fail(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "resend_test")

@@ -192,6 +192,14 @@ async def test_invite_member_returns_shareable_invite_and_blocks_duplicates():
     assert exc.value.status_code == 409
 
 
+def test_invite_url_uses_canonical_frontend_domain_for_preview_or_apex_env(monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://app-fgv2-git-main-user-projects.vercel.app")
+    assert team_route._build_invite_url("preview-token") == "https://www.unravler.com/accept-invite/preview-token"
+
+    monkeypatch.setenv("FRONTEND_URL", "https://unravler.com")
+    assert team_route._build_invite_url("root-token") == "https://www.unravler.com/accept-invite/root-token"
+
+
 @pytest.mark.asyncio
 async def test_invite_member_expires_legacy_pending_invite_before_creating_new_one():
     now = datetime.now(timezone.utc)

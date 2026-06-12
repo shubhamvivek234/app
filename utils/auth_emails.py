@@ -3,18 +3,16 @@ import inspect
 import logging
 import os
 from typing import Literal
-from urllib.parse import urlencode
 
 from firebase_admin import auth as firebase_auth
 
 from api.deps import get_firebase_app
+from utils.frontend_urls import DEFAULT_FRONTEND_URL, build_frontend_url, resolve_frontend_base_url
 from utils.observability import event_log, shorten_provider_error
 
 logger = logging.getLogger(__name__)
 
 AuthEmailKind = Literal["password_reset", "verify_email"]
-
-_DEFAULT_FRONTEND_URL = "https://www.unravler.com"
 _SUPPORTS_LINK_DOMAIN = "link_domain" in inspect.signature(firebase_auth.ActionCodeSettings.__init__).parameters
 
 
@@ -54,7 +52,7 @@ def get_auth_email_config_status() -> dict[str, object]:
     resend_api_key = _clean_env("RESEND_API_KEY")
     sender_email = _clean_env("SENDER_EMAIL")
     sender_name = _clean_env("SENDER_NAME", "Unravler") or "Unravler"
-    frontend_url = _clean_env("FRONTEND_URL", _DEFAULT_FRONTEND_URL) or _DEFAULT_FRONTEND_URL
+    frontend_url = resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
     logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/favicon-256.png"
     link_domain = _clean_env("FIREBASE_AUTH_EMAIL_LINK_DOMAIN")
 
@@ -91,13 +89,7 @@ def _require_auth_email_config() -> dict[str, object]:
 
 
 def _build_frontend_url(path: str, query: dict[str, str] | None = None) -> str:
-    base = _clean_env("FRONTEND_URL", _DEFAULT_FRONTEND_URL) or _DEFAULT_FRONTEND_URL
-    url = f"{base.rstrip('/')}{path}"
-    if query:
-        encoded = urlencode({key: value for key, value in query.items() if value})
-        if encoded:
-            url = f"{url}?{encoded}"
-    return url
+    return build_frontend_url(path, query=query, raw_base_url=_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
 
 
 def _build_action_code_settings(path: str, *, query: dict[str, str] | None = None, handle_code_in_app: bool) -> firebase_auth.ActionCodeSettings:
