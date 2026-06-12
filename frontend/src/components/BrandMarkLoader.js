@@ -121,10 +121,43 @@ const BrandMarkLoader = ({ className = '', size = 'xl', overlay = false }) => {
           }
         }
 
+        @keyframes unravlerLoaderPulseRing {
+          0% {
+            transform: translate(-50%, -50%) scale(0.92);
+            opacity: 0;
+          }
+          18% {
+            opacity: 0.16;
+          }
+          62% {
+            opacity: 0.08;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(1.08);
+            opacity: 0;
+          }
+        }
+
+        @keyframes unravlerLoaderArcSweep {
+          0% {
+            transform: translate(-50%, -50%) rotate(0deg);
+            opacity: 0.22;
+          }
+          50% {
+            opacity: 0.42;
+          }
+          100% {
+            transform: translate(-50%, -50%) rotate(360deg);
+            opacity: 0.22;
+          }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .unravler-loader__spotlight,
           .unravler-loader__halo-primary,
           .unravler-loader__halo-secondary,
+          .unravler-loader__pulse,
+          .unravler-loader__arc,
           .unravler-loader__orbit,
           .unravler-loader__orbit-accent,
           .unravler-loader__mark-shell,
@@ -221,6 +254,30 @@ const BrandMarkLoader = ({ className = '', size = 'xl', overlay = false }) => {
             background:
               'radial-gradient(circle, rgba(229,236,231,0.18) 0%, rgba(229,236,231,0.08) 48%, rgba(15,23,42,0) 72%)',
             animation: 'unravlerLoaderAura 4.6s cubic-bezier(0.37, 0, 0.22, 1) infinite',
+          }}
+        />
+        <div
+          className="unravler-loader__pulse pointer-events-none absolute left-1/2 top-1/2 rounded-full border border-slate-300/30 dark:border-slate-500/25"
+          style={{
+            width: Math.round(stageSize * 1.24),
+            height: Math.round(stageSize * 1.24),
+            transform: 'translate(-50%, -50%)',
+            animation: 'unravlerLoaderPulseRing 4.9s cubic-bezier(0.16, 1, 0.3, 1) infinite',
+          }}
+        />
+        <div
+          className="unravler-loader__arc pointer-events-none absolute left-1/2 top-1/2 rounded-full"
+          style={{
+            width: orbitSize + 10,
+            height: orbitSize + 10,
+            transform: 'translate(-50%, -50%)',
+            background:
+              'conic-gradient(from 150deg, rgba(86,116,110,0.38) 0deg, rgba(86,116,110,0.12) 34deg, rgba(86,116,110,0) 74deg, rgba(86,116,110,0) 360deg)',
+            WebkitMask:
+              'radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px))',
+            mask:
+              'radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px))',
+            animation: 'unravlerLoaderArcSweep 8.6s linear infinite',
           }}
         />
 
