@@ -1,385 +1,62 @@
 """
-Phase 5.8 — Public REST API under /api/v1/public/.
-Authenticated via API key (X-API-Key header) instead of Firebase JWT.
-Scoped to user — never cross-user access.
+Developer REST API under /api/public.
+Authenticated via personal tokens or workspace API keys.
 """
-import hashlib
+
+import json
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Header, Request, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, Field
+from starlette.requests import Request as StarletteRequest
 
-from api.deps import DB
+from api.deps import DB, ensure_active_workspace
 from api.limiter import limiter
+from api.models.post import PostResponse, UpdatePostRequest
+from api.routes import accounts as accounts_route
+from api.routes import auth as auth_route
+from api.routes import posts as posts_route
+from api.routes import stats as stats_route
+from utils.developer_tokens import PERSONAL_TOKEN_TYPE, WORKSPACE_TOKEN_TYPE, effective_scopes, has_scope, hash_developer_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/public", tags=["public-api"])
-_STRICT_SCOPE_ENFORCEMENT = os.environ.get("API_KEY_SCOPE_ENFORCEMENT", "false").lower() == "true"
-
-
-# ── API key auth ──────────────────────────────────────────────────────────────
-
-def _has_scope(doc: dict, required_scope: str | None) -> bool:
-    if not required_scope:
-        return True
-    scopes = set(doc.get("scopes") or [])
-    return "*" in scopes or required_scope in scopes
-
-
-async def _resolve_api_key_doc(x_api_key: str | None, db, required_scope: str | None = None) -> dict:
-    """
-    Resolve an API key document.
-    Scope enforcement is opt-in for now to avoid breaking existing deployed keys.
-    """
-    if not x_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-API-Key header is required",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    doc = await db.api_keys.find_one({"key_hash": key_hash, "revoked": {"$ne": True}})
-    if not doc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or revoked API key",
-        )
-    if _STRICT_SCOPE_ENFORCEMENT and not _has_scope(doc, required_scope):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"API key lacks required scope: {required_scope}",
-        )
-    try:
-        await db.api_keys.update_one(
-            {"_id": doc["_id"]},
-            {"$set": {"last_used_at": datetime.now(timezone.utc)}},
-        )
-    except Exception:
-        pass
-    return doc
-
-
-async def _resolve_user_id(x_api_key: str | None, db, required_scope: str | None = None) -> str:
-    """
-    Resolve user_id from an API key.
-    Hashes the key, looks it up in api_keys collection, returns user_id.
-    Updates last_used_at as a side effect.
-    """
-    doc = await _resolve_api_key_doc(x_api_key, db, required_scope)
-    return doc["user_id"]
-
-
-async def _resolve_workspace(x_api_key: str | None, db, required_scope: str | None = None) -> dict:
-    """
-    Look up workspace by hashed API key. Returns workspace doc.
-
-    Checks two systems in order:
-    1. api_keys collection (supports multiple keys, scopes, revocation)
-    2. workspaces.api_key_hash (legacy single-key per workspace)
-    """
-    if not x_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-API-Key header is required",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
-    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-
-    # Primary: check api_keys collection (multi-key, revocable)
-    api_key_doc = await db.api_keys.find_one({
-        "key_hash": key_hash,
-        "revoked": {"$ne": True},
-    })
-    if api_key_doc:
-        if _STRICT_SCOPE_ENFORCEMENT and not _has_scope(api_key_doc, required_scope):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"API key lacks required scope: {required_scope}",
-            )
-        workspace_id = api_key_doc.get("workspace_id")
-        workspace = await db.workspaces.find_one({"_id": workspace_id}) or \
-                    await db.workspaces.find_one({"workspace_id": workspace_id})
-        if workspace:
-            # Update last_used_at (best-effort, non-blocking)
-            try:
-                await db.api_keys.update_one(
-                    {"_id": api_key_doc["_id"]},
-                    {"$set": {"last_used_at": datetime.now(timezone.utc)}},
-                )
-            except Exception:
-                pass
-            return workspace
-
-    # Fallback: legacy single workspace api_key_hash
-    workspace = await db.workspaces.find_one({"api_key_hash": key_hash, "active": True})
-    if workspace:
-        return workspace
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or revoked API key",
-    )
-
-
-# ── Response models ───────────────────────────────────────────────────────────
-
-class PublicPostSummary(BaseModel):
-    id: str
-    status: str
-    platforms: list[str]
-    scheduled_time: datetime
-    created_at: datetime
-    platform_results: dict = {}
+_PUBLIC_API_ENABLED = os.environ.get("PUBLIC_API_ENABLED", "true").lower() == "true"
 
 
 class PublicPostListResponse(BaseModel):
-    data: list[PublicPostSummary]
+    data: list[PostResponse]
     total: int
     page: int
     limit: int
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-
-@router.get("/posts", response_model=PublicPostListResponse)
-@limiter.limit("60/minute")
-async def public_list_posts(
-    request: Request,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    page: int = 1,
-    limit: int = 20,
-) -> PublicPostListResponse:
-    """List posts for the workspace associated with the API key."""
-    workspace = await _resolve_workspace(x_api_key, db, "posts:read")
-    workspace_id = str(workspace["_id"])
-
-    if limit > 100:
-        limit = 100
-
-    query = {"workspace_id": workspace_id, "deleted_at": {"$exists": False}}
-    total = await db.posts.count_documents(query)
-    skip = (page - 1) * limit
-    cursor = db.posts.find(
-        query,
-        {"_id": 0, "id": 1, "status": 1, "platforms": 1,
-         "scheduled_time": 1, "created_at": 1, "platform_results": 1},
-    ).sort("scheduled_time", -1).skip(skip).limit(limit)
-
-    docs = await cursor.to_list(length=limit)
-    return PublicPostListResponse(
-        data=[PublicPostSummary(**d) for d in docs],
-        total=total,
-        page=page,
-        limit=limit,
-    )
-
-
-@router.get("/posts/{post_id}", response_model=PublicPostSummary)
-@limiter.limit("60/minute")
-async def public_get_post(
-    request: Request,
-    post_id: str,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> PublicPostSummary:
-    workspace = await _resolve_workspace(x_api_key, db, "posts:read")
-    workspace_id = str(workspace["_id"])
-
-    doc = await db.posts.find_one(
-        {"id": post_id, "workspace_id": workspace_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "id": 1, "status": 1, "platforms": 1,
-         "scheduled_time": 1, "created_at": 1, "platform_results": 1},
-    )
-    if not doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
-    return PublicPostSummary(**doc)
-
-
-# ── Accounts ──────────────────────────────────────────────────────────────────
-
-class PublicAccount(BaseModel):
-    id: str
-    platform: str
-    username: Optional[str] = None
-    name: Optional[str] = None
-    status: str = "active"
-
-
-@router.get("/accounts")
-@limiter.limit("60/minute")
-async def public_list_accounts(
-    request: Request,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict:
-    """List all active connected social accounts for this API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db, "accounts:read")
-    cursor = db.social_accounts.find(
-        {"user_id": user_id, "is_active": True},
-        {"_id": 0, "account_id": 1, "platform": 1, "username": 1, "name": 1},
-    )
-    accounts = await cursor.to_list(length=200)
-    return {
-        "accounts": [
-            {
-                "id": a.get("account_id", ""),
-                "platform": a.get("platform", ""),
-                "username": a.get("username") or a.get("name"),
-                "status": "active",
-            }
-            for a in accounts
-        ],
-        "total": len(accounts),
-    }
-
-
-# ── Create post ───────────────────────────────────────────────────────────────
-
 class PublicCreatePostRequest(BaseModel):
-    content: str
-    account_ids: list[str]
-    scheduled_at: Optional[datetime] = None
+    content: str = Field(default="", max_length=10000)
+    account_ids: list[str] = Field(default_factory=list, min_length=1, max_length=20)
+    platforms: list[str] = Field(default_factory=list, max_length=10)
+    scheduled_at: datetime | None = None
     publish_now: bool = False
-    media_urls: list[str] = []
+    media_urls: list[str] = Field(default_factory=list, max_length=10)
+    title: str | None = Field(default=None, max_length=500)
+    post_type: str = Field(default="text", max_length=50)
+    timezone: str = Field(default="UTC", max_length=100)
 
 
-@router.post("/posts", status_code=status.HTTP_201_CREATED)
-@limiter.limit("30/minute")
-async def public_create_post(
-    request: Request,
-    body: PublicCreatePostRequest,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict:
-    """Create a post — draft, scheduled, or publish now."""
-    user_id = await _resolve_user_id(x_api_key, db, "posts:write")
-
-    if not body.content.strip():
-        raise HTTPException(status_code=422, detail="Content cannot be empty")
-    if not body.account_ids:
-        raise HTTPException(status_code=422, detail="account_ids cannot be empty")
-
-    # Validate that all accounts belong to this user
-    accounts = await db.social_accounts.find(
-        {"account_id": {"$in": body.account_ids}, "user_id": user_id, "is_active": True},
-        {"account_id": 1, "platform": 1},
-    ).to_list(length=100)
-
-    found_ids = {a["account_id"] for a in accounts}
-    invalid = [aid for aid in body.account_ids if aid not in found_ids]
-    if invalid:
-        raise HTTPException(status_code=422, detail=f"Unknown or inactive account IDs: {invalid}")
-
-    platforms = list({a["platform"] for a in accounts})
-    now = datetime.now(timezone.utc)
-
-    if body.publish_now:
-        post_status = "publishing"
-        scheduled_time = now
-    elif body.scheduled_at:
-        post_status = "scheduled"
-        scheduled_time = body.scheduled_at
-    else:
-        post_status = "draft"
-        scheduled_time = now
-
-    post_id = str(ObjectId())
-    doc = {
-        "id": post_id,
-        "user_id": user_id,
-        "content": body.content,
-        "platforms": platforms,
-        "account_ids": body.account_ids,
-        "media_urls": body.media_urls,
-        "scheduled_time": scheduled_time,
-        "status": post_status,
-        "created_at": now,
-        "updated_at": now,
-        "history": [{"status": post_status, "timestamp": now, "actor": f"api_key:{user_id}"}],
-        "platform_results": {},
-    }
-    await db.posts.insert_one(doc)
-
-    return {
-        "id": post_id,
-        "status": post_status,
-        "scheduled_at": scheduled_time.isoformat(),
-        "message": (
-            "Post is being published now." if body.publish_now
-            else f"Post scheduled for {scheduled_time.isoformat()}." if body.scheduled_at
-            else "Post saved as draft."
-        ),
-    }
-
-
-# ── Delete post ───────────────────────────────────────────────────────────────
-
-@router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-@limiter.limit("30/minute")
-async def public_delete_post(
-    request: Request,
-    post_id: str,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> None:
-    """Delete a post owned by this API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db, "posts:delete")
-    result = await db.posts.update_one(
-        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"$set": {"deleted_at": datetime.now(timezone.utc), "status": "deleted"}},
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-
-# ── Retry failed post ─────────────────────────────────────────────────────────
-
-@router.post("/posts/{post_id}/retry")
-@limiter.limit("20/minute")
-async def public_retry_post(
-    request: Request,
-    post_id: str,
-    db: DB,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict:
-    """Retry a failed post."""
-    user_id = await _resolve_user_id(x_api_key, db, "posts:write")
-    now = datetime.now(timezone.utc)
-    result = await db.posts.update_one(
-        {"id": post_id, "user_id": user_id, "status": {"$in": ["failed", "partial"]}},
-        {
-            "$set": {"status": "scheduled", "updated_at": now},
-            "$push": {"history": {"status": "scheduled", "timestamp": now, "actor": f"api_key_retry:{user_id}"}},
-        },
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Failed post not found or not retryable")
-    return {"post_id": post_id, "status": "scheduled", "message": "Post queued for retry."}
-
-
-# ── AI content generation ─────────────────────────────────────────────────────
-
-_PLATFORM_HINTS: dict[str, str] = {
-    "twitter":   " Keep it under 280 characters.",
-    "linkedin":  " Make it professional and insight-driven.",
-    "instagram": " Make it engaging with 3–5 relevant hashtags.",
-    "facebook":  " Write in a conversational tone.",
-    "tiktok":    " Write a short, punchy caption with trending language.",
-    "youtube":   " Write a concise, keyword-rich description.",
-}
-
-_SYSTEM_MESSAGE_BASE = (
-    "You are a social media content expert. "
-    "Generate engaging, brand-safe social media posts. "
-    "Return only the post text — no explanations or meta-commentary."
-)
+class PublicUpdatePostRequest(BaseModel):
+    content: str | None = Field(default=None, max_length=10000)
+    scheduled_at: datetime | None = None
+    platforms: list[str] | None = Field(default=None, max_length=10)
+    account_ids: list[str] | None = Field(default=None, max_length=20)
+    media_urls: list[str] | None = Field(default=None, max_length=10)
+    title: str | None = Field(default=None, max_length=500)
+    post_type: str | None = Field(default=None, max_length=50)
+    timezone: str | None = Field(default=None, max_length=100)
+    version: int | None = None
 
 
 class PublicAIRequest(BaseModel):
@@ -390,38 +67,620 @@ class PublicAIRequest(BaseModel):
     additional_context: Optional[str] = None
 
 
+class PublicApprovalDecisionRequest(BaseModel):
+    reason: str = ""
+
+
+class PublicApprovalResubmitRequest(BaseModel):
+    content: str | None = None
+
+
+def _ensure_enabled() -> None:
+    if not _PUBLIC_API_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public API is disabled")
+
+
+def _extract_raw_token(authorization: str | None, x_api_key: str | None) -> str:
+    if authorization:
+        parts = authorization.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Authorization header. Expected Bearer token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return parts[1].strip()
+    if x_api_key:
+        return x_api_key.strip()
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authorization Bearer token or X-API-Key header is required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _load_workspace_role(db: DB, user_id: str, workspace_id: str | None) -> str | None:
+    if not workspace_id:
+        return None
+    membership = await db.workspace_members.find_one(
+        {"workspace_id": workspace_id, "user_id": user_id},
+        {"_id": 0, "role": 1},
+    )
+    if membership and membership.get("role"):
+        return membership["role"]
+    workspace = await db.workspaces.find_one(
+        {"workspace_id": workspace_id},
+        {"_id": 0, "owner_id": 1},
+    )
+    if workspace and workspace.get("owner_id") == user_id:
+        return "owner"
+    return None
+
+
+async def _resolve_public_principal(
+    *,
+    request: Request,
+    db: DB,
+    authorization: str | None,
+    x_api_key: str | None,
+    required_scope: str | None = None,
+) -> tuple[dict, dict]:
+    _ensure_enabled()
+    raw_token = _extract_raw_token(authorization, x_api_key)
+    key_hash = hash_developer_token(raw_token)
+    token_doc = await db.api_keys.find_one(
+        {"key_hash": key_hash, "revoked": {"$ne": True}},
+        {"_id": 0},
+    )
+    if not token_doc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked developer token")
+    if not has_scope(token_doc, required_scope):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Developer token lacks required scope: {required_scope}",
+        )
+
+    user = await db.users.find_one({"user_id": token_doc["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Developer token user no longer exists")
+
+    user = await ensure_active_workspace(db, user, create_if_missing=False)
+    workspace_id = token_doc.get("workspace_id") or user.get("default_workspace_id")
+    if not workspace_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Developer token is not bound to a workspace")
+
+    role = await _load_workspace_role(db, user["user_id"], workspace_id)
+    if not role:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Developer token workspace access is no longer valid")
+
+    user["default_workspace_id"] = workspace_id
+    user["workspace_role"] = role
+    user["workspace_permissions"] = []
+    request.state.user_id = user["user_id"]
+
+    try:
+        await db.api_keys.update_one(
+            {"id": token_doc.get("id") or token_doc.get("key_id")},
+            {"$set": {"last_used_at": datetime.now(timezone.utc)}},
+        )
+    except Exception:
+        pass
+
+    return token_doc, user
+
+
+def _public_request(method: str, path: str, request: Request) -> StarletteRequest:
+    headers = [(b"x-forwarded-proto", b"https")]
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        headers.append((b"authorization", auth_header.encode()))
+    return StarletteRequest(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": headers,
+            "client": ("127.0.0.1", 0),
+            "server": ("api.unravler.local", 443),
+            "scheme": "https",
+            "state": {},
+        }
+    )
+
+
+async def _resolve_accounts_to_platforms(db: DB, user_id: str, account_ids: list[str]) -> list[str]:
+    cursor = db.social_accounts.find(
+        {"account_id": {"$in": account_ids}, "user_id": user_id, "is_active": True},
+        {"_id": 0, "account_id": 1, "platform": 1},
+    )
+    accounts = await cursor.to_list(length=max(20, len(account_ids) * 2))
+    found_ids = {doc["account_id"] for doc in accounts}
+    invalid = [account_id for account_id in account_ids if account_id not in found_ids]
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown or inactive account IDs: {invalid}",
+        )
+    return list(dict.fromkeys(doc["platform"] for doc in accounts))
+
+
+def _request_fingerprint(payload: dict | None) -> str:
+    return hash_developer_token(json.dumps(payload or {}, sort_keys=True, default=str))
+
+
+async def _restore_idempotent_response(
+    db: DB,
+    *,
+    token_doc: dict,
+    method: str,
+    path: str,
+    key: str | None,
+    request_hash: str,
+) -> tuple[int, dict | None] | None:
+    if not key:
+        return None
+    doc = await db.public_api_idempotency.find_one(
+        {
+            "token_id": token_doc.get("id") or token_doc.get("key_id"),
+            "method": method,
+            "path": path,
+            "idempotency_key": key,
+        },
+        {"_id": 0},
+    )
+    if not doc:
+        return None
+    if doc.get("request_hash") != request_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency-Key was already used with a different request payload.",
+        )
+    return doc.get("status_code", status.HTTP_200_OK), doc.get("response_payload")
+
+
+async def _store_idempotent_response(
+    db: DB,
+    *,
+    token_doc: dict,
+    method: str,
+    path: str,
+    key: str | None,
+    request_hash: str,
+    status_code: int,
+    response_payload: dict | None,
+) -> None:
+    if not key:
+        return
+    await db.public_api_idempotency.update_one(
+        {
+            "token_id": token_doc.get("id") or token_doc.get("key_id"),
+            "method": method,
+            "path": path,
+            "idempotency_key": key,
+        },
+        {
+            "$set": {
+                "request_hash": request_hash,
+                "status_code": status_code,
+                "response_payload": response_payload,
+                "workspace_id": token_doc.get("workspace_id"),
+                "updated_at": datetime.now(timezone.utc),
+            },
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "created_at": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+    )
+
+
+def _serialize_model(value):
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_serialize_model(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _serialize_model(item) for key, item in value.items()}
+    return value
+
+
+def _response_key(request: Request, post_id: str | None = None) -> str:
+    return request.url.path if post_id is None else request.url.path.replace("{post_id}", post_id)
+
+
+@router.get("/me")
+@limiter.limit("60/minute")
+async def public_get_me(
+    request: Request,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope=None,
+    )
+    response = await auth_route._build_user_response(db, current_user)
+    payload = response.model_dump(mode="json")
+    payload["token_id"] = token_doc.get("id") or token_doc.get("key_id")
+    payload["token_type"] = token_doc.get("token_type") or WORKSPACE_TOKEN_TYPE
+    payload["scopes"] = effective_scopes(token_doc)
+    payload["token_scopes"] = effective_scopes(token_doc)
+    return payload
+
+
+@router.get("/accounts")
+@limiter.limit("60/minute")
+async def public_list_accounts(
+    request: Request,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict:
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="accounts:read",
+    )
+    accounts = await accounts_route.list_accounts(current_user=current_user, db=db)
+    data = [_serialize_model(item) for item in accounts]
+    return {"accounts": data, "total": len(data)}
+
+
+@router.get("/posts", response_model=PublicPostListResponse)
+@limiter.limit("60/minute")
+async def public_list_posts(
+    request: Request,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    status_filter: str | None = Query(default=None, alias="status"),
+) -> PublicPostListResponse:
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:read",
+    )
+    posts = await posts_route.list_posts(
+        current_user=current_user,
+        db=db,
+        workspace_id=current_user["default_workspace_id"],
+        status_filter=status_filter,
+        published_window=None,
+        page=page,
+        limit=limit,
+    )
+    query = {
+        "workspace_id": current_user["default_workspace_id"],
+        "user_id": current_user["user_id"],
+        "deleted_at": {"$exists": False},
+    }
+    if status_filter:
+        query["status"] = status_filter
+    total = await db.posts.count_documents(query)
+    return PublicPostListResponse(
+        data=posts,
+        total=total,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/posts/{post_id}", response_model=PostResponse)
+@limiter.limit("60/minute")
+async def public_get_post(
+    request: Request,
+    post_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> PostResponse:
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:read",
+    )
+    return await posts_route.get_post(post_id=post_id, current_user=current_user, db=db)
+
+
+@router.post("/posts", status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
+async def public_create_post(
+    request: Request,
+    body: PublicCreatePostRequest,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:write",
+    )
+    platforms = await _resolve_accounts_to_platforms(db, current_user["user_id"], list(body.account_ids))
+    payload = body.model_dump(mode="json")
+    request_hash = _request_fingerprint(payload)
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+
+    core_request = posts_route.CreatePostRequest(
+        content=body.content,
+        account_ids=list(body.account_ids),
+        platforms=platforms,
+        publish_now=body.publish_now,
+        scheduled_time=body.scheduled_at,
+        media_urls=list(body.media_urls),
+        title=body.title,
+        post_type=body.post_type,
+        timezone=body.timezone,
+    )
+    created = await posts_route.create_post(
+        request=_public_request("POST", request.url.path, request),
+        body=core_request,
+        current_user=current_user,
+        db=db,
+        queue_redis=None,
+    )
+    response_payload = {
+        "id": created.id,
+        "status": created.status.value if hasattr(created.status, "value") else str(created.status),
+        "scheduled_at": created.scheduled_time.isoformat() if created.scheduled_time else None,
+        "message": (
+            "Post is being published now." if body.publish_now
+            else f"Post scheduled for {created.scheduled_time.isoformat()}." if created.scheduled_time
+            else "Post saved as draft."
+        ),
+    }
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_201_CREATED,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+@router.patch("/posts/{post_id}", response_model=PostResponse)
+@limiter.limit("30/minute")
+async def public_update_post(
+    request: Request,
+    post_id: str,
+    body: PublicUpdatePostRequest,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> PostResponse:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:write",
+    )
+    payload = body.model_dump(mode="json", exclude_none=True)
+    request_hash = _request_fingerprint(payload)
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="PATCH",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return PostResponse.model_validate(response_payload)
+
+    existing = await posts_route.get_post(post_id=post_id, current_user=current_user, db=db)
+    platforms = list(body.platforms) if body.platforms is not None else None
+    if body.account_ids is not None:
+        platforms = await _resolve_accounts_to_platforms(db, current_user["user_id"], list(body.account_ids))
+
+    core_request = UpdatePostRequest(
+        content=body.content,
+        scheduled_time=body.scheduled_at,
+        platforms=platforms,
+        account_ids=list(body.account_ids) if body.account_ids is not None else None,
+        media_urls=list(body.media_urls) if body.media_urls is not None else None,
+        post_type=body.post_type,
+        title=body.title,
+        timezone=body.timezone,
+        version=body.version if body.version is not None else existing.version,
+    )
+    updated = await posts_route.update_post(
+        post_id=post_id,
+        body=core_request,
+        current_user=current_user,
+        db=db,
+    )
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="PATCH",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=updated.model_dump(mode="json"),
+    )
+    return updated
+
+
+@router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
+async def public_delete_post(
+    request: Request,
+    post_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Response:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:delete",
+    )
+    request_hash = _request_fingerprint({"post_id": post_id})
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="DELETE",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    await posts_route.delete_post(post_id=post_id, current_user=current_user, db=db)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="DELETE",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_payload={"deleted": True},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/posts/{post_id}/retry")
+@limiter.limit("20/minute")
+async def public_retry_post(
+    request: Request,
+    post_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:write",
+    )
+    posts_route._ensure_verified_email_for_publish_action(current_user)
+    request_hash = _request_fingerprint({"post_id": post_id})
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+
+    retried = await posts_route.retry_failed_post(
+        post_id=post_id,
+        current_user=current_user,
+        db=db,
+        platform=None,
+    )
+    response_payload = _serialize_model(retried)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+_PLATFORM_HINTS: dict[str, str] = {
+    "twitter": " Keep it under 280 characters.",
+    "linkedin": " Make it professional and insight-driven.",
+    "instagram": " Make it engaging with 3–5 relevant hashtags.",
+    "facebook": " Write in a conversational tone.",
+    "tiktok": " Write a short, punchy caption with trending language.",
+    "youtube": " Write a concise, keyword-rich description.",
+}
+
+_SYSTEM_MESSAGE_BASE = (
+    "You are a social media content expert. "
+    "Generate engaging, brand-safe social media posts. "
+    "Return only the post text — no explanations or meta-commentary."
+)
+
+
 @router.post("/ai/generate")
 @limiter.limit("20/minute")
 async def public_generate_content(
     request: Request,
     body: PublicAIRequest,
     db: DB,
+    authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
-    """Generate platform-optimized social media content via AI."""
-    user_id = await _resolve_user_id(x_api_key, db, "ai:generate")
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="ai:generate",
+    )
 
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="AI service is not configured")
-
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI service is not configured")
     if not body.topic.strip():
-        raise HTTPException(status_code=422, detail="Topic cannot be empty")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Topic cannot be empty")
 
     platform_hint = _PLATFORM_HINTS.get(body.platform or "", "")
     tone_hint = f" Use a {body.tone} tone." if body.tone else ""
     context_hint = f" Additional context: {body.additional_context}" if body.additional_context else ""
     system_message = f"{_SYSTEM_MESSAGE_BASE}{platform_hint}{tone_hint}"
-
     prompt = f"Write a social media post about: {body.topic}.{context_hint}"
-
     count = max(1, min(body.count, 5))
     results = []
 
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage  # type: ignore
-        for i in range(count):
-            session_id = f"mcp-content-gen-{user_id}-{uuid.uuid4()}"
+
+        for _ in range(count):
+            session_id = f"public-content-gen-{current_user['user_id']}-{uuid.uuid4()}"
             chat = (
                 LlmChat(api_key=api_key, session_id=session_id, system_message=system_message)
                 .with_model("openai", "gpt-4o-mini")
@@ -429,8 +688,8 @@ async def public_generate_content(
             response = await chat.send_message(UserMessage(text=prompt))
             results.append(response)
     except Exception as exc:
-        logger.error("Public AI generation error user=%s: %s", user_id, exc)
-        raise HTTPException(status_code=502, detail="AI content generation failed. Please try again.")
+        logger.error("Public AI generation error user=%s: %s", current_user["user_id"], exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI content generation failed. Please try again.")
 
     return {
         "variations": results,
@@ -439,30 +698,284 @@ async def public_generate_content(
     }
 
 
-# ── Stats ─────────────────────────────────────────────────────────────────────
-
 @router.get("/stats")
 @limiter.limit("60/minute")
 async def public_get_stats(
     request: Request,
     db: DB,
+    authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict:
-    """Dashboard statistics for the API key's user."""
-    user_id = await _resolve_user_id(x_api_key, db, "stats:read")
-
-    total_posts, scheduled, published, failed, accounts = await __import__("asyncio").gather(
-        db.posts.count_documents({"user_id": user_id, "deleted_at": {"$exists": False}}),
-        db.posts.count_documents({"user_id": user_id, "status": "scheduled", "deleted_at": {"$exists": False}}),
-        db.posts.count_documents({"user_id": user_id, "status": "published", "deleted_at": {"$exists": False}}),
-        db.posts.count_documents({"user_id": user_id, "status": {"$in": ["failed", "partial"]}, "deleted_at": {"$exists": False}}),
-        db.social_accounts.count_documents({"user_id": user_id, "is_active": True}),
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="stats:read",
     )
+    return await stats_route.get_stats(current_user=current_user, db=db)
 
-    return {
-        "total_posts": total_posts,
-        "scheduled_posts": scheduled,
-        "published_posts": published,
-        "failed_posts": failed,
-        "connected_accounts": accounts,
-    }
+
+@router.get("/approvals")
+@limiter.limit("60/minute")
+async def public_list_approvals(
+    request: Request,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    limit: int = Query(default=25, ge=1, le=100),
+) -> dict:
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:read",
+    )
+    return await posts_route.list_approval_queue(current_user=current_user, db=db, limit=limit)
+
+
+@router.post("/posts/{post_id}/submit-review")
+@limiter.limit("20/minute")
+async def public_submit_post_for_review(
+    request: Request,
+    post_id: str,
+    body: PublicApprovalResubmitRequest,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:write",
+    )
+    payload = body.model_dump(mode="json")
+    request_hash = _request_fingerprint(payload)
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+    result = await posts_route.submit_post_for_review(
+        post_id=post_id,
+        body=posts_route.ApprovalResubmitBody(content=body.content),
+        current_user=current_user,
+        db=db,
+    )
+    response_payload = _serialize_model(result)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+@router.post("/posts/{post_id}/approve")
+@limiter.limit("20/minute")
+async def public_approve_post(
+    request: Request,
+    post_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:write",
+    )
+    posts_route._ensure_verified_email_for_publish_action(current_user)
+    request_hash = _request_fingerprint({"post_id": post_id})
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+    result = await posts_route.approve_post(post_id=post_id, current_user=current_user, db=db)
+    response_payload = _serialize_model(result)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+@router.post("/posts/{post_id}/reject")
+@limiter.limit("20/minute")
+async def public_reject_post(
+    request: Request,
+    post_id: str,
+    body: PublicApprovalDecisionRequest,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:write",
+    )
+    payload = body.model_dump(mode="json")
+    request_hash = _request_fingerprint(payload)
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+    result = await posts_route.reject_post(
+        post_id=post_id,
+        body=posts_route.ApprovalDecisionBody(reason=body.reason),
+        current_user=current_user,
+        db=db,
+    )
+    response_payload = _serialize_model(result)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+@router.post("/posts/{post_id}/resubmit")
+@limiter.limit("20/minute")
+async def public_resubmit_post(
+    request: Request,
+    post_id: str,
+    body: PublicApprovalResubmitRequest,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:write",
+    )
+    payload = body.model_dump(mode="json")
+    request_hash = _request_fingerprint(payload)
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+    result = await posts_route.resubmit_post(
+        post_id=post_id,
+        body=posts_route.ApprovalResubmitBody(content=body.content),
+        current_user=current_user,
+        db=db,
+    )
+    response_payload = _serialize_model(result)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload
+
+
+@router.post("/posts/{post_id}/return-to-draft")
+@limiter.limit("20/minute")
+async def public_return_post_to_draft(
+    request: Request,
+    post_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="approval:write",
+    )
+    request_hash = _request_fingerprint({"post_id": post_id})
+    cached = await _restore_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+    )
+    if cached:
+        _status, response_payload = cached
+        return response_payload or {}
+    result = await posts_route.return_post_to_draft(
+        post_id=post_id,
+        current_user=current_user,
+        db=db,
+    )
+    response_payload = _serialize_model(result)
+    await _store_idempotent_response(
+        db,
+        token_doc=token_doc,
+        method="POST",
+        path=request.url.path,
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=status.HTTP_200_OK,
+        response_payload=response_payload,
+    )
+    return response_payload

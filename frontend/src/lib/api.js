@@ -921,6 +921,26 @@ export const deleteApiKey = async (keyId) => {
   return response.data;
 };
 
+export const getDeveloperScopes = async () => {
+  const response = await axios.get(`${API}/developer/scopes`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getPersonalTokens = async () => {
+  const response = await axios.get(`${API}/developer/personal-tokens`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createPersonalToken = async (data) => {
+  const response = await axios.post(`${API}/developer/personal-tokens`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deletePersonalToken = async (tokenId) => {
+  const response = await axios.delete(`${API}/developer/personal-tokens/${tokenId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 // ── Calendar Notes ──
 const CALENDAR_NOTE_COLOR_ALIASES = {
   '#4caf50': 'green',

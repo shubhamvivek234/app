@@ -24,6 +24,7 @@ import ConnectedAccounts from '@/pages/ConnectedAccounts';
 import Billing from '@/pages/Billing';
 import PaymentPage from '@/pages/PaymentPage';
 import Settings from '@/pages/Settings';
+import Developers from '@/pages/Developers';
 import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
 import DataDeletion from '@/pages/DataDeletion';
@@ -31,9 +32,6 @@ import Onboarding from '@/pages/Onboarding';
 import OnboardingConnect from '@/pages/OnboardingConnect';
 import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
-import ApiKeys from '@/pages/ApiKeys';
-import AgentDocs from '@/pages/AgentDocs';
-import McpDocs from '@/pages/McpDocs';
 import HashtagGroups from '@/pages/HashtagGroups';
 import PublicCalendar from '@/pages/PublicCalendar';
 import Analytics from '@/pages/Analytics';
@@ -179,7 +177,7 @@ const PublicRoute = ({ children }) => {
     return children;
   }
 
-  // If user is authenticated, honour returnTo if present (e.g. from /mcp)
+  // If user is authenticated, honour returnTo if present (e.g. from /developers)
   const returnTo = location.state?.returnTo;
   if (user) {
     if (returnTo) {
@@ -280,7 +278,10 @@ function App() {
               <Route path="/data-deletion" element={<DataDeletion />} />
               <Route path="/resources/social-media-image-guide" element={<SocialMediaImageGuide />} />
               <Route path="/resources/social-media-video-guide" element={<SocialMediaVideoGuide />} />
-              <Route path="/mcp" element={<McpDocs />} />
+              <Route path="/developers" element={<Developers />} />
+              <Route path="/mcp" element={<Navigate to="/developers" replace />} />
+              <Route path="/api-keys" element={<Navigate to="/developers" replace />} />
+              <Route path="/agent-docs" element={<Navigate to="/developers" replace />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/oauth/callback" element={<OAuthCallback />} />
               <Route path="/accept-invite/:token" element={<AcceptInvite />} />
@@ -399,26 +400,10 @@ function App() {
                 }
               />
               <Route
-                path="/api-keys"
-                element={
-                  <PrivateRoute>
-                    <ApiKeys />
-                  </PrivateRoute>
-                }
-              />
-              <Route
                 path="/settings"
                 element={
                   <PrivateRoute>
                     <Settings />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/agent-docs"
-                element={
-                  <PrivateRoute>
-                    <AgentDocs />
                   </PrivateRoute>
                 }
               />

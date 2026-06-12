@@ -131,7 +131,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       { name: 'Connections', path: '/accounts', icon: FaUsers },
       { name: 'Team', path: '/team', icon: FaUsers },
       { name: 'Settings', path: '/settings', icon: FaCog },
-      { name: 'Api', path: '/api-keys', icon: FaKey },
+      { name: 'Developers', path: '/developers', icon: FaKey },
     ],
     support: [
       { name: 'Support', path: '/support', icon: FaQuestionCircle },

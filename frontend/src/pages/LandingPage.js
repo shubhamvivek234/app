@@ -639,11 +639,11 @@ const LandingPage = () => {
                 <p className="text-slate-500 text-xs"># claude_desktop_config.json</p>
                 <pre className="text-yellow-300/80 text-xs mt-1 mb-5 whitespace-pre">{`{
   "mcpServers": {
-    "socialentangler": {
+    "unravler": {
       "command": "node",
       "args": ["/path/to/mcp-server/index.js"],
       "env": {
-        "SOCIALENTANGLER_API_KEY": "sk-..."
+        "UNRAVLER_TOKEN": "unr_..."
       }
     }
   }
@@ -678,10 +678,10 @@ const LandingPage = () => {
           <div className="text-center">
             <Button
               size="lg"
-              onClick={() => navigate('/mcp')}
+              onClick={() => navigate('/developers')}
               className="bg-indigo-500 hover:bg-indigo-400 text-white px-10 font-semibold"
             >
-              View MCP Setup Guide →
+              View Developers Guide →
             </Button>
             <p className="text-slate-500 text-sm mt-4">
               Compatible with Claude Desktop, Cursor, and any MCP client

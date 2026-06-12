@@ -1,15 +1,18 @@
 {
-  "name": "socialentangler-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for SocialEntangler — manage social media via AI agents",
+  "name": "unravler-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for Unravler developer integrations",
   "type": "module",
   "main": "index.js",
   "bin": {
+    "unravler-mcp": "./index.js",
     "socialentangler-mcp": "./index.js"
   },
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "start:http": "node remote.js",
+    "dev:http": "node --watch remote.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -1,0 +1,15 @@
+FROM node:20-alpine
+
+WORKDIR /app/mcp-server
+
+COPY mcp-server/package*.json ./
+RUN npm ci --omit=dev
+
+COPY mcp-server/ ./
+
+ENV NODE_ENV=production \
+    PORT=3001
+
+EXPOSE 3001
+
+CMD ["node", "remote.js"]
