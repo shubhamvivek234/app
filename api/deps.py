@@ -162,6 +162,140 @@ async def _bootstrap_user_from_claims(
         raise
 
 
+async def _create_personal_workspace(
+    db: AsyncIOMotorDatabase,
+    user_id: str,
+    display_name: str | None,
+) -> str:
+    existing = await db.workspaces.find_one(
+        {"owner_id": user_id, "workspace_type": "personal"},
+        {"_id": 0, "workspace_id": 1},
+    )
+    if existing:
+        return existing["workspace_id"]
+
+    now = datetime.now(timezone.utc)
+    workspace_name = f"{display_name or 'My'} Personal Workspace"
+    ws_id = f"ws_{secrets.token_hex(12)}"
+
+    await db.workspaces.insert_one(
+        {
+            "workspace_id": ws_id,
+            "name": workspace_name,
+            "owner_id": user_id,
+            "workspace_type": "personal",
+            "members": [{"user_id": user_id, "role": "owner", "joined_at": now}],
+            "created_at": now,
+        }
+    )
+    await db.workspace_members.insert_one(
+        {
+            "workspace_id": ws_id,
+            "user_id": user_id,
+            "role": "owner",
+            "joined_at": now,
+        }
+    )
+    event_log(
+        logger,
+        "info",
+        "auth.workspace.created",
+        route="/auth/me",
+        user_id=user_id,
+        workspace_id=ws_id,
+        outcome="created",
+    )
+    return ws_id
+
+
+async def ensure_active_workspace(
+    db: AsyncIOMotorDatabase,
+    user: dict,
+    *,
+    create_if_missing: bool = True,
+) -> dict:
+    hydrated_user = dict(user)
+    user_id = hydrated_user["user_id"]
+    workspace_ids = [ws_id for ws_id in (hydrated_user.get("workspace_ids") or []) if ws_id]
+    default_workspace_id = hydrated_user.get("default_workspace_id")
+
+    async def _has_access(workspace_id: str | None) -> bool:
+        if not workspace_id:
+            return False
+        membership = await db.workspace_members.find_one(
+            {"workspace_id": workspace_id, "user_id": user_id},
+            {"_id": 0, "role": 1},
+        )
+        if membership:
+            return True
+        workspace = await db.workspaces.find_one(
+            {"workspace_id": workspace_id, "owner_id": user_id},
+            {"_id": 0, "workspace_id": 1},
+        )
+        return workspace is not None
+
+    resolved_workspace_id = default_workspace_id if await _has_access(default_workspace_id) else None
+
+    if resolved_workspace_id is None:
+        for workspace_id in workspace_ids:
+            if await _has_access(workspace_id):
+                resolved_workspace_id = workspace_id
+                break
+
+    if resolved_workspace_id is None:
+        owned_personal_workspace = await db.workspaces.find_one(
+            {"owner_id": user_id, "workspace_type": "personal"},
+            {"_id": 0, "workspace_id": 1},
+        )
+        if owned_personal_workspace:
+            resolved_workspace_id = owned_personal_workspace["workspace_id"]
+
+    if resolved_workspace_id is None:
+        owned_workspace = await db.workspaces.find_one(
+            {"owner_id": user_id},
+            {"_id": 0, "workspace_id": 1},
+        )
+        if owned_workspace:
+            resolved_workspace_id = owned_workspace["workspace_id"]
+
+    if resolved_workspace_id is None:
+        membership = await db.workspace_members.find_one(
+            {"user_id": user_id},
+            {"_id": 0, "workspace_id": 1},
+        )
+        if membership:
+            resolved_workspace_id = membership["workspace_id"]
+
+    if resolved_workspace_id is None and create_if_missing:
+        resolved_workspace_id = await _create_personal_workspace(
+            db,
+            user_id,
+            hydrated_user.get("display_name"),
+        )
+
+    if resolved_workspace_id and (
+        resolved_workspace_id != default_workspace_id or resolved_workspace_id not in workspace_ids
+    ):
+        await db.users.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {"default_workspace_id": resolved_workspace_id},
+                "$addToSet": {"workspace_ids": resolved_workspace_id},
+            },
+        )
+
+    if resolved_workspace_id:
+        hydrated_user["default_workspace_id"] = resolved_workspace_id
+        if resolved_workspace_id not in workspace_ids:
+            hydrated_user["workspace_ids"] = [*workspace_ids, resolved_workspace_id]
+        else:
+            hydrated_user["workspace_ids"] = workspace_ids
+    elif "workspace_ids" not in hydrated_user:
+        hydrated_user["workspace_ids"] = workspace_ids
+
+    return hydrated_user
+
+
 # ── Security scheme ─────────────────────────────────────────────────────────
 _bearer = HTTPBearer(auto_error=False)
 
@@ -211,6 +345,7 @@ async def get_current_user(
 
     try:
         user = await _bootstrap_user_from_claims(db, decoded)
+        user = await ensure_active_workspace(db, user)
     except DuplicateKeyError as exc:
         event_log(
             logger,
@@ -246,6 +381,7 @@ async def get_current_user_from_cookie(
 
     try:
         user = await _bootstrap_user_from_claims(db, claims)
+        user = await ensure_active_workspace(db, user)
     except DuplicateKeyError as exc:
         event_log(
             logger,
@@ -302,6 +438,7 @@ def require_permission(permission: str):
         current_user: CurrentUser,
         db: DB,
     ) -> dict:
+        current_user = await ensure_active_workspace(db, current_user)
         user_id = current_user["user_id"]
         workspace_id = current_user.get("default_workspace_id")
 

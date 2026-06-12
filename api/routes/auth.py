@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from redis.exceptions import RedisError
 
-from api.deps import CurrentUser, CookieUser, DB, CacheRedis, get_firebase_app
+from api.deps import CurrentUser, CookieUser, DB, CacheRedis, ensure_active_workspace, get_firebase_app
 from api.limiter import limiter
 from api.models.user import Plan, SubscriptionStatus, UserResponse, WorkspaceResponse
 from utils.auth_emails import (
@@ -205,24 +205,7 @@ def _coerce_user_defaults(user: dict) -> dict:
 
 
 async def _build_user_response(db: DB, user: dict) -> UserResponse:
-    hydrated_user = dict(user)
-
-    if not hydrated_user.get("workspace_ids"):
-        ws_id = await _ensure_personal_workspace(db, hydrated_user["user_id"], hydrated_user.get("display_name"))
-        await db.users.update_one(
-            {"user_id": hydrated_user["user_id"]},
-            {
-                "$set": {"default_workspace_id": ws_id},
-                "$addToSet": {"workspace_ids": ws_id},
-            },
-        )
-        refreshed = await db.users.find_one({"user_id": hydrated_user["user_id"]}, {"_id": 0})
-        if refreshed:
-            hydrated_user = refreshed
-        else:
-            hydrated_user["default_workspace_id"] = ws_id
-            hydrated_user["workspace_ids"] = [ws_id]
-
+    hydrated_user = await ensure_active_workspace(db, user)
     hydrated_user = _coerce_user_defaults(hydrated_user)
 
     workspace_id = hydrated_user.get("default_workspace_id")

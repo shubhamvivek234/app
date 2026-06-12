@@ -196,6 +196,48 @@ async def test_get_me_returns_workspace_role_and_permissions():
     assert "post:update" not in result.workspace_permissions
 
 
+@pytest.mark.asyncio
+async def test_get_me_recovers_permissions_when_default_workspace_missing():
+    db = _FakeDB()
+    now = datetime.now(timezone.utc)
+    db.users.docs.append(
+        {
+            "user_id": "user-legacy",
+            "email": "legacy@example.com",
+            "email_verified": True,
+            "display_name": "Legacy User",
+            "plan": "starter",
+            "subscription_status": "free",
+            "timezone": "UTC",
+            "mfa_enabled": False,
+            "role": "user",
+            "onboarding_completed": False,
+            "workspace_ids": ["ws-team"],
+            "default_workspace_id": None,
+            "created_at": now,
+        }
+    )
+    db.workspace_members.docs.append(
+        {
+            "workspace_id": "ws-team",
+            "user_id": "user-legacy",
+            "role": "admin",
+            "joined_at": now,
+        }
+    )
+
+    result = await auth_routes.get_me(
+        request=Request({"type": "http", "method": "GET", "path": "/api/auth/me", "headers": []}),
+        current_user=dict(db.users.docs[0]),
+        db=db,
+    )
+
+    assert result.workspace_role == "admin"
+    assert "workspace:read" in result.workspace_permissions
+    assert "post:update" in result.workspace_permissions
+    assert db.users.docs[0]["default_workspace_id"] == "ws-team"
+
+
 def _fake_create_session_cookie(container):
     async def _create(response, id_token, expires_in=0):
         container["token"] = id_token
