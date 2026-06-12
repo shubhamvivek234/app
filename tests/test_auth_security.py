@@ -192,6 +192,7 @@ async def test_get_me_returns_workspace_role_and_permissions():
     )
 
     assert result.workspace_role == "viewer"
+    assert "approval:read" in result.workspace_permissions
     assert "post:read" in result.workspace_permissions
     assert "post:update" not in result.workspace_permissions
 
@@ -233,6 +234,7 @@ async def test_get_me_recovers_permissions_when_default_workspace_missing():
     )
 
     assert result.workspace_role == "admin"
+    assert "approval:read" in result.workspace_permissions
     assert "workspace:read" in result.workspace_permissions
     assert "post:update" in result.workspace_permissions
     assert db.users.docs[0]["default_workspace_id"] == "ws-team"

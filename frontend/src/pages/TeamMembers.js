@@ -26,7 +26,7 @@ const ROLE_OPTIONS = [
   { value: 'admin', label: 'Admin', description: 'Manage members, posts, and accounts' },
   { value: 'editor', label: 'Editor', description: 'Create and update content' },
   { value: 'viewer', label: 'Viewer', description: 'Read-only workspace access' },
-  { value: 'client', label: 'Client', description: 'Review visibility with limited access' },
+  { value: 'client', label: 'Client', description: 'Read-only approval review access' },
 ];
 
 const ROLE_STYLES = {

@@ -272,6 +272,44 @@ async def test_list_approval_queue_buckets_workspace_posts_and_preserves_rejecti
 
 
 @pytest.mark.asyncio
+async def test_list_approval_queue_allows_client_role_read_only_access(monkeypatch):
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "awaiting-client",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=2),
+            ),
+        ],
+        users=[
+            {"user_id": "author-1", "display_name": "Author One", "email": "one@example.com"},
+        ],
+        workspace_members=[
+            {"workspace_id": "ws-1", "user_id": "client-1", "role": "client"},
+        ],
+    )
+    monkeypatch.setattr(posts_route, "_hydrate_post_card_fields_for_docs", _identity_hydrate)
+
+    result = await posts_route.list_approval_queue(
+        current_user={"user_id": "client-1", "default_workspace_id": "ws-1"},
+        db=db,
+        limit=10,
+    )
+
+    assert result["current_user_role"] == "client"
+    assert result["permissions"] == {
+        "can_read": True,
+        "can_review": False,
+        "can_resubmit": False,
+        "can_return_to_draft": False,
+    }
+    assert [post["id"] for post in result["awaiting"]] == ["awaiting-client"]
+
+
+@pytest.mark.asyncio
 async def test_reject_resubmit_submit_review_and_return_to_draft_update_post_statuses():
     now = datetime.now(timezone.utc)
     db = FakeDB(

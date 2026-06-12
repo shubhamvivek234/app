@@ -287,7 +287,7 @@ def _post_workspace_id(current_user: dict) -> str:
 def _approval_permission_flags(role: str) -> dict[str, bool]:
     can_review = has_permission(role, "post:update")
     return {
-        "can_read": has_permission(role, "post:read"),
+        "can_read": has_permission(role, "approval:read"),
         "can_review": can_review,
         "can_resubmit": can_review,
         "can_return_to_draft": can_review,
@@ -1171,7 +1171,7 @@ async def list_recent_published_posts(
     return [_doc_to_response(d) for d in hydrated_docs]
 
 
-@router.get("/approvals", dependencies=[require_permission("post:read")])
+@router.get("/approvals", dependencies=[require_permission("approval:read")])
 async def list_approval_queue(
     current_user: CurrentUser,
     db: DB,

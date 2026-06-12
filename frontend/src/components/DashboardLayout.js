@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
 import { useTheme } from '@/context/ThemeContext';
+import { canReadApprovalsWorkspace, canReadTeamWorkspace } from '@/lib/workspacePermissions';
 
 const UserMenu = ({ user, onLogout }) => {
   const [open, setOpen] = useState(false);
@@ -142,6 +143,16 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
     ],
   };
 
+  const filteredNavigation = {
+    ...navigation,
+    posts: navigation.posts.filter((item) => (
+      item.path !== '/approvals' || canReadApprovalsWorkspace(user)
+    )),
+    configuration: navigation.configuration.filter((item) => (
+      item.path !== '/team' || canReadTeamWorkspace(user)
+    )),
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -233,7 +244,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
           {/* Workspace + collapse toggle */}
           <div className={`mb-1 ${collapsed ? 'px-2' : 'px-3'}`}>
             {!collapsed && <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2 mb-1.5">Workspace</p>}
-            {navigation.workspace.map((item) => {
+            {filteredNavigation.workspace.map((item) => {
               const Icon = item.icon;
               const active = isActive(item.path);
               return (
@@ -303,7 +314,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                 <div className={`mb-1 ${collapsed ? 'px-2' : 'px-3'}`}>
                   {!collapsed && <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2 mb-1.5">Create</p>}
                   <nav className="space-y-0.5">
-                    {navigation.create.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
+                    {filteredNavigation.create.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
                   </nav>
                 </div>
 
@@ -312,7 +323,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   {!collapsed && <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2 mb-1.5 mt-2">Posts</p>}
                   {collapsed && <div className="border-t border-gray-200 dark:border-gray-700 my-2" />}
                   <nav className="space-y-0.5">
-                    {navigation.posts.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
+                    {filteredNavigation.posts.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
                   </nav>
                 </div>
 
@@ -321,7 +332,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   {!collapsed && <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2 mb-1.5 mt-2">Configuration</p>}
                   {collapsed && <div className="border-t border-gray-200 dark:border-gray-700 my-2" />}
                   <nav className="space-y-0.5">
-                    {navigation.configuration.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
+                    {filteredNavigation.configuration.map(item => <NavItem key={item.path} item={item} active={isActive(item.path)} />)}
                   </nav>
                 </div>
 
@@ -330,7 +341,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
                   {!collapsed && <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2 mb-1.5">Support</p>}
                   {collapsed && <div className="border-t border-gray-200 dark:border-gray-700 my-2" />}
                   <nav className="space-y-0.5">
-                    {navigation.support.map(item => <NavItem key={item.path} item={item} active={false} />)}
+                    {filteredNavigation.support.map(item => <NavItem key={item.path} item={item} active={false} />)}
                   </nav>
                   <div className="mt-1">
                     <button

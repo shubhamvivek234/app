@@ -17,7 +17,7 @@ const ROLE_CAPABILITIES = {
   admin:  'manage team members, connect social accounts, create and publish posts',
   editor: 'create, edit, and publish posts',
   viewer: 'view scheduled posts, approvals, and analytics in read-only mode',
-  client: 'review workspace content with limited operational access',
+  client: 'review approval-ready content in read-only mode',
 };
 
 // ── Style constants ──────────────────────────────────────────────────────────
@@ -191,6 +191,8 @@ const AcceptInvite = () => {
 
   // ── Render: accepted ──────────────────────────────────────────────────────
   if (pageState === 'accepted') {
+    const acceptedPath = invite?.role === 'client' ? '/approvals' : '/dashboard';
+    const acceptedLabel = invite?.role === 'client' ? 'Open approval queue' : 'Go to Dashboard';
     return (
       <CenteredCard>
         <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -203,8 +205,8 @@ const AcceptInvite = () => {
           You've joined <strong>{invite?.workspace_name || invite?.owner_name + "'s workspace"}</strong> as{' '}
           <strong>{ROLE_LABELS[invite?.role] || invite?.role}</strong>.
         </p>
-        <button onClick={() => navigate('/dashboard')} style={ctaStyle}>
-          Go to Dashboard
+        <button onClick={() => navigate(acceptedPath)} style={ctaStyle}>
+          {acceptedLabel}
         </button>
       </CenteredCard>
     );

@@ -8,5 +8,4 @@ export const hasWorkspacePermission = (user, permission) => (
 
 export const canReadTeamWorkspace = (user) => hasWorkspacePermission(user, 'workspace:read');
 
-export const canReadApprovalsWorkspace = (user) => hasWorkspacePermission(user, 'post:read');
-
+export const canReadApprovalsWorkspace = (user) => hasWorkspacePermission(user, 'approval:read');

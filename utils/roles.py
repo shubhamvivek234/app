@@ -22,6 +22,7 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     "post:update": WorkspaceRole.EDITOR,
     "post:delete": WorkspaceRole.EDITOR,
     "post:read": WorkspaceRole.VIEWER,
+    "approval:read": WorkspaceRole.CLIENT,
 
     # Social account management
     "account:connect": WorkspaceRole.ADMIN,

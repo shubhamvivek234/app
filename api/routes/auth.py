@@ -103,6 +103,7 @@ _ACTIVE_WORKSPACE_PERMISSION_KEYS = (
     "workspace:invite",
     "workspace:remove_member",
     "workspace:update",
+    "approval:read",
     "post:read",
     "post:update",
 )
