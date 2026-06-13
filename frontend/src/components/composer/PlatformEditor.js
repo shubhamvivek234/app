@@ -30,6 +30,11 @@ import {
   createCanvaExport,
   getCanvaExport,
 } from '@/lib/api';
+import { listenForOAuthResult } from '@/lib/oauthPopup';
+import {
+  buildGooglePhotosAuthUrl,
+  buildGooglePhotosImportState,
+} from '@/lib/googlePhotosAuth';
 
 const PLATFORM_ICONS = {
   facebook:  { icon: FaFacebook,  color: '#1877F2' },
@@ -168,8 +173,8 @@ const PROVIDER_SETUP_LABELS = {
 };
 
 const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
-const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const GOOGLE_DRIVE_PAGE_SIZE = 24;
+const GOOGLE_PHOTOS_AUTH_TIMEOUT_MS = 3 * 60 * 1000;
 
 const loadExternalScript = (src, id, dataAttributes = {}) => new Promise((resolve, reject) => {
   const existing = id ? document.getElementById(id) : null;
@@ -674,6 +679,50 @@ const PlatformEditor = ({
     tokenClient.requestAccessToken({ prompt: 'consent' });
   });
 
+  const waitForGooglePhotosAuthToken = useCallback(({ popup, state }) => new Promise((resolve, reject) => {
+    let settled = false;
+    let closePoll = null;
+    let timeoutId = null;
+
+    const cleanup = () => {
+      unlisten?.();
+      if (closePoll) {
+        window.clearInterval(closePoll);
+      }
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+
+    const unlisten = listenForOAuthResult((payload) => {
+      if (payload?.type !== 'google_photos_import' || payload?.state !== state) {
+        return;
+      }
+      if (payload.status === 'success' && payload.access_token) {
+        finish(resolve, payload.access_token);
+        return;
+      }
+      finish(reject, new Error(payload?.error || 'Google authorization failed'));
+    });
+
+    closePoll = window.setInterval(() => {
+      if (popup?.closed) {
+        finish(reject, new Error('Google authorization popup was closed before it finished'));
+      }
+    }, 400);
+
+    timeoutId = window.setTimeout(() => {
+      finish(reject, new Error('Google authorization timed out'));
+    }, GOOGLE_PHOTOS_AUTH_TIMEOUT_MS);
+  }), []);
+
   useEffect(() => {
     loadGoogleIdentityClient().catch(() => {});
   }, [loadGoogleIdentityClient]);
@@ -790,24 +839,23 @@ const PlatformEditor = ({
   };
 
   const openGooglePhotosPicker = async () => {
-    setSourceOpen(false);
     if (!MEDIA_SOURCE_SETUP.google_photos()) {
       toast.error(`Add ${PROVIDER_SETUP_LABELS.google_photos} to use Google Photos`);
       return;
     }
-    const pickerWindow = window.open('', 'google-photos-picker', 'width=1280,height=800');
+    const clientId = env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID;
+    const state = buildGooglePhotosImportState(isVideo ? 'video' : 'image');
+    const redirectUri = `${window.location.origin}/oauth/callback`;
+    const authUrl = buildGooglePhotosAuthUrl({ clientId, redirectUri, state });
+    const pickerWindow = window.open(authUrl, 'google-photos-picker', 'width=1280,height=800');
+    setSourceOpen(false);
     if (!pickerWindow) {
-      toast.error('Popup blocked while opening Google Photos');
+      toast.error('Google authorization popup was blocked');
       return;
     }
     try {
-      pickerWindow.document.title = 'Google Photos';
-      pickerWindow.document.body.innerHTML = '<div style="font-family:system-ui,-apple-system,sans-serif;padding:32px;color:#111827">Opening Google Photos…</div>';
-      if (!googleIdentityReadyRef.current) {
-        await loadGoogleIdentityClient();
-      }
-      const clientId = env.GOOGLE_PHOTOS_CLIENT_ID || env.GOOGLE_CLIENT_ID;
-      const token = await requestGoogleAccessToken(GOOGLE_PHOTOS_SCOPE, clientId);
+      pickerWindow.focus();
+      const token = await waitForGooglePhotosAuthToken({ popup: pickerWindow, state });
       const sessionResponse = await fetch('https://photospicker.googleapis.com/v1/sessions', {
         method: 'POST',
         headers: {

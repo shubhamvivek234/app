@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } from '@/lib/oauthPopup';
+import { getGoogleOAuthHashParams, isGooglePhotosImportState } from '@/lib/googlePhotosAuth';
 import { submitOAuthCallback } from '@/lib/requestOAuthCallback';
 
 const OAuthCallback = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [status, setStatus] = useState('processing');
+  const [message, setMessage] = useState('Please wait while we complete the connection.');
 
   useEffect(() => {
     const handleOAuthCallback = async () => {
@@ -15,6 +17,10 @@ const OAuthCallback = () => {
       const state = searchParams.get('state');
       const error = searchParams.get('error');
       const success = searchParams.get('success');
+      const hashParams = getGoogleOAuthHashParams();
+      const hashState = hashParams.get('state');
+      const hashError = hashParams.get('error');
+      const hashAccessToken = hashParams.get('access_token');
       const platform = searchParams.get('platform') || sessionStorage.getItem('oauth_platform') || '';
 
       const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
@@ -33,9 +39,49 @@ const OAuthCallback = () => {
         setTimeout(() => window.close(), 500);
       };
 
+      if (isGooglePhotosImportState(hashState || state)) {
+        const resultState = hashState || state;
+        if (hashError) {
+          setStatus('error');
+          setMessage('Google Photos authorization failed.');
+          broadcastOAuthResult({
+            type: 'google_photos_import',
+            status: 'error',
+            state: resultState,
+            error: hashError,
+          });
+          setTimeout(() => window.close(), 500);
+          return;
+        }
+
+        if (!hashAccessToken) {
+          setStatus('error');
+          setMessage('Google Photos authorization did not return an access token.');
+          broadcastOAuthResult({
+            type: 'google_photos_import',
+            status: 'error',
+            state: resultState,
+            error: 'Google Photos authorization did not return an access token.',
+          });
+          setTimeout(() => window.close(), 500);
+          return;
+        }
+
+        setStatus('processing');
+        setMessage('Preparing Google Photos picker…');
+        broadcastOAuthResult({
+          type: 'google_photos_import',
+          status: 'success',
+          state: resultState,
+          access_token: hashAccessToken,
+        });
+        return;
+      }
+
       // Backend-redirect flow: backend already processed the OAuth and redirected here
       if (success === 'true') {
         setStatus('success');
+        setMessage('Redirecting you back...');
         if (popupExpected) {
           finishPopupFlow({ status: 'success', platform, returnTo });
           return;
@@ -49,6 +95,7 @@ const OAuthCallback = () => {
 
       if (error) {
         setStatus('error');
+        setMessage('Redirecting you back...');
         if (popupExpected) {
           finishPopupFlow({ status: 'error', platform, returnTo, error: `OAuth error: ${error}` });
           return;
@@ -61,6 +108,7 @@ const OAuthCallback = () => {
 
       if (!code || !state) {
         setStatus('error');
+        setMessage('Redirecting you back...');
         toast.error('Invalid OAuth callback');
         setTimeout(() => navigate(fallbackUrl), 2000);
         return;
@@ -97,6 +145,7 @@ const OAuthCallback = () => {
         const connected = responseData.success || responseData.connected;
         if (connected) {
           setStatus('success');
+          setMessage('Redirecting you back...');
           const resolvedPlatform = responseData.platform || platform;
           if (popupExpected) {
             finishPopupFlow({ status: 'success', platform: resolvedPlatform, returnTo });
@@ -120,6 +169,7 @@ const OAuthCallback = () => {
       } catch (error) {
         console.error('OAuth callback error:', error);
         setStatus('error');
+        setMessage('Redirecting you back...');
         const message = error.response?.data?.detail || 'Failed to connect account';
 
         if (popupExpected) {
@@ -149,7 +199,7 @@ const OAuthCallback = () => {
           <>
             <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-500 mx-auto mb-4"></div>
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Connecting your account...</h2>
-            <p className="text-slate-600">Please wait while we complete the connection.</p>
+            <p className="text-slate-600">{message}</p>
           </>
         )}
 
@@ -161,7 +211,7 @@ const OAuthCallback = () => {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Successfully Connected!</h2>
-            <p className="text-slate-600">Redirecting you back...</p>
+            <p className="text-slate-600">{message}</p>
           </>
         )}
 
@@ -173,7 +223,7 @@ const OAuthCallback = () => {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Connection Failed</h2>
-            <p className="text-slate-600">Redirecting you back...</p>
+            <p className="text-slate-600">{message}</p>
           </>
         )}
       </div>
