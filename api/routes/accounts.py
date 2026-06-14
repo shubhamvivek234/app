@@ -328,16 +328,15 @@ async def _hydrate_social_account_metadata(db: DB, doc: dict) -> dict:
 
             auth = LinkedInAuth()
             try:
-                profile = await auth.get_user_profile(access_token)
+                engagement = await auth.fetch_audience_analytics(access_token, doc)
             except Exception:
                 access_token = await _get_linkedin_access_token(db, doc, force_refresh=True)
-                profile = await auth.get_user_profile(access_token)
-            engagement = await auth.fetch_audience_analytics(access_token, doc)
+                engagement = await auth.fetch_audience_analytics(access_token, doc)
             updates = {
-                "display_name": profile.get("name") or profile.get("email") or doc.get("display_name") or doc.get("platform_username"),
-                "platform_username": profile.get("name") or profile.get("email") or doc.get("platform_username"),
-                "picture_url": profile.get("picture"),
-                "followers_count": engagement.get("followers"),
+                "display_name": doc.get("display_name") or doc.get("platform_username") or doc.get("platform_user_id"),
+                "platform_username": doc.get("platform_username") or doc.get("display_name") or doc.get("platform_user_id"),
+                "picture_url": doc.get("picture_url"),
+                "followers_count": engagement.get("followers", doc.get("followers_count")),
             }
 
         elif platform == "twitter":

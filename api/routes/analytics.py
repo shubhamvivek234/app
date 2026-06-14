@@ -685,18 +685,17 @@ async def _fetch_account_feed_and_stats(
 
         auth = LinkedInAuth()
         try:
-            profile = await auth.get_user_profile(access_token)
+            engagement = await auth.fetch_audience_analytics(access_token, account, days=days)
         except Exception:
             access_token = await _get_linkedin_access_token(db, account, force_refresh=True)
-            profile = await auth.get_user_profile(access_token)
-
-        engagement = await auth.fetch_audience_analytics(access_token, account, days=days)
+            engagement = await auth.fetch_audience_analytics(access_token, account, days=days)
         engagement["display_name"] = (
-            profile.get("name")
-            or profile.get("email")
-            or account.get("display_name")
+            account.get("display_name")
             or account.get("platform_username")
+            or account.get("platform_user_id")
         )
+        if account.get("picture_url"):
+            engagement["picture_url"] = account.get("picture_url")
         return [], engagement
 
     if platform == "twitter":

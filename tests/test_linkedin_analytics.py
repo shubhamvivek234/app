@@ -62,3 +62,44 @@ def test_linkedin_access_denied_error_message_is_user_actionable():
 
     assert "LinkedIn is connected" in message
     assert "reconnect" in message
+
+
+@pytest.mark.asyncio
+async def test_fetch_account_feed_and_stats_linkedin_avoids_userinfo(monkeypatch):
+    class _FakeLinkedInAuth:
+        async def fetch_audience_analytics(self, access_token: str, account: dict, days: int | None = None) -> dict:
+            assert access_token == "linkedin-token"
+            assert account["platform"] == "linkedin"
+            assert days == 30
+            return {
+                "followers": 321,
+                "followers_growth": 12,
+                "impressions": 900,
+                "reach": 750,
+                "analytics_status": "ok",
+            }
+
+        async def get_user_profile(self, _access_token: str) -> dict:
+            raise AssertionError("LinkedIn analytics should not depend on userinfo")
+
+    monkeypatch.setattr(analytics, "decrypt", lambda value: "linkedin-token")
+    monkeypatch.setattr("backend.app.social.linkedin.LinkedInAuth", _FakeLinkedInAuth)
+
+    _feed, engagement = await analytics._fetch_account_feed_and_stats(
+        None,
+        {
+            "platform": "linkedin",
+            "account_id": "linkedin-account-1",
+            "platform_user_id": "linkedin-user-1",
+            "access_token": "encrypted-token",
+            "display_name": "LinkedIn Org",
+            "platform_username": "linkedin-org",
+            "picture_url": "https://example.com/logo.png",
+        },
+        days=30,
+    )
+
+    assert engagement["display_name"] == "LinkedIn Org"
+    assert engagement["picture_url"] == "https://example.com/logo.png"
+    assert engagement["followers"] == 321
+    assert engagement["reach"] == 750

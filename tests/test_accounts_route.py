@@ -327,3 +327,43 @@ async def test_exchange_linkedin_code_falls_back_to_userinfo_when_id_token_missi
     assert result["platform_user_id"] == "linkedin-user-2"
     assert result["username"] == "fallback@example.com"
     assert result["display_name"] == "Fallback User"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_linkedin_metadata_avoids_userinfo_when_refreshing_followers(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(accounts_route, "decrypt", lambda value: "linkedin-token")
+
+    class _FakeLinkedInAuth:
+        async def fetch_audience_analytics(self, access_token: str, account: dict, days: int | None = None) -> dict:
+            assert access_token == "linkedin-token"
+            assert account["platform"] == "linkedin"
+            return {"followers": 87}
+
+        async def get_user_profile(self, _access_token: str) -> dict:
+            raise AssertionError("LinkedIn metadata hydration should not depend on userinfo")
+
+    monkeypatch.setattr(linkedin_module, "LinkedInAuth", _FakeLinkedInAuth)
+
+    db = _FakeDB([
+        {
+            "id": "linkedin-account-1",
+            "account_id": "linkedin-account-1",
+            "user_id": "user-1",
+            "platform": "linkedin",
+            "platform_user_id": "linkedin-user-1",
+            "platform_username": "linkedin-org",
+            "display_name": "LinkedIn Org",
+            "picture_url": "https://example.com/logo.png",
+            "access_token": "encrypted-token",
+            "is_active": True,
+            "connected_at": now,
+            "followers_count": None,
+        }
+    ])
+
+    hydrated = await accounts_route._hydrate_social_account_metadata(db, db.social_accounts.docs[0])
+
+    assert hydrated["followers_count"] == 87
+    assert hydrated["display_name"] == "LinkedIn Org"
+    assert hydrated["picture_url"] == "https://example.com/logo.png"
