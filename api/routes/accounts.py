@@ -1255,7 +1255,11 @@ async def save_linkedin_orgs(body: LinkedInOrgRequest, current_user: CurrentUser
     user_id = current_user["user_id"]
     await db.social_accounts.update_one(
         {"user_id": user_id, "platform": "linkedin", "is_active": True},
-        {"$set": {"selected_org_ids": body.org_ids, "updated_at": datetime.now(timezone.utc)}},
+        {"$set": {
+            "selected_org_ids": body.org_ids,
+            "pending_orgs": [],
+            "updated_at": datetime.now(timezone.utc),
+        }},
     )
     return {"saved": True, "org_count": len(body.org_ids)}
 
@@ -1269,7 +1273,11 @@ async def add_linkedin_page_manually(body: dict, current_user: CurrentUser, db: 
     user_id = current_user["user_id"]
     await db.social_accounts.update_one(
         {"user_id": user_id, "platform": "linkedin", "is_active": True},
-        {"$addToSet": {"selected_org_ids": page_id}},
+        {
+            "$addToSet": {"selected_org_ids": page_id},
+            "$pull": {"pending_orgs": {"org_id": page_id}},
+            "$set": {"updated_at": datetime.now(timezone.utc)},
+        },
     )
     return {"added": True, "page_id": page_id}
 
@@ -1415,6 +1423,18 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
     existing = await db.social_accounts.find_one(query, {"_id": 0, "refresh_token": 1})
     raw_refresh_token = token_data.get("refresh_token")
     refresh_token_value = encrypt(raw_refresh_token) if raw_refresh_token else (existing or {}).get("refresh_token", "")
+    extra_updates: dict[str, object] = {}
+
+    if platform == "linkedin":
+        try:
+            from backend.app.social.linkedin import LinkedInAuth
+
+            pending_orgs = await LinkedInAuth().get_admin_organization_choices(token_data["access_token"])
+            extra_updates["pending_orgs"] = pending_orgs
+        except Exception as exc:
+            logger.warning("LinkedIn organization discovery failed during connect for user %s: %s", user_id, exc)
+            extra_updates["pending_orgs"] = []
+
     await db.social_accounts.update_one(
         query,
         {
@@ -1447,6 +1467,7 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
                 "publish_action_required": None,
                 "publish_restriction_type": None,
                 "publish_blocked_at": None,
+                **extra_updates,
             }
         },
         upsert=True,

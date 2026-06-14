@@ -57,6 +57,13 @@ class LinkedInAuth:
             return raw
         return f"urn:li:organization:{raw}"
 
+    @staticmethod
+    def _organization_id(value: str | None) -> str | None:
+        urn = LinkedInAuth._organization_urn(value)
+        if not urn:
+            return None
+        return urn.rsplit(":", 1)[-1]
+
     def get_auth_url(self, state: str) -> str:
         """Generate LinkedIn OAuth URL"""
         if not self.client_id or not self.redirect_uri:
@@ -182,6 +189,19 @@ class LinkedInAuth:
                 if org_urn and org_urn not in orgs:
                     orgs.append(org_urn)
             return orgs
+
+    async def get_admin_organization_choices(self, access_token: str) -> list[dict[str, str]]:
+        organization_urns = await self.get_admin_organizations(access_token)
+        choices: list[dict[str, str]] = []
+        for organization_urn in organization_urns:
+            org_id = self._organization_id(organization_urn)
+            if not org_id:
+                continue
+            choices.append({
+                "org_id": org_id,
+                "name": org_id,
+            })
+        return choices
 
     async def get_organization_follower_total(self, access_token: str, organization_urn: str) -> int | None:
         async with httpx.AsyncClient() as client:

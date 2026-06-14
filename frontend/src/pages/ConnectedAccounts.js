@@ -736,7 +736,10 @@ const ConnectedAccounts = () => {
 
     setAddingPage(true);
     try {
-      await addLinkedInPageManually(pageIdInput.trim(), pageNameInput.trim());
+      await addLinkedInPageManually({
+        page_id: pageIdInput.trim(),
+        page_name: pageNameInput.trim(),
+      });
       toast.success(`LinkedIn page "${pageNameInput}" connected!`);
       setLinkedinPageModal(false);
       setPageIdInput('');
@@ -752,8 +755,8 @@ const ConnectedAccounts = () => {
   const handleSaveLinkedinOrgs = async () => {
     setSavingOrgs(true);
     try {
-      const result = await saveLinkedInOrgs(selectedOrgs);
-      toast.success(`${result.saved} LinkedIn page${result.saved !== 1 ? 's' : ''} connected!`);
+      const result = await saveLinkedInOrgs({ org_ids: selectedOrgs });
+      toast.success(`${result.org_count} LinkedIn page${result.org_count !== 1 ? 's' : ''} connected!`);
       setLinkedinOrgsModal(false);
       fetchAccounts();
     } catch {

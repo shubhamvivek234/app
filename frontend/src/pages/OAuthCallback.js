@@ -5,6 +5,15 @@ import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } f
 import { getGoogleOAuthHashParams, isGooglePhotosImportState } from '@/lib/googlePhotosAuth';
 import { submitOAuthCallback } from '@/lib/requestOAuthCallback';
 
+const resolvePostConnectPath = (platform, returnTo, { personalConnected = false } = {}) => {
+  if (platform === 'linkedin') {
+    const params = new URLSearchParams({ linkedin_orgs: '1' });
+    if (personalConnected) params.set('personal_connected', 'true');
+    return `/accounts?${params.toString()}`;
+  }
+  return returnTo === 'onboarding' ? '/onboarding/connect' : '/accounts';
+};
+
 const OAuthCallback = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -89,7 +98,8 @@ const OAuthCallback = () => {
         toast.success(`${platform} connected successfully!`);
         cleanup();
         clearOAuthPopupExpected();
-        setTimeout(() => navigate(returnTo === 'onboarding' ? '/onboarding/connect' : '/accounts'), 1500);
+        const destination = resolvePostConnectPath(platform, returnTo, { personalConnected: platform === 'linkedin' });
+        setTimeout(() => navigate(destination), 1500);
         return;
       }
 
@@ -142,7 +152,7 @@ const OAuthCallback = () => {
         }
 
         const responseData = await submitOAuthCallback(platform, callbackData, token);
-        const connected = responseData.success || responseData.connected;
+        const connected = Boolean(responseData.success || responseData.connected || responseData.account_id);
         if (connected) {
           setStatus('success');
           setMessage('Redirecting you back...');
@@ -157,13 +167,12 @@ const OAuthCallback = () => {
 
           // Redirect based on return destination securely provided by backend or fallback to session
           const finalReturnTo = responseData.return_to || returnTo;
+          const destination = resolvePostConnectPath(resolvedPlatform, finalReturnTo, {
+            personalConnected: resolvedPlatform === 'linkedin',
+          });
 
           setTimeout(() => {
-            if (finalReturnTo === 'onboarding') {
-              navigate('/onboarding/connect');
-            } else {
-              navigate('/accounts');
-            }
+            navigate(destination);
           }, 1500);
         }
       } catch (error) {
