@@ -69,33 +69,74 @@ const formatPlatformResultLabel = (rawKey = '', result = {}) => {
     .trim();
 };
 
+const PLATFORM_RESULT_STATUS_RANK = {
+  published: 6,
+  processing: 5,
+  queued: 4,
+  retrying: 3,
+  failed: 2,
+  permanently_failed: 2,
+  cancelled: 1,
+  paused: 1,
+  pending: 0,
+};
+
+const scorePlatformResultEntry = (entry) => {
+  const rawKey = String(entry.rawKey || '').toLowerCase();
+  const inferredPlatform = String(entry.inferredPlatform || '').toLowerCase();
+  const status = String(entry.result?.status || 'pending').toLowerCase();
+
+  return (
+    (rawKey && inferredPlatform && rawKey === inferredPlatform ? 100 : 0)
+    + (entry.result?.post_url ? 20 : 0)
+    + (entry.result?.platform_post_id ? 10 : 0)
+    + (PLATFORM_RESULT_STATUS_RANK[status] || 0)
+  );
+};
+
+const getRenderablePlatformResults = (results = {}) => {
+  const groupedResults = new Map();
+
+  Object.entries(results).forEach(([rawKey, result]) => {
+    const inferredPlatform = inferPlatformKey(rawKey, result);
+    const displayLabel = formatPlatformResultLabel(rawKey, result);
+    const groupKey = String(inferredPlatform || rawKey || displayLabel).toLowerCase();
+    const nextEntry = { rawKey, result: result || {}, inferredPlatform, displayLabel };
+    const existingEntry = groupedResults.get(groupKey);
+
+    if (!existingEntry || scorePlatformResultEntry(nextEntry) > scorePlatformResultEntry(existingEntry)) {
+      groupedResults.set(groupKey, nextEntry);
+    }
+  });
+
+  return Array.from(groupedResults.values());
+};
+
 // 18.7 — Per-platform status row component
 const PlatformStatusRows = ({ post, onRetry }) => {
   const results = post.platform_results || {};
-  const platforms = Object.keys(results);
-  if (!platforms.length) return null;
+  const platformEntries = getRenderablePlatformResults(results);
+  if (!platformEntries.length) return null;
 
   return (
     <div className="border-t border-slate-100 px-4 py-2 space-y-1.5">
-      {platforms.map((platform) => {
-        const r = results[platform] || {};
+      {platformEntries.map(({ rawKey, result, inferredPlatform, displayLabel }) => {
+        const r = result || {};
         const statusStyle = PLATFORM_STATUS_STYLE[r.status] || 'text-gray-500 bg-gray-50';
         const canRetry = r.status === 'permanently_failed' || r.status === 'failed';
         const isPublished = r.status === 'published';
         const failureMessage = getPublishFailureMessage(r);
         const failureAction = getPublishFailureAction(r);
-        const inferredPlatform = inferPlatformKey(platform, r);
-        const displayLabel = formatPlatformResultLabel(platform, r);
         const platformIcon = inferredPlatform ? PLATFORM_ICON_MAP[inferredPlatform] : <FaUser className="text-slate-400" />;
 
         return (
-          <div key={platform} className="rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-2 text-[11px]">
+          <div key={rawKey} className="rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-2 text-[11px]">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span
                     className="inline-flex min-w-0 max-w-full items-center gap-1 font-medium text-gray-700"
-                    title={String(platform)}
+                    title={String(rawKey)}
                   >
                     {platformIcon}
                     <span className="truncate capitalize">{displayLabel}</span>
@@ -129,7 +170,7 @@ const PlatformStatusRows = ({ post, onRetry }) => {
                 )}
                 {canRetry && (
                   <button
-                    onClick={() => onRetry(post.id, platform)}
+                    onClick={() => onRetry(post.id, rawKey)}
                     className="inline-flex items-center gap-1 text-amber-600 hover:text-amber-800 font-medium"
                   >
                     <FaRedo className="text-[9px]" /> Retry
