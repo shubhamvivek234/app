@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from api.routes import accounts as accounts_route
+from backend.app.social import linkedin as linkedin_module
 
 
 class _FakeCursor:
@@ -246,3 +247,83 @@ async def test_persist_oauth_account_clears_publish_restriction_fields(monkeypat
     assert set_fields["publish_action_required"] is None
     assert set_fields["publish_restriction_type"] is None
     assert set_fields["publish_blocked_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_exchange_linkedin_code_uses_id_token_claims_before_userinfo(monkeypatch):
+    class _FakeLinkedInAuth:
+        @staticmethod
+        def _oauth_scopes() -> str:
+            return "openid profile email w_member_social"
+
+        async def exchange_code_for_token(self, code: str) -> dict:
+            assert code == "oauth-code"
+            return {
+                "access_token": "linkedin-access",
+                "refresh_token": "linkedin-refresh",
+                "expires_in": 3600,
+                "id_token": "header.payload.signature",
+                "scope": "openid profile email",
+            }
+
+        @staticmethod
+        def _decode_jwt_payload(_token: str | None) -> dict:
+            return {
+                "sub": "linkedin-user-1",
+                "name": "LinkedIn User",
+                "email": "linkedin@example.com",
+                "picture": "https://example.com/linkedin.png",
+            }
+
+        async def get_user_profile(self, _access_token: str) -> dict:
+            raise AssertionError("userinfo should not be called when id_token claims are usable")
+
+    monkeypatch.setattr(linkedin_module, "LinkedInAuth", _FakeLinkedInAuth)
+
+    result = await accounts_route._exchange_linkedin_code("oauth-code")
+
+    assert result is not None
+    assert result["platform_user_id"] == "linkedin-user-1"
+    assert result["username"] == "linkedin@example.com"
+    assert result["display_name"] == "LinkedIn User"
+    assert result["picture_url"] == "https://example.com/linkedin.png"
+    assert result["refresh_token"] == "linkedin-refresh"
+    assert result["scopes"] == ["openid", "profile", "email"]
+    assert result["expires_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_exchange_linkedin_code_falls_back_to_userinfo_when_id_token_missing_subject(monkeypatch):
+    class _FakeLinkedInAuth:
+        @staticmethod
+        def _oauth_scopes() -> str:
+            return "openid profile email w_member_social"
+
+        async def exchange_code_for_token(self, code: str) -> dict:
+            assert code == "oauth-code"
+            return {
+                "access_token": "linkedin-access",
+                "expires_in": 3600,
+                "id_token": "header.payload.signature",
+            }
+
+        @staticmethod
+        def _decode_jwt_payload(_token: str | None) -> dict:
+            return {"email": "linkedin@example.com"}
+
+        async def get_user_profile(self, access_token: str) -> dict:
+            assert access_token == "linkedin-access"
+            return {
+                "sub": "linkedin-user-2",
+                "name": "Fallback User",
+                "email": "fallback@example.com",
+            }
+
+    monkeypatch.setattr(linkedin_module, "LinkedInAuth", _FakeLinkedInAuth)
+
+    result = await accounts_route._exchange_linkedin_code("oauth-code")
+
+    assert result is not None
+    assert result["platform_user_id"] == "linkedin-user-2"
+    assert result["username"] == "fallback@example.com"
+    assert result["display_name"] == "Fallback User"

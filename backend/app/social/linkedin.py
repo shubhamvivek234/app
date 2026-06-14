@@ -1,3 +1,5 @@
+import base64
+import json
 import httpx
 import os
 import logging
@@ -63,6 +65,20 @@ class LinkedInAuth:
         if not urn:
             return None
         return urn.rsplit(":", 1)[-1]
+
+    @staticmethod
+    def _decode_jwt_payload(token: str | None) -> dict:
+        if not token or token.count(".") < 2:
+            return {}
+        try:
+            payload = token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
+            data = json.loads(decoded.decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logging.warning("LinkedIn id_token decode failed: %s", exc)
+            return {}
 
     def get_auth_url(self, state: str) -> str:
         """Generate LinkedIn OAuth URL"""

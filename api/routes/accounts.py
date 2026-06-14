@@ -1850,16 +1850,32 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
         expires_in = tokens.get("expires_in")
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
                       if expires_in else None)
-        profile = await auth.get_user_profile(access_token)
+        profile = auth._decode_jwt_payload(tokens.get("id_token"))
+        if not profile.get("sub"):
+            profile = await auth.get_user_profile(access_token)
+
         raw_scopes = tokens.get("scope") or auth._oauth_scopes()
         granted_scopes = str(raw_scopes or "").replace(",", " ").split()
+        full_name = str(profile.get("name") or "").strip()
+        if not full_name:
+            full_name = " ".join(
+                str(part).strip()
+                for part in [profile.get("given_name"), profile.get("family_name")]
+                if str(part or "").strip()
+            ).strip()
+        email = str(profile.get("email") or "").strip()
+        subject = str(profile.get("sub") or "").strip()
+        picture = profile.get("picture")
+        if isinstance(picture, dict):
+            picture = picture.get("url") or ((picture.get("data") or {}).get("url"))
 
         return {
             "access_token": access_token,
             "refresh_token": tokens.get("refresh_token"),
-            "platform_user_id": str(profile.get("sub", "")),
-            "username": profile.get("name", profile.get("email", "")),
-            "display_name": profile.get("name", profile.get("email", "")),
+            "platform_user_id": subject,
+            "username": email or full_name or subject,
+            "display_name": full_name or email or subject,
+            "picture_url": picture,
             "scopes": granted_scopes or ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
         }
