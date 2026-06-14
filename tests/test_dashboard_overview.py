@@ -24,6 +24,10 @@ def _matches_query(doc, query):
             if not any(_matches_query(doc, condition) for condition in expected):
                 return False
             continue
+        if key == "$and":
+            if not all(_matches_query(doc, condition) for condition in expected):
+                return False
+            continue
         if not _matches_value(doc.get(key), expected):
             return False
     return True
@@ -173,7 +177,8 @@ async def test_dashboard_overview_returns_full_normalized_sections_from_db(monke
             {
                 "notification_id": "notif-1",
                 "user_id": "user_1",
-                "type": "account.disconnected",
+                "type": "account.reconnect_required",
+                "event": "account.reconnect_required",
                 "message": "Instagram token expired.",
                 "metadata": {"account_id": "acct_1"},
                 "is_read": False,

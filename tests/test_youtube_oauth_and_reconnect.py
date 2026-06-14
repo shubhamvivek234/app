@@ -50,12 +50,25 @@ class _FakeNotifications:
     async def insert_one(self, payload):
         self.inserted.append(payload)
 
+    async def update_one(self, query, update, upsert=False):
+        payload = dict(query)
+        payload.update(update.get("$setOnInsert", {}))
+        payload.update(update.get("$set", {}))
+        self.inserted.append(payload)
+        return SimpleNamespace(matched_count=0, upserted_id="notice-1")
+
+
+class _FakeNotificationPrefs:
+    async def find_one(self, query):
+        return None
+
 
 class _FakeDB:
     def __init__(self):
         self.social_accounts = _FakeSocialAccounts()
         self.posts = _FakePosts()
         self.notifications = _FakeNotifications()
+        self.notification_prefs = _FakeNotificationPrefs()
 
 
 @pytest.mark.asyncio
@@ -72,5 +85,6 @@ async def test_handle_account_reconnect_required_pauses_and_notifies():
     assert result == {"paused_count": 2, "account_id": "youtube_account_1"}
     assert len(db.posts.queries) == 2
     assert db.notifications.inserted[0]["type"] == "account.reconnect_required"
+    assert db.notifications.inserted[0]["event"] == "account.reconnect_required"
     assert "needs to be reconnected" in db.notifications.inserted[0]["message"]
     assert "Prodcaster" in db.notifications.inserted[0]["message"]

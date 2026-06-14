@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from utils.notifications import emit_notification
 from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
@@ -135,23 +136,23 @@ async def send_expiry_warnings(db, cache_redis) -> None:
             default=True,
             feature="Subscription pre-expiry dedup",
         )
-        inserted = await db.notifications.update_one(
-            {"dedup_key": dedup_key},
-            {"$setOnInsert": {
-                "user_id": user_id,
-                "type": "subscription.expiring",
-                "channel": "email",
-                "message": (
-                    "Your subscription expires in 7 days. "
-                    "After expiry, you'll have a 7-day grace period before posts are paused."
-                ),
-                "created_at": now,
-                "read": False,
-                "dedup_key": dedup_key,
-            }},
-            upsert=True,
+        written = await emit_notification(
+            db,
+            user_id=user_id,
+            event="subscription.expiring",
+            notification_type="subscription.expiring",
+            title="Subscription ending soon",
+            message=(
+                "Your subscription expires in 7 days. "
+                "After expiry, you'll have a 7-day grace period before posts are paused."
+            ),
+            severity="medium",
+            metadata={"subscription": True},
+            target_path="/billing",
+            dedup_key=dedup_key,
+            created_at=now,
         )
-        if not already_sent or inserted.upserted_id is None:
+        if not already_sent or not written:
             continue
         logger.info(
             "Sending pre-expiry warning to user %s (expires %s)",
@@ -186,23 +187,23 @@ async def send_expiry_warnings(db, cache_redis) -> None:
             "status": "scheduled",
             "scheduled_time": {"$gt": now},
         })
-        inserted = await db.notifications.update_one(
-            {"dedup_key": dedup_key},
-            {"$setOnInsert": {
-                "user_id": user_id,
-                "type": "subscription.expired",
-                "channel": "email",
-                "message": (
-                    f"Your subscription has expired. You have a 7-day grace period. "
-                    f"{affected_count} scheduled post(s) will be paused after the grace period."
-                ),
-                "created_at": now,
-                "read": False,
-                "dedup_key": dedup_key,
-            }},
-            upsert=True,
+        written = await emit_notification(
+            db,
+            user_id=user_id,
+            event="subscription.expiring",
+            notification_type="subscription.expired",
+            title="Subscription expired",
+            message=(
+                f"Your subscription has expired. You have a 7-day grace period. "
+                f"{affected_count} scheduled post(s) will be paused after the grace period."
+            ),
+            severity="high",
+            metadata={"subscription": True, "affected_posts": affected_count},
+            target_path="/billing",
+            dedup_key=dedup_key,
+            created_at=now,
         )
-        if not already_sent or inserted.upserted_id is None:
+        if not already_sent or not written:
             continue
 
         logger.info(

@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from utils.notifications import emit_notification
+
 logger = logging.getLogger(__name__)
 
 # ── Plan limits ──────────────────────────────────────────────────────────────
@@ -180,34 +182,42 @@ async def handle_payment_failure(
         )
         paused_count = result.modified_count
 
-        # Send consolidated notification
-        await db.notifications.insert_one({
-            "user_id": user_id,
-            "type": "billing.payment_failed_final",
-            "channel": "email",
-            "message": (
+        await emit_notification(
+            db,
+            user_id=user_id,
+            event="billing.failed",
+            notification_type="billing.payment_failed_final",
+            title="Billing payment failed",
+            message=(
                 f"Payment failed after {attempt} attempts. "
                 f"{paused_count} scheduled post(s) have been paused. "
                 "Please update your payment method to resume posting."
             ),
-            "created_at": now,
-            "read": False,
-        })
+            severity="high",
+            metadata={"billing": True, "attempt_count": attempt, "paused_count": paused_count},
+            target_path="/billing",
+            dedup_key=f"billing:{user_id}:payment_failed_final:{attempt}",
+            created_at=now,
+        )
         logger.warning("Payment exhausted for user %s — paused %d posts", user_id, paused_count)
     else:
-        # Send retry notification
-        await db.notifications.insert_one({
-            "user_id": user_id,
-            "type": "billing.payment_failed",
-            "channel": "email",
-            "message": (
+        await emit_notification(
+            db,
+            user_id=user_id,
+            event="billing.failed",
+            notification_type="billing.payment_failed",
+            title="Billing payment failed",
+            message=(
                 f"Payment attempt {attempt} failed. "
                 f"We'll retry in {next_retry_days} day(s). "
                 "Your scheduled posts will continue publishing during this time."
             ),
-            "created_at": now,
-            "read": False,
-        })
+            severity="high",
+            metadata={"billing": True, "attempt_count": attempt, "next_retry_days": next_retry_days},
+            target_path="/billing",
+            dedup_key=f"billing:{user_id}:payment_failed:{attempt}",
+            created_at=now,
+        )
         logger.info("Payment attempt %d failed for user %s, retry in %d days", attempt, user_id, next_retry_days)
 
     return {
@@ -259,16 +269,6 @@ async def handle_payment_success(db, user_id: str) -> dict:
     resumed_count = result.modified_count
 
     if resumed_count:
-        await db.notifications.insert_one({
-            "user_id": user_id,
-            "type": "billing.payment_succeeded",
-            "channel": "in_app",
-            "message": (
-                f"Payment successful! {resumed_count} paused post(s) have been resumed."
-            ),
-            "created_at": now,
-            "read": False,
-        })
         logger.info("Payment succeeded for user %s — resumed %d posts", user_id, resumed_count)
 
     return {

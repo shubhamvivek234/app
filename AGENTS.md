@@ -4,32 +4,26 @@
 ## Current Phase
 Stage: v2.9 shipped
 Branch: main
-Focus: auth hardening + R2 migration + composer reliability
+Focus: important notifications + composer reliability + R2 migration
 
 ## Last Session Completed
-Date: 2026-06-04
+Date: 2026-06-14
 Completed:
-- Backend: added Firebase session-cookie auth with `POST /api/auth/session` and `POST /api/auth/session/logout`; browser auth is now cookie-first with bearer fallback.
-  Files: `api/routes/auth.py`, `api/deps.py`, `utils/session.py`, `api/models/user.py`
-- Backend: `/api/auth/password-reset/request` now uses Firebase-managed reset emails, Turnstile, rate limiting, and generic success responses that do not leak account existence.
-  Files: `api/routes/auth.py`, `docker-compose.yml`
-- Backend: added `email_verified` propagation from Firebase claims into Mongo bootstrap/update flow and exposed it from `/api/auth/me`.
-  Files: `api/deps.py`, `api/models/user.py`, `api/routes/auth.py`
-- Backend: gated verified-email-required actions for social account connect, publish/schedule/retry/approve, team invite/accept, recurring rules, and bulk CSV scheduling.
-  Files: `api/routes/accounts.py`, `api/routes/posts.py`, `api/routes/team.py`, `api/routes/recurring.py`, `api/routes/bulk_upload.py`
-- Frontend: removed auth-page roulette; login/signup now use the hardened V1 flows consistently with Turnstile.
-  Files: `frontend/src/pages/Login.js`, `frontend/src/pages/Signup.js`, `frontend/src/pages/LoginV1.js`, `frontend/src/pages/SignupV1.js`
-- Frontend: moved the web app away from `localStorage` bearer auth toward HttpOnly cookie sessions while keeping compatibility fallback for legacy callers.
-  Files: `frontend/src/services/authService.js`, `frontend/src/context/AuthContext.js`, `frontend/src/lib/http.js`, `frontend/src/lib/api.js`, `frontend/src/lib/requestOAuthUrl.js`, `frontend/src/lib/requestOAuthCallback.js`, `frontend/src/hooks/usePostStatusStream.js`
-- Frontend: added real `/forgot-password` and replaced the dead verify-email flow with Firebase action-code verification plus backend resync.
-  Files: `frontend/src/pages/ForgotPassword.js`, `frontend/src/pages/VerifyEmail.js`, `frontend/src/App.js`, `frontend/src/pages/AuthCallback.js`
-- Tests: added auth-security regressions for session exchange, password reset privacy, cookie-first auth, and verified-email enforcement.
-  Files: `tests/test_auth_security.py`
+- Backend: added central important-notification emitter and consistent doc shape with event/type/title/severity/target/dedup/read fields.
+  Files: `utils/notifications.py`, `utils/notification_prefs.py`
+- Backend: wired schedule confirmations, aggregate publish results, reconnect-required, billing failed, and subscription-expiry/grace notices to the central emitter.
+  Files: `api/routes/posts.py`, `celery_workers/tasks/publish.py`, `utils/ghost_cascade.py`, `api/routes/webhooks.py`, `celery_workers/tasks/subscription_check.py`
+- Backend: normalized notification list/read/delete and dashboard activity to in-app important events only, with legacy `read` compatibility.
+  Files: `api/routes/notifications.py`, `api/routes/dashboard.py`
+- Frontend: rebuilt notification center to use shared API helpers and updated Settings notification categories/defaults.
+  Files: `frontend/src/components/NotificationCenter.js`, `frontend/src/lib/api.js`, `frontend/src/pages/Settings.js`
+- Tests: added focused notification tests and updated dashboard/reconnect fixtures.
+  Files: `tests/test_settings_notifications.py`, `tests/test_dashboard_overview.py`, `tests/test_youtube_oauth_and_reconnect.py`
 
 ## Active Work
 Currently implementing: None
 Next:
-- Commit/deploy the auth hardening once requested and verify the live cookie-session flow on Vercel + EC2.
+- Commit/deploy the notification repair once requested and verify live notification center after first scheduled/published/failed events.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
@@ -41,6 +35,6 @@ Next:
 ```bash
 git status --short
 CI=true npm run build --prefix frontend
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/test_auth_security.py tests/test_publish_feed.py tests/test_accounts_route.py -q
-python3 -m compileall api/routes/auth.py api/deps.py api/routes/posts.py api/routes/accounts.py api/routes/team.py api/routes/recurring.py api/routes/bulk_upload.py utils/session.py
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/test_settings_notifications.py tests/test_youtube_oauth_and_reconnect.py tests/test_dashboard_overview.py tests/test_post_reschedule_update.py tests/test_accounts_route.py -q
+.venv/bin/python -m compileall api/routes/notifications.py api/routes/dashboard.py api/routes/posts.py celery_workers/tasks/publish.py utils/notifications.py utils/notification_prefs.py
 ```

@@ -491,8 +491,11 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
             "id": 1,
             "user_id": 1,
             "workspace_id": 1,
+            "title": 1,
+            "content": 1,
             "status": 1,
             "post_type": 1,
+            "platforms": 1,
             "platform_results": 1,
             "account_results": 1,
             "publish_targets": 1,
@@ -542,6 +545,27 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
 
     await db.posts.update_one({"id": post_id}, update_doc)
 
+    try:
+        await _emit_aggregate_publish_notification(
+            db,
+            post=updated_post,
+            aggregate_status=agg_status,
+            result_entries=result_entries,
+            created_at=now,
+        )
+    except Exception as exc:
+        event_log(
+            logger,
+            "warning",
+            "publish.aggregate_notification.degraded",
+            exc_info=exc,
+            task_name="_finalize_post_status",
+            post_id=post_id,
+            failure_type="notification_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
+
     if should_cleanup_media(result_entries):
         schedule_media_cleanup.apply_async(
             kwargs={"post_id": post_id},
@@ -550,6 +574,99 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
         )
 
     return updated_post.get("user_id"), prev_agg_status, agg_status
+
+
+def _post_notification_preview(post: dict) -> str:
+    text = (post.get("title") or post.get("content") or "Untitled post").strip()
+    if len(text) > 90:
+        return f"{text[:87].rstrip()}..."
+    return text or "Untitled post"
+
+
+def _publish_target_summary(result_entries: dict) -> dict[str, int | bool]:
+    statuses = [
+        str((entry or {}).get("status") or "").lower()
+        for entry in (result_entries or {}).values()
+    ]
+    failed_statuses = {"failed", "permanently_failed", "paused", "cancelled"}
+    return {
+        "total": len(statuses),
+        "published": sum(1 for status in statuses if status == "published"),
+        "failed": sum(1 for status in statuses if status in failed_statuses),
+        "permanent": any(status == "permanently_failed" for status in statuses),
+    }
+
+
+async def _emit_aggregate_publish_notification(
+    db,
+    *,
+    post: dict,
+    aggregate_status: str,
+    result_entries: dict,
+    created_at: datetime,
+) -> None:
+    from utils.notifications import emit_notification
+
+    post_id = str(post.get("id") or "")
+    user_id = str(post.get("user_id") or "")
+    if not post_id or not user_id:
+        return
+    if aggregate_status not in {"published", "partial", "failed"}:
+        return
+
+    summary = _publish_target_summary(result_entries)
+    total = int(summary["total"] or 0)
+    published = int(summary["published"] or 0)
+    failed = int(summary["failed"] or 0)
+    platforms = list(post.get("platforms") or [])
+    metadata = {
+        "post_id": post_id,
+        "platforms": platforms,
+        "aggregate_status": aggregate_status,
+        "published_count": published,
+        "failed_count": failed,
+        "target_count": total,
+    }
+    preview = _post_notification_preview(post)
+
+    if aggregate_status == "published":
+        event = "post.published"
+        notification_type = "post.published"
+        title = "Post published"
+        severity = "low"
+        message = f"{preview} published successfully on {total or len(platforms) or 1} target(s)."
+    elif bool(summary["permanent"]):
+        event = "post.dlq"
+        notification_type = "post.dlq"
+        title = "Post permanently failed"
+        severity = "high"
+        message = f"{preview} could not be published after all retries. Review and reschedule it."
+    elif aggregate_status == "partial":
+        event = "post.failed"
+        notification_type = "post.partial_failed"
+        title = "Post partially published"
+        severity = "high"
+        message = f"{preview} published on {published} target(s), but {failed} target(s) need attention."
+    else:
+        event = "post.failed"
+        notification_type = "post.failed"
+        title = "Post failed"
+        severity = "high"
+        message = f"{preview} failed to publish. Review the failed post and retry or reschedule."
+
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event=event,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        severity=severity,
+        metadata=metadata,
+        target_path="/content-library?status=failed" if event != "post.published" else "/content-library?status=published",
+        dedup_key=f"post:{post_id}:publish:{event}",
+        created_at=created_at,
+    )
 
 
 # ── Parent publish task ───────────────────────────────────────────────────────
@@ -2737,124 +2854,19 @@ async def _move_to_dlq(post_id: str, reason: str, platform: str | None = None, a
                 outcome="degraded",
             )
 
-    # 18.8: DLQ notification — "permanently failed — [Reschedule]"
-    if post and platform:
-        user_id = post.get("user_id", "")
-        try:
-            from celery_workers.tasks.media import send_notification
-            send_notification.apply_async(
-                kwargs={
-                    "post_id": post_id,
-                    "type": "publish_permanently_failed",
-                    "platform": platform,
-                    "error": (
-                        f"Your post permanently failed on {platform.capitalize()} after "
-                        f"{MAX_RETRIES} attempts — please reschedule or edit the post."
-                    ),
-                    "user_id": user_id,
-                },
-                queue="default",
-            )
-        except Exception as notify_exc:
-            event_log(
-                logger,
-                "warning",
-                "publish.dlq.notification_degraded",
-                exc_info=notify_exc,
-                task_name="_move_to_dlq",
-                post_id=post_id,
-                platform=platform,
-                account_id=account_id,
-                failure_type="notification_failed",
-                provider_error=shorten_provider_error(notify_exc),
-                outcome="degraded",
-            )
-
 
 async def _send_failure_notification(db, post_id: str, platform: str, error: str, user_id: str = "") -> None:
-    # Section 20.12: check user notification preferences before sending
-    if user_id:
-        try:
-            from utils.notification_prefs import should_notify
-            if not await should_notify(db, user_id, "post.failed", "email"):
-                logger.debug("Notification suppressed for user %s event post.failed", user_id)
-                return
-        except Exception:
-            pass  # never block notifications on pref lookup failure
-    from celery_workers.tasks.media import send_notification
-    send_notification.apply_async(
-        kwargs={"post_id": post_id, "type": "publish_failed", "platform": platform, "error": error},
-        queue="default",
-    )
+    # Notifications are emitted from _finalize_post_status once aggregate state is known.
+    return None
 
 
 # 18.8: Per-platform success notification
 async def _send_success_notification(db, post_id: str, platform: str, post_url: str, user_id: str = "") -> None:
-    if user_id:
-        try:
-            from utils.notification_prefs import should_notify
-            if not await should_notify(db, user_id, "post.published", "email"):
-                logger.debug("Notification suppressed for user %s event post.published", user_id)
-                return
-        except Exception:
-            pass
-    try:
-        from celery_workers.tasks.media import send_notification
-        send_notification.apply_async(
-            kwargs={
-                "post_id": post_id,
-                "type": "publish_success",
-                "platform": platform,
-                "post_url": post_url,
-                "user_id": user_id,
-            },
-            queue="default",
-        )
-    except Exception as exc:
-        event_log(
-            logger,
-            "warning",
-            "publish.success_notification.degraded",
-            exc_info=exc,
-            task_name="_send_success_notification",
-            post_id=post_id,
-            platform=platform,
-            user_id=user_id,
-            failure_type="notification_failed",
-            provider_error=shorten_provider_error(exc),
-            outcome="degraded",
-        )
+    # Notifications are emitted from _finalize_post_status once aggregate state is known.
+    return None
 
 
 # 18.8: Partial-recovery notification — all platforms now published
 async def _send_recovery_notification(db, post_id: str, user_id: str = "") -> None:
-    if user_id:
-        try:
-            from utils.notification_prefs import should_notify
-            if not await should_notify(db, user_id, "post.published", "email"):
-                return
-        except Exception:
-            pass
-    try:
-        from celery_workers.tasks.media import send_notification
-        send_notification.apply_async(
-            kwargs={
-                "post_id": post_id,
-                "type": "publish_recovered",
-                "user_id": user_id,
-            },
-            queue="default",
-        )
-    except Exception as exc:
-        event_log(
-            logger,
-            "warning",
-            "publish.recovery_notification.degraded",
-            exc_info=exc,
-            task_name="_send_recovery_notification",
-            post_id=post_id,
-            user_id=user_id,
-            failure_type="notification_failed",
-            provider_error=shorten_provider_error(exc),
-            outcome="degraded",
-        )
+    # Notifications are emitted from _finalize_post_status once aggregate state is known.
+    return None

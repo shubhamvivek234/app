@@ -24,20 +24,30 @@ class DigestFrequency(str, Enum):
 
 
 SUPPORTED_NOTIFICATION_EVENTS: tuple[str, ...] = (
+    "post.scheduled",
     "post.published",
     "post.failed",
     "post.dlq",
+    "account.reconnect_required",
+    "subscription.expiring",
     "account.expiring",
     "billing.failed",
 )
 
 # Default preferences applied to new users and returned to Settings.
 DEFAULT_PREFERENCES: dict[str, dict[str, Any]] = {
+    "post.scheduled": {"channels": ["in_app"], "digest": "immediate"},
     "post.published": {"channels": ["in_app"], "digest": "immediate"},
     "post.failed": {"channels": ["email", "in_app"], "digest": "immediate"},
     "post.dlq": {"channels": ["email", "in_app"], "digest": "immediate"},
+    "account.reconnect_required": {"channels": ["email", "in_app"], "digest": "immediate"},
+    "subscription.expiring": {"channels": ["email", "in_app"], "digest": "immediate"},
     "account.expiring": {"channels": ["email", "in_app"], "digest": "immediate"},
-    "billing.failed": {"channels": ["email"], "digest": "immediate"},
+    "billing.failed": {"channels": ["email", "in_app"], "digest": "immediate"},
+}
+
+_EVENT_ALIASES: dict[str, tuple[str, ...]] = {
+    "subscription.expiring": ("account.expiring",),
 }
 
 _VALID_CHANNELS = {NotificationChannel.EMAIL.value, NotificationChannel.IN_APP.value}
@@ -78,12 +88,30 @@ def sanitize_preferences(preferences: Mapping[str, Any] | None) -> dict[str, dic
     return sanitized
 
 
+def _apply_alias_preferences(
+    prefs: dict[str, dict[str, Any]],
+    raw_prefs: Mapping[str, Any] | None,
+) -> None:
+    if not isinstance(raw_prefs, Mapping):
+        return
+    for event, aliases in _EVENT_ALIASES.items():
+        if event in raw_prefs:
+            continue
+        for alias in aliases:
+            alias_pref = sanitize_preferences({alias: raw_prefs.get(alias)}).get(alias)
+            if alias_pref is not None:
+                prefs[event] = alias_pref
+                break
+
+
 async def get_user_prefs(db, user_id: str) -> dict:
     """Fetch user notification preferences, falling back to defaults."""
     doc = await db.notification_prefs.find_one({"user_id": user_id})
     prefs = build_default_preferences()
     if doc:
-        prefs.update(sanitize_preferences(doc.get("prefs", {})))
+        raw_prefs = doc.get("prefs", {})
+        prefs.update(sanitize_preferences(raw_prefs))
+        _apply_alias_preferences(prefs, raw_prefs)
     return prefs
 
 
@@ -99,7 +127,13 @@ async def should_notify(
     """
     prefs = await get_user_prefs(db, user_id)
     event_pref = prefs.get(event, {})
-    return channel in event_pref.get("channels", [])
+    if channel in event_pref.get("channels", []):
+        return True
+    for alias in _EVENT_ALIASES.get(event, ()):
+        alias_pref = prefs.get(alias, {})
+        if channel in alias_pref.get("channels", []):
+            return True
+    return False
 
 
 async def get_digest_frequency(db, user_id: str, event: str) -> str:

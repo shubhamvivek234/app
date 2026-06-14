@@ -33,6 +33,7 @@ from api.task_queue import enqueue_task, revoke_task
 from utils.audit import log_audit_event
 from utils.content_policy import check_content_policy, validate_platform_content_type
 from utils.observability import event_log, shorten_provider_error
+from utils.notifications import emit_notification
 from utils.schedule_density import check_schedule_density
 from utils.ssrf_guard import assert_safe_url
 from utils.storage import public_url_for_key
@@ -70,6 +71,57 @@ class ApprovalDecisionBody(BaseModel):
 
 class ApprovalResubmitBody(BaseModel):
     content: str | None = None
+
+
+def _post_notification_preview(doc: dict) -> str:
+    text = (doc.get("title") or doc.get("content") or "Untitled post").strip()
+    if len(text) > 90:
+        return f"{text[:87].rstrip()}..."
+    return text or "Untitled post"
+
+
+async def _emit_scheduled_post_notification(db, post: dict, *, now: datetime | None = None) -> None:
+    scheduled_time = post.get("scheduled_time")
+    if not scheduled_time:
+        return
+
+    post_id = str(post.get("id") or "")
+    user_id = str(post.get("user_id") or "")
+    if not post_id or not user_id:
+        return
+
+    platforms = list(post.get("platforms") or [])
+    platform_copy = ", ".join(platform.capitalize() for platform in platforms[:3])
+    if len(platforms) > 3:
+        platform_copy = f"{platform_copy} +{len(platforms) - 3} more"
+    if not platform_copy:
+        platform_copy = "selected platforms"
+
+    schedule_iso = scheduled_time.isoformat() if hasattr(scheduled_time, "isoformat") else str(scheduled_time)
+    timezone_label = post.get("timezone") or "UTC"
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event="post.scheduled",
+        notification_type="post.scheduled",
+        title="Post scheduled",
+        message=(
+            f"{_post_notification_preview(post)} is scheduled for {schedule_iso} "
+            f"({timezone_label}) on {platform_copy}."
+        ),
+        severity="low",
+        channels=("in_app",),
+        metadata={
+            "post_id": post_id,
+            "platforms": platforms,
+            "scheduled_time": schedule_iso,
+            "timezone": timezone_label,
+        },
+        target_path="/content-library?status=scheduled",
+        dedup_key=f"post:{post_id}:scheduled",
+        created_at=now,
+        update_existing=True,
+    )
 
 
 def _ensure_verified_email_for_publish_action(current_user: dict) -> None:
@@ -878,6 +930,12 @@ async def create_post(
 
     await db.posts.insert_one(doc)
 
+    if post_status == PostStatus.SCHEDULED and scheduled_time is not None:
+        try:
+            await _emit_scheduled_post_notification(db, doc, now=now)
+        except Exception as exc:
+            logger.warning("Failed to store scheduled notification for post %s: %s", doc["id"], exc)
+
     if body.publish_now:
         try:
             async_result = enqueue_task(
@@ -1291,9 +1349,15 @@ async def update_post(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
         {
             "_id": 0,
+            "id": 1,
+            "user_id": 1,
             "status": 1,
             "workspace_id": 1,
             "platforms": 1,
+            "title": 1,
+            "content": 1,
+            "scheduled_time": 1,
+            "timezone": 1,
             "account_ids": 1,
             "social_account_ids": 1,
             "platform_results": 1,
@@ -1470,6 +1534,17 @@ async def update_post(
         )
 
     updated = await db.posts.find_one({"id": post_id, "user_id": user_id}, {"_id": 0})
+
+    if (
+        "scheduled_time" in body.model_fields_set
+        and body.scheduled_time is not None
+        and updated
+        and updated.get("status") == PostStatus.SCHEDULED
+    ):
+        try:
+            await _emit_scheduled_post_notification(db, updated, now=now)
+        except Exception as exc:
+            logger.warning("Failed to store rescheduled notification for post %s: %s", post_id, exc)
 
     # Phase 7.5.1 — Audit event
     await log_audit_event(

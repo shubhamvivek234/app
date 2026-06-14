@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from api.deps import CurrentUser, DB, require_permission
 from api.routes.accounts import _connection_health, _hydrate_social_account_metadata
 from api.routes.posts import _hydrate_post_card_fields_for_docs
+from utils.notifications import IMPORTANT_NOTIFICATION_EVENTS, IMPORTANT_NOTIFICATION_TYPES
 
 router = APIRouter(tags=["dashboard"])
 
@@ -48,6 +49,35 @@ def _notification_is_unread(notification: dict[str, Any]) -> bool:
     if "read" in notification:
         return not bool(notification.get("read"))
     return True
+
+
+def _in_app_notification_query(user_id: str) -> dict[str, Any]:
+    return {
+        "$and": [
+            {
+                "user_id": user_id,
+                "$or": [
+                    {"channel": {"$exists": False}},
+                    {"channel": {"$ne": "email"}},
+                ],
+            },
+            {
+                "$or": [
+                    {"event": {"$in": list(IMPORTANT_NOTIFICATION_EVENTS)}},
+                    {"type": {"$in": list(IMPORTANT_NOTIFICATION_TYPES)}},
+                ]
+            },
+        ],
+    }
+
+
+def _unread_notification_query() -> dict[str, Any]:
+    return {
+        "$or": [
+            {"is_read": False},
+            {"is_read": {"$exists": False}, "read": {"$ne": True}},
+        ],
+    }
 
 
 def _account_label(account: dict[str, Any]) -> str:
@@ -170,16 +200,19 @@ def _notification_severity(notification_type: str, message: str) -> str:
 
 
 def _normalize_activity(notification: dict[str, Any]) -> dict[str, Any]:
+    object_id = notification.get("_id")
     notification_type = str(notification.get("type") or "info")
     message = str(notification.get("message") or "")
     metadata = notification.get("metadata") or {}
     return {
-        "id": str(notification.get("id") or notification.get("notification_id") or ""),
+        "id": str(notification.get("id") or notification.get("notification_id") or object_id or ""),
         "type": notification_type,
+        "event": str(notification.get("event") or notification_type),
+        "title": str(notification.get("title") or ""),
         "message": message,
-        "severity": _notification_severity(notification_type, message),
+        "severity": str(notification.get("severity") or _notification_severity(notification_type, message)),
         "created_at": notification.get("created_at"),
-        "target_path": _notification_target_path(notification_type, message, metadata),
+        "target_path": notification.get("target_path") or _notification_target_path(notification_type, message, metadata),
         "is_read": not _notification_is_unread(notification),
     }
 
@@ -453,10 +486,9 @@ async def _build_core_section(
         _count_documents(
             db.notifications,
             {
-                "user_id": user_id,
-                "$or": [
-                    {"is_read": False},
-                    {"is_read": {"$exists": False}, "read": {"$ne": True}},
+                "$and": [
+                    _in_app_notification_query(user_id),
+                    _unread_notification_query(),
                 ],
             },
         ),
@@ -566,8 +598,7 @@ async def _build_activity_section(
     user_id: str,
 ) -> dict[str, Any]:
     recent_notifications = await db.notifications.find(
-        {"user_id": user_id},
-        {"_id": 0},
+        _in_app_notification_query(user_id),
     ).sort("created_at", -1).limit(5).to_list(length=5)
     return {
         "activity": [_normalize_activity(notification) for notification in recent_notifications],

@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from utils.notifications import emit_notification
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,25 +102,29 @@ async def handle_ghost_account(
         or account.get("username")
         or social_account_id
     )
-    await db.notifications.insert_one({
-        "user_id": user_id,
-        "type": "account.suspended",
-        "channel": "email",
-        "message": (
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event="account.reconnect_required",
+        notification_type="account.suspended",
+        title="Connected account needs attention",
+        message=(
             f"Your {platform} account '{account_name}' has been suspended by the platform. "
             f"Reason: {suspension_reason}. "
-            f"{paused_count} scheduled post(s) have been paused. "
-            "Reconnect the account after resolving the issue to resume posting."
+            f"{paused_count} scheduled post(s) have been paused."
         ),
-        "metadata": {
+        severity="high",
+        metadata={
+            "account_id": social_account_id,
             "social_account_id": social_account_id,
             "platform": platform,
             "error_code": str(error_code),
             "paused_count": paused_count,
         },
-        "created_at": now,
-        "read": False,
-    })
+        target_path="/accounts",
+        dedup_key=f"account:{social_account_id}:suspended",
+        created_at=now,
+    )
 
     logger.info(
         "Ghost cascade complete: account=%s platform=%s paused=%s reason=%s",
@@ -179,25 +185,30 @@ async def handle_account_reconnect_required(
     )
     paused_count = await _pause_future_posts(db, social_account_id, now, "account_reconnect_required")
 
-    await db.notifications.insert_one({
-        "user_id": user_id,
-        "type": "account.reconnect_required",
-        "channel": "email",
-        "message": (
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event="account.reconnect_required",
+        notification_type="account.reconnect_required",
+        title="Reconnect affected account",
+        message=(
             f"Your {platform} account '{account_name}' needs to be reconnected before publishing can resume. "
             f"Reason: {reconnect_reason}. "
-            f"{paused_count} scheduled post(s) have been paused. "
-            "Reconnect the account to grant the required permissions and resume posting."
+            f"{paused_count} scheduled post(s) have been paused."
         ),
-        "metadata": {
+        severity="high",
+        metadata={
+            "account_id": social_account_id,
             "social_account_id": social_account_id,
             "platform": platform,
             "error_code": str(error_code or ""),
             "paused_count": paused_count,
         },
-        "created_at": now,
-        "read": False,
-    })
+        target_path="/accounts",
+        dedup_key=f"account:{social_account_id}:reconnect_required",
+        created_at=now,
+        update_existing=True,
+    )
 
     logger.info(
         "Reconnect-required flow complete: account=%s platform=%s paused=%s",

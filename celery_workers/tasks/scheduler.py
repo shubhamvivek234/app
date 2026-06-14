@@ -517,23 +517,6 @@ async def _async_scan_pre_upload_timeouts() -> dict:
             except Exception as dlq_exc:
                 logger.error("17.4D: Failed to move %s/%s to DLQ: %s", post_id, target["platform"], dlq_exc)
 
-            try:
-                from celery_workers.tasks.media import send_notification
-                send_notification.apply_async(
-                    kwargs={
-                        "post_id": post_id,
-                        "type": "pre_upload_timeout",
-                        "platform": target["platform"],
-                        "error": (
-                            "Your video upload timed out after 2 hours. "
-                            "Please reschedule the post or try again with a smaller file."
-                        ),
-                    },
-                    queue="default",
-                )
-            except Exception as notify_exc:
-                logger.warning("17.4D: Failed to notify user for post %s/%s: %s", post_id, target["platform"], notify_exc)
-
             timed_out += 1
 
     if timed_out:

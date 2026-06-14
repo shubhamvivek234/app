@@ -11,7 +11,7 @@ from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
 from db.redis_client import get_cache_redis
-from utils.notification_prefs import should_notify
+from utils.notifications import emit_notification
 from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
 
                 inserted = await _ensure_notification_once(
                     db,
-                    event="account.expiring",
+                    event="subscription.expiring",
                     channel=channel,
                     dedup_key=dedup_key,
                     payload_builder=lambda posts_at_risk, days_until_cleanup, *, current_channel=channel, current_dedup_key=dedup_key: {
@@ -135,7 +135,7 @@ async def _send_grace_period_reminders(db, cache_redis) -> dict:
                     if is_new:
                         inserted = await _ensure_notification_once(
                             db,
-                            event="account.expiring",
+                            event="subscription.expiring",
                             channel=channel,
                             dedup_key=dedup_key,
                             payload_builder=lambda posts_at_risk, _days_until_cleanup, *, current_channel=channel, current_dedup_key=dedup_key: {
@@ -188,9 +188,6 @@ async def _ensure_notification_once(
     subscription_cleanup_date,
     days_since_expiry: int,
 ) -> bool:
-    if not await should_notify(db, user_id, event, channel):
-        return False
-
     posts_at_risk = await db.posts.count_documents({
         "user_id": user_id,
         "status": "paused",
@@ -201,9 +198,19 @@ async def _ensure_notification_once(
     else:
         days_until_cleanup = 20 - days_since_expiry
 
-    result = await db.notifications.update_one(
-        {"dedup_key": dedup_key},
-        {"$setOnInsert": payload_builder(posts_at_risk, days_until_cleanup)},
-        upsert=True,
+    payload = payload_builder(posts_at_risk, days_until_cleanup)
+    written = await emit_notification(
+        db,
+        user_id=user_id,
+        event=event,
+        channels=(channel,),
+        notification_type=payload.get("type", "subscription.expiring"),
+        title="Subscription needs attention",
+        message=payload.get("message", "Your subscription needs attention."),
+        severity="high" if payload.get("metadata", {}).get("final_warning") else "medium",
+        metadata=payload.get("metadata", {}),
+        target_path="/billing",
+        dedup_key=dedup_key,
+        created_at=now,
     )
-    return result.upserted_id is not None
+    return bool(written)

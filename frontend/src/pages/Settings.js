@@ -62,9 +62,15 @@ const COMMON_TIMEZONES = [
 
 const NOTIFICATION_EVENTS = [
   {
+    key: 'post.scheduled',
+    label: 'Scheduled posts',
+    description: 'In-app confirmations when a post is scheduled or rescheduled.',
+    defaultChannels: ['in_app'],
+  },
+  {
     key: 'post.published',
     label: 'Published posts',
-    description: 'Successful publishing confirmations.',
+    description: 'Successful publishing confirmations after platforms accept the post.',
     defaultChannels: ['in_app'],
   },
   {
@@ -80,8 +86,14 @@ const NOTIFICATION_EVENTS = [
     defaultChannels: ['email', 'in_app'],
   },
   {
-    key: 'account.expiring',
-    label: 'Subscription and access issues',
+    key: 'account.reconnect_required',
+    label: 'Account reconnect required',
+    description: 'Connected accounts that need refreshed access before publishing can continue.',
+    defaultChannels: ['email', 'in_app'],
+  },
+  {
+    key: 'subscription.expiring',
+    label: 'Subscription ending soon',
     description: 'Expiry warnings, paused posts, and grace-period notices.',
     defaultChannels: ['email', 'in_app'],
   },
@@ -89,7 +101,7 @@ const NOTIFICATION_EVENTS = [
     key: 'billing.failed',
     label: 'Billing failures',
     description: 'Payment failures that need action.',
-    defaultChannels: ['email'],
+    defaultChannels: ['email', 'in_app'],
   },
 ];
 

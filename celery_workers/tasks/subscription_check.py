@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
-from utils.notification_prefs import insert_notification_if_enabled
+from utils.notifications import emit_notification
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,19 @@ async def _emit_account_expiring_notifications(
     now: datetime,
     metadata: dict | None = None,
 ) -> None:
-    for channel in ("in_app", "email"):
-        await insert_notification_if_enabled(
-            db,
-            user_id=user_id,
-            event="account.expiring",
-            channel=channel,
-            notification_type=notification_type,
-            message=message,
-            metadata=metadata,
-            created_at=now,
-            extra_fields={"is_read": False},
-        )
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event="subscription.expiring",
+        notification_type=notification_type,
+        title="Subscription needs attention",
+        message=message,
+        severity="high" if notification_type in {"posts_paused", "subscription.posts_deleted"} else "medium",
+        metadata={**(metadata or {}), "subscription": True},
+        target_path="/billing",
+        dedup_key=f"subscription:{user_id}:{notification_type}",
+        created_at=now,
+    )
 
 
 @celery_app.task(

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from api.deps import DB, CacheRedis
 from api.limiter import limiter
-from utils.notification_prefs import insert_notification_if_enabled
+from utils.notifications import emit_notification
 from utils.redis_resilience import safe_set
 
 logger = logging.getLogger(__name__)
@@ -57,18 +57,19 @@ async def _emit_billing_failed_notifications(
         "provider": provider.lower(),
         "attempt_count": attempt_count,
     }
-    for channel in ("in_app", "email"):
-        await insert_notification_if_enabled(
-            db,
-            user_id=user_id,
-            event="billing.failed",
-            channel=channel,
-            notification_type="billing.payment_failed",
-            message=message,
-            metadata=metadata,
-            created_at=now,
-            extra_fields={"is_read": False},
-        )
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event="billing.failed",
+        notification_type="billing.payment_failed",
+        title="Billing payment failed",
+        message=message,
+        severity="high",
+        metadata={**metadata, "billing": True},
+        target_path="/billing",
+        dedup_key=f"billing:{user_id}:payment_failed:{attempt_count}",
+        created_at=now,
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

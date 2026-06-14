@@ -24,6 +24,8 @@ _EVENT_MAP: dict[str, str] = {
     "publish_failed":             "post.failed",
     "publish_permanently_failed": "post.dlq",
     "publish_partial_recovery":   "post.published",
+    "publish_recovered":          "post.published",
+    "pre_upload_timeout":         "post.dlq",
 }
 
 _TITLES: dict[str, str] = {
@@ -31,6 +33,8 @@ _TITLES: dict[str, str] = {
     "publish_failed":             "Post Failed",
     "publish_permanently_failed": "Post Permanently Failed",
     "publish_partial_recovery":   "Post Recovered ✓",
+    "publish_recovered":          "Post Recovered ✓",
+    "pre_upload_timeout":         "Post Permanently Failed",
 }
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
@@ -439,7 +443,7 @@ async def _async_send_notification(
     post_url: str | None,
 ) -> None:
     from db.mongo import get_client
-    from utils.notification_prefs import should_notify
+    from utils.notifications import emit_notification
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -456,62 +460,25 @@ async def _async_send_notification(
     platform_label = platform.capitalize() if platform else "platform"
     message = _build_message(notification_type, platform_label, error, post_url)
     title = _TITLES.get(notification_type, "Notification")
-
-    now = datetime.now(timezone.utc).isoformat()
-    notification_doc = {
-        "user_id": user_id,
-        "type": notification_type,
-        "post_id": post_id,
-        "platform": platform,
-        "title": title,
-        "message": message,
-        "read": False,
-        "created_at": now,
-    }
-
-    # ── In-app (stored in DB, read by frontend /api/inbox) ────────────────────
-    try:
-        in_app_ok = await should_notify(db, user_id, event_key, "in_app")
-    except Exception:
-        in_app_ok = True  # fail-open — never silently drop in-app
-
-    if in_app_ok:
-        await db.notifications.insert_one({**notification_doc, "channel": "in_app"})
-        logger.info(
-            "18.8 in_app stored: user=%s type=%s post=%s platform=%s",
-            user_id, notification_type, post_id, platform,
-        )
-
-    # ── Email (Resend API) ────────────────────────────────────────────────────
-    try:
-        email_ok = await should_notify(db, user_id, event_key, "email")
-    except Exception:
-        email_ok = False  # fail-closed for email — avoid spam on pref lookup error
-
-    if email_ok and RESEND_API_KEY:
-        user_doc = await db.users.find_one({"user_id": user_id}, {"email": 1, "name": 1})
-        recipient_email = (user_doc or {}).get("email")
-        recipient_name = (user_doc or {}).get("name", "there")
-
-        if recipient_email:
-            import resend  # noqa: PLC0415 — lazy import
-            resend.api_key = RESEND_API_KEY
-            try:
-                resend.Emails.send({
-                    "from": SENDER_EMAIL,
-                    "to": recipient_email,
-                    "subject": f"SocialEntangler — {title}",
-                    "html": _build_email_html(recipient_name, title, message, post_url),
-                })
-                logger.info(
-                    "18.8 email sent: user=%s type=%s post=%s platform=%s",
-                    user_id, notification_type, post_id, platform,
-                )
-            except Exception as email_exc:
-                logger.warning("18.8 email send failed (non-fatal): %s", email_exc)
-
-        # Always record email attempt in DB for audit
-        await db.notifications.insert_one({**notification_doc, "channel": "email"})
+    severity = "low" if event_key == "post.published" else "high"
+    await emit_notification(
+        db,
+        user_id=user_id,
+        event=event_key,
+        notification_type=notification_type,
+        title=title.replace(" ✓", ""),
+        message=message,
+        severity=severity,
+        metadata={
+            "post_id": post_id,
+            "platform": platform,
+            "post_url": post_url,
+            "legacy_publish_notification": True,
+        },
+        target_path="/content-library?status=published" if event_key == "post.published" else "/content-library?status=failed",
+        dedup_key=f"post:{post_id}:legacy:{event_key}:{platform or 'all'}",
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 def _build_message(notification_type: str, platform: str, error: str | None, post_url: str | None) -> str:

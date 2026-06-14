@@ -118,7 +118,14 @@ async def _refresh_with_lock(db, account_id: str, platform: str) -> None:
 
 
 async def _notify_reconnect_needed(db, account_id: str, platform: str) -> None:
-    account = await db.social_accounts.find_one({"account_id": account_id}, {"user_id": 1})
-    if account:
-        # TODO: integrate with notification service
-        logger.info("Sending reconnect notification to user %s for %s", account.get("user_id"), platform)
+    try:
+        from utils.ghost_cascade import handle_account_reconnect_required
+
+        await handle_account_reconnect_required(
+            db,
+            account_id,
+            f"{platform} did not provide a refresh token. Reconnect the account to keep publishing reliable.",
+            error_code="missing_refresh_token",
+        )
+    except Exception as exc:
+        logger.warning("Reconnect notification failed for %s/%s: %s", account_id, platform, exc)

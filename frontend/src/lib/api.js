@@ -786,10 +786,12 @@ export const revokeWorkspaceInvite = async (inviteId) => {
 };
 
 // Notifications
-export const getNotifications = async (unreadOnly = false) => {
-  const url = unreadOnly
-    ? `${API}/notifications?unread_only=true`
-    : `${API}/notifications`;
+export const getNotifications = async ({ unreadOnly = false, limit = 20 } = {}) => {
+  const params = new URLSearchParams();
+  if (unreadOnly) params.set('unread_only', 'true');
+  if (limit) params.set('limit', String(limit));
+  const query = params.toString();
+  const url = `${API}/notifications${query ? `?${query}` : ''}`;
   const response = await axios.get(url, { headers: getAuthHeaders() });
   return response.data;
 };
@@ -810,6 +812,13 @@ export const markAllNotificationsRead = async () => {
     { headers: getAuthHeaders() }
   );
   return response.data;
+};
+
+export const deleteNotification = async (notificationId) => {
+  await axios.delete(`${API}/notifications/${notificationId}`, {
+    headers: getAuthHeaders(),
+  });
+  return true;
 };
 
 // ── Internal Notes (Stub - to be implemented) ──
