@@ -82,6 +82,26 @@ const buildDropWallClock = ({ event, oldEvent, viewType }) => {
   return { date, time };
 };
 
+const mergeDateWithOriginalTime = (date, originalTime) => {
+  if (!date || !originalTime) return date || null;
+  const merged = new Date(date);
+  merged.setHours(originalTime.getHours(), originalTime.getMinutes(), 0, 0);
+  return merged;
+};
+
+const getEffectiveAllowedDropDate = (dropInfo, draggedEvent) => {
+  if (!dropInfo?.start) return null;
+  if (dropInfo.allDay && draggedEvent?.start) {
+    return mergeDateWithOriginalTime(dropInfo.start, draggedEvent.start);
+  }
+  return dropInfo.start;
+};
+
+const isFutureDate = (value) => {
+  const parsed = value instanceof Date ? value : new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now();
+};
+
 const ScheduledEventContent = ({ eventInfo }) => {
   const post = eventInfo.event.extendedProps.post;
   const locked = eventInfo.event.extendedProps.locked;
@@ -160,6 +180,11 @@ const ScheduledCalendarView = ({
       toast.error('Could not understand the selected schedule time.');
       return;
     }
+    if (!isFutureDate(scheduledIso)) {
+      revert?.();
+      toast.error('Choose a future date and time.');
+      return;
+    }
 
     setSavingPostId(post.id);
     try {
@@ -207,6 +232,8 @@ const ScheduledCalendarView = ({
 
   const selectedAccount = selectedPost ? getPrimaryAccount(selectedPost, accountMap || {}) : null;
   const selectedMedia = selectedPost ? getPostMediaMeta(selectedPost) : null;
+  const todayDate = format(new Date(), 'yyyy-MM-dd');
+  const minExactTime = exactDate === todayDate ? format(new Date(), 'HH:mm') : undefined;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -252,9 +279,10 @@ const ScheduledCalendarView = ({
             eventDrop={handleEventDrop}
             eventClick={handleEventClick}
             eventContent={(eventInfo) => <ScheduledEventContent eventInfo={eventInfo} />}
-            eventAllow={(_dropInfo, draggedEvent) => {
+            eventAllow={(dropInfo, draggedEvent) => {
               const post = draggedEvent?.extendedProps?.post;
-              return post?.status === 'scheduled';
+              const effectiveDropDate = getEffectiveAllowedDropDate(dropInfo, draggedEvent);
+              return post?.status === 'scheduled' && isFutureDate(effectiveDropDate);
             }}
             nowIndicator
             allDaySlot={false}
@@ -310,6 +338,7 @@ const ScheduledCalendarView = ({
                   <input
                     type="date"
                     value={exactDate}
+                    min={todayDate}
                     onChange={(event) => setExactDate(event.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
                   />
@@ -320,6 +349,7 @@ const ScheduledCalendarView = ({
                     type="time"
                     step="60"
                     value={exactTime}
+                    min={minExactTime}
                     onChange={(event) => setExactTime(event.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
                   />
