@@ -331,6 +331,11 @@ def _analytics_error_message(platform: str | None, exc: Exception) -> str:
         return "Bluesky session expired. Reconnect the account if automatic refresh could not restore access."
     if platform == "youtube" and ("Failed to refresh token" in message or "YouTube access was revoked or expired" in message):
         return "YouTube access was revoked or expired. Reconnect the account to restore analytics."
+    if platform == "linkedin" and ("ACCESS_DENIED" in message or "Not enough permissions" in message):
+        return (
+            "LinkedIn is connected, but live analytics are not available for this app/token. "
+            "Enable approved LinkedIn organization analytics permissions and reconnect the account."
+        )
     return message
 
 
@@ -900,6 +905,10 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
     if impressions is None and platform == "youtube":
         impressions = engagement.get("total_views")
 
+    analytics_status = engagement.get("analytics_status")
+    analytics_message = engagement.get("analytics_message") or engagement.get("error")
+    required_permissions = engagement.get("required_permissions") or []
+
     return {
         "id": account.get("account_id") or account.get("id"),
         "account_id": account.get("account_id") or account.get("id"),
@@ -916,6 +925,14 @@ def _normalize_connected_account(account: dict[str, Any], engagement: dict[str, 
         "profile_views": engagement.get("profile_views"),
         "supports": supports,
         "message": _platform_message(platform),
+        "analytics_status": analytics_status,
+        "analytics_message": analytics_message,
+        "analytics_required_permissions": required_permissions,
+        "analytics": {
+            "status": analytics_status,
+            "message": analytics_message,
+            "required_permissions": required_permissions,
+        },
     }
 
 

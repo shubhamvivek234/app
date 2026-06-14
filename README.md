@@ -164,6 +164,7 @@ To enable real social media posting, you need to:
 #### 3. LinkedIn API
 - Create app at: https://developer.linkedin.com
 - Get Client ID and Secret
+- Default scopes support profile lookup and publishing. LinkedIn follower/page analytics require LinkedIn-approved organization analytics permissions such as `r_organization_admin` or `rw_organization_admin`; after enabling them in the developer app, set `LINKEDIN_OAUTH_SCOPES` and reconnect the account.
 - Implement OAuth flow
 - Add to backend/.env
 

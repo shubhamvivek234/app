@@ -1830,6 +1830,8 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
                       if expires_in else None)
         profile = await auth.get_user_profile(access_token)
+        raw_scopes = tokens.get("scope") or auth._oauth_scopes()
+        granted_scopes = str(raw_scopes or "").replace(",", " ").split()
 
         return {
             "access_token": access_token,
@@ -1837,7 +1839,7 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
             "platform_user_id": str(profile.get("sub", "")),
             "username": profile.get("name", profile.get("email", "")),
             "display_name": profile.get("name", profile.get("email", "")),
-            "scopes": ["openid", "profile", "email", "w_member_social"],
+            "scopes": granted_scopes or ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
         }
     except Exception as exc:

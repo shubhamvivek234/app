@@ -514,7 +514,7 @@ const selectedPlatformAudienceSupport = (platform, computedSupport) => {
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 // Engagement summary card
-const EngagementCard = ({ icon: Icon, label, value, color, loading }) => (
+const EngagementCard = ({ icon: Icon, label, value, color, loading, helper }) => (
   <div className="bg-offwhite rounded-xl border border-gray-200 p-5 flex items-center gap-4">
     <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
       <Icon className="text-white text-lg" />
@@ -525,6 +525,9 @@ const EngagementCard = ({ icon: Icon, label, value, color, loading }) => (
         ? <div className="h-7 w-16 bg-gray-200 animate-pulse rounded mt-1" />
         : <p className="text-2xl font-bold text-gray-900 mt-0.5">{fmt(value)}</p>
       }
+      {!loading && helper && (
+        <p className="mt-1 text-[11px] leading-snug text-amber-700">{helper}</p>
+      )}
     </div>
   </div>
 );
@@ -2553,6 +2556,34 @@ const Analytics = () => {
   const audienceSource = selectedAccount
     ? selectedConnectedAccount
     : (overview?.audience_totals || {});
+  const selectedAnalytics = selectedPlatform === 'linkedin'
+    ? (selectedConnectedAccount?.analytics || selectedConnectedAccount || null)
+    : null;
+  const linkedinErrorMessage = selectedPlatform === 'linkedin'
+    ? (
+      engagement?.errors?.find((item) => item?.account)?.error
+      || overview?.errors?.find((item) => item?.account)?.error
+      || null
+    )
+    : null;
+  const linkedinAnalyticsLimited = selectedPlatform === 'linkedin'
+    && !loadingOverview
+    && !loadingEngagement
+    && (
+      !!linkedinErrorMessage
+      || (
+        selectedAnalytics
+        && selectedAnalytics.status !== 'ok'
+        && selectedAnalytics.analytics_status !== 'ok'
+      )
+    );
+  const linkedinAnalyticsMessage = selectedAnalytics?.analytics_message
+    || selectedAnalytics?.message
+    || linkedinErrorMessage
+    || PLATFORM_NOTICES.linkedin;
+  const linkedinMetricHelper = linkedinAnalyticsLimited
+    ? 'Requires approved LinkedIn analytics access'
+    : null;
   const reachCardLabel = audienceSupport.reach
     ? 'Reach'
     : (audienceSupport.impressions ? 'Impressions' : null);
@@ -2585,6 +2616,7 @@ const Analytics = () => {
       value: audienceSource?.followers_count ?? audienceSource?.followers_total,
       color: 'bg-sky-600',
       visible: audienceSupport.followers_total,
+      helper: (audienceSource?.followers_count ?? audienceSource?.followers_total) == null ? linkedinMetricHelper : null,
     },
     {
       key: 'followers_growth',
@@ -2593,6 +2625,7 @@ const Analytics = () => {
       value: audienceSource?.followers_growth,
       color: 'bg-emerald-600',
       visible: audienceSupport.followers_growth,
+      helper: audienceSource?.followers_growth == null ? linkedinMetricHelper : null,
     },
     {
       key: 'reach',
@@ -2601,6 +2634,7 @@ const Analytics = () => {
       value: audienceSupport.reach ? audienceSource?.reach : audienceSource?.impressions,
       color: 'bg-amber-500',
       visible: !!reachCardLabel,
+      helper: (audienceSupport.reach ? audienceSource?.reach : audienceSource?.impressions) == null ? linkedinMetricHelper : null,
     },
   ].filter((metric) => metric.visible);
   const visibleSortOptions = SORT_OPTIONS.filter((opt) => opt.value === 'date' || !selectedPlatform || selectedPlatformMetrics[opt.value]);
@@ -2975,6 +3009,26 @@ const Analytics = () => {
           </div>
         )}
 
+        {linkedinAnalyticsLimited && (
+          <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-semibold">LinkedIn live analytics need additional access</p>
+                <p className="mt-1 text-blue-800">{linkedinAnalyticsMessage}</p>
+                <p className="mt-2 text-xs text-blue-700">
+                  Unravler can still show LinkedIn posts published from the app. Native follower, growth, reach, and impression cards unlock only after the LinkedIn app has approved organization analytics permissions and the account is reconnected.
+                </p>
+              </div>
+              <a
+                href="/accounts"
+                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-offwhite px-3 py-2 text-xs font-semibold text-blue-700 hover:border-blue-300"
+              >
+                Manage LinkedIn connection
+              </a>
+            </div>
+          </div>
+        )}
+
         {/* ── Tabs ─────────────────────────────────────────────────── */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200">
           <div className="flex min-w-0 flex-wrap gap-1">
@@ -3105,7 +3159,7 @@ const Analytics = () => {
               </div>
             )}
 
-            {!!engagement?.errors?.length && (
+            {!!engagement?.errors?.length && !linkedinAnalyticsLimited && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {engagement.errors.map((item, idx) => (
                   <div key={`${item.account}-${idx}`}>
@@ -3115,7 +3169,7 @@ const Analytics = () => {
               </div>
             )}
 
-            {!!overview?.errors?.length && (
+            {!!overview?.errors?.length && !linkedinAnalyticsLimited && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {overview.errors.map((item, idx) => (
                   <div key={`${item.account}-${idx}`}>
@@ -3127,7 +3181,7 @@ const Analytics = () => {
 
             {/* Engagement stat cards */}
             <div className={`grid gap-4 ${(audienceMetricCards.length + visibleMetricCards.length + 1) >= 5 ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
-              {audienceMetricCards.map(({ key, label, icon, value, color }) => (
+              {audienceMetricCards.map(({ key, label, icon, value, color, helper }) => (
                 <EngagementCard
                   key={key}
                   icon={icon}
@@ -3135,6 +3189,7 @@ const Analytics = () => {
                   value={value}
                   color={color}
                   loading={loadingOverview}
+                  helper={helper}
                 />
               ))}
               <EngagementCard
@@ -5074,7 +5129,9 @@ const Analytics = () => {
                 <FaFileAlt className="text-4xl text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 font-medium">No published posts found</p>
                 <p className="text-sm text-gray-400 mt-1">
-                  {selectedPlatform
+                  {postsMessage
+                    ? postsMessage
+                    : selectedPlatform
                     ? (selectedPlatform === 'twitter' && postsErrors?.some(e => String(e?.error || '').includes('CreditsDepleted'))
                       ? 'X is blocking feed reads due to depleted API credits. Without X credits we can only show posts published from Unravler. None found for this account.'
                       : `No posts from ${PLATFORM_LABELS[selectedPlatform]} yet.`)

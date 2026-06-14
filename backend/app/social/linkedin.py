@@ -5,6 +5,19 @@ from fastapi import HTTPException
 from urllib.parse import urlencode
 from datetime import datetime, timedelta, timezone
 
+
+LINKEDIN_ANALYTICS_PERMISSION_MESSAGE = (
+    "LinkedIn is connected, but live analytics are not available for this app/token. "
+    "LinkedIn returned access denied for follower/page analytics. Enable approved "
+    "LinkedIn organization analytics permissions and reconnect the account."
+)
+
+LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS = [
+    "r_organization_admin",
+    "rw_organization_admin",
+    "LinkedIn Marketing Developer Platform approval",
+]
+
 class LinkedInAuth:
     """LinkedIn OAuth 2.0 and API"""
 
@@ -257,13 +270,16 @@ class LinkedInAuth:
 
     async def fetch_audience_analytics(self, access_token: str, account: dict, days: int | None = None) -> dict:
         """Fetch LinkedIn audience metrics for member and organization analytics."""
-        result: dict[str, int | str | None] = {
+        result: dict[str, int | str | list[str] | None] = {
             "platform": "linkedin",
             "followers": None,
             "followers_growth": None,
             "impressions": None,
             "reach": None,
             "error": None,
+            "analytics_status": "ok",
+            "analytics_message": None,
+            "required_permissions": [],
         }
 
         member_total = await self.get_member_follower_total(access_token)
@@ -310,7 +326,10 @@ class LinkedInAuth:
                 result["reach"] = org_reach
 
         if all(result.get(metric) is None for metric in ("followers", "followers_growth", "impressions", "reach")):
-            result["error"] = "LinkedIn analytics are not enabled for this application or this LinkedIn connection does not have the required analytics access."
+            result["analytics_status"] = "permission_required"
+            result["analytics_message"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+            result["required_permissions"] = LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS
+            result["error"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
 
         return result
 
