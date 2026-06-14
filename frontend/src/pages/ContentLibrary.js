@@ -36,6 +36,39 @@ const PLATFORM_STATUS_STYLE = {
   paused:             'text-gray-500 bg-gray-50',
 };
 
+const KNOWN_PLATFORM_KEYS = new Set(Object.keys(PLATFORM_ICON_MAP));
+
+const inferPlatformKey = (rawKey = '', result = {}) => {
+  const candidates = [
+    rawKey,
+    result.platform,
+    result.platform_name,
+    result.provider,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  for (const candidate of candidates) {
+    for (const knownKey of KNOWN_PLATFORM_KEYS) {
+      if (candidate === knownKey || candidate.startsWith(`${knownKey}-`) || candidate.startsWith(`${knownKey}_`)) {
+        return knownKey;
+      }
+    }
+  }
+
+  return null;
+};
+
+const formatPlatformResultLabel = (rawKey = '', result = {}) => {
+  const inferred = inferPlatformKey(rawKey, result);
+  if (inferred) {
+    return inferred;
+  }
+  return String(rawKey || result.platform || 'target')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+};
+
 // 18.7 — Per-platform status row component
 const PlatformStatusRows = ({ post, onRetry }) => {
   const results = post.platform_results || {};
@@ -51,46 +84,65 @@ const PlatformStatusRows = ({ post, onRetry }) => {
         const isPublished = r.status === 'published';
         const failureMessage = getPublishFailureMessage(r);
         const failureAction = getPublishFailureAction(r);
+        const inferredPlatform = inferPlatformKey(platform, r);
+        const displayLabel = formatPlatformResultLabel(platform, r);
+        const showRawKey = !KNOWN_PLATFORM_KEYS.has(String(platform).toLowerCase());
+        const platformIcon = inferredPlatform ? PLATFORM_ICON_MAP[inferredPlatform] : <FaUser className="text-slate-400" />;
 
         return (
-          <div key={platform} className="flex items-start gap-2 text-[11px]">
-            <span className="flex items-center gap-1 w-20 flex-shrink-0 capitalize font-medium text-gray-700 pt-0.5">
-              {PLATFORM_ICON_MAP[platform] || null}
-              {platform}
-            </span>
-            <span className={`px-2 py-0.5 rounded-full font-semibold capitalize mt-0.5 ${statusStyle}`}>
-              {r.status || 'pending'}
-            </span>
-            <div className="min-w-0 flex-1">
-              {r.error && !isPublished && (
-                <div className="text-gray-500 max-w-[240px]" title={failureMessage}>
-                  <span className={`${isTikTokPublicPostingRestriction(r) ? 'text-red-600 font-medium' : 'text-gray-400'} line-clamp-2`}>
-                    {failureMessage}
+          <div key={platform} className="rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-2 text-[11px]">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span
+                    className="inline-flex min-w-0 max-w-full items-center gap-1 font-medium text-gray-700"
+                    title={String(platform)}
+                  >
+                    {platformIcon}
+                    <span className="truncate capitalize">{displayLabel}</span>
                   </span>
-                  {failureAction && (
-                    <p className="text-[10px] text-amber-700 mt-0.5 line-clamp-2">{failureAction}</p>
-                  )}
+                  <span className={`inline-flex px-2 py-0.5 rounded-full font-semibold capitalize ${statusStyle}`}>
+                    {r.status || 'pending'}
+                  </span>
                 </div>
-              )}
+                {showRawKey && (
+                  <p className="mt-1 truncate text-[10px] text-slate-400" title={String(platform)}>
+                    Target key: {platform}
+                  </p>
+                )}
+                {r.error && !isPublished && (
+                  <div className="mt-1 text-gray-500" title={failureMessage}>
+                    <span className={`${isTikTokPublicPostingRestriction(r) ? 'text-red-600 font-medium' : 'text-gray-400'} line-clamp-2`}>
+                      {failureMessage}
+                    </span>
+                    {failureAction && (
+                      <p className="mt-0.5 text-[10px] text-amber-700 line-clamp-2">{failureAction}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                {isPublished && r.post_url && (
+                  <a
+                    href={r.post_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium"
+                  >
+                    <FaExternalLinkAlt className="text-[9px]" /> View Post
+                  </a>
+                )}
+                {canRetry && (
+                  <button
+                    onClick={() => onRetry(post.id, platform)}
+                    className="inline-flex items-center gap-1 text-amber-600 hover:text-amber-800 font-medium"
+                  >
+                    <FaRedo className="text-[9px]" /> Retry
+                  </button>
+                )}
+              </div>
             </div>
-            {isPublished && r.post_url && (
-              <a
-                href={r.post_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-auto flex items-center gap-1 text-indigo-600 hover:text-indigo-800 font-medium"
-              >
-                <FaExternalLinkAlt className="text-[9px]" /> View Post
-              </a>
-            )}
-            {canRetry && (
-              <button
-                onClick={() => onRetry(post.id, platform)}
-                className="ml-auto flex items-center gap-1 text-amber-600 hover:text-amber-800 font-medium"
-              >
-                <FaRedo className="text-[9px]" /> Retry
-              </button>
-            )}
           </div>
         );
       })}
