@@ -10,15 +10,20 @@ from datetime import datetime, timedelta, timezone
 
 LINKEDIN_ANALYTICS_PERMISSION_MESSAGE = (
     "LinkedIn is connected, but live analytics are not available for this app/token. "
-    "LinkedIn returned access denied for follower/page analytics. Enable approved "
-    "LinkedIn organization analytics permissions and reconnect the account."
+    "LinkedIn returned access denied for profile/page analytics. Enable approved "
+    "LinkedIn profile or organization analytics permissions and reconnect the account."
 )
 
 LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS = [
+    "r_member_profileAnalytics",
     "r_organization_admin",
     "rw_organization_admin",
-    "LinkedIn Marketing Developer Platform approval",
+    "LinkedIn Community Management or profile analytics product approval",
 ]
+
+LINKEDIN_MEMBER_ANALYTICS_SCOPES = {"r_member_profileAnalytics"}
+LINKEDIN_ORGANIZATION_ANALYTICS_SCOPES = {"r_organization_admin", "rw_organization_admin"}
+
 
 class LinkedInAuth:
     """LinkedIn OAuth 2.0 and API"""
@@ -82,6 +87,21 @@ class LinkedInAuth:
         except Exception as exc:
             logging.warning("LinkedIn id_token decode failed: %s", exc)
             return {}
+
+    @staticmethod
+    def _scope_set(account: dict | None) -> set[str]:
+        raw_scopes = (account or {}).get("scopes") or []
+        if isinstance(raw_scopes, str):
+            raw_scopes = raw_scopes.replace(",", " ").split()
+        return {str(scope).strip() for scope in raw_scopes if str(scope or "").strip()}
+
+    @staticmethod
+    def _mark_analytics_permission_required(result: dict) -> dict:
+        result["analytics_status"] = "permission_required"
+        result["analytics_message"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+        result["required_permissions"] = LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS
+        result["error"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+        return result
 
     def get_auth_url(self, state: str) -> str:
         """Generate LinkedIn OAuth URL"""
@@ -321,15 +341,27 @@ class LinkedInAuth:
             "required_permissions": [],
         }
 
-        member_total = await self.get_member_follower_total(access_token)
-        member_growth = await self.get_member_follower_growth(access_token, days=days)
-        if member_total is not None:
-            result["followers"] = member_total
-        if member_growth is not None:
-            result["followers_growth"] = member_growth
+        account_scopes = self._scope_set(account)
+        can_fetch_member_analytics = bool(account_scopes & LINKEDIN_MEMBER_ANALYTICS_SCOPES)
+        can_fetch_organization_analytics = bool(account_scopes & LINKEDIN_ORGANIZATION_ANALYTICS_SCOPES)
+
+        if not can_fetch_member_analytics and not can_fetch_organization_analytics:
+            return self._mark_analytics_permission_required(result)
+
+        if can_fetch_member_analytics:
+            member_total = await self.get_member_follower_total(access_token)
+            member_growth = await self.get_member_follower_growth(access_token, days=days)
+            if member_total is not None:
+                result["followers"] = member_total
+            if member_growth is not None:
+                result["followers_growth"] = member_growth
 
         explicit_orgs = [self._organization_urn(org_id) for org_id in (account.get("selected_org_ids") or [])]
-        organization_urns = [org for org in explicit_orgs if org] or await self.get_admin_organizations(access_token)
+        organization_urns = (
+            ([org for org in explicit_orgs if org] or await self.get_admin_organizations(access_token))
+            if can_fetch_organization_analytics
+            else []
+        )
 
         if organization_urns:
             org_followers_total = 0
@@ -365,10 +397,7 @@ class LinkedInAuth:
                 result["reach"] = org_reach
 
         if all(result.get(metric) is None for metric in ("followers", "followers_growth", "impressions", "reach")):
-            result["analytics_status"] = "permission_required"
-            result["analytics_message"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
-            result["required_permissions"] = LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS
-            result["error"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+            self._mark_analytics_permission_required(result)
 
         return result
 

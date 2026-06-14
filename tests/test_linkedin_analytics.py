@@ -9,7 +9,55 @@ from backend.app.social.linkedin import (
 
 
 @pytest.mark.asyncio
-async def test_linkedin_audience_analytics_reports_permission_required_when_metrics_denied(monkeypatch):
+async def test_linkedin_audience_analytics_skips_provider_calls_without_analytics_scopes(monkeypatch):
+    async def unexpected_call(*args, **kwargs):
+        raise AssertionError("LinkedIn analytics endpoints should not be called without approved scopes")
+
+    monkeypatch.setattr(LinkedInAuth, "get_member_follower_total", unexpected_call)
+    monkeypatch.setattr(LinkedInAuth, "get_member_follower_growth", unexpected_call)
+    monkeypatch.setattr(LinkedInAuth, "get_admin_organizations", unexpected_call)
+
+    result = await LinkedInAuth().fetch_audience_analytics(
+        "token",
+        {"scopes": ["openid", "profile", "email", "w_member_social"]},
+        days=30,
+    )
+
+    assert result["analytics_status"] == "permission_required"
+    assert result["analytics_message"] == LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+    assert result["required_permissions"] == LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS
+    assert result["error"] == LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_linkedin_audience_analytics_uses_member_scope_when_available(monkeypatch):
+    async def member_total(*args, **kwargs):
+        return 44
+
+    async def member_growth(*args, **kwargs):
+        return 7
+
+    async def unexpected_org_lookup(*args, **kwargs):
+        raise AssertionError("Organization analytics should not be called without organization scopes")
+
+    monkeypatch.setattr(LinkedInAuth, "get_member_follower_total", member_total)
+    monkeypatch.setattr(LinkedInAuth, "get_member_follower_growth", member_growth)
+    monkeypatch.setattr(LinkedInAuth, "get_admin_organizations", unexpected_org_lookup)
+
+    result = await LinkedInAuth().fetch_audience_analytics(
+        "token",
+        {"scopes": "openid profile email w_member_social r_member_profileAnalytics"},
+        days=30,
+    )
+
+    assert result["analytics_status"] == "ok"
+    assert result["followers"] == 44
+    assert result["followers_growth"] == 7
+    assert result["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_linkedin_audience_analytics_reports_permission_required_when_scoped_calls_return_no_metrics(monkeypatch):
     async def none_metric(*args, **kwargs):
         return None
 
@@ -22,7 +70,7 @@ async def test_linkedin_audience_analytics_reports_permission_required_when_metr
 
     result = await LinkedInAuth().fetch_audience_analytics(
         "token",
-        {"scopes": ["openid", "profile", "email", "w_member_social"]},
+        {"scopes": ["r_member_profileAnalytics", "r_organization_admin"]},
         days=30,
     )
 
