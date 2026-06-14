@@ -49,7 +49,7 @@ class LinkedInAuth:
     def _oauth_scopes() -> str:
         raw = os.environ.get(
             "LINKEDIN_OAUTH_SCOPES",
-            "openid profile email w_member_social r_organization_admin rw_organization_admin",
+            "openid profile email w_member_social",
         )
         return " ".join(str(raw).replace(",", " ").split())
 

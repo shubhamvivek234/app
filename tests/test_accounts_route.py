@@ -1,6 +1,7 @@
 import inspect
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -367,3 +368,25 @@ async def test_hydrate_linkedin_metadata_avoids_userinfo_when_refreshing_followe
     assert hydrated["followers_count"] == 87
     assert hydrated["display_name"] == "LinkedIn Org"
     assert hydrated["picture_url"] == "https://example.com/logo.png"
+
+
+def test_linkedin_oauth_scopes_default_to_safe_connect_set(monkeypatch):
+    monkeypatch.delenv("LINKEDIN_OAUTH_SCOPES", raising=False)
+    monkeypatch.setenv("LINKEDIN_CLIENT_ID", "linkedin-client-id")
+    monkeypatch.setenv("LINKEDIN_REDIRECT_URI", "https://api.example.com/api/oauth/linkedin/callback")
+
+    url = accounts_route._build_oauth_url("linkedin", "state-123")
+    params = parse_qs(urlparse(url).query)
+
+    assert params["scope"] == ["openid profile email w_member_social"]
+
+
+def test_linkedin_oauth_scopes_allow_env_override(monkeypatch):
+    monkeypatch.setenv("LINKEDIN_OAUTH_SCOPES", "openid profile email w_member_social r_organization_admin")
+    monkeypatch.setenv("LINKEDIN_CLIENT_ID", "linkedin-client-id")
+    monkeypatch.setenv("LINKEDIN_REDIRECT_URI", "https://api.example.com/api/oauth/linkedin/callback")
+
+    url = accounts_route._build_oauth_url("linkedin", "state-456")
+    params = parse_qs(urlparse(url).query)
+
+    assert params["scope"] == ["openid profile email w_member_social r_organization_admin"]

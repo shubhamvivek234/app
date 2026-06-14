@@ -1488,12 +1488,9 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "threads": "https://threads.net/oauth/authorize",
     }
     
-    linkedin_scopes = " ".join(
-        os.environ.get(
-            "LINKEDIN_OAUTH_SCOPES",
-            "openid profile email w_member_social r_organization_admin rw_organization_admin",
-        ).replace(",", " ").split()
-    )
+    from backend.app.social.linkedin import LinkedInAuth
+
+    linkedin_scopes = LinkedInAuth._oauth_scopes()
 
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
