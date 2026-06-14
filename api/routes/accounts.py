@@ -1489,7 +1489,10 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     }
     
     linkedin_scopes = " ".join(
-        os.environ.get("LINKEDIN_OAUTH_SCOPES", "openid profile email w_member_social").replace(",", " ").split()
+        os.environ.get(
+            "LINKEDIN_OAUTH_SCOPES",
+            "openid profile email w_member_social r_organization_admin rw_organization_admin",
+        ).replace(",", " ").split()
     )
 
     scopes = {
