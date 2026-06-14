@@ -86,7 +86,6 @@ const PlatformStatusRows = ({ post, onRetry }) => {
         const failureAction = getPublishFailureAction(r);
         const inferredPlatform = inferPlatformKey(platform, r);
         const displayLabel = formatPlatformResultLabel(platform, r);
-        const showRawKey = !KNOWN_PLATFORM_KEYS.has(String(platform).toLowerCase());
         const platformIcon = inferredPlatform ? PLATFORM_ICON_MAP[inferredPlatform] : <FaUser className="text-slate-400" />;
 
         return (
@@ -105,11 +104,6 @@ const PlatformStatusRows = ({ post, onRetry }) => {
                     {r.status || 'pending'}
                   </span>
                 </div>
-                {showRawKey && (
-                  <p className="mt-1 truncate text-[10px] text-slate-400" title={String(platform)}>
-                    Target key: {platform}
-                  </p>
-                )}
                 {r.error && !isPublished && (
                   <div className="mt-1 text-gray-500" title={failureMessage}>
                     <span className={`${isTikTokPublicPostingRestriction(r) ? 'text-red-600 font-medium' : 'text-gray-400'} line-clamp-2`}>
