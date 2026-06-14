@@ -210,6 +210,22 @@ class UpdatePostRequest(BaseModel):
             raise ValueError(f"Unsupported platforms: {invalid}")
         return [p.lower() for p in v]
 
+    @field_validator("scheduled_time")
+    @classmethod
+    def validate_scheduled_time(cls, v: datetime | None) -> datetime | None:
+        if v is None:
+            return v
+        now = datetime.now(timezone.utc)
+        if v.tzinfo is None:
+            from datetime import timezone as _tz
+            v = v.replace(tzinfo=_tz.utc)
+        if (now - v).total_seconds() > 300:
+            raise ValueError("scheduled_time cannot be more than 5 minutes in the past")
+        max_future = now.replace(year=now.year + 1)
+        if v > max_future:
+            raise ValueError("scheduled_time cannot be more than 365 days in the future")
+        return v
+
 
 class PostResponse(BaseModel):
     """Safe response model — never includes internal fields."""

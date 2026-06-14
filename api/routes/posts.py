@@ -1374,6 +1374,27 @@ async def update_post(
     if "scheduled_time" in body.model_fields_set:
         updates["scheduled_timezone_explicit"] = bool(body.scheduled_time)
 
+    if "scheduled_time" in body.model_fields_set and body.scheduled_time is not None:
+        density_ws = existing.get("workspace_id") or current_user.get("default_workspace_id")
+        density_warnings = await check_schedule_density(
+            db,
+            density_ws,
+            next_platforms,
+            body.scheduled_time,
+        )
+        for dw in density_warnings:
+            event_log(
+                logger,
+                "warning",
+                "posts.schedule_density.warning",
+                route="/posts/{post_id}",
+                user_id=user_id,
+                workspace_id=density_ws,
+                failure_type="schedule_density_warning",
+                provider_error=dw.message,
+                outcome="warning",
+            )
+
     if body.platform_overrides is not None:
         normalized_platform_overrides: dict[str, dict] = {}
         for platform, override in body.platform_overrides.items():

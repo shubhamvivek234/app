@@ -1750,15 +1750,27 @@
   dependencies:
     preact "~10.12.1"
 
-"@fullcalendar/daygrid@^6.1.20":
+"@fullcalendar/daygrid@^6.1.20", "@fullcalendar/daygrid@~6.1.20":
   version "6.1.20"
   resolved "https://registry.npmjs.org/@fullcalendar/daygrid/-/daygrid-6.1.20.tgz"
   integrity sha512-AO9vqhkLP77EesmJzuU+IGXgxNulsA8mgQHynclJ8U70vSwAVnbcLG9qftiTAFSlZjiY/NvhE7sflve6cJelyQ==
+
+"@fullcalendar/interaction@^6.1.20":
+  version "6.1.20"
+  resolved "https://registry.npmjs.org/@fullcalendar/interaction/-/interaction-6.1.20.tgz"
+  integrity sha512-p6txmc5txL0bMiPaJxe2ip6o0T384TyoD2KGdsU6UjZ5yoBlaY+dg7kxfnYKpYMzEJLG58n+URrHr2PgNL2fyA==
 
 "@fullcalendar/react@^6.1.20":
   version "6.1.20"
   resolved "https://registry.npmjs.org/@fullcalendar/react/-/react-6.1.20.tgz"
   integrity sha512-1w0pZtceaUdfAnxMSCGHCQalhi+mR1jOe76sXzyAXpcPz/Lf0zHSdcGK/U2XpZlnQgQtBZW+d+QBnnzVQKCxAA==
+
+"@fullcalendar/timegrid@^6.1.20":
+  version "6.1.20"
+  resolved "https://registry.npmjs.org/@fullcalendar/timegrid/-/timegrid-6.1.20.tgz"
+  integrity sha512-4H+/MWbz3ntA50lrPif+7TsvMeX3R1GSYjiLULz0+zEJ7/Yfd9pupZmAwUs/PBpA6aAcFmeRr0laWfcz1a9V1A==
+  dependencies:
+    "@fullcalendar/daygrid" "~6.1.20"
 
 "@grpc/grpc-js@~1.9.0":
   version "1.9.16"

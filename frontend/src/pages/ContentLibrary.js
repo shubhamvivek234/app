@@ -11,6 +11,7 @@ import { FaXTwitter } from 'react-icons/fa6';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
 import { formatScheduledCompactDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
+import ScheduledCalendarView from '@/components/scheduled/ScheduledCalendarView';
 
 // 18.7 — Per-platform status colours and icons
 const PLATFORM_ICON_MAP = {
@@ -157,6 +158,7 @@ const ContentLibrary = () => {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
   const initialStatus = queryParams.get('status') || 'all';
+  const scheduledView = initialStatus === 'scheduled' && queryParams.get('view') === 'calendar' ? 'calendar' : 'list';
 
   const [posts, setPosts] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -310,6 +312,22 @@ const ContentLibrary = () => {
     }
   };
 
+  const handlePostUpdated = useCallback((updatedPost) => {
+    if (!updatedPost?.id) return;
+    setPosts((prev) => prev.map((post) => (post.id === updatedPost.id ? updatedPost : post)));
+  }, []);
+
+  const handleScheduledViewChange = (nextView) => {
+    const nextParams = new URLSearchParams(location.search);
+    nextParams.set('status', 'scheduled');
+    if (nextView === 'calendar') {
+      nextParams.set('view', 'calendar');
+    } else {
+      nextParams.delete('view');
+    }
+    navigate({ pathname: location.pathname, search: nextParams.toString() }, { replace: true });
+  };
+
   const filteredPosts = useMemo(() => {
     let result = [...posts];
 
@@ -397,14 +415,42 @@ const ContentLibrary = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900 flex items-center gap-2">
             {pageTitle} <span className="text-slate-400 text-lg font-normal cursor-help" title="These are all your created posts">ⓘ</span>
           </h1>
-          <Button onClick={() => navigate('/create')} size="sm">
-            <FaPlus className="mr-2" />
-            Create
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {initialStatus === 'scheduled' && (
+              <div className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => handleScheduledViewChange('list')}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    scheduledView === 'list'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScheduledViewChange('calendar')}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    scheduledView === 'calendar'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Calendar
+                </button>
+              </div>
+            )}
+            <Button onClick={() => navigate('/create')} size="sm">
+              <FaPlus className="mr-2" />
+              Create
+            </Button>
+          </div>
         </div>
 
         {/* Filters Row */}
@@ -487,7 +533,16 @@ const ContentLibrary = () => {
           </div>
         </div>
 
-        {/* Posts Grid Layout */}
+        {initialStatus === 'scheduled' && scheduledView === 'calendar' ? (
+          <ScheduledCalendarView
+            posts={filteredPosts}
+            accountMap={accountMap}
+            onPostUpdated={handlePostUpdated}
+            onRefresh={fetchAll}
+            onEditPost={(postId) => navigate(`/create-post?edit=${encodeURIComponent(postId)}`)}
+          />
+        ) : (
+        /* Posts Grid Layout */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredPosts.length === 0 ? (
             <div className="col-span-full border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-500">
@@ -710,6 +765,7 @@ const ContentLibrary = () => {
             })
           )}
         </div>
+        )}
       </div>
     </DashboardLayout>
   );
