@@ -80,6 +80,49 @@ async def test_linkedin_audience_analytics_reports_permission_required_when_scop
     assert result["error"] == LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
 
 
+@pytest.mark.asyncio
+async def test_linkedin_organization_account_uses_stored_org_for_analytics(monkeypatch):
+    async def unexpected_admin_lookup(*args, **kwargs):
+        raise AssertionError("First-class LinkedIn page accounts should not need org discovery")
+
+    async def organization_total(_self, _access_token, organization_urn):
+        assert organization_urn == "urn:li:organization:12345"
+        return 125
+
+    async def organization_growth(_self, _access_token, organization_urn, days=None):
+        assert organization_urn == "urn:li:organization:12345"
+        assert days == 7
+        return 5
+
+    async def organization_share_stats(_self, _access_token, organization_urn, days=None):
+        assert organization_urn == "urn:li:organization:12345"
+        assert days == 7
+        return {"impressions": 900, "reach": 640}
+
+    monkeypatch.setattr(LinkedInAuth, "get_admin_organizations", unexpected_admin_lookup)
+    monkeypatch.setattr(LinkedInAuth, "get_organization_follower_total", organization_total)
+    monkeypatch.setattr(LinkedInAuth, "get_organization_follower_growth", organization_growth)
+    monkeypatch.setattr(LinkedInAuth, "get_organization_share_stats", organization_share_stats)
+
+    result = await LinkedInAuth().fetch_audience_analytics(
+        "token",
+        {
+            "account_type": "organization",
+            "linkedin_org_id": "12345",
+            "platform_user_id": "12345",
+            "scopes": ["r_organization_social"],
+        },
+        days=7,
+    )
+
+    assert result["analytics_status"] == "ok"
+    assert result["followers"] == 125
+    assert result["followers_growth"] == 5
+    assert result["impressions"] == 900
+    assert result["reach"] == 640
+    assert result["error"] is None
+
+
 def test_linkedin_connected_account_normalization_includes_analytics_diagnostics():
     account = {
         "account_id": "linkedin_1",

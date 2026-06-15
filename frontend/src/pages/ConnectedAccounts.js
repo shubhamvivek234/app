@@ -164,6 +164,16 @@ const getDisplayName = (account) => account.display_name || account.platform_use
 
 const getHandle = (account) => account.platform_username ? `@${account.platform_username}` : null;
 
+const getLinkedInAccountType = (account) => {
+  const raw = String(account?.account_type || '').toLowerCase();
+  if (raw === 'organization' || account?.linkedin_org_id) return 'organization';
+  return 'profile';
+};
+
+const getLinkedInAccountTypeLabel = (account) => (
+  getLinkedInAccountType(account) === 'organization' ? 'Company Page' : 'Profile'
+);
+
 const sortAccounts = (accounts) => (
   [...accounts].sort((left, right) => {
     const leftState = getConnectionState(left);
@@ -253,6 +263,7 @@ const ConnectedAccountRow = ({
   const restriction = platform.id === 'tiktok' ? getTikTokRestrictionFromAccount(account) : null;
   const primaryMessage = restriction ? getPublishFailureMessage(restriction) : getConnectionMessage(account);
   const secondaryMessage = restriction ? getPublishFailureAction(restriction) : null;
+  const linkedinTypeLabel = platform.id === 'linkedin' ? getLinkedInAccountTypeLabel(account) : null;
 
   return (
     <div className={`rounded-2xl border px-4 py-4 ${tone.panel}`}>
@@ -262,11 +273,17 @@ const ConnectedAccountRow = ({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-semibold text-gray-900">{getDisplayName(account)}</p>
+              {linkedinTypeLabel ? (
+                <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                  {linkedinTypeLabel}
+                </span>
+              ) : null}
               <StatusBadge state={state} />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
               {handle ? <span>{handle}</span> : null}
               <span>{platform.name}</span>
+              {linkedinTypeLabel ? <span>{linkedinTypeLabel}</span> : null}
               {expiresAt ? <span>Expires {expiresAt}</span> : null}
               {!expiresAt && connectedAt ? <span>Connected {connectedAt}</span> : null}
             </div>
@@ -277,7 +294,7 @@ const ConnectedAccountRow = ({
         <div className="flex shrink-0 items-center gap-2">
           {state !== 'healthy' ? (
             <button
-              onClick={() => onReconnect(platform.id)}
+              onClick={() => onReconnect(platform.id, { mode: 'reconnect', account })}
               disabled={connecting === platform.id}
               className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
             >
@@ -315,7 +332,6 @@ const PlatformCard = ({
   onDisconnect,
   connecting,
   disconnectingAccountId,
-  onOpenLinkedInPage,
 }) => {
   const Icon = platform.icon;
   const sortedAccounts = useMemo(() => sortAccounts(accounts), [accounts]);
@@ -350,15 +366,6 @@ const PlatformCard = ({
           </div>
           <div className="flex items-center gap-2">
             {count > 0 ? <StatusBadge state={state} /> : null}
-            {platform.id === 'linkedin' && count > 0 ? (
-              <button
-                onClick={onOpenLinkedInPage}
-                className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-50"
-              >
-                <FaPlus className="text-[10px]" />
-                Company page
-              </button>
-            ) : null}
           </div>
         </div>
       </div>
@@ -444,6 +451,7 @@ const AttentionItem = ({ account, platform, onReconnect, connecting }) => {
   const handle = getHandle(account);
   const restriction = platform.id === 'tiktok' ? getTikTokRestrictionFromAccount(account) : null;
   const message = restriction ? getPublishFailureMessage(restriction) : getConnectionMessage(account);
+  const linkedinTypeLabel = platform.id === 'linkedin' ? getLinkedInAccountTypeLabel(account) : null;
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between">
@@ -454,6 +462,11 @@ const AttentionItem = ({ account, platform, onReconnect, connecting }) => {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-gray-900">{getDisplayName(account)}</p>
+            {linkedinTypeLabel ? (
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                {linkedinTypeLabel}
+              </span>
+            ) : null}
             <StatusBadge state={state} />
           </div>
           <p className="mt-1 text-sm text-gray-600">
@@ -465,7 +478,7 @@ const AttentionItem = ({ account, platform, onReconnect, connecting }) => {
         </div>
       </div>
       <button
-        onClick={() => onReconnect(platform.id)}
+        onClick={() => onReconnect(platform.id, { mode: 'reconnect', account })}
         disabled={connecting === platform.id}
         className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
       >
@@ -554,6 +567,8 @@ const ConnectedAccounts = () => {
   const [linkedinOrgs, setLinkedinOrgs] = useState([]);
   const [selectedOrgs, setSelectedOrgs] = useState([]);
   const [savingOrgs, setSavingOrgs] = useState(false);
+  const [linkedinGrantAccountId, setLinkedinGrantAccountId] = useState(null);
+  const [linkedinChoiceModal, setLinkedinChoiceModal] = useState({ open: false, mode: 'connect', account: null });
   const [linkedinPageModal, setLinkedinPageModal] = useState(false);
   const [pageIdInput, setPageIdInput] = useState('');
   const [pageNameInput, setPageNameInput] = useState('');
@@ -586,18 +601,23 @@ const ConnectedAccounts = () => {
   ), []);
 
   useEffect(() => {
-    if (searchParams.get('linkedin_orgs') === '1') {
-      if (searchParams.get('personal_connected') === 'true') {
-        toast.success('LinkedIn personal account connected!');
-      }
+    if (searchParams.get('linkedin_profile') === '1') {
+      toast.success('LinkedIn profile connected!');
+      fetchAccounts();
+    } else if (searchParams.get('linkedin_orgs') === '1') {
       fetchAccounts();
       getLinkedInPendingOrgs().then((data) => {
+        setLinkedinGrantAccountId(data.grant_account_id || null);
         if (data.orgs?.length > 0) {
           setLinkedinOrgs(data.orgs);
           setSelectedOrgs(data.orgs.map((org) => org.org_id));
           setLinkedinOrgsModal(true);
+        } else {
+          toast.info('LinkedIn connected, but no manageable company pages were returned.');
         }
-      }).catch(() => {});
+      }).catch((error) => {
+        toast.error(error?.response?.data?.detail || 'Unable to load LinkedIn company pages.');
+      });
     } else if (searchParams.get('connected') === 'true') {
       toast.success(`Successfully connected: ${searchParams.get('platforms') || 'account'}`);
       fetchAccounts();
@@ -635,7 +655,44 @@ const ConnectedAccounts = () => {
     setManualModal({ platformId, mode });
   };
 
-  const handleConnect = async (platformId, { mode = 'connect' } = {}) => {
+  const startOAuth = async (platformId, { accountType = null } = {}) => {
+    setConnecting(platformId);
+    markOAuthPopupExpected(false);
+
+    try {
+      const requestOptions = platformId === 'linkedin' && accountType
+        ? { accountType }
+        : {};
+      const { authorization_url, code_verifier } = await requestOAuthUrl(platformId, requestOptions);
+      if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
+      sessionStorage.setItem('oauth_platform', platformId);
+      sessionStorage.setItem('oauth_return_to', 'accounts');
+      if (platformId === 'linkedin' && accountType) {
+        sessionStorage.setItem('linkedin_account_type', accountType);
+      } else {
+        sessionStorage.removeItem('linkedin_account_type');
+      }
+      window.location.assign(authorization_url);
+      return;
+    } catch (error) {
+      clearOAuthPopupExpected();
+      const detail = error.response?.data?.detail;
+      if ((error.response?.status === 500 || error.response?.status === 503) && detail?.includes('not configured')) {
+        toast.error(detail);
+      } else {
+        toast.error(detail || 'Failed to connect account');
+      }
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const handleLinkedInChoice = (accountType) => {
+    setLinkedinChoiceModal({ open: false, mode: 'connect', account: null });
+    startOAuth('linkedin', { accountType });
+  };
+
+  const handleConnect = async (platformId, { mode = 'connect', account = null, accountType = null } = {}) => {
     if (MANUAL_PLATFORMS.has(platformId)) {
       openManualModal(platformId, mode);
       return;
@@ -643,26 +700,17 @@ const ConnectedAccounts = () => {
 
     if (!OAUTH_PLATFORMS.has(platformId)) return;
 
-    setConnecting(platformId);
-    markOAuthPopupExpected(false);
-
-    try {
-      const { authorization_url, code_verifier } = await requestOAuthUrl(platformId);
-      if (code_verifier) sessionStorage.setItem('twitter_code_verifier', code_verifier);
-      sessionStorage.setItem('oauth_platform', platformId);
-      sessionStorage.setItem('oauth_return_to', 'accounts');
-      window.location.assign(authorization_url);
-      return;
-    } catch (error) {
-      clearOAuthPopupExpected();
-      if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
-        toast.error('API credentials not configured for this platform.');
-      } else {
-        toast.error(error.response?.data?.detail || 'Failed to connect account');
+    if (platformId === 'linkedin') {
+      const inferredType = accountType || (account ? getLinkedInAccountType(account) : null);
+      if (inferredType) {
+        await startOAuth(platformId, { accountType: inferredType });
+        return;
       }
-    } finally {
-      setConnecting(null);
+      setLinkedinChoiceModal({ open: true, mode, account });
+      return;
     }
+
+    await startOAuth(platformId);
   };
 
   const handleDisconnect = async (accountId, platformName) => {
@@ -755,9 +803,13 @@ const ConnectedAccounts = () => {
   const handleSaveLinkedinOrgs = async () => {
     setSavingOrgs(true);
     try {
-      const result = await saveLinkedInOrgs({ org_ids: selectedOrgs });
+      const result = await saveLinkedInOrgs({
+        org_ids: selectedOrgs,
+        grant_account_id: linkedinGrantAccountId,
+      });
       toast.success(`${result.org_count} LinkedIn page${result.org_count !== 1 ? 's' : ''} connected!`);
       setLinkedinOrgsModal(false);
+      setLinkedinGrantAccountId(null);
       fetchAccounts();
     } catch {
       toast.error('Failed to connect LinkedIn pages');
@@ -851,7 +903,7 @@ const ConnectedAccounts = () => {
               tone={verificationRequired ? 'warning' : 'success'}
               detail={
                 verificationRequired
-                  ? 'Email verification is required before connecting or reconnecting providers'
+                  ? 'Email verification is still required before publishing, scheduling, and inviting teammates'
                   : 'Email is verified for connection and publishing actions'
               }
             />
@@ -931,7 +983,6 @@ const ConnectedAccounts = () => {
                 onDisconnect={handleDisconnect}
                 connecting={connecting}
                 disconnectingAccountId={disconnectingAccountId}
-                onOpenLinkedInPage={() => setLinkedinPageModal(true)}
               />
             ))}
           </div>
@@ -1114,6 +1165,63 @@ const ConnectedAccounts = () => {
             />
           </div>
         </CredentialDialogShell>
+
+        <Dialog
+          open={linkedinChoiceModal.open}
+          onOpenChange={(open) => {
+            if (!open) setLinkedinChoiceModal({ open: false, mode: 'connect', account: null });
+          }}
+        >
+          <DialogContent className="max-w-lg rounded-[28px]">
+            <DialogHeader className="text-left">
+              <DialogTitle>
+                {linkedinChoiceModal.mode === 'reconnect' ? 'Reconnect LinkedIn' : 'Connect LinkedIn'}
+              </DialogTitle>
+              <DialogDescription>
+                Choose whether this connection should publish as your member profile or as a company page you manage.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => handleLinkedInChoice('profile')}
+                className="rounded-3xl border border-blue-200 bg-blue-50 p-5 text-left transition-colors hover:border-blue-400 hover:bg-blue-100"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-blue-700 shadow-sm">
+                  <FaLinkedin />
+                </div>
+                <p className="mt-4 text-sm font-semibold text-gray-900">LinkedIn profile</p>
+                <p className="mt-1 text-xs leading-5 text-gray-600">
+                  Connect your personal member profile and publish as yourself.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleLinkedInChoice('organization')}
+                className="rounded-3xl border border-blue-200 bg-white p-5 text-left transition-colors hover:border-blue-400 hover:bg-blue-50"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-700 text-white shadow-sm">
+                  <FaPlus />
+                </div>
+                <p className="mt-4 text-sm font-semibold text-gray-900">LinkedIn company page</p>
+                <p className="mt-1 text-xs leading-5 text-gray-600">
+                  Connect one or more organization pages and publish as the page.
+                </p>
+              </button>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs leading-5 text-gray-600">
+              Company page connection requires approved LinkedIn organization scopes on the Unravler LinkedIn app. If LinkedIn has not approved them yet, the app will show a configuration message.
+            </div>
+            <DialogFooter className="justify-end gap-2">
+              <button
+                onClick={() => setLinkedinChoiceModal({ open: false, mode: 'connect', account: null })}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={linkedinPageModal} onOpenChange={setLinkedinPageModal}>
           <DialogContent className="max-w-md rounded-[28px]">

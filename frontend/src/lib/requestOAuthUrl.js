@@ -3,10 +3,19 @@ import env from '@/env';
 
 const buildHeaders = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
 
-export async function requestOAuthUrl(platform, token) {
+export async function requestOAuthUrl(platform, options = {}, token = null) {
+  const requestOptions = typeof options === 'string' ? {} : (options || {});
+  const authToken = typeof options === 'string' ? options : token;
+  const params = {};
+  const linkedinAccountType = requestOptions.accountType || requestOptions.account_type;
+  if (platform === 'linkedin' && linkedinAccountType) {
+    params.account_type = linkedinAccountType;
+  }
+
   const requestConfig = {
-    headers: buildHeaders(token),
+    headers: buildHeaders(authToken),
     withCredentials: true,
+    params,
   };
 
   try {

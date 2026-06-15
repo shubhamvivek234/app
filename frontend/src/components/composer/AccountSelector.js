@@ -55,6 +55,9 @@ const AccountSelector = ({
         const Icon = platformInfo.icon;
         const isSelected = selectedAccounts.includes(account.id);
         const displayName = account.platform_username || account.platform;
+        const accountTypeLabel = account.platform === 'linkedin'
+          ? (account.account_type === 'organization' || account.linkedin_org_id ? 'Company Page' : 'Profile')
+          : null;
         const hex = RING_HEX[account.platform] || '#3B82F6';
 
         // Use box-shadow to draw the ring: 2px white gap + 2px colored ring
@@ -70,7 +73,7 @@ const AccountSelector = ({
                 isSelected ? 'opacity-100' : 'opacity-50 hover:opacity-80'
               }`}
               style={ringStyle}
-              title={`${account.platform}: ${displayName}`}
+              title={`${account.platform}: ${displayName}${accountTypeLabel ? ` (${accountTypeLabel})` : ''}`}
             >
               {account.picture_url ? (
                 <img
@@ -97,6 +100,7 @@ const AccountSelector = ({
             {/* Hover tooltip */}
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 shadow-lg">
               <span className="capitalize">{account.platform}</span>: {displayName}
+              {accountTypeLabel ? <span> · {accountTypeLabel}</span> : null}
               <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
             </div>
           </div>

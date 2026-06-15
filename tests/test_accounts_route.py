@@ -24,18 +24,32 @@ class _FakeSocialAccountsCollection:
         self.docs = [dict(doc) for doc in docs]
         self.update_calls = []
 
+    def _matches(self, doc, query):
+        for key, value in query.items():
+            if key == "$or":
+                if not any(self._matches(doc, condition) for condition in value):
+                    return False
+                continue
+            if isinstance(value, dict) and "$exists" in value:
+                exists = key in doc
+                if bool(value["$exists"]) != exists:
+                    return False
+                continue
+            if doc.get(key) != value:
+                return False
+        return True
+
     def find(self, query, _projection=None):
         matched = [
             dict(doc)
             for doc in self.docs
-            if doc.get("user_id") == query.get("user_id")
-            and doc.get("is_active", True) == query.get("is_active", True)
+            if self._matches(doc, query)
         ]
         return _FakeCursor(matched)
 
     async def find_one(self, query, _projection=None):
         for doc in self.docs:
-            if all(doc.get(key) == value for key, value in query.items()):
+            if self._matches(doc, query):
                 return dict(doc)
         return None
 
@@ -238,7 +252,7 @@ async def test_persist_oauth_account_clears_publish_restriction_fields(monkeypat
         },
     )
 
-    assert account_id.startswith("tiktok_user-1_")
+    assert account_id == "tiktok-account-1"
     assert db.social_accounts.update_calls
     _query, update, upsert = db.social_accounts.update_calls[-1]
     assert upsert is True
@@ -254,7 +268,11 @@ async def test_persist_oauth_account_clears_publish_restriction_fields(monkeypat
 async def test_exchange_linkedin_code_uses_id_token_claims_before_userinfo(monkeypatch):
     class _FakeLinkedInAuth:
         @staticmethod
-        def _oauth_scopes() -> str:
+        def normalize_account_type(account_type=None) -> str:
+            return account_type or "profile"
+
+        @staticmethod
+        def _oauth_scopes(_account_type=None) -> str:
             return "openid profile email w_member_social"
 
         async def exchange_code_for_token(self, code: str) -> dict:
@@ -291,13 +309,19 @@ async def test_exchange_linkedin_code_uses_id_token_claims_before_userinfo(monke
     assert result["refresh_token"] == "linkedin-refresh"
     assert result["scopes"] == ["openid", "profile", "email"]
     assert result["expires_at"] is not None
+    assert result["account_type"] == "profile"
+    assert result["linkedin_author_urn"] == "urn:li:person:linkedin-user-1"
 
 
 @pytest.mark.asyncio
 async def test_exchange_linkedin_code_falls_back_to_userinfo_when_id_token_missing_subject(monkeypatch):
     class _FakeLinkedInAuth:
         @staticmethod
-        def _oauth_scopes() -> str:
+        def normalize_account_type(account_type=None) -> str:
+            return account_type or "profile"
+
+        @staticmethod
+        def _oauth_scopes(_account_type=None) -> str:
             return "openid profile email w_member_social"
 
         async def exchange_code_for_token(self, code: str) -> dict:
@@ -328,6 +352,8 @@ async def test_exchange_linkedin_code_falls_back_to_userinfo_when_id_token_missi
     assert result["platform_user_id"] == "linkedin-user-2"
     assert result["username"] == "fallback@example.com"
     assert result["display_name"] == "Fallback User"
+    assert result["account_type"] == "profile"
+    assert result["linkedin_author_urn"] == "urn:li:person:linkedin-user-2"
 
 
 @pytest.mark.asyncio
@@ -370,6 +396,107 @@ async def test_hydrate_linkedin_metadata_avoids_userinfo_when_refreshing_followe
     assert hydrated["picture_url"] == "https://example.com/logo.png"
 
 
+@pytest.mark.asyncio
+async def test_persist_linkedin_profile_account_sets_person_author_urn(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(accounts_route, "encrypt", lambda value: f"enc:{value}")
+    db = _FakeDB([])
+
+    account_id = await accounts_route._persist_oauth_account(
+        db,
+        "user-1",
+        "linkedin",
+        {
+            "access_token": "linkedin-access",
+            "refresh_token": "linkedin-refresh",
+            "platform_user_id": "member-1",
+            "username": "member@example.com",
+            "display_name": "Member One",
+            "picture_url": "https://example.com/member.png",
+            "scopes": ["openid", "profile", "email", "w_member_social"],
+            "expires_at": now,
+            "account_type": "profile",
+            "linkedin_author_urn": "urn:li:person:member-1",
+        },
+    )
+
+    assert account_id.startswith("linkedin_user-1_")
+    assert len(db.social_accounts.docs) == 1
+    account = db.social_accounts.docs[0]
+    assert account["account_type"] == "profile"
+    assert account["platform_user_id"] == "member-1"
+    assert account["linkedin_author_urn"] == "urn:li:person:member-1"
+    assert account["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_persist_linkedin_organization_flow_creates_page_account(monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(accounts_route, "encrypt", lambda value: f"enc:{value}")
+    db = _FakeDB([])
+
+    class _FakeLinkedInAuth:
+        async def get_manageable_organization_choices(self, access_token: str) -> list[dict]:
+            assert access_token == "linkedin-access"
+            return [
+                {
+                    "org_id": "12345",
+                    "name": "Unravler Company",
+                    "role": "ADMINISTRATOR",
+                    "organization_urn": "urn:li:organization:12345",
+                }
+            ]
+
+    monkeypatch.setattr(linkedin_module, "LinkedInAuth", _FakeLinkedInAuth)
+
+    grant_id = await accounts_route._persist_oauth_account(
+        db,
+        "user-1",
+        "linkedin",
+        {
+            "access_token": "linkedin-access",
+            "refresh_token": "linkedin-refresh",
+            "platform_user_id": "member-1",
+            "username": "member@example.com",
+            "display_name": "Member One",
+            "picture_url": "https://example.com/member.png",
+            "scopes": [
+                "openid",
+                "profile",
+                "email",
+                "w_member_social",
+                "w_organization_social",
+                "r_organization_admin",
+            ],
+            "expires_at": now,
+            "account_type": "organization",
+        },
+    )
+
+    grant = db.social_accounts.docs[0]
+    assert grant["account_id"] == grant_id
+    assert grant["account_type"] == "organization_grant"
+    assert grant["is_active"] is False
+    assert grant["parent_member_id"] == "member-1"
+    assert grant["pending_orgs"][0]["org_id"] == "12345"
+
+    page_id = await accounts_route._create_linkedin_organization_account(
+        db,
+        "user-1",
+        grant,
+        grant["pending_orgs"][0],
+    )
+
+    page = next(doc for doc in db.social_accounts.docs if doc.get("account_id") == page_id)
+    assert page["account_type"] == "organization"
+    assert page["platform_user_id"] == "12345"
+    assert page["linkedin_org_id"] == "12345"
+    assert page["linkedin_org_role"] == "ADMINISTRATOR"
+    assert page["linkedin_author_urn"] == "urn:li:organization:12345"
+    assert page["parent_member_id"] == "member-1"
+    assert page["access_token"] == "enc:linkedin-access"
+
+
 def test_linkedin_oauth_scopes_default_to_safe_connect_set(monkeypatch):
     monkeypatch.delenv("LINKEDIN_OAUTH_SCOPES", raising=False)
     monkeypatch.setenv("LINKEDIN_CLIENT_ID", "linkedin-client-id")
@@ -389,4 +516,47 @@ def test_linkedin_oauth_scopes_allow_env_override(monkeypatch):
     url = accounts_route._build_oauth_url("linkedin", "state-456")
     params = parse_qs(urlparse(url).query)
 
-    assert params["scope"] == ["openid profile email w_member_social r_organization_admin"]
+    assert params["scope"] == ["openid profile email w_member_social"]
+
+
+def test_linkedin_organization_oauth_requires_company_page_scopes(monkeypatch):
+    monkeypatch.setenv("LINKEDIN_OAUTH_SCOPES", "openid profile email w_member_social")
+    monkeypatch.setenv("LINKEDIN_CLIENT_ID", "linkedin-client-id")
+    monkeypatch.setenv("LINKEDIN_REDIRECT_URI", "https://api.example.com/api/oauth/linkedin/callback")
+
+    with pytest.raises(accounts_route.HTTPException) as exc_info:
+        linkedin_module.LinkedInAuth().get_auth_url("state-456", account_type="organization")
+
+    assert exc_info.value.status_code == 503
+    assert "company page connection is not configured" in str(exc_info.value.detail)
+
+
+def test_linkedin_organization_oauth_uses_organization_scopes(monkeypatch):
+    monkeypatch.setenv(
+        "LINKEDIN_OAUTH_SCOPES",
+        "openid profile email w_member_social w_organization_social r_organization_admin r_organization_social",
+    )
+    monkeypatch.setenv("LINKEDIN_CLIENT_ID", "linkedin-client-id")
+    monkeypatch.setenv("LINKEDIN_REDIRECT_URI", "https://api.example.com/api/oauth/linkedin/callback")
+
+    url = linkedin_module.LinkedInAuth().get_auth_url("state-789", account_type="organization")
+    params = parse_qs(urlparse(url).query)
+
+    assert params["scope"] == [
+        "openid profile email w_member_social w_organization_social r_organization_admin r_organization_social"
+    ]
+
+
+def test_stateless_oauth_state_preserves_linkedin_account_type(monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://app.unravler.com")
+    state = accounts_route._create_stateless_oauth_state({
+        "user_id": "user-1",
+        "frontend_base": "https://www.unravler.com",
+        "linkedin_account_type": "organization",
+    })
+
+    decoded = accounts_route._decode_stateless_oauth_state(state)
+
+    assert decoded["user_id"] == "user-1"
+    assert decoded["frontend_base"] == "https://www.unravler.com"
+    assert decoded["linkedin_account_type"] == "organization"

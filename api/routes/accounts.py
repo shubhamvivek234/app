@@ -28,6 +28,8 @@ router = APIRouter(tags=["accounts"])
 _SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
 _OAUTH_STATE_JWT_SECRET = os.environ.get("JWT_SECRET", "your-secret-key")
 _OAUTH_STATE_JWT_ALGORITHM = "HS256"
+_LINKEDIN_PROFILE_ACCOUNT_TYPE = "profile"
+_LINKEDIN_ORGANIZATION_ACCOUNT_TYPE = "organization"
 
 
 def _coerce_datetime(value: datetime | str | None) -> datetime | None:
@@ -102,6 +104,15 @@ def _connection_health(doc: dict, now: datetime) -> dict[str, object]:
         "reconnect_required_at": None,
     }
 
+
+def _linkedin_account_type(value: str | None = None) -> str:
+    raw = str(value or _LINKEDIN_PROFILE_ACCOUNT_TYPE).strip().lower().replace("-", "_")
+    if raw in {"profile", "member", "personal", "person"}:
+        return _LINKEDIN_PROFILE_ACCOUNT_TYPE
+    if raw in {"organization", "company", "company_page", "page"}:
+        return _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid LinkedIn account type")
+
 # ── Response models (access_token / refresh_token intentionally absent) ───────
 
 class SocialAccountResponse(BaseModel):
@@ -133,6 +144,11 @@ class SocialAccountResponse(BaseModel):
     publish_action_required: str | None = None
     publish_restriction_type: str | None = None
     publish_blocked_at: datetime | None = None
+    account_type: str | None = None
+    linkedin_author_urn: str | None = None
+    parent_member_id: str | None = None
+    linkedin_org_id: str | None = None
+    linkedin_org_role: str | None = None
 
 
 class DisconnectConflictResponse(BaseModel):
@@ -184,6 +200,7 @@ class MastodonConnectRequest(BaseModel):
 
 class LinkedInOrgRequest(BaseModel):
     org_ids: list[str]
+    grant_account_id: str | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -226,6 +243,9 @@ async def list_accounts(
                 },
                 {"$set": updates},
             )
+        account_type = doc.get("account_type")
+        if doc.get("platform") == "linkedin":
+            account_type = _linkedin_account_type(account_type)
         connection_health = _connection_health(doc, now)
         response_docs.append(
             SocialAccountResponse(
@@ -255,6 +275,11 @@ async def list_accounts(
                 publish_action_required=doc.get("publish_action_required"),
                 publish_restriction_type=doc.get("publish_restriction_type"),
                 publish_blocked_at=doc.get("publish_blocked_at"),
+                account_type=account_type,
+                linkedin_author_urn=doc.get("linkedin_author_urn"),
+                parent_member_id=doc.get("parent_member_id"),
+                linkedin_org_id=doc.get("linkedin_org_id"),
+                linkedin_org_role=doc.get("linkedin_org_role"),
             )
         )
     return response_docs
@@ -887,6 +912,7 @@ async def get_oauth_url(
     request: Request,
     current_user: CurrentUser,
     cache_redis: CacheRedis,
+    account_type: Annotated[str | None, Query()] = None,
 ) -> OAuthUrlResponse:
     if platform not in _SUPPORTED_PLATFORMS:
         raise HTTPException(
@@ -905,6 +931,7 @@ async def get_oauth_url(
     twitter_code_challenge: str | None = None
     redirect_uri: str | None = None
     state = redis_state
+    linkedin_account_type = _linkedin_account_type(account_type) if platform == "linkedin" else None
 
     if platform == "tiktok":
         from backend.app.social.tiktok import TikTokAuth
@@ -922,7 +949,7 @@ async def get_oauth_url(
         auth_url = auth.get_auth_url(redis_state, challenge)
     elif platform == "linkedin":
         from backend.app.social.linkedin import LinkedInAuth
-        auth_url = LinkedInAuth().get_auth_url(redis_state)
+        auth_url = LinkedInAuth().get_auth_url(redis_state, account_type=linkedin_account_type)
     elif platform == "threads":
         auth_url, redirect_uri = _build_threads_auth_url(request, redis_state)
     else:
@@ -937,6 +964,7 @@ async def get_oauth_url(
         "frontend_base": frontend_base,
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
+        "linkedin_account_type": linkedin_account_type,
     }
     stored = await safe_setex(
         cache_redis,
@@ -962,7 +990,7 @@ async def get_oauth_url(
         elif platform == "linkedin":
             state = _create_stateless_oauth_state(state_context)
             from backend.app.social.linkedin import LinkedInAuth
-            auth_url = LinkedInAuth().get_auth_url(state)
+            auth_url = LinkedInAuth().get_auth_url(state, account_type=linkedin_account_type)
         elif platform == "threads":
             state = _create_stateless_oauth_state(state_context)
             auth_url, redirect_uri = _build_threads_auth_url(request, state)
@@ -1064,8 +1092,14 @@ async def oauth_callback_redirect(
     )
     try:
         await _persist_oauth_account(db, user_id, platform, token_data)
+        if platform == "linkedin":
+            linkedin_type = _linkedin_account_type((state_context or {}).get("linkedin_account_type"))
+            success_flag = "linkedin_orgs=1" if linkedin_type == _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE else "linkedin_profile=1"
+            success_query = f"success=true&platform={platform}&{success_flag}"
+        else:
+            success_query = f"success=true&platform={platform}"
         return RedirectResponse(
-            url=f"{frontend_base}/oauth/callback?success=true&platform={platform}",
+            url=f"{frontend_base}/oauth/callback?{success_query}",
             status_code=status.HTTP_302_FOUND,
         )
     except HTTPException as exc:
@@ -1340,28 +1374,48 @@ async def connect_mastodon(
 async def get_linkedin_pending_orgs(current_user: CurrentUser, db: DB):
     """Return LinkedIn orgs pending page selection for the connected account."""
     user_id = current_user["user_id"]
-    account = await db.social_accounts.find_one(
-        {"user_id": user_id, "platform": "linkedin", "is_active": True},
-        {"_id": 0, "pending_orgs": 1},
-    )
+    account = await _find_linkedin_organization_grant(db, user_id)
+    if not account:
+        account = await db.social_accounts.find_one(
+            {"user_id": user_id, "platform": "linkedin", "is_active": True},
+            {"_id": 0, "pending_orgs": 1, "account_id": 1},
+        )
     if not account:
         raise HTTPException(status_code=404, detail="No active LinkedIn account found")
-    return {"orgs": account.get("pending_orgs", [])}
+    return {"orgs": account.get("pending_orgs", []), "grant_account_id": account.get("account_id")}
 
 
 @router.post("/social-accounts/linkedin/save-orgs")
 async def save_linkedin_orgs(body: LinkedInOrgRequest, current_user: CurrentUser, db: DB):
     """Save selected LinkedIn org pages to the account."""
     user_id = current_user["user_id"]
+    grant = await _find_linkedin_organization_grant(db, user_id, body.grant_account_id)
+    if not grant:
+        grant = await db.social_accounts.find_one(
+            {"user_id": user_id, "platform": "linkedin", "is_active": True},
+            {"_id": 0},
+            sort=[("connected_at", -1)],
+        )
+    if not grant:
+        raise HTTPException(status_code=404, detail="No LinkedIn connection found")
+
+    pending_orgs = grant.get("pending_orgs", [])
+    created_ids: list[str] = []
+    for org_id in body.org_ids:
+        org_choice = _linkedin_org_choice(pending_orgs, str(org_id))
+        created_ids.append(await _create_linkedin_organization_account(db, user_id, grant, org_choice))
+
+    now = datetime.now(timezone.utc)
     await db.social_accounts.update_one(
-        {"user_id": user_id, "platform": "linkedin", "is_active": True},
+        {"account_id": grant.get("account_id"), "user_id": user_id},
         {"$set": {
             "selected_org_ids": body.org_ids,
             "pending_orgs": [],
-            "updated_at": datetime.now(timezone.utc),
+            "organization_selection_completed_at": now,
+            "updated_at": now,
         }},
     )
-    return {"saved": True, "org_count": len(body.org_ids)}
+    return {"saved": True, "org_count": len(created_ids), "account_ids": created_ids}
 
 
 @router.post("/social-accounts/linkedin/manual")
@@ -1371,15 +1425,27 @@ async def add_linkedin_page_manually(body: dict, current_user: CurrentUser, db: 
     if not page_id:
         raise HTTPException(status_code=422, detail="page_id required")
     user_id = current_user["user_id"]
+    grant = await _find_linkedin_organization_grant(db, user_id)
+    if not grant:
+        grant = await db.social_accounts.find_one(
+            {"user_id": user_id, "platform": "linkedin", "is_active": True},
+            {"_id": 0},
+            sort=[("connected_at", -1)],
+        )
+    if not grant:
+        raise HTTPException(status_code=404, detail="Connect LinkedIn before adding a company page")
+
+    org_choice = _linkedin_org_choice(grant.get("pending_orgs", []), str(page_id))
+    org_choice["name"] = body.get("page_name") or org_choice.get("name") or str(page_id)
+    account_id = await _create_linkedin_organization_account(db, user_id, grant, org_choice)
     await db.social_accounts.update_one(
-        {"user_id": user_id, "platform": "linkedin", "is_active": True},
+        {"account_id": grant.get("account_id"), "user_id": user_id},
         {
-            "$addToSet": {"selected_org_ids": page_id},
             "$pull": {"pending_orgs": {"org_id": page_id}},
             "$set": {"updated_at": datetime.now(timezone.utc)},
         },
     )
-    return {"added": True, "page_id": page_id}
+    return {"added": True, "page_id": page_id, "account_id": account_id}
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -1488,6 +1554,7 @@ def _create_stateless_oauth_state(context: dict) -> str:
         "frontend_base": _normalize_frontend_base(context.get("frontend_base")) or _default_frontend_base(),
         "code_verifier": context.get("code_verifier"),
         "redirect_uri": context.get("redirect_uri"),
+        "linkedin_account_type": context.get("linkedin_account_type"),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
     }
     return jwt.encode(payload, _OAUTH_STATE_JWT_SECRET, algorithm=_OAUTH_STATE_JWT_ALGORITHM)
@@ -1507,7 +1574,221 @@ def _decode_stateless_oauth_state(state: str) -> dict | None:
         "frontend_base": _normalize_frontend_base(payload.get("frontend_base")) or _default_frontend_base(),
         "code_verifier": payload.get("code_verifier"),
         "redirect_uri": payload.get("redirect_uri"),
+        "linkedin_account_type": payload.get("linkedin_account_type"),
     }
+
+
+def _linkedin_org_choice(pending_orgs: list[dict], org_id: str) -> dict:
+    for org in pending_orgs or []:
+        if str(org.get("org_id")) == str(org_id):
+            return org
+    return {
+        "org_id": str(org_id),
+        "name": str(org_id),
+        "role": None,
+        "organization_urn": f"urn:li:organization:{org_id}",
+    }
+
+
+async def _find_linkedin_organization_grant(db: DB, user_id: str, grant_account_id: str | None = None) -> dict | None:
+    query: dict[str, object] = {
+        "user_id": user_id,
+        "platform": "linkedin",
+        "account_type": "organization_grant",
+    }
+    if grant_account_id:
+        query["account_id"] = grant_account_id
+    return await db.social_accounts.find_one(query, {"_id": 0}, sort=[("connected_at", -1)])
+
+
+async def _create_linkedin_organization_account(
+    db: DB,
+    user_id: str,
+    grant: dict,
+    org_choice: dict,
+) -> str:
+    now = datetime.now(timezone.utc)
+    org_id = str(org_choice.get("org_id") or "").strip()
+    if not org_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="LinkedIn organization id required")
+
+    existing = await db.social_accounts.find_one(
+        {
+            "user_id": user_id,
+            "platform": "linkedin",
+            "account_type": _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE,
+            "linkedin_org_id": org_id,
+        },
+        {"_id": 0, "account_id": 1, "id": 1},
+    )
+    account_id = (existing or {}).get("account_id") or (existing or {}).get("id") or f"linkedin_org_{user_id}_{secrets.token_hex(8)}"
+    organization_urn = org_choice.get("organization_urn") or f"urn:li:organization:{org_id}"
+    display_name = org_choice.get("name") or f"LinkedIn Page {org_id}"
+
+    await db.social_accounts.update_one(
+        {
+            "user_id": user_id,
+            "platform": "linkedin",
+            "account_type": _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE,
+            "linkedin_org_id": org_id,
+        },
+        {"$set": {
+            "id": account_id,
+            "account_id": account_id,
+            "user_id": user_id,
+            "platform": "linkedin",
+            "platform_user_id": org_id,
+            "platform_username": display_name,
+            "display_name": display_name,
+            "picture_url": org_choice.get("picture_url") or grant.get("picture_url"),
+            "access_token": grant.get("access_token"),
+            "refresh_token": grant.get("refresh_token"),
+            "scopes": grant.get("scopes", []),
+            "expires_at": grant.get("expires_at"),
+            "token_expiry": grant.get("token_expiry") or grant.get("expires_at"),
+            "is_active": True,
+            "connected_at": now,
+            "updated_at": now,
+            "account_type": _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE,
+            "linkedin_author_urn": organization_urn,
+            "linkedin_org_id": org_id,
+            "linkedin_org_role": org_choice.get("role"),
+            "parent_member_id": grant.get("parent_member_id") or grant.get("platform_user_id"),
+            "requires_reconnect": False,
+            "reconnect_reason": None,
+            "reconnect_required_at": None,
+            "suspension_reason": None,
+            "suspended_at": None,
+            "publish_error_code": None,
+            "publish_error_category": None,
+            "publish_action_required": None,
+            "publish_restriction_type": None,
+            "publish_blocked_at": None,
+        }},
+        upsert=True,
+    )
+    return account_id
+
+
+async def _persist_linkedin_oauth_account(db: DB, user_id: str, token_data: dict) -> str:
+    from backend.app.social.linkedin import LinkedInAuth
+
+    now = datetime.now(timezone.utc)
+    member_id = str(token_data.get("platform_user_id") or "").strip()
+    account_type = _linkedin_account_type(token_data.get("account_type"))
+    raw_refresh_token = token_data.get("refresh_token")
+
+    if account_type == _LINKEDIN_ORGANIZATION_ACCOUNT_TYPE:
+        try:
+            pending_orgs = await LinkedInAuth().get_manageable_organization_choices(token_data["access_token"])
+        except Exception as exc:
+            logger.warning("LinkedIn organization discovery failed during connect for user %s: %s", user_id, exc)
+            pending_orgs = []
+        if not pending_orgs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "No manageable LinkedIn company pages were found. "
+                    "Confirm the LinkedIn app has organization scopes and the LinkedIn user has page access."
+                ),
+            )
+
+        query = {
+            "user_id": user_id,
+            "platform": "linkedin",
+            "account_type": "organization_grant",
+            "parent_member_id": member_id,
+        }
+        existing = await db.social_accounts.find_one(query, {"_id": 0, "account_id": 1, "id": 1, "refresh_token": 1})
+        account_id = (existing or {}).get("account_id") or (existing or {}).get("id") or f"linkedin_grant_{user_id}_{secrets.token_hex(8)}"
+        refresh_token_value = encrypt(raw_refresh_token) if raw_refresh_token else (existing or {}).get("refresh_token", "")
+        await db.social_accounts.update_one(
+            query,
+            {"$set": {
+                "id": account_id,
+                "account_id": account_id,
+                "user_id": user_id,
+                "platform": "linkedin",
+                "platform_user_id": member_id,
+                "platform_username": token_data.get("username"),
+                "display_name": token_data.get("display_name"),
+                "picture_url": token_data.get("picture_url"),
+                "access_token": encrypt(token_data["access_token"]),
+                "refresh_token": refresh_token_value,
+                "scopes": token_data.get("scopes", []),
+                "expires_at": token_data.get("expires_at"),
+                "token_expiry": token_data.get("expires_at"),
+                "is_active": False,
+                "connected_at": now,
+                "updated_at": now,
+                "account_type": "organization_grant",
+                "parent_member_id": member_id,
+                "pending_orgs": pending_orgs,
+                "requires_reconnect": False,
+                "reconnect_reason": None,
+                "reconnect_required_at": None,
+            }},
+            upsert=True,
+        )
+        return account_id
+
+    existing = await db.social_accounts.find_one(
+        {
+            "user_id": user_id,
+            "platform": "linkedin",
+            "platform_user_id": member_id,
+            "$or": [
+                {"account_type": _LINKEDIN_PROFILE_ACCOUNT_TYPE},
+                {"account_type": {"$exists": False}},
+                {"account_type": None},
+            ],
+        },
+        {"_id": 0, "account_id": 1, "id": 1, "refresh_token": 1},
+    )
+    account_id = (existing or {}).get("account_id") or (existing or {}).get("id") or f"linkedin_{user_id}_{secrets.token_hex(8)}"
+    refresh_token_value = encrypt(raw_refresh_token) if raw_refresh_token else (existing or {}).get("refresh_token", "")
+    await db.social_accounts.update_one(
+        {"account_id": account_id, "user_id": user_id},
+        {"$set": {
+            "id": account_id,
+            "account_id": account_id,
+            "user_id": user_id,
+            "platform": "linkedin",
+            "platform_user_id": member_id,
+            "platform_username": token_data.get("username"),
+            "display_name": token_data.get("display_name"),
+            "picture_url": token_data.get("picture_url"),
+            "followers_count": token_data.get("followers_count"),
+            "following_count": token_data.get("following_count"),
+            "posts_count": token_data.get("posts_count"),
+            "access_token": encrypt(token_data["access_token"]),
+            "refresh_token": refresh_token_value,
+            "scopes": token_data.get("scopes", []),
+            "expires_at": token_data.get("expires_at"),
+            "token_expiry": token_data.get("expires_at"),
+            "is_active": True,
+            "connected_at": now,
+            "updated_at": now,
+            "account_type": _LINKEDIN_PROFILE_ACCOUNT_TYPE,
+            "linkedin_author_urn": token_data.get("linkedin_author_urn") or f"urn:li:person:{member_id}",
+            "parent_member_id": None,
+            "linkedin_org_id": None,
+            "linkedin_org_role": None,
+            "pending_orgs": [],
+            "requires_reconnect": False,
+            "reconnect_reason": None,
+            "reconnect_required_at": None,
+            "suspension_reason": None,
+            "suspended_at": None,
+            "publish_error_code": None,
+            "publish_error_category": None,
+            "publish_action_required": None,
+            "publish_restriction_type": None,
+            "publish_blocked_at": None,
+        }},
+        upsert=True,
+    )
+    return account_id
 
 
 async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data: dict | None) -> str:
@@ -1516,24 +1797,16 @@ async def _persist_oauth_account(db: DB, user_id: str, platform: str, token_data
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to exchange authorization code for tokens",
         )
+    if platform == "linkedin":
+        return await _persist_linkedin_oauth_account(db, user_id, token_data)
 
     now = datetime.now(timezone.utc)
-    account_id = f"{platform}_{user_id}_{secrets.token_hex(8)}"
     query = {"user_id": user_id, "platform": platform, "platform_user_id": token_data.get("platform_user_id")}
-    existing = await db.social_accounts.find_one(query, {"_id": 0, "refresh_token": 1})
+    existing = await db.social_accounts.find_one(query, {"_id": 0, "refresh_token": 1, "account_id": 1, "id": 1})
+    account_id = (existing or {}).get("account_id") or (existing or {}).get("id") or f"{platform}_{user_id}_{secrets.token_hex(8)}"
     raw_refresh_token = token_data.get("refresh_token")
     refresh_token_value = encrypt(raw_refresh_token) if raw_refresh_token else (existing or {}).get("refresh_token", "")
     extra_updates: dict[str, object] = {}
-
-    if platform == "linkedin":
-        try:
-            from backend.app.social.linkedin import LinkedInAuth
-
-            pending_orgs = await LinkedInAuth().get_admin_organization_choices(token_data["access_token"])
-            extra_updates["pending_orgs"] = pending_orgs
-        except Exception as exc:
-            logger.warning("LinkedIn organization discovery failed during connect for user %s: %s", user_id, exc)
-            extra_updates["pending_orgs"] = []
 
     await db.social_accounts.update_one(
         query,
@@ -1589,18 +1862,17 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "threads": "https://threads.net/oauth/authorize",
     }
     
-    from backend.app.social.linkedin import LinkedInAuth
-
-    linkedin_scopes = LinkedInAuth._oauth_scopes()
-
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
         "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl",
         "twitter": "tweet.read tweet.write users.read offline.access",
-        "linkedin": linkedin_scopes,
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
     }
+    if platform == "linkedin":
+        from backend.app.social.linkedin import LinkedInAuth
+
+        scopes["linkedin"] = LinkedInAuth._oauth_scopes("profile")
     # Some providers use APP_ID naming instead of CLIENT_ID.
     if platform == "youtube":
         client_id_env = "GOOGLE_CLIENT_ID"
@@ -1665,7 +1937,7 @@ async def _exchange_code_for_tokens(
     if platform == "twitter":
         return await _exchange_twitter_code(code, code_verifier or "")
     if platform == "linkedin":
-        return await _exchange_linkedin_code(code)
+        return await _exchange_linkedin_code(code, (state_context or {}).get("linkedin_account_type"))
     if platform == "tiktok":
         return await _exchange_tiktok_code(code, code_verifier or "")
     if platform == "threads":
@@ -1931,13 +2203,14 @@ async def _exchange_threads_code(code: str, state_context: dict | None = None) -
         return None
 
 
-async def _exchange_linkedin_code(code: str) -> dict | None:
+async def _exchange_linkedin_code(code: str, account_type: str | None = None) -> dict | None:
     """LinkedIn OAuth: exchange authorization code for tokens."""
     from backend.app.social.linkedin import LinkedInAuth
     from datetime import timedelta
 
     try:
         auth = LinkedInAuth()
+        normalized_account_type = auth.normalize_account_type(account_type)
         tokens = await auth.exchange_code_for_token(code)
         access_token = tokens.get("access_token")
         if not access_token:
@@ -1954,7 +2227,7 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
         if not profile.get("sub"):
             profile = await auth.get_user_profile(access_token)
 
-        raw_scopes = tokens.get("scope") or auth._oauth_scopes()
+        raw_scopes = tokens.get("scope") or auth._oauth_scopes(normalized_account_type)
         granted_scopes = str(raw_scopes or "").replace(",", " ").split()
         full_name = str(profile.get("name") or "").strip()
         if not full_name:
@@ -1978,6 +2251,8 @@ async def _exchange_linkedin_code(code: str) -> dict | None:
             "picture_url": picture,
             "scopes": granted_scopes or ["openid", "profile", "email", "w_member_social"],
             "expires_at": expires_at,
+            "account_type": normalized_account_type,
+            "linkedin_author_urn": f"urn:li:person:{subject}" if subject else None,
         }
     except Exception as exc:
         logger.error("LinkedIn token exchange failed: %s", exc)
