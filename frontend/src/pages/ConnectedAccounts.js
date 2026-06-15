@@ -1074,8 +1074,27 @@ const ConnectedAccounts = () => {
             </>
           )}
         >
-          <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-            Create a personal access token from your Mastodon instance settings, then paste the instance URL and token here.
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">How to connect Mastodon</p>
+              <ol className="mt-2 space-y-1.5 text-sm text-indigo-900">
+                <li>1. Sign in to your Mastodon instance in another tab.</li>
+                <li>2. Open <span className="font-medium">Preferences → Development</span> and create a new application, or open an existing one.</li>
+                <li>3. Copy the app&apos;s <span className="font-medium">Your access token</span> value after saving.</li>
+                <li>4. Paste your instance home URL here, such as <span className="font-mono">https://mastodon.social</span>.</li>
+                <li>5. Paste the access token below and connect.</li>
+              </ol>
+            </div>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">Recommended Mastodon app scopes</p>
+              <p className="mt-1">
+                If you are creating a new Mastodon app for Unravler, enable read access plus posting/media scopes so scheduling and publishing can work later.
+              </p>
+              <p className="mt-2 font-mono text-xs text-amber-950">read, read:accounts, read:statuses, write, write:media, write:statuses</p>
+              <p className="mt-2 text-xs text-amber-800">
+                If your instance asks for a redirect URI while creating the app, keep its default value unless your instance requires something else.
+              </p>
+            </div>
           </div>
           <div className="space-y-3">
             <input
