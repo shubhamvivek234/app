@@ -191,6 +191,11 @@ class DiscordWebhookRequest(BaseModel):
     channel_name: str | None = None  # optional user-supplied label
 
 
+class MastodonConnectRequest(BaseModel):
+    instance_url: str
+    access_token: str
+
+
 # ── LinkedIn org models ───────────────────────────────────────────────────────
 
 class LinkedInOrgRequest(BaseModel):
@@ -1265,6 +1270,102 @@ async def connect_discord(
         outcome="connected",
     )
     return {"connected": True, "platform": "discord", "channel": channel_label}
+
+
+# ── Mastodon (instance token-based, no OAuth redirect) ───────────────────────
+
+@router.post("/social-accounts/mastodon/connect")
+async def connect_mastodon(
+    body: MastodonConnectRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Connect Mastodon using a user-provided instance URL and personal access token."""
+    from backend.app.social.mastodon import MastodonAuth
+
+    user_id = current_user["user_id"]
+
+    try:
+        profile = await MastodonAuth().get_user_profile(body.instance_url, body.access_token)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        event_log(
+            logger,
+            "error",
+            "accounts.mastodon.connect_failed",
+            exc_info=exc,
+            route="/social-accounts/mastodon/connect",
+            user_id=user_id,
+            platform="mastodon",
+            failure_type="token_validation_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to reach Mastodon. Check the instance URL and try again.",
+        )
+
+    now = datetime.now(timezone.utc)
+    mastodon_user_id = str(profile.get("id", ""))
+    username = profile.get("acct") or profile.get("username") or mastodon_user_id
+    existing = await db.social_accounts.find_one(
+        {"user_id": user_id, "platform": "mastodon", "platform_user_id": mastodon_user_id},
+        {"_id": 0, "account_id": 1, "id": 1},
+    )
+    account_id = (existing or {}).get("account_id") or (existing or {}).get("id") or f"mastodon_{user_id}_{secrets.token_hex(8)}"
+
+    await db.social_accounts.update_one(
+        {"user_id": user_id, "platform": "mastodon", "platform_user_id": mastodon_user_id},
+        {"$set": {
+            "id": account_id,
+            "account_id": account_id,
+            "user_id": user_id,
+            "platform": "mastodon",
+            "platform_user_id": mastodon_user_id,
+            "platform_username": username,
+            "display_name": profile.get("display_name") or username,
+            "picture_url": profile.get("picture_url"),
+            "followers_count": profile.get("followers_count"),
+            "following_count": profile.get("following_count"),
+            "posts_count": profile.get("posts_count"),
+            "access_token": encrypt(body.access_token.strip()),
+            "refresh_token": None,
+            "scopes": ["read:accounts", "read:statuses"],
+            "is_active": True,
+            "connected_at": now,
+            "expires_at": None,
+            "updated_at": now,
+            "metadata": {
+                "instance_url": profile.get("instance_url"),
+                "profile_url": profile.get("url"),
+                "display_name": profile.get("display_name") or username,
+                "acct": profile.get("acct") or username,
+            },
+            "requires_reconnect": False,
+            "reconnect_reason": None,
+            "reconnect_required_at": None,
+            "token_error": None,
+        }},
+        upsert=True,
+    )
+    event_log(
+        logger,
+        "info",
+        "accounts.mastodon.connected",
+        route="/social-accounts/mastodon/connect",
+        user_id=user_id,
+        platform="mastodon",
+        account_id=account_id,
+        outcome="connected",
+    )
+    return {
+        "connected": True,
+        "platform": "mastodon",
+        "username": username,
+        "instance_url": profile.get("instance_url"),
+    }
 
 
 # ── LinkedIn org selection ────────────────────────────────────────────────────
