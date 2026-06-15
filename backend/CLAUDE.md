@@ -110,7 +110,7 @@ MOCK_GOOGLE_AUTH=false              # Set to "true" in dev to skip real OAuth
 # Twitter / X
 TWITTER_CLIENT_ID=
 TWITTER_CLIENT_SECRET=
-TWITTER_REDIRECT_URI=http://localhost:8000/api/oauth/twitter/callback
+TWITTER_REDIRECT_URI=https://www.unravler.com/oauth/callback
 
 # LinkedIn
 LINKEDIN_CLIENT_ID=
