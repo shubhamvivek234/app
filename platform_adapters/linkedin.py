@@ -1,6 +1,6 @@
 """
 LinkedIn platform adapter.
-Publishes via /v2/ugcPosts with author URN urn:li:person:{user_id}.
+Publishes via /v2/ugcPosts with account-specific author URNs.
 Images: register upload via /v2/assets?action=registerUpload first.
 Documents: PDF upload flow (stub — TODO).
 """
@@ -124,10 +124,17 @@ class LinkedInAdapter(PlatformAdapter):
     @staticmethod
     def _resolve_author_urn(account: dict, fallback_user_id: str) -> str:
         metadata = account.get("metadata") or {}
+        stored_author = account.get("linkedin_author_urn") or metadata.get("linkedin_author_urn")
+        if stored_author:
+            return str(stored_author)
+
         organization_urn = (
-            metadata.get("organization_urn")
+            account.get("linkedin_org_id")
+            or metadata.get("organization_urn")
             or metadata.get("org_urn")
         )
+        if account.get("account_type") == "organization" and not organization_urn:
+            organization_urn = account.get("platform_user_id")
         if organization_urn:
             return organization_urn if str(organization_urn).startswith("urn:li:organization:") else f"urn:li:organization:{organization_urn}"
         return f"urn:li:person:{fallback_user_id}"

@@ -16,13 +16,37 @@ LINKEDIN_ANALYTICS_PERMISSION_MESSAGE = (
 
 LINKEDIN_ANALYTICS_REQUIRED_PERMISSIONS = [
     "r_member_profileAnalytics",
+    "r_organization_social",
     "r_organization_admin",
     "rw_organization_admin",
     "LinkedIn Community Management or profile analytics product approval",
 ]
 
 LINKEDIN_MEMBER_ANALYTICS_SCOPES = {"r_member_profileAnalytics"}
-LINKEDIN_ORGANIZATION_ANALYTICS_SCOPES = {"r_organization_admin", "rw_organization_admin"}
+LINKEDIN_ORGANIZATION_ANALYTICS_SCOPES = {
+    "r_organization_social",
+    "r_organization_admin",
+    "rw_organization_admin",
+}
+LINKEDIN_PROFILE_CONNECT_SCOPES = ("openid", "profile", "email", "w_member_social")
+LINKEDIN_ORGANIZATION_CONNECT_SCOPES = (
+    "openid",
+    "profile",
+    "email",
+    "w_member_social",
+    "w_organization_social",
+)
+LINKEDIN_ORGANIZATION_ADMIN_SCOPES = {"r_organization_admin", "rw_organization_admin"}
+LINKEDIN_OPTIONAL_ANALYTICS_SCOPES = {
+    "r_organization_social",
+    "r_member_profileAnalytics",
+    "r_member_postAnalytics",
+}
+LINKEDIN_ORGANIZATION_POST_ROLES = {
+    "ADMINISTRATOR",
+    "DIRECT_SPONSORED_CONTENT_POSTER",
+    "LEAD_GEN_FORMS_MANAGER",
+}
 
 
 class LinkedInAuth:
@@ -51,12 +75,71 @@ class LinkedInAuth:
         }
 
     @staticmethod
-    def _oauth_scopes() -> str:
-        raw = os.environ.get(
-            "LINKEDIN_OAUTH_SCOPES",
-            "openid profile email w_member_social",
-        )
-        return " ".join(str(raw).replace(",", " ").split())
+    def normalize_account_type(account_type: str | None = None) -> str:
+        raw = str(account_type or "profile").strip().lower().replace("-", "_")
+        if raw in {"profile", "member", "personal", "person"}:
+            return "profile"
+        if raw in {"organization", "company", "company_page", "page"}:
+            return "organization"
+        raise HTTPException(status_code=400, detail="Invalid LinkedIn account type")
+
+    @staticmethod
+    def _configured_oauth_scope_set() -> set[str]:
+        raw = os.environ.get("LINKEDIN_OAUTH_SCOPES")
+        if not raw:
+            return set(LINKEDIN_PROFILE_CONNECT_SCOPES)
+        return {scope for scope in str(raw).replace(",", " ").split() if scope}
+
+    @staticmethod
+    def _oauth_scope_list(account_type: str | None = None) -> list[str]:
+        normalized_type = LinkedInAuth.normalize_account_type(account_type)
+        configured = LinkedInAuth._configured_oauth_scope_set()
+        if normalized_type == "organization":
+            required = set(LINKEDIN_ORGANIZATION_CONNECT_SCOPES)
+            missing = sorted(required - configured)
+            has_admin_scope = bool(configured & LINKEDIN_ORGANIZATION_ADMIN_SCOPES)
+            if missing or not has_admin_scope:
+                if not has_admin_scope:
+                    missing.append("r_organization_admin or rw_organization_admin")
+                missing_text = ", ".join(dict.fromkeys(missing))
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "LinkedIn company page connection is not configured. "
+                        f"Missing approved LinkedIn scopes: {missing_text}"
+                    ),
+                )
+            allowed = required | LINKEDIN_ORGANIZATION_ADMIN_SCOPES | LINKEDIN_OPTIONAL_ANALYTICS_SCOPES
+        else:
+            required = set(LINKEDIN_PROFILE_CONNECT_SCOPES)
+            missing = sorted(required - configured)
+            if missing:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "LinkedIn profile connection is not configured. "
+                        f"Missing approved LinkedIn scopes: {', '.join(missing)}"
+                    ),
+                )
+            allowed = required | {"r_member_profileAnalytics", "r_member_postAnalytics"}
+
+        ordered_scopes = [
+            "openid",
+            "profile",
+            "email",
+            "w_member_social",
+            "w_organization_social",
+            "r_organization_admin",
+            "rw_organization_admin",
+            "r_organization_social",
+            "r_member_profileAnalytics",
+            "r_member_postAnalytics",
+        ]
+        return [scope for scope in ordered_scopes if scope in configured and scope in allowed]
+
+    @staticmethod
+    def _oauth_scopes(account_type: str | None = None) -> str:
+        return " ".join(LinkedInAuth._oauth_scope_list(account_type))
 
     @staticmethod
     def _organization_urn(value: str | None) -> str | None:
@@ -103,12 +186,21 @@ class LinkedInAuth:
         result["error"] = LINKEDIN_ANALYTICS_PERMISSION_MESSAGE
         return result
 
-    def get_auth_url(self, state: str) -> str:
+    @staticmethod
+    def _author_urn(value: str | None, account_type: str | None = None) -> str:
+        raw = str(value or "").strip()
+        if raw.startswith("urn:li:person:") or raw.startswith("urn:li:organization:"):
+            return raw
+        normalized_type = LinkedInAuth.normalize_account_type(account_type)
+        prefix = "organization" if normalized_type == "organization" else "person"
+        return f"urn:li:{prefix}:{raw}"
+
+    def get_auth_url(self, state: str, account_type: str | None = None) -> str:
         """Generate LinkedIn OAuth URL"""
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="LinkedIn credentials not configured")
 
-        scopes = self._oauth_scopes()
+        scopes = self._oauth_scopes(account_type)
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -242,6 +334,41 @@ class LinkedInAuth:
             })
         return choices
 
+    async def get_manageable_organization_choices(self, access_token: str) -> list[dict[str, str]]:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.REST_URL}/organizationAcls",
+                params={
+                    "q": "roleAssignee",
+                    "state": "APPROVED",
+                    "count": 100,
+                    "start": 0,
+                },
+                headers=self._rest_headers(access_token),
+            )
+            if response.status_code != 200:
+                logging.warning("LinkedIn organization selection unavailable: %s", response.text)
+                return []
+
+            choices: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for item in response.json().get("elements", []):
+                role = str(item.get("role") or "").strip().upper()
+                if role not in LINKEDIN_ORGANIZATION_POST_ROLES:
+                    continue
+                organization_urn = self._organization_urn(item.get("organizationTarget") or item.get("organization"))
+                org_id = self._organization_id(organization_urn)
+                if not org_id or org_id in seen:
+                    continue
+                seen.add(org_id)
+                choices.append({
+                    "org_id": org_id,
+                    "name": item.get("localizedName") or item.get("name") or org_id,
+                    "role": role,
+                    "organization_urn": organization_urn or f"urn:li:organization:{org_id}",
+                })
+            return choices
+
     async def get_organization_follower_total(self, access_token: str, organization_urn: str) -> int | None:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -356,7 +483,12 @@ class LinkedInAuth:
             if member_growth is not None:
                 result["followers_growth"] = member_growth
 
-        explicit_orgs = [self._organization_urn(org_id) for org_id in (account.get("selected_org_ids") or [])]
+        explicit_org_values = list(account.get("selected_org_ids") or [])
+        if account.get("account_type") == "organization":
+            explicit_org_values = explicit_org_values or [
+                account.get("linkedin_org_id") or account.get("platform_user_id")
+            ]
+        explicit_orgs = [self._organization_urn(org_id) for org_id in explicit_org_values]
         organization_urns = (
             ([org for org in explicit_orgs if org] or await self.get_admin_organizations(access_token))
             if can_fetch_organization_analytics
@@ -401,8 +533,18 @@ class LinkedInAuth:
 
         return result
 
-    async def publish_post(self, access_token: str, person_urn: str, text: str, media_urls: list = None, local_file_path: str = None) -> str:
-        """Publish a post to LinkedIn member profile"""
+    async def publish_post(
+        self,
+        access_token: str,
+        author: str | None = None,
+        text: str = "",
+        media_urls: list = None,
+        local_file_path: str = None,
+        account_type: str | None = None,
+        person_urn: str | None = None,
+    ) -> str:
+        """Publish a post to a LinkedIn member profile or organization page."""
+        author_urn = self._author_urn(author or person_urn, account_type)
         async with httpx.AsyncClient() as client:
             asset_urn = None
             
@@ -417,7 +559,7 @@ class LinkedInAuth:
                 register_payload = {
                     "registerUploadRequest": {
                         "recipes": [recipe],
-                        "owner": f"urn:li:person:{person_urn}",
+                        "owner": author_urn,
                         "serviceRelationships": [
                             {
                                 "relationshipType": "OWNER",
@@ -465,7 +607,7 @@ class LinkedInAuth:
 
             # LinkedIn UGC Post structure
             payload = {
-                "author": f"urn:li:person:{person_urn}",
+                "author": author_urn,
                 "lifecycleState": "PUBLISHED",
                 "specificContent": {
                     "com.linkedin.ugc.ShareContent": {

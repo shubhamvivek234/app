@@ -5,10 +5,13 @@ import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } f
 import { getGoogleOAuthHashParams, isGooglePhotosImportState } from '@/lib/googlePhotosAuth';
 import { submitOAuthCallback } from '@/lib/requestOAuthCallback';
 
-const resolvePostConnectPath = (platform, returnTo, { personalConnected = false } = {}) => {
+const resolvePostConnectPath = (platform, returnTo, { linkedinAccountType = null } = {}) => {
   if (platform === 'linkedin') {
-    const params = new URLSearchParams({ linkedin_orgs: '1' });
-    if (personalConnected) params.set('personal_connected', 'true');
+    const params = new URLSearchParams(
+      linkedinAccountType === 'organization'
+        ? { linkedin_orgs: '1' }
+        : { linkedin_profile: '1' },
+    );
     return `/accounts?${params.toString()}`;
   }
   return returnTo === 'onboarding' ? '/onboarding/connect' : '/accounts';
@@ -31,6 +34,11 @@ const OAuthCallback = () => {
       const hashError = hashParams.get('error');
       const hashAccessToken = hashParams.get('access_token');
       const platform = searchParams.get('platform') || sessionStorage.getItem('oauth_platform') || '';
+      const linkedinAccountType = searchParams.get('linkedin_orgs') === '1'
+        ? 'organization'
+        : searchParams.get('linkedin_profile') === '1'
+          ? 'profile'
+          : sessionStorage.getItem('linkedin_account_type');
 
       const fallbackUrl = sessionStorage.getItem('oauth_return_to') === 'accounts' ? '/accounts' : '/onboarding/connect';
       const returnTo = sessionStorage.getItem('oauth_return_to') || 'accounts';
@@ -39,6 +47,7 @@ const OAuthCallback = () => {
       const cleanup = () => {
         sessionStorage.removeItem('oauth_platform');
         sessionStorage.removeItem('oauth_return_to');
+        sessionStorage.removeItem('linkedin_account_type');
       };
 
       const finishPopupFlow = (result) => {
@@ -98,7 +107,7 @@ const OAuthCallback = () => {
         toast.success(`${platform} connected successfully!`);
         cleanup();
         clearOAuthPopupExpected();
-        const destination = resolvePostConnectPath(platform, returnTo, { personalConnected: platform === 'linkedin' });
+        const destination = resolvePostConnectPath(platform, returnTo, { linkedinAccountType });
         setTimeout(() => navigate(destination), 1500);
         return;
       }
@@ -168,7 +177,7 @@ const OAuthCallback = () => {
           // Redirect based on return destination securely provided by backend or fallback to session
           const finalReturnTo = responseData.return_to || returnTo;
           const destination = resolvePostConnectPath(resolvedPlatform, finalReturnTo, {
-            personalConnected: resolvedPlatform === 'linkedin',
+            linkedinAccountType: resolvedPlatform === 'linkedin' ? linkedinAccountType : null,
           });
 
           setTimeout(() => {
@@ -186,8 +195,8 @@ const OAuthCallback = () => {
           return;
         }
 
-        if (error.response?.status === 500 && error.response?.data?.detail?.includes('not configured')) {
-          toast.error('API credentials not configured. Please contact administrator.');
+        if ((error.response?.status === 500 || error.response?.status === 503) && error.response?.data?.detail?.includes('not configured')) {
+          toast.error(error.response.data.detail);
         } else {
           toast.error(message);
         }

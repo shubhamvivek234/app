@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from celery_workers.tasks import publish as publish_tasks
+from platform_adapters.linkedin import LinkedInAdapter
 from platform_adapters.base import ErrorClass, PlatformAPIError, PlatformHTTPError, classify_error
 
 
@@ -82,6 +83,21 @@ class RetryTriggered(Exception):
     def __init__(self, countdown):
         super().__init__(f"retry:{countdown}")
         self.countdown = countdown
+
+
+def test_linkedin_adapter_resolves_profile_and_organization_authors():
+    assert LinkedInAdapter._resolve_author_urn(
+        {"linkedin_author_urn": "urn:li:person:member-1", "platform_user_id": "member-1"},
+        "member-1",
+    ) == "urn:li:person:member-1"
+    assert LinkedInAdapter._resolve_author_urn(
+        {"account_type": "organization", "linkedin_org_id": "12345", "platform_user_id": "member-1"},
+        "member-1",
+    ) == "urn:li:organization:12345"
+    assert LinkedInAdapter._resolve_author_urn(
+        {"metadata": {"organization_urn": "urn:li:organization:67890"}, "platform_user_id": "member-1"},
+        "member-1",
+    ) == "urn:li:organization:67890"
 
 
 @pytest.mark.asyncio

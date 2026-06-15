@@ -125,7 +125,10 @@ const OnboardingConnect = () => {
     // Use same-tab OAuth. Popups/new tabs are disruptive and can be blocked.
     markOAuthPopupExpected(false);
     try {
-      const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id);
+      const requestOptions = selectedPlatform.id === 'linkedin'
+        ? { accountType: 'profile' }
+        : {};
+      const { authorization_url, code_verifier } = await requestOAuthUrl(selectedPlatform.id, requestOptions);
 
       // Store code_verifier for Twitter if present
       if (code_verifier) {
@@ -135,6 +138,11 @@ const OnboardingConnect = () => {
       // Store platform info for callback
       sessionStorage.setItem('oauth_platform', selectedPlatform.id);
       sessionStorage.setItem('oauth_return_to', 'onboarding');
+      if (selectedPlatform.id === 'linkedin') {
+        sessionStorage.setItem('linkedin_account_type', 'profile');
+      } else {
+        sessionStorage.removeItem('linkedin_account_type');
+      }
 
       // Same-tab redirect.
       window.location.assign(authorization_url);

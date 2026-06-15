@@ -3524,8 +3524,13 @@ async def publish_to_platform(platform: str, account: dict, post_doc: dict, trac
         elif platform == "linkedin":
             from app.social.linkedin import LinkedInAuth
             li = LinkedInAuth()
-            person_urn = account.get("platform_user_id", "")
-            result = await li.publish_post(access_token, person_urn, content, media_urls)
+            account_type = account.get("account_type") or ("organization" if account.get("linkedin_org_id") else "profile")
+            author = (
+                account.get("linkedin_author_urn")
+                or account.get("linkedin_org_id")
+                or account.get("platform_user_id", "")
+            )
+            result = await li.publish_post(access_token, author, content, media_urls, account_type=account_type)
             return {"status": "success", "platform_post_id": str(result)}
 
         elif platform == "youtube":
