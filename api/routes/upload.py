@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated
 
 import magic
-from fastapi import APIRouter, Body, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, status
 from redis.exceptions import RedisError
 
 from api.deps import CurrentUser, DB, CacheRedis, QueueRedis, require_permission
@@ -26,6 +26,7 @@ from api.models.media import (
 )
 from api.task_queue import enqueue_task
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
+from utils.temp_audio_cleanup import TEMP_AUDIO_PURPOSE, temporary_audio_metadata
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["upload"])
@@ -228,6 +229,11 @@ async def create_upload_session(
         )
 
     _ensure_allowed_mime(payload.content_type)
+    asset_kind = _asset_kind_for_mime(payload.content_type)
+    if payload.purpose and payload.purpose != TEMP_AUDIO_PURPOSE:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported upload purpose")
+    if payload.purpose == TEMP_AUDIO_PURPOSE and asset_kind != "audio":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Temporary composer uploads must be audio files")
     await _check_user_upload_backlog(db, user_id, plan)
     await _reserve_concurrent_upload_slot(cache_redis, user_id, plan)
 
@@ -294,7 +300,7 @@ async def create_upload_session(
         "workspace_id": current_user.get("default_workspace_id") or user_id,
         "status": MediaStatus.PENDING_UPLOAD,
         "mime_type": payload.content_type,
-        "asset_kind": _asset_kind_for_mime(payload.content_type),
+        "asset_kind": asset_kind,
         "file_size_bytes": payload.file_size_bytes,
         "original_filename": safe_name,
         "source_storage_key": source_storage_key,
@@ -305,6 +311,8 @@ async def create_upload_session(
         "processed_at": None,
         "error_message": None,
     }
+    if payload.purpose == TEMP_AUDIO_PURPOSE:
+        asset_doc.update(temporary_audio_metadata(composer_session_id=payload.composer_session_id, now=now))
     await db.media_assets.insert_one(asset_doc)
     event_log(
         logger,
@@ -500,6 +508,8 @@ async def upload_media(
     db: DB,
     cache_redis: CacheRedis,
     queue_redis: QueueRedis,
+    purpose: Annotated[str | None, Form()] = None,
+    composer_session_id: Annotated[str | None, Form()] = None,
 ) -> MediaUploadResponse:
     user_id = current_user["user_id"]
     plan = current_user.get("plan", "starter")
@@ -536,6 +546,11 @@ async def upload_media(
         mime_type = magic.from_buffer(header_bytes, mime=True)
 
         _ensure_allowed_mime(mime_type)
+        asset_kind = _asset_kind_for_mime(mime_type)
+        if purpose and purpose != TEMP_AUDIO_PURPOSE:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported upload purpose")
+        if purpose == TEMP_AUDIO_PURPOSE and asset_kind != "audio":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Temporary composer uploads must be audio files")
 
         # 5. Generate UUID filename — discard original to prevent path traversal
         ext = _mime_to_ext(mime_type)
@@ -578,7 +593,7 @@ async def upload_media(
             "workspace_id": current_user.get("default_workspace_id") or user_id,
             "status": MediaStatus.QUARANTINE,
             "mime_type": mime_type,
-            "asset_kind": _asset_kind_for_mime(mime_type),
+            "asset_kind": asset_kind,
             "file_size_bytes": total_bytes,
             "quarantine_path": quarantine_path,
             "original_filename_discarded": True,
@@ -586,6 +601,8 @@ async def upload_media(
             "processed_at": None,
             "error_message": None,
         }
+        if purpose == TEMP_AUDIO_PURPOSE:
+            asset_doc.update(temporary_audio_metadata(composer_session_id=composer_session_id, now=now))
         await db.media_assets.insert_one(asset_doc)
 
         # 8. Enqueue media processing task without importing worker modules into API

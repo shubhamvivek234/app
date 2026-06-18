@@ -11,6 +11,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import env from '@/env';
 import {
+  cleanupTemporaryAudio,
   getAudioAssets,
   renderVideoAudio,
   uploadMedia,
@@ -18,10 +19,39 @@ import {
   waitForUploadReady,
 } from '@/lib/api';
 
-const waveformBars = Array.from({ length: 52 }, (_, index) => {
+const fallbackWaveformBars = Array.from({ length: 64 }, (_, index) => {
   const value = Math.sin(index * 1.7) * 0.5 + Math.cos(index * 0.47) * 0.35 + 0.75;
   return Math.max(18, Math.min(92, Math.round(value * 56)));
 });
+
+const buildWaveformBars = async (url, barCount = 64) => {
+  if (!url || typeof window === 'undefined') return fallbackWaveformBars;
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return fallbackWaveformBars;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Unable to load audio waveform');
+  const buffer = await response.arrayBuffer();
+  const audioContext = new AudioContextCtor();
+  try {
+    const audioBuffer = await audioContext.decodeAudioData(buffer);
+    const channelData = audioBuffer.getChannelData(0);
+    const samplesPerBar = Math.max(1, Math.floor(channelData.length / barCount));
+    const bars = Array.from({ length: barCount }, (_, index) => {
+      const start = index * samplesPerBar;
+      const end = Math.min(channelData.length, start + samplesPerBar);
+      let sum = 0;
+      for (let cursor = start; cursor < end; cursor += 1) {
+        sum += channelData[cursor] * channelData[cursor];
+      }
+      const rms = Math.sqrt(sum / Math.max(end - start, 1));
+      return Math.max(14, Math.min(96, Math.round(rms * 260)));
+    });
+    const max = Math.max(...bars, 1);
+    return bars.map((bar) => Math.max(14, Math.round((bar / max) * 92)));
+  } finally {
+    audioContext.close?.();
+  }
+};
 
 const formatDuration = (seconds) => {
   const value = Number(seconds || 0);
@@ -95,6 +125,9 @@ const AddAudioDialog = ({
   onOpenChange,
   video,
   onRenderComplete,
+  composerSessionId,
+  onTemporaryAudioUploaded,
+  onTemporaryAudioRemoved,
 }) => {
   const [audioAssets, setAudioAssets] = useState([]);
   const [selectedAudioId, setSelectedAudioId] = useState('');
@@ -111,6 +144,7 @@ const AddAudioDialog = ({
   const [fadeOut, setFadeOut] = useState(0.8);
   const [originalVolume, setOriginalVolume] = useState(0.35);
   const [selectedVolume, setSelectedVolume] = useState(0.9);
+  const [waveformBars, setWaveformBars] = useState(fallbackWaveformBars);
   const [muteOriginal, setMuteOriginal] = useState(true);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -131,18 +165,17 @@ const AddAudioDialog = ({
   const trimEndSeconds = trimEnd === '' ? null : clampSeconds(trimEnd, hasAudioDuration ? selectedAudioDuration : null);
   const effectiveTrimEnd = trimEndSeconds || selectedAudioDuration || videoDuration || null;
   const offsetSeconds = clampSeconds(offset, hasVideoDuration ? videoDuration : null);
-  const visibleTimelineDuration = Math.max(
+  const audioTimelineDuration = Math.max(
     selectedAudioDuration || 0,
-    videoDuration || 0,
-    trimEndSeconds || 0,
+    effectiveTrimEnd || 0,
     trimStartSeconds || 0,
     1,
   );
-  const trimStartPercent = clamp((trimStartSeconds / visibleTimelineDuration) * 100, 0, 100);
+  const trimStartPercent = clamp((trimStartSeconds / audioTimelineDuration) * 100, 0, 100);
   const trimEndPercent = effectiveTrimEnd
-    ? clamp((effectiveTrimEnd / visibleTimelineDuration) * 100, trimStartPercent, 100)
+    ? clamp((effectiveTrimEnd / audioTimelineDuration) * 100, trimStartPercent, 100)
     : 100;
-  const offsetPercent = clamp((offsetSeconds / visibleTimelineDuration) * 100, 0, 100);
+  const offsetPercent = hasVideoDuration ? clamp((offsetSeconds / videoDuration) * 100, 0, 100) : 0;
   const originalVolumePercent = Math.round(clampVolume(originalVolume) * 100);
   const selectedVolumePercent = Math.round(clampVolume(selectedVolume) * 100);
   const canRender = Boolean(video?.mediaId && selectedAudio?.media_id && !rendering && !uploadingAudio);
@@ -186,6 +219,24 @@ const AddAudioDialog = ({
     stopPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAudioId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!open || !selectedAudio?.media_url) {
+      setWaveformBars(fallbackWaveformBars);
+      return undefined;
+    }
+    buildWaveformBars(selectedAudio.media_url)
+      .then((bars) => {
+        if (!cancelled) setWaveformBars(bars);
+      })
+      .catch(() => {
+        if (!cancelled) setWaveformBars(fallbackWaveformBars);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selectedAudio?.media_url]);
 
   const stopPreview = () => {
     clearTimeout(delayedAudioTimerRef.current);
@@ -277,10 +328,17 @@ const AddAudioDialog = ({
     setUploadingAudio(true);
     setUploadProgress(0);
     try {
-      const upload = await uploadMedia(file, (progressEvent) => {
-        const total = progressEvent.total || file.size || 1;
-        setUploadProgress(Math.round(((progressEvent.loaded || 0) * 100) / total));
-      });
+      const upload = await uploadMedia(
+        file,
+        (progressEvent) => {
+          const total = progressEvent.total || file.size || 1;
+          setUploadProgress(Math.round(((progressEvent.loaded || 0) * 100) / total));
+        },
+        {
+          purpose: 'composer_audio_temp',
+          composerSessionId,
+        }
+      );
       const asset = await waitForUploadReady(upload.media_job_id, {
         onPoll: (polled) => {
           if (polled?.status === 'processing') setUploadProgress(95);
@@ -292,12 +350,28 @@ const AddAudioDialog = ({
       };
       setAudioAssets((prev) => [normalizedAsset, ...prev.filter((item) => item.media_id !== asset.media_id)]);
       setSelectedAudioId(asset.media_id);
+      onTemporaryAudioUploaded?.(asset.media_id);
       toast.success('Audio uploaded');
     } catch (error) {
       toast.error(error?.message || 'Failed to upload audio');
     } finally {
       setUploadingAudio(false);
       setUploadProgress(0);
+    }
+  };
+
+  const handleRemoveTemporaryAudio = async () => {
+    if (!selectedAudio?.media_id || selectedAudio?.temporary !== true) return;
+    const mediaId = selectedAudio.media_id;
+    stopPreview();
+    try {
+      await cleanupTemporaryAudio({ mediaIds: [mediaId], reason: 'composer_audio_removed' });
+      setAudioAssets((prev) => prev.filter((item) => item.media_id !== mediaId));
+      setSelectedAudioId('');
+      onTemporaryAudioRemoved?.(mediaId);
+      toast.success('Uploaded audio removed');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || error?.message || 'Failed to remove uploaded audio');
     }
   };
 
@@ -429,11 +503,22 @@ const AddAudioDialog = ({
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-semibold text-slate-700">Selected: {audioLabel(selectedAudio)}</p>
-                    <p className="text-[11px] text-slate-500">Clear this if you want to preview the video without added audio.</p>
+                    <p className="text-[11px] text-slate-500">
+                      {selectedAudio.temporary === true
+                        ? 'This uploaded track is temporary and can be removed from storage.'
+                        : 'Clear this if you want to preview the video without added audio.'}
+                    </p>
                   </div>
-                  <Button type="button" variant="ghost" size="sm" onClick={handleClearSelectedAudio} disabled={rendering}>
-                    Clear
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={handleClearSelectedAudio} disabled={rendering}>
+                      Clear
+                    </Button>
+                    {selectedAudio.temporary === true && (
+                      <Button type="button" variant="outline" size="sm" onClick={handleRemoveTemporaryAudio} disabled={rendering}>
+                        Remove upload
+                      </Button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -457,9 +542,15 @@ const AddAudioDialog = ({
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-900">Trim and align</p>
-                <span className="text-xs text-gray-500">Video length {formatDuration(video?.duration)}</span>
+                <span className="text-xs text-gray-500">
+                  Audio {formatDuration(selectedAudioDuration)} · Video {formatDuration(video?.duration)}
+                </span>
               </div>
               <div className="rounded-xl bg-slate-950 px-3 py-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Audio trim</span>
+                  <span>{formatDuration(audioTimelineDuration)}</span>
+                </div>
                 <div className="flex h-16 items-end gap-1">
                   {waveformBars.map((height, index) => {
                     const barPercent = (index / Math.max(waveformBars.length - 1, 1)) * 100;
@@ -478,15 +569,25 @@ const AddAudioDialog = ({
                     className="absolute top-0 h-3 rounded-full bg-cyan-300/80"
                     style={{ left: `${trimStartPercent}%`, width: `${Math.max(trimEndPercent - trimStartPercent, 1)}%` }}
                   />
-                  <div
-                    className="absolute -top-1 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.8)]"
-                    style={{ left: `${offsetPercent}%` }}
-                    title="Video start offset"
-                  />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
                   <span>Audio trim {formatDuration(trimStartSeconds)} - {formatDuration(effectiveTrimEnd || 0)}</span>
-                  <span>Starts at video {formatDuration(offsetSeconds)}</span>
+                  <span>{formatDuration(Math.max((effectiveTrimEnd || 0) - trimStartSeconds, 0))} selected</span>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Video alignment</span>
+                  <span>{formatDuration(videoDuration)}</span>
+                </div>
+                <div className="relative mt-2 h-3 rounded-full bg-slate-800">
+                  <div
+                    className="absolute -top-1 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.8)]"
+                    style={{ left: `${offsetPercent}%` }}
+                    title="Custom audio starts at this video time"
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Custom audio starts at {formatDuration(offsetSeconds)}</span>
+                  <span>{hasVideoDuration ? `${Math.round(offsetPercent)}% into video` : 'Set video duration by loading preview'}</span>
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">

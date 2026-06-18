@@ -20,6 +20,7 @@ import {
   getHashtagGroups,
   generateContent,
   createPost,
+  cleanupTemporaryAudio,
   getPost,
   updatePost,
 } from '@/lib/api';
@@ -306,6 +307,10 @@ const formatLocalDateInput = (date = new Date()) => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const createComposerAudioSessionId = () => (
+  `composer-audio-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+);
 
 // Format 24h "HH:MM" → "h:MM AM/PM"
 const fmt12h = (t24) => {
@@ -622,6 +627,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     index: null,
     video: null,
   });
+  const composerAudioSessionIdRef = useRef(createComposerAudioSessionId());
+  const temporaryAudioIdsRef = useRef(new Set());
+  const composerSubmitCompleteRef = useRef(false);
 
   const inferMediaKind = useCallback((items) => {
     const mediaItems = Array.isArray(items) ? items : [];
@@ -663,6 +671,56 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     loadHashtagGroups();
     setScheduledDate(formatLocalDateInput(new Date()));
   }, [loadAccounts, loadHashtagGroups]);
+
+  const registerTemporaryAudio = useCallback((mediaId) => {
+    if (!mediaId) return;
+    composerSubmitCompleteRef.current = false;
+    temporaryAudioIdsRef.current.add(mediaId);
+  }, []);
+
+  const unregisterTemporaryAudio = useCallback((mediaId) => {
+    if (!mediaId) return;
+    temporaryAudioIdsRef.current.delete(mediaId);
+  }, []);
+
+  const resetComposerAudioSession = useCallback(() => {
+    temporaryAudioIdsRef.current.clear();
+    composerAudioSessionIdRef.current = createComposerAudioSessionId();
+    composerSubmitCompleteRef.current = false;
+  }, []);
+
+  const cleanupTemporaryComposerAudio = useCallback((reason = 'composer_abandoned', { keepalive = false } = {}) => {
+    if (composerSubmitCompleteRef.current) return Promise.resolve();
+    const mediaIds = Array.from(temporaryAudioIdsRef.current);
+    if (mediaIds.length === 0) return Promise.resolve();
+    const cleanupPromise = cleanupTemporaryAudio(
+      {
+        mediaIds,
+        composerSessionId: composerAudioSessionIdRef.current,
+        reason,
+      },
+      { keepalive }
+    );
+    if (!keepalive) {
+      cleanupPromise
+        .then(() => {
+          mediaIds.forEach((mediaId) => temporaryAudioIdsRef.current.delete(mediaId));
+        })
+        .catch(() => {});
+    }
+    return cleanupPromise;
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      cleanupTemporaryComposerAudio('composer_unload', { keepalive: true });
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      cleanupTemporaryComposerAudio('composer_unmount', { keepalive: true });
+    };
+  }, [cleanupTemporaryComposerAudio]);
 
   useEffect(() => {
     if (!editPostId) {
@@ -1827,6 +1885,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         await createPost(postPayload);
       }
 
+      composerSubmitCompleteRef.current = true;
+      temporaryAudioIdsRef.current.clear();
+
       toast.success(
         isEditMode
           ? (mode === 'scheduled' ? 'Post updated and rescheduled!' : 'Draft updated!')
@@ -1838,6 +1899,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
       if (!isEditMode && createAnother) {
         resetForm();
+        resetComposerAudioSession();
       } else {
         navigate('/content-library');
         onClose?.();
@@ -1855,11 +1917,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   };
 
   const handleBack = () => {
-    if (onClose) {
-      onClose();
-    } else {
-      navigate('/create-post');
-    }
+    cleanupTemporaryComposerAudio('composer_back')
+      .finally(() => {
+        if (onClose) {
+          onClose();
+        } else {
+          navigate('/create-post');
+        }
+      });
   };
 
   if (editLoading) {
@@ -2496,6 +2561,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         }}
         video={audioDialog.video}
         onRenderComplete={handleAudioRenderComplete}
+        composerSessionId={composerAudioSessionIdRef.current}
+        onTemporaryAudioUploaded={registerTemporaryAudio}
+        onTemporaryAudioRemoved={unregisterTemporaryAudio}
       />
 
       {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}

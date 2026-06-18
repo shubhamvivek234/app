@@ -80,6 +80,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 300,  # every 5 minutes
         "options": {"queue": "default"},
     },
+    "stale-composer-audio-scan": {
+        "task": "celery_workers.tasks.cleanup.scan_stale_composer_audio",
+        "schedule": 300,  # every 5 minutes
+        "options": {"queue": "default"},
+    },
     "check-subscription-expiry": {
         "task": "celery_workers.tasks.subscription_check.check_expiring_subscriptions",
         "schedule": 86400,  # daily

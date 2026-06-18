@@ -86,9 +86,11 @@ const writeSocialAccountsCache = (accounts) => {
   }
 };
 
-const postLegacyUpload = async (file, onProgress) => {
+const postLegacyUpload = async (file, onProgress, options = {}) => {
   const formData = new FormData();
   formData.append('file', file);
+  if (options.purpose) formData.append('purpose', options.purpose);
+  if (options.composerSessionId) formData.append('composer_session_id', options.composerSessionId);
 
   const response = await axios.post(`${API}/upload`, formData, {
     headers: {
@@ -336,7 +338,7 @@ export const getDashboardOverview = async ({ days = 7, refresh = false, sections
 };
 
 // Media Upload with progress tracking
-export const uploadMedia = async (file, onProgress) => {
+export const uploadMedia = async (file, onProgress, options = {}) => {
   let mediaJobId = null;
 
   try {
@@ -346,6 +348,8 @@ export const uploadMedia = async (file, onProgress) => {
         filename: file.name,
         file_size_bytes: file.size,
         content_type: file.type || 'application/octet-stream',
+        ...(options.purpose ? { purpose: options.purpose } : {}),
+        ...(options.composerSessionId ? { composer_session_id: options.composerSessionId } : {}),
       },
       {
         headers: getAuthHeaders(),
@@ -379,11 +383,42 @@ export const uploadMedia = async (file, onProgress) => {
   } catch (error) {
     const status = error?.response?.status;
     if (DIRECT_UPLOAD_FALLBACK_STATUSES.has(status)) {
-      return postLegacyUpload(file, onProgress);
+      return postLegacyUpload(file, onProgress, options);
     }
     await abortDirectUpload(mediaJobId, error?.message || 'Upload failed');
     throw error;
   }
+};
+
+export const cleanupTemporaryAudio = async (
+  { mediaIds = [], composerSessionId = null, reason = 'composer_abandoned' } = {},
+  { keepalive = false } = {}
+) => {
+  const payload = {
+    media_ids: mediaIds,
+    composer_session_id: composerSessionId,
+    reason,
+  };
+  if (keepalive && typeof fetch === 'function') {
+    const response = await fetch(`${API}/media/audio/temp/cleanup`, {
+      method: 'POST',
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      keepalive: true,
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error('Temporary audio cleanup failed');
+    }
+    return response.json();
+  }
+  const response = await axios.post(`${API}/media/audio/temp/cleanup`, payload, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
 };
 
 export const getUploadStatus = async (mediaJobId) => {

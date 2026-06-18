@@ -59,6 +59,7 @@ def cleanup_deleted_post_media(self, post_id: str) -> dict:
 async def _async_cleanup(post_id: str) -> dict:
     from db.mongo import get_client
     from celery_workers.tasks.publish import should_cleanup_media
+    from utils.temp_audio_cleanup import cleanup_temporary_audio_for_post_media
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -77,6 +78,13 @@ async def _async_cleanup(post_id: str) -> dict:
     plan = (user or {}).get("plan", "starter")
 
     media_ids = sorted(_collect_post_media_ids(post))
+    temp_audio_cleanup = await cleanup_temporary_audio_for_post_media(
+        db,
+        post=post,
+        media_ids=media_ids,
+        reason="post_terminal",
+        excluding_post_id=post_id,
+    )
     cleaned = 0
     # Collect permanent thumbnail URLs to store on the post
     # (thumbnails survive cleanup — needed for dashboard previews)
@@ -161,15 +169,19 @@ async def _async_cleanup(post_id: str) -> dict:
         "Cleaned %d media files for post %s (plan=%s, thumbnails_preserved=%d)",
         cleaned, post_id, plan, len(surviving_thumbnail_urls),
     )
-    return {
+    result = {
         "status": "cleaned",
         "count": cleaned,
         "thumbnails_preserved": len(surviving_thumbnail_urls),
     }
+    if any(temp_audio_cleanup.get(key, 0) for key in ("deleted", "skipped", "failed")):
+        result["temporary_audio"] = temp_audio_cleanup
+    return result
 
 
 async def _async_cleanup_deleted_post_media(post_id: str) -> dict:
     from db.mongo import get_client
+    from utils.temp_audio_cleanup import cleanup_temporary_audio_for_post_media
 
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -183,11 +195,20 @@ async def _async_cleanup_deleted_post_media(post_id: str) -> dict:
     if not post.get("deleted_at"):
         return {"status": "post_not_deleted"}
 
+    post_media_ids = sorted(_collect_post_media_ids(post))
+    temp_audio_cleanup = await cleanup_temporary_audio_for_post_media(
+        db,
+        post=post,
+        media_ids=post_media_ids,
+        reason="post_deleted",
+        excluding_post_id=post_id,
+    )
+
     deleted_media = 0
     retained_media = 0
     failed_media = 0
 
-    for media_id in sorted(_collect_post_media_ids(post)):
+    for media_id in post_media_ids:
         outcome = await _delete_media_asset_if_orphaned(
             db,
             media_id=media_id,
@@ -209,12 +230,15 @@ async def _async_cleanup_deleted_post_media(post_id: str) -> dict:
         retained_media,
         failed_media,
     )
-    return {
+    result = {
         "status": "cleaned",
         "deleted_media": deleted_media,
         "retained_media": retained_media,
         "failed_media": failed_media,
     }
+    if any(temp_audio_cleanup.get(key, 0) for key in ("deleted", "skipped", "failed")):
+        result["temporary_audio"] = temp_audio_cleanup
+    return result
 
 
 async def _delete_from_storage(storage_key: str) -> None:
@@ -588,6 +612,31 @@ async def _async_scan_stale_direct_uploads() -> dict:
         "failed": failed,
         "errors": errors,
     }
+
+
+@celery_app.task(
+    name="celery_workers.tasks.cleanup.scan_stale_composer_audio",
+    bind=True,
+)
+def scan_stale_composer_audio(self) -> dict:
+    return run_async(_async_scan_stale_composer_audio())
+
+
+async def _async_scan_stale_composer_audio() -> dict:
+    from db.mongo import get_client
+    from utils.temp_audio_cleanup import cleanup_stale_temporary_audio_assets
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+    result = await cleanup_stale_temporary_audio_assets(db)
+    logger.info(
+        "stale_composer_audio_scan: scanned=%s deleted=%s skipped=%s failed=%s",
+        result.get("scanned"),
+        result.get("deleted"),
+        result.get("skipped"),
+        result.get("failed"),
+    )
+    return result
 
 
 async def _release_upload_slot_if_possible(user_id: str | None) -> None:
