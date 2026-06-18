@@ -44,6 +44,39 @@ const toSeconds = (value) => {
   return Number.isFinite(parsed) ? Math.max(parsed, 0) : 0;
 };
 
+const waitForMediaMetadata = (element) => new Promise((resolve, reject) => {
+  if (!element) {
+    reject(new Error('Media element is not available'));
+    return;
+  }
+  if (element.readyState >= 1) {
+    resolve();
+    return;
+  }
+  const cleanup = () => {
+    element.removeEventListener('loadedmetadata', handleLoaded);
+    element.removeEventListener('error', handleError);
+  };
+  const handleLoaded = () => {
+    cleanup();
+    resolve();
+  };
+  const handleError = () => {
+    cleanup();
+    reject(new Error('Media preview could not load'));
+  };
+  element.addEventListener('loadedmetadata', handleLoaded, { once: true });
+  element.addEventListener('error', handleError, { once: true });
+  element.load?.();
+});
+
+const seekMedia = (element, seconds) => {
+  if (!element) return;
+  const duration = Number.isFinite(element.duration) ? element.duration : null;
+  const target = duration === null ? seconds : Math.min(seconds, Math.max(duration - 0.05, 0));
+  element.currentTime = Math.max(target, 0);
+};
+
 const AddAudioDialog = ({
   open,
   onOpenChange,
@@ -67,6 +100,8 @@ const AddAudioDialog = ({
   const [selectedVolume, setSelectedVolume] = useState(0.9);
   const [muteOriginal, setMuteOriginal] = useState(true);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -95,6 +130,8 @@ const AddAudioDialog = ({
   useEffect(() => {
     if (!open) {
       setIsPreviewing(false);
+      setPreviewLoading(false);
+      setPreviewError('');
       setRenderProgress(0);
       clearTimeout(delayedAudioTimerRef.current);
     }
@@ -114,33 +151,58 @@ const AddAudioDialog = ({
     clearTimeout(delayedAudioTimerRef.current);
     if (videoRef.current) videoRef.current.pause();
     if (audioRef.current) audioRef.current.pause();
+    setPreviewLoading(false);
     setIsPreviewing(false);
   };
 
   const startPreview = async () => {
-    if (!videoRef.current || !audioRef.current || !selectedAudio?.media_url) return;
+    if (!videoRef.current || !video?.url) return;
     clearTimeout(delayedAudioTimerRef.current);
     const videoEl = videoRef.current;
     const audioEl = audioRef.current;
-    videoEl.currentTime = 0;
-    videoEl.volume = muteOriginal ? 0 : originalVolume;
-    videoEl.muted = muteOriginal;
-    audioEl.volume = selectedVolume;
-    audioEl.currentTime = trimStart;
-    setIsPreviewing(true);
+    const hasSelectedAudio = Boolean(audioEl && selectedAudio?.media_url);
+    setPreviewError('');
+    setPreviewLoading(true);
     try {
+      await waitForMediaMetadata(videoEl);
+      seekMedia(videoEl, 0);
+      videoEl.volume = muteOriginal ? 0 : originalVolume;
+      videoEl.muted = muteOriginal;
+
+      if (hasSelectedAudio) {
+        await waitForMediaMetadata(audioEl);
+        audioEl.volume = selectedVolume;
+        seekMedia(audioEl, trimStart);
+      }
+
+      setIsPreviewing(true);
       await videoEl.play();
-      if (offset > 0) {
+      if (hasSelectedAudio && offset > 0) {
         delayedAudioTimerRef.current = setTimeout(() => {
-          audioEl.currentTime = trimStart;
+          seekMedia(audioEl, trimStart);
           audioEl.play().catch(() => {});
         }, offset * 1000);
-      } else {
+      } else if (hasSelectedAudio) {
         await audioEl.play();
       }
-    } catch {
+    } catch (error) {
+      videoEl.pause();
+      audioEl?.pause();
       setIsPreviewing(false);
-      toast.error('Preview could not start. Try clicking play again.');
+      const message = error?.message || 'Preview could not start. Try clicking play again.';
+      setPreviewError(message);
+      toast.error(message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const togglePreview = () => {
+    if (previewLoading) return;
+    if (isPreviewing) {
+      stopPreview();
+    } else {
+      startPreview();
     }
   };
 
@@ -378,18 +440,45 @@ const AddAudioDialog = ({
           <div className="space-y-5 p-6">
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-black shadow-sm">
               {video?.url ? (
-                <video
-                  ref={videoRef}
-                  src={video.url}
-                  className="aspect-video w-full object-contain"
-                  playsInline
-                  onPause={() => {
-                    clearTimeout(delayedAudioTimerRef.current);
-                    audioRef.current?.pause();
-                    setIsPreviewing(false);
-                  }}
-                  onEnded={stopPreview}
-                />
+                <div className="relative">
+                  <video
+                    ref={videoRef}
+                    src={video.url}
+                    poster={video.thumbnailUrl && video.thumbnailUrl !== video.url ? video.thumbnailUrl : undefined}
+                    className="aspect-video w-full cursor-pointer object-contain"
+                    preload="metadata"
+                    playsInline
+                    onClick={togglePreview}
+                    onPause={() => {
+                      clearTimeout(delayedAudioTimerRef.current);
+                      audioRef.current?.pause();
+                      setIsPreviewing(false);
+                    }}
+                    onEnded={stopPreview}
+                    onError={() => {
+                      setPreviewError('Video preview could not load');
+                      setIsPreviewing(false);
+                      setPreviewLoading(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={togglePreview}
+                    disabled={previewLoading}
+                    className="absolute inset-0 flex items-center justify-center bg-black/10 transition hover:bg-black/20 disabled:cursor-wait"
+                    aria-label={isPreviewing ? 'Pause preview mix' : 'Play preview mix'}
+                  >
+                    <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/95 text-gray-950 shadow-lg ring-1 ring-black/10">
+                      {previewLoading ? (
+                        <FaSpinner className="animate-spin" />
+                      ) : isPreviewing ? (
+                        <FaPause />
+                      ) : (
+                        <FaPlay className="ml-1" />
+                      )}
+                    </span>
+                  </button>
+                </div>
               ) : (
                 <div className="flex aspect-video items-center justify-center text-sm text-gray-400">No video selected</div>
               )}
@@ -399,6 +488,10 @@ const AddAudioDialog = ({
                   src={selectedAudio.media_url}
                   preload="metadata"
                   onTimeUpdate={handleAudioTimeUpdate}
+                  onError={() => {
+                    setPreviewError('Selected audio preview could not load');
+                    stopPreview();
+                  }}
                 />
               )}
             </div>
@@ -409,11 +502,21 @@ const AddAudioDialog = ({
                   <p className="text-sm font-semibold text-gray-900">Preview mix</p>
                   <p className="text-xs text-gray-500">Browser preview approximates the final render.</p>
                 </div>
-                <Button type="button" variant="outline" onClick={isPreviewing ? stopPreview : startPreview} disabled={!selectedAudio?.media_url}>
-                  {isPreviewing ? <FaPause className="mr-2" /> : <FaPlay className="mr-2" />}
-                  {isPreviewing ? 'Pause' : 'Play'}
+                <Button type="button" variant="outline" onClick={togglePreview} disabled={!video?.url || previewLoading}>
+                  {previewLoading ? <FaSpinner className="mr-2 animate-spin" /> : isPreviewing ? <FaPause className="mr-2" /> : <FaPlay className="mr-2" />}
+                  {previewLoading ? 'Loading' : isPreviewing ? 'Pause' : selectedAudio?.media_url ? 'Play mix' : 'Play video'}
                 </Button>
               </div>
+              {previewError && (
+                <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {previewError}
+                </p>
+              )}
+              {!selectedAudio?.media_url && (
+                <p className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Select or upload an audio track to preview the final mix. The video preview can still play without a selected track.
+                </p>
+              )}
 
               <div className="mt-5 space-y-5">
                 <div>
