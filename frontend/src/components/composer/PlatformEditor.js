@@ -240,6 +240,7 @@ const PlatformEditor = ({
   onRemoveMedia,    // (index: number) => void  — only on first platform
   onReorderMedia,   // (from, to) => void       — only on first platform
   onEditAudio,      // (index: number) => void  — video media only
+  onRemoveAudio,    // (index: number) => void  — custom audio on rendered video only
   fileInputRef,
   // Accordion expand/collapse
   isExpanded = true,
@@ -1380,6 +1381,16 @@ const PlatformEditor = ({
                           </button>
                         )}
 
+                        {onRemoveAudio && item.type === 'video' && item.audioMix && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
+                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700"
+                            title="Remove custom audio and restore original video"
+                          >
+                            <FaTimes />
+                          </button>
+                        )}
+
                         {/* Crop button (images only) */}
                         {onCropMedia && item.type !== 'video' && (
                           <button
@@ -1393,7 +1404,7 @@ const PlatformEditor = ({
 
                         {/* Position badge when multiple */}
                         {mediaArray.length > 1 && (
-                          <div className={`absolute ${item.type === 'video' && onEditAudio ? 'bottom-1 right-1' : 'bottom-1 left-1'} w-4 h-4 rounded bg-black/60 text-white text-[9px] flex items-center justify-center font-medium`}>
+                          <div className={`absolute ${item.type === 'video' && item.audioMix && onRemoveAudio ? 'top-7 left-1' : item.type === 'video' && onEditAudio ? 'bottom-1 right-1' : 'bottom-1 left-1'} w-4 h-4 rounded bg-black/60 text-white text-[9px] flex items-center justify-center font-medium`}>
                             {idx + 1}
                           </div>
                         )}
@@ -1603,6 +1614,15 @@ const PlatformEditor = ({
                           >
                             <FaMusic />
                             Audio
+                          </button>
+                        )}
+                        {onRemoveAudio && item.type === 'video' && item.audioMix && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
+                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700"
+                            title="Remove custom audio and restore original video"
+                          >
+                            <FaTimes />
                           </button>
                         )}
                         {/* Crop button for secondary platforms */}

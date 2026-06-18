@@ -44,6 +44,19 @@ const toSeconds = (value) => {
   return Number.isFinite(parsed) ? Math.max(parsed, 0) : 0;
 };
 
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const clampVolume = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return clamp(parsed, 0, 1);
+};
+
+const clampSeconds = (value, max = null) => {
+  const seconds = toSeconds(value);
+  return Number.isFinite(max) && max > 0 ? Math.min(seconds, max) : seconds;
+};
+
 const waitForMediaMetadata = (element) => new Promise((resolve, reject) => {
   if (!element) {
     reject(new Error('Media element is not available'));
@@ -110,6 +123,28 @@ const AddAudioDialog = ({
   const licensedAudioProviderName = env.AUDIO_PROVIDER_NAME || 'licensed audio provider';
 
   const selectedAudio = audioAssets.find((asset) => asset.media_id === selectedAudioId) || null;
+  const videoDuration = Number(video?.duration || 0);
+  const hasVideoDuration = Number.isFinite(videoDuration) && videoDuration > 0;
+  const selectedAudioDuration = Number(selectedAudio?.duration_seconds || 0);
+  const hasAudioDuration = Number.isFinite(selectedAudioDuration) && selectedAudioDuration > 0;
+  const trimStartSeconds = clampSeconds(trimStart, hasAudioDuration ? selectedAudioDuration : null);
+  const trimEndSeconds = trimEnd === '' ? null : clampSeconds(trimEnd, hasAudioDuration ? selectedAudioDuration : null);
+  const effectiveTrimEnd = trimEndSeconds || selectedAudioDuration || videoDuration || null;
+  const offsetSeconds = clampSeconds(offset, hasVideoDuration ? videoDuration : null);
+  const visibleTimelineDuration = Math.max(
+    selectedAudioDuration || 0,
+    videoDuration || 0,
+    trimEndSeconds || 0,
+    trimStartSeconds || 0,
+    1,
+  );
+  const trimStartPercent = clamp((trimStartSeconds / visibleTimelineDuration) * 100, 0, 100);
+  const trimEndPercent = effectiveTrimEnd
+    ? clamp((effectiveTrimEnd / visibleTimelineDuration) * 100, trimStartPercent, 100)
+    : 100;
+  const offsetPercent = clamp((offsetSeconds / visibleTimelineDuration) * 100, 0, 100);
+  const originalVolumePercent = Math.round(clampVolume(originalVolume) * 100);
+  const selectedVolumePercent = Math.round(clampVolume(selectedVolume) * 100);
   const canRender = Boolean(video?.mediaId && selectedAudio?.media_id && !rendering && !uploadingAudio);
 
   useEffect(() => {
@@ -139,13 +174,18 @@ const AddAudioDialog = ({
 
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.volume = muteOriginal ? 0 : originalVolume;
+      videoRef.current.volume = muteOriginal ? 0 : clampVolume(originalVolume);
       videoRef.current.muted = muteOriginal;
     }
     if (audioRef.current) {
-      audioRef.current.volume = selectedVolume;
+      audioRef.current.volume = clampVolume(selectedVolume);
     }
   }, [muteOriginal, originalVolume, selectedVolume]);
+
+  useEffect(() => {
+    stopPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAudioId]);
 
   const stopPreview = () => {
     clearTimeout(delayedAudioTimerRef.current);
@@ -166,22 +206,22 @@ const AddAudioDialog = ({
     try {
       await waitForMediaMetadata(videoEl);
       seekMedia(videoEl, 0);
-      videoEl.volume = muteOriginal ? 0 : originalVolume;
+      videoEl.volume = muteOriginal ? 0 : clampVolume(originalVolume);
       videoEl.muted = muteOriginal;
 
       if (hasSelectedAudio) {
         await waitForMediaMetadata(audioEl);
-        audioEl.volume = selectedVolume;
-        seekMedia(audioEl, trimStart);
+        audioEl.volume = clampVolume(selectedVolume);
+        seekMedia(audioEl, trimStartSeconds);
       }
 
       setIsPreviewing(true);
       await videoEl.play();
-      if (hasSelectedAudio && offset > 0) {
+      if (hasSelectedAudio && offsetSeconds > 0) {
         delayedAudioTimerRef.current = setTimeout(() => {
-          seekMedia(audioEl, trimStart);
+          seekMedia(audioEl, trimStartSeconds);
           audioEl.play().catch(() => {});
-        }, offset * 1000);
+        }, offsetSeconds * 1000);
       } else if (hasSelectedAudio) {
         await audioEl.play();
       }
@@ -209,15 +249,21 @@ const AddAudioDialog = ({
   const handleAudioTimeUpdate = () => {
     const audioEl = audioRef.current;
     if (!audioEl) return;
-    const end = trimEnd === '' ? null : toSeconds(trimEnd);
+    const end = trimEnd === '' ? null : trimEndSeconds;
     if (end && audioEl.currentTime >= end) {
       if (loopToEnd) {
-        audioEl.currentTime = trimStart;
+        seekMedia(audioEl, trimStartSeconds);
         audioEl.play().catch(() => {});
       } else {
         audioEl.pause();
       }
     }
+  };
+
+  const handleClearSelectedAudio = () => {
+    stopPreview();
+    setSelectedAudioId('');
+    setPreviewError('');
   };
 
   const handleAudioUpload = async (event) => {
@@ -257,9 +303,16 @@ const AddAudioDialog = ({
 
   const handleRender = async () => {
     if (!canRender) return;
-    const trimEndSeconds = trimEnd === '' ? null : toSeconds(trimEnd);
-    if (trimEndSeconds !== null && trimEndSeconds <= trimStart) {
+    if (trimEndSeconds !== null && trimEndSeconds <= trimStartSeconds) {
       toast.error('Trim end must be after trim start');
+      return;
+    }
+    if (hasAudioDuration && trimStartSeconds >= selectedAudioDuration) {
+      toast.error('Trim start must be inside the selected audio track');
+      return;
+    }
+    if (hasVideoDuration && offsetSeconds >= videoDuration) {
+      toast.error('Start time must be inside the video duration');
       return;
     }
     setRendering(true);
@@ -267,14 +320,14 @@ const AddAudioDialog = ({
     try {
       const render = await renderVideoAudio(video.mediaId, {
         audio_media_id: selectedAudio.media_id,
-        trim_start_ms: Math.round(trimStart * 1000),
+        trim_start_ms: Math.round(trimStartSeconds * 1000),
         trim_end_ms: trimEndSeconds === null ? null : Math.round(trimEndSeconds * 1000),
-        video_offset_ms: Math.round(offset * 1000),
+        video_offset_ms: Math.round(offsetSeconds * 1000),
         loop_to_video_end: loopToEnd,
         fade_in_ms: Math.round(fadeIn * 1000),
         fade_out_ms: Math.round(fadeOut * 1000),
-        original_volume: muteOriginal ? 0 : originalVolume,
-        selected_volume: selectedVolume,
+        original_volume: muteOriginal ? 0 : clampVolume(originalVolume),
+        selected_volume: clampVolume(selectedVolume),
         mute_original: muteOriginal,
         normalize_audio: true,
       });
@@ -372,6 +425,17 @@ const AddAudioDialog = ({
                   ))}
                 </div>
               )}
+              {selectedAudio && (
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-semibold text-slate-700">Selected: {audioLabel(selectedAudio)}</p>
+                    <p className="text-[11px] text-slate-500">Clear this if you want to preview the video without added audio.</p>
+                  </div>
+                  <Button type="button" variant="ghost" size="sm" onClick={handleClearSelectedAudio} disabled={rendering}>
+                    Clear
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-4">
@@ -397,27 +461,71 @@ const AddAudioDialog = ({
               </div>
               <div className="rounded-xl bg-slate-950 px-3 py-3">
                 <div className="flex h-16 items-end gap-1">
-                  {waveformBars.map((height, index) => (
-                    <span
-                      key={index}
-                      className="flex-1 rounded-full bg-cyan-300/80"
-                      style={{ height: `${height}%` }}
-                    />
-                  ))}
+                  {waveformBars.map((height, index) => {
+                    const barPercent = (index / Math.max(waveformBars.length - 1, 1)) * 100;
+                    const inTrimRange = barPercent >= trimStartPercent && barPercent <= trimEndPercent;
+                    return (
+                      <span
+                        key={index}
+                        className={`flex-1 rounded-full transition-colors ${inTrimRange ? 'bg-cyan-300/90' : 'bg-slate-600/70'}`}
+                        style={{ height: `${height}%` }}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="relative mt-3 h-3 rounded-full bg-slate-800">
+                  <div
+                    className="absolute top-0 h-3 rounded-full bg-cyan-300/80"
+                    style={{ left: `${trimStartPercent}%`, width: `${Math.max(trimEndPercent - trimStartPercent, 1)}%` }}
+                  />
+                  <div
+                    className="absolute -top-1 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.8)]"
+                    style={{ left: `${offsetPercent}%` }}
+                    title="Video start offset"
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Audio trim {formatDuration(trimStartSeconds)} - {formatDuration(effectiveTrimEnd || 0)}</span>
+                  <span>Starts at video {formatDuration(offsetSeconds)}</span>
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Trim start (sec)</Label>
-                  <Input type="number" min="0" step="0.1" value={trimStart} onChange={(event) => setTrimStart(toSeconds(event.target.value))} />
+                  <Input
+                    type="number"
+                    min="0"
+                    max={hasAudioDuration ? selectedAudioDuration : undefined}
+                    step="0.1"
+                    value={trimStart}
+                    onChange={(event) => setTrimStart(clampSeconds(event.target.value, hasAudioDuration ? selectedAudioDuration : null))}
+                  />
                 </div>
                 <div>
                   <Label className="text-xs">Trim end (sec)</Label>
-                  <Input type="number" min="0" step="0.1" value={trimEnd} onChange={(event) => setTrimEnd(event.target.value)} placeholder="End" />
+                  <Input
+                    type="number"
+                    min="0"
+                    max={hasAudioDuration ? selectedAudioDuration : undefined}
+                    step="0.1"
+                    value={trimEnd}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setTrimEnd(value === '' ? '' : String(clampSeconds(value, hasAudioDuration ? selectedAudioDuration : null)));
+                    }}
+                    placeholder="End"
+                  />
                 </div>
                 <div>
                   <Label className="text-xs">Start at video time (sec)</Label>
-                  <Input type="number" min="0" step="0.1" value={offset} onChange={(event) => setOffset(toSeconds(event.target.value))} />
+                  <Input
+                    type="number"
+                    min="0"
+                    max={hasVideoDuration ? videoDuration : undefined}
+                    step="0.1"
+                    value={offset}
+                    onChange={(event) => setOffset(clampSeconds(event.target.value, hasVideoDuration ? videoDuration : null))}
+                  />
                 </div>
                 <div>
                   <Label className="text-xs">Fade in / out (sec)</Label>
@@ -522,28 +630,28 @@ const AddAudioDialog = ({
                 <div>
                   <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
                     <span>Original video audio</span>
-                    <span>{muteOriginal ? 'Muted' : `${Math.round(originalVolume * 100)}%`}</span>
+                    <span>{muteOriginal ? 'Muted' : `${originalVolumePercent}%`}</span>
                   </div>
                   <Slider
-                    value={[Math.round(originalVolume * 100)]}
+                    value={[originalVolumePercent]}
                     min={0}
                     max={100}
                     step={1}
                     disabled={muteOriginal}
-                    onValueChange={(value) => setOriginalVolume((value?.[0] || 0) / 100)}
+                    onValueChange={(value) => setOriginalVolume(clampVolume((value?.[0] || 0) / 100))}
                   />
                 </div>
                 <div>
                   <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
                     <span>Selected audio</span>
-                    <span>{Math.round(selectedVolume * 100)}%</span>
+                    <span>{selectedVolumePercent}%</span>
                   </div>
                   <Slider
-                    value={[Math.round(selectedVolume * 100)]}
+                    value={[selectedVolumePercent]}
                     min={0}
-                    max={150}
+                    max={100}
                     step={1}
-                    onValueChange={(value) => setSelectedVolume((value?.[0] || 0) / 100)}
+                    onValueChange={(value) => setSelectedVolume(clampVolume((value?.[0] || 0) / 100))}
                   />
                 </div>
               </div>
