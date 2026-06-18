@@ -1372,7 +1372,7 @@ const PlatformEditor = ({
                         {onEditAudio && item.type === 'video' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
-                            className="absolute bottom-1 left-1 flex h-5 items-center gap-1 rounded bg-black/75 px-1.5 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 z-10"
+                            className="absolute bottom-1 left-1 z-10 flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
                             title="Add or replace audio"
                           >
                             <FaMusic />
@@ -1393,7 +1393,7 @@ const PlatformEditor = ({
 
                         {/* Position badge when multiple */}
                         {mediaArray.length > 1 && (
-                          <div className="absolute bottom-1 left-1 w-4 h-4 rounded bg-black/60 text-white text-[9px] flex items-center justify-center font-medium">
+                          <div className={`absolute ${item.type === 'video' && onEditAudio ? 'bottom-1 right-1' : 'bottom-1 left-1'} w-4 h-4 rounded bg-black/60 text-white text-[9px] flex items-center justify-center font-medium`}>
                             {idx + 1}
                           </div>
                         )}
@@ -1589,6 +1589,21 @@ const PlatformEditor = ({
                           <video src={item.url} className="w-full h-full object-cover" />
                         ) : (
                           <img src={item.url} alt="" className="w-full h-full object-cover" />
+                        )}
+                        {item.type === 'video' && item.audioMix && (
+                          <div className="absolute left-1 top-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
+                            Audio
+                          </div>
+                        )}
+                        {onEditAudio && item.type === 'video' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
+                            className="absolute bottom-1 left-1 z-10 flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
+                            title="Add or replace audio"
+                          >
+                            <FaMusic />
+                            Audio
+                          </button>
                         )}
                         {/* Crop button for secondary platforms */}
                         {onCropMedia && item.type !== 'video' && (
