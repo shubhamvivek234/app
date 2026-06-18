@@ -49,6 +49,8 @@ async def list_media_assets(current_user: CurrentUser, db: DB, asset_kind: str |
     }
     if asset_kind in {"image", "video", "audio"}:
         query["asset_kind"] = asset_kind
+    if asset_kind == "audio":
+        query["temporary"] = {"$ne": True}
     cursor = db.media_assets.find(
         query,
         {"_id": 0},

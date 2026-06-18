@@ -41,6 +41,8 @@ class MediaUploadSessionRequest(BaseModel):
     filename: str
     file_size_bytes: int = Field(gt=0)
     content_type: str
+    purpose: str | None = None
+    composer_session_id: str | None = Field(default=None, max_length=80)
 
 
 class MediaUploadPartResponse(BaseModel):
@@ -110,6 +112,13 @@ class MediaAssetResponse(BaseModel):
     source_label: str | None = None
     source_attribution: dict[str, Any] | None = None
     source_stage: MediaSourceStage | None = None
+    temporary: bool | None = None
+    purpose: str | None = None
+    composer_session_id: str | None = None
+    temporary_audio_state: str | None = None
+    cleanup_after: datetime | None = None
+    cleanup_reason: str | None = None
+    deleted_at: datetime | None = None
 
 
 class RemoteMediaImportItem(BaseModel):
@@ -202,3 +211,9 @@ class AudioRenderResponse(BaseModel):
     media_job_id: str
     status: MediaStatus
     message: str = "Audio render queued"
+
+
+class TemporaryAudioCleanupRequest(BaseModel):
+    media_ids: list[str] = Field(default_factory=list, max_length=100)
+    composer_session_id: str | None = Field(default=None, max_length=80)
+    reason: str = Field(default="composer_abandoned", max_length=80)

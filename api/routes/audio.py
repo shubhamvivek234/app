@@ -6,9 +6,16 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, status
 
 from api.deps import CurrentUser, DB, require_permission
-from api.models.media import AudioRenderRequest, AudioRenderResponse, MediaAssetResponse, MediaStatus
+from api.models.media import (
+    AudioRenderRequest,
+    AudioRenderResponse,
+    MediaAssetResponse,
+    MediaStatus,
+    TemporaryAudioCleanupRequest,
+)
 from api.task_queue import enqueue_task
 from utils.observability import event_log
+from utils.temp_audio_cleanup import cleanup_temporary_audio_assets
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["audio-render"])
@@ -157,3 +164,27 @@ async def get_audio_render_status(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio render not found")
     return MediaAssetResponse(**doc)
+
+
+@router.post(
+    "/media/audio/temp/cleanup",
+    dependencies=[require_permission("media:upload")],
+)
+async def cleanup_temporary_audio(
+    payload: TemporaryAudioCleanupRequest,
+    current_user: CurrentUser,
+    db: DB,
+) -> dict:
+    if not payload.media_ids and not payload.composer_session_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide media_ids or composer_session_id",
+        )
+    return await cleanup_temporary_audio_assets(
+        db,
+        user_id=current_user["user_id"],
+        workspace_id=current_user.get("default_workspace_id") or current_user["user_id"],
+        media_ids=payload.media_ids,
+        composer_session_id=payload.composer_session_id,
+        reason=payload.reason,
+    )
