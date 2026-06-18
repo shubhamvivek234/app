@@ -1333,6 +1333,53 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     });
   };
 
+  const restoreOriginalVideoAudio = (item) => {
+    const originalMediaId = item?.originalMediaId || item?.original_media_id || null;
+    const originalUrl = item?.originalUrl || item?.sourceUrl || null;
+    if (!originalMediaId || !originalUrl) {
+      return null;
+    }
+    const {
+      audioMix: _audioMix,
+      originalMediaId: _originalMediaId,
+      original_media_id: _originalMediaSnakeId,
+      originalThumbnailUrl: _originalThumbnailUrl,
+      originalName: _originalName,
+      ...rest
+    } = item;
+    return {
+      ...rest,
+      mediaId: originalMediaId,
+      url: originalUrl,
+      originalUrl,
+      sourceUrl: originalUrl,
+      thumbnailUrl: item.originalThumbnailUrl || originalUrl,
+      name: item.originalName || item.name || 'Video',
+    };
+  };
+
+  const handleRemoveAudioForPlatform = (accountId, index) => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const mediaItems = [...getEffectiveMediaForAccount(normalizedAccountId)];
+    const item = mediaItems[index];
+    if (!item || item.type !== 'video' || !item.audioMix) return;
+
+    const restoredEntry = restoreOriginalVideoAudio(item);
+    if (!restoredEntry) {
+      toast.error('Original video is not available for this rendered asset. Re-upload the original video to remove custom audio.');
+      return;
+    }
+
+    mediaItems[index] = restoredEntry;
+    if (!normalizedAccountId) {
+      setUploadedMedia(mediaItems);
+      clearDerivedPlatformMediaOverrides();
+    } else {
+      updateAccountOverride(normalizedAccountId, { media: mediaItems });
+    }
+    toast.success('Custom audio removed');
+  };
+
   const handleAudioRenderComplete = async (asset) => {
     if (!asset?.media_url || !audioDialog.video) return;
     const renderedEntry = await createMediaEntryFromAsset(asset, {
@@ -1341,9 +1388,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     const nextEntry = {
       ...audioDialog.video,
       ...renderedEntry,
+      originalMediaId: audioDialog.video.originalMediaId || audioDialog.video.mediaId,
       originalUrl: audioDialog.video.originalUrl || audioDialog.video.url,
       sourceUrl: audioDialog.video.sourceUrl || audioDialog.video.originalUrl || audioDialog.video.url,
       sourceFile: audioDialog.video.sourceFile || audioDialog.video.file,
+      originalThumbnailUrl: audioDialog.video.originalThumbnailUrl || audioDialog.video.thumbnailUrl,
+      originalName: audioDialog.video.originalName || audioDialog.video.name,
       audioMix: asset.audio_mix || {
         source_label: asset.source_label || 'Custom audio',
       },
@@ -1936,6 +1986,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
             onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
             onEditAudio={(idx) => handleEditAudioForPlatform(null, idx)}
+            onRemoveAudio={(idx) => handleRemoveAudioForPlatform(null, idx)}
             fileInputRef={fileInputRef}
             postFormat={postFormat}
             onPostFormatChange={setPostFormat}
@@ -2009,6 +2060,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 onRemoveMedia={(idx) => activePlatformAccount && handleRemoveMediaForPlatform(activePlatformAccount.id, idx)}
                 onReorderMedia={(from, to) => activePlatformAccount && handleReorderMediaForPlatform(activePlatformAccount.id, from, to)}
                 onEditAudio={(idx) => activePlatformAccount && handleEditAudioForPlatform(activePlatformAccount.id, idx)}
+                onRemoveAudio={(idx) => activePlatformAccount && handleRemoveAudioForPlatform(activePlatformAccount.id, idx)}
                 fileInputRef={undefined}
                 postFormat={postFormat}
                 onPostFormatChange={setPostFormat}
