@@ -35,6 +35,7 @@ import { SiBluesky, SiThreads } from 'react-icons/si';
 
 import AccountSelector from '@/components/composer/AccountSelector';
 import PlatformEditor from '@/components/composer/PlatformEditor';
+import AddAudioDialog from '@/components/composer/AddAudioDialog';
 import PreviewPanel from '@/components/composer/previews/PreviewPanel';
 
 // ── Timezone list (comprehensive IANA) ────────────────────────────────────────
@@ -615,6 +616,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   );
   const [loading,               setLoading]               = useState(false);
   const [altTexts,              setAltTexts]              = useState([]);
+  const [audioDialog,           setAudioDialog]           = useState({
+    open: false,
+    accountId: null,
+    index: null,
+    video: null,
+  });
 
   const inferMediaKind = useCallback((items) => {
     const mediaItems = Array.isArray(items) ? items : [];
@@ -1084,7 +1091,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
       height: dims.height || asset.height || 0,
       duration: asset.duration_seconds || 0,
       hasAudio: inferredIsVideo ? undefined : false,
+      audioMix: asset.audio_mix || null,
       sourceProvider: asset.source_provider || null,
+      sourceLabel: asset.source_label || null,
       sourceAttribution: asset.source_attribution || null,
     };
   }, []);
@@ -1305,6 +1314,58 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     const [moved] = arr.splice(fromIndex, 1);
     arr.splice(toIndex, 0, moved);
     updateAccountOverride(accountId, { media: arr });
+  };
+
+  const handleEditAudioForPlatform = (accountId, index) => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const mediaItems = getEffectiveMediaForAccount(normalizedAccountId);
+    const item = mediaItems[index];
+    if (!item || item.type !== 'video') return;
+    if (!item.mediaId) {
+      toast.error('Upload processing must finish before audio can be added');
+      return;
+    }
+    setAudioDialog({
+      open: true,
+      accountId: normalizedAccountId,
+      index,
+      video: item,
+    });
+  };
+
+  const handleAudioRenderComplete = async (asset) => {
+    if (!asset?.media_url || !audioDialog.video) return;
+    const renderedEntry = await createMediaEntryFromAsset(asset, {
+      fallbackName: `${audioDialog.video.name || 'video'} with audio`,
+    });
+    const nextEntry = {
+      ...audioDialog.video,
+      ...renderedEntry,
+      originalUrl: audioDialog.video.originalUrl || audioDialog.video.url,
+      sourceUrl: audioDialog.video.sourceUrl || audioDialog.video.originalUrl || audioDialog.video.url,
+      sourceFile: audioDialog.video.sourceFile || audioDialog.video.file,
+      audioMix: asset.audio_mix || {
+        source_label: asset.source_label || 'Custom audio',
+      },
+    };
+
+    if (!audioDialog.accountId) {
+      setUploadedMedia((prev) => {
+        const next = [...prev];
+        if (!next[audioDialog.index]) return prev;
+        next[audioDialog.index] = nextEntry;
+        return next;
+      });
+      clearDerivedPlatformMediaOverrides();
+    } else {
+      const accountMedia = [...getEffectiveMediaForAccount(audioDialog.accountId)];
+      if (!accountMedia[audioDialog.index]) {
+        toast.error('Media item no longer exists');
+        return;
+      }
+      accountMedia[audioDialog.index] = nextEntry;
+      updateAccountOverride(audioDialog.accountId, { media: accountMedia });
+    }
   };
 
   const uploadCoverImageToBackend = async (file) => {
@@ -1874,6 +1935,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             onImportRemoteMedia={(items) => handleImportRemoteMediaForPlatform(null, items)}
             onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
             onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
+            onEditAudio={(idx) => handleEditAudioForPlatform(null, idx)}
             fileInputRef={fileInputRef}
             postFormat={postFormat}
             onPostFormatChange={setPostFormat}
@@ -1946,6 +2008,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 onImportRemoteMedia={(items) => activePlatformAccount && handleImportRemoteMediaForPlatform(activePlatformAccount.id, items)}
                 onRemoveMedia={(idx) => activePlatformAccount && handleRemoveMediaForPlatform(activePlatformAccount.id, idx)}
                 onReorderMedia={(from, to) => activePlatformAccount && handleReorderMediaForPlatform(activePlatformAccount.id, from, to)}
+                onEditAudio={(idx) => activePlatformAccount && handleEditAudioForPlatform(activePlatformAccount.id, idx)}
                 fileInputRef={undefined}
                 postFormat={postFormat}
                 onPostFormatChange={setPostFormat}
@@ -2369,6 +2432,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     <>
       {/* Hidden file inputs */}
       <input ref={coverImageInputRef} type="file" accept="image/*" onChange={handleCoverImageChange} className="hidden" />
+
+      <AddAudioDialog
+        open={audioDialog.open}
+        onOpenChange={(open) => {
+          setAudioDialog((prev) => ({
+            ...prev,
+            open,
+            ...(open ? {} : { accountId: null, index: null, video: null }),
+          }));
+        }}
+        video={audioDialog.video}
+        onRenderComplete={handleAudioRenderComplete}
+      />
 
       {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
       <Dialog open={showTimeslotPicker} onOpenChange={setShowTimeslotPicker}>

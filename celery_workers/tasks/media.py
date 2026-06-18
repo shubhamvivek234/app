@@ -85,6 +85,35 @@ def import_remote_media(self, media_job_id: str, user_id: str) -> dict:
     return run_async(_async_import_remote_media(self, media_job_id, user_id))
 
 
+@celery_app.task(
+    name="celery_workers.tasks.media.render_video_audio_mix",
+    bind=True,
+    max_retries=1,
+    acks_late=True,
+    queue="media_processing",
+    time_limit=7500,
+    soft_time_limit=7200,
+)
+def render_video_audio_mix(
+    self,
+    render_job_id: str,
+    rendered_media_id: str,
+    video_media_id: str,
+    audio_media_id: str,
+    user_id: str,
+    mix: dict,
+) -> dict:
+    return run_async(_async_render_video_audio_mix(
+        self,
+        render_job_id,
+        rendered_media_id,
+        video_media_id,
+        audio_media_id,
+        user_id,
+        mix,
+    ))
+
+
 async def _async_import_remote_media(task, media_job_id: str, user_id: str) -> dict:
     temp_path: str | None = None
     cache_redis = None
@@ -199,6 +228,200 @@ async def _async_import_remote_media(task, media_job_id: str, user_id: str) -> d
                 logger.warning("Could not cleanup media import auth %s: %s", auth_ref, exc)
 
 
+def _asset_kind_for_doc(doc: dict | None) -> str:
+    if not doc:
+        return ""
+    if doc.get("asset_kind"):
+        return str(doc["asset_kind"])
+    mime_type = str(doc.get("mime_type") or doc.get("content_type") or "")
+    if mime_type.startswith("video/"):
+        return "video"
+    if mime_type.startswith("audio/"):
+        return "audio"
+    return "image"
+
+
+def _storage_ref(doc: dict) -> str | None:
+    return doc.get("storage_key") or doc.get("media_url") or doc.get("url")
+
+
+async def _mark_render_failed(rendered_media_id: str, error_message: str) -> None:
+    try:
+        _client, db = await _get_db()
+        await db.media_assets.update_one(
+            {"media_id": rendered_media_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "error_message": error_message,
+                    "processed_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+    except Exception as mark_exc:
+        logger.error("Failed to mark audio render %s as failed: %s", rendered_media_id, mark_exc)
+
+
+async def _async_render_video_audio_mix(
+    task,
+    render_job_id: str,
+    rendered_media_id: str,
+    video_media_id: str,
+    audio_media_id: str,
+    user_id: str,
+    mix: dict,
+) -> dict:
+    video_path: str | None = None
+    audio_path: str | None = None
+    output_path: str | None = None
+    try:
+        from media_pipeline.validation import validate_media
+        from media_pipeline.ffmpeg_worker import render_video_with_audio
+        from utils.observability import event_log, shorten_provider_error
+        from utils.storage import download_file_to_path_async, upload_file_from_path_async
+
+        _client, db = await _get_db()
+        rendered_asset = await db.media_assets.find_one(
+            {"media_id": rendered_media_id, "user_id": user_id},
+            {"_id": 0},
+        )
+        if not rendered_asset:
+            return {"status": "not_found"}
+
+        video_asset = await db.media_assets.find_one(
+            {"media_id": video_media_id, "user_id": user_id},
+            {"_id": 0},
+        )
+        audio_asset = await db.media_assets.find_one(
+            {"media_id": audio_media_id, "user_id": user_id},
+            {"_id": 0},
+        )
+        if not video_asset or not audio_asset:
+            raise ValueError("Source video or audio no longer exists")
+        if video_asset.get("status") != "ready" or audio_asset.get("status") != "ready":
+            raise ValueError("Source video and audio must be ready before rendering")
+        if _asset_kind_for_doc(video_asset) != "video":
+            raise ValueError("Audio render source media is not a video")
+        if _asset_kind_for_doc(audio_asset) != "audio":
+            raise ValueError("Selected audio media is not an audio asset")
+
+        event_log(
+            logger,
+            "info",
+            "audio.render.started",
+            user_id=user_id,
+            media_job_id=rendered_media_id,
+            video_media_id=video_media_id,
+            audio_media_id=audio_media_id,
+            render_job_id=render_job_id,
+            outcome="started",
+        )
+
+        video_suffix = pathlib.Path(video_asset.get("storage_key") or video_asset.get("media_url") or ".mp4").suffix or ".mp4"
+        audio_suffix = pathlib.Path(audio_asset.get("storage_key") or audio_asset.get("media_url") or ".m4a").suffix or ".m4a"
+        fd, video_path = tempfile.mkstemp(prefix=f"audio-render-video-{render_job_id}-", suffix=video_suffix)
+        os.close(fd)
+        fd, audio_path = tempfile.mkstemp(prefix=f"audio-render-audio-{render_job_id}-", suffix=audio_suffix)
+        os.close(fd)
+        output_path = os.path.join(tempfile.gettempdir(), f"audio-render-{rendered_media_id}.mp4")
+
+        await download_file_to_path_async(_storage_ref(video_asset), video_path)
+        await download_file_to_path_async(_storage_ref(audio_asset), audio_path)
+
+        video_metadata = await validate_media(video_path, video_asset.get("mime_type") or "video/mp4")
+        audio_metadata = await validate_media(audio_path, audio_asset.get("mime_type") or "audio/mp4")
+        if not video_metadata.get("is_video"):
+            raise ValueError("Stored source media is not a valid video")
+        if not audio_metadata.get("is_audio") and not audio_metadata.get("has_audio"):
+            raise ValueError("Stored selected media is not valid audio")
+
+        await render_video_with_audio(
+            video_path=video_path,
+            audio_path=audio_path,
+            output_path=output_path,
+            video_metadata=video_metadata,
+            mix=mix,
+        )
+        rendered_metadata = await validate_media(output_path, "video/mp4")
+
+        media_folder = f"media/{user_id}"
+        media_filename = f"{rendered_media_id}.mp4"
+        media_storage_key = f"{media_folder}/{media_filename}"
+        media_url = await upload_file_from_path_async(
+            output_path,
+            media_filename,
+            "video/mp4",
+            folder=media_folder,
+        )
+
+        now = datetime.now(timezone.utc)
+        await db.media_assets.update_one(
+            {"media_id": rendered_media_id, "user_id": user_id},
+            {
+                "$set": {
+                    "status": "ready",
+                    "media_url": media_url,
+                    "storage_key": media_storage_key,
+                    "mime_type": "video/mp4",
+                    "asset_kind": "video",
+                    "file_size_bytes": pathlib.Path(output_path).stat().st_size,
+                    "duration_seconds": rendered_metadata.get("duration") or video_metadata.get("duration"),
+                    "width": rendered_metadata.get("width") or video_metadata.get("width"),
+                    "height": rendered_metadata.get("height") or video_metadata.get("height"),
+                    "has_audio": True,
+                    "processed_at": now,
+                    "error_message": None,
+                }
+            },
+        )
+        event_log(
+            logger,
+            "info",
+            "audio.render.succeeded",
+            user_id=user_id,
+            media_job_id=rendered_media_id,
+            video_media_id=video_media_id,
+            audio_media_id=audio_media_id,
+            render_job_id=render_job_id,
+            file_size_bytes=pathlib.Path(output_path).stat().st_size,
+            outcome="ready",
+        )
+        return {"status": "ready", "media_job_id": rendered_media_id, "media_url": media_url}
+    except Exception as exc:
+        logger.error("Audio render failed for %s: %s", rendered_media_id, exc)
+        current_retries = getattr(task.request, "retries", 0)
+        max_retries = getattr(task, "max_retries", 0)
+        if current_retries >= max_retries:
+            await _mark_render_failed(rendered_media_id, str(exc))
+            try:
+                from utils.observability import event_log, shorten_provider_error
+                event_log(
+                    logger,
+                    "error",
+                    "audio.render.failed",
+                    exc_info=exc,
+                    user_id=user_id,
+                    media_job_id=rendered_media_id,
+                    video_media_id=video_media_id,
+                    audio_media_id=audio_media_id,
+                    render_job_id=render_job_id,
+                    failure_type="ffmpeg_render_failed",
+                    provider_error=shorten_provider_error(exc),
+                    outcome="failed",
+                )
+            except Exception:
+                logger.exception("Could not emit audio render failure event")
+            raise
+        raise task.retry(countdown=30, exc=exc)
+    finally:
+        for path in {video_path, audio_path, output_path}:
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError as cleanup_exc:
+                    logger.warning("Could not delete audio render temp file %s: %s", path, cleanup_exc)
+
+
 async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     quarantine_path: str | None = None
     source_storage_key: str | None = None
@@ -253,8 +476,12 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         # Step 1: Validate
         validation_result = await validate_media(input_path, mime_type)
 
+        asset_kind = "video" if mime_type and mime_type.startswith("video/") else (
+            "audio" if mime_type and mime_type.startswith("audio/") else "image"
+        )
+
         # Step 2: Transcode if video
-        if mime_type and mime_type.startswith("video/"):
+        if asset_kind == "video":
             processed_path = await process_video(input_path, validation_result)
         else:
             processed_path = input_path
@@ -274,8 +501,11 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 mime_type,
             )
 
-        # Step 3: Thumbnail
-        thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
+        # Step 3: Thumbnail. Audio assets are library inputs for later video
+        # rendering, so they intentionally do not get image thumbnails.
+        thumbnail_path = None
+        if asset_kind != "audio":
+            thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
 
         # Step 4: Upload media to permanent storage (R2 or Firebase)
         ext = pathlib.Path(processed_path).suffix or ""
@@ -356,6 +586,8 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 "duration_seconds": validation_result.get("duration"),
                 "width": validation_result.get("width"),
                 "height": validation_result.get("height"),
+                "has_audio": validation_result.get("has_audio"),
+                "asset_kind": asset_kind,
                 "source_stage": "ready",
             },
         }

@@ -239,6 +239,7 @@ const PlatformEditor = ({
   onImportRemoteMedia, // (items: RemoteImportItem[]) => void
   onRemoveMedia,    // (index: number) => void  — only on first platform
   onReorderMedia,   // (from, to) => void       — only on first platform
+  onEditAudio,      // (index: number) => void  — video media only
   fileInputRef,
   // Accordion expand/collapse
   isExpanded = true,
@@ -1351,6 +1352,12 @@ const PlatformEditor = ({
                           <img src={item.url} alt="" className="w-full h-full object-cover" />
                         )}
 
+                        {item.type === 'video' && item.audioMix && (
+                          <div className="absolute left-1 top-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
+                            Audio
+                          </div>
+                        )}
+
                         {/* Remove button */}
                         {onRemoveMedia && (
                           <button
@@ -1358,6 +1365,18 @@ const PlatformEditor = ({
                             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
                           >
                             <FaTimes />
+                          </button>
+                        )}
+
+                        {/* Audio button (videos only) */}
+                        {onEditAudio && item.type === 'video' && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
+                            className="absolute bottom-1 left-1 flex h-5 items-center gap-1 rounded bg-black/75 px-1.5 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 z-10"
+                            title="Add or replace audio"
+                          >
+                            <FaMusic />
+                            Audio
                           </button>
                         )}
 

@@ -416,6 +416,53 @@ export const waitForUploadReady = async (
   throw new Error('Upload processing timed out');
 };
 
+export const getAudioAssets = async () => {
+  const response = await axios.get(`${API}/media-assets`, {
+    headers: getAuthHeaders(),
+    params: { asset_kind: 'audio' },
+  });
+  return response.data;
+};
+
+export const renderVideoAudio = async (videoMediaId, mix) => {
+  const response = await axios.post(
+    `${API}/media/${videoMediaId}/audio/render`,
+    { mix },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const getAudioRenderStatus = async (renderJobId) => {
+  const response = await axios.get(`${API}/media/audio-renders/${renderJobId}`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const waitForAudioRenderReady = async (
+  renderJobId,
+  { intervalMs = 2500, timeoutMs = 600000, onPoll = null } = {}
+) => {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const asset = await getAudioRenderStatus(renderJobId);
+    onPoll?.(asset);
+
+    if (asset.status === 'ready') {
+      return asset;
+    }
+    if (asset.status === 'failed') {
+      throw new Error(asset.error_message || 'Audio render failed');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error('Audio render timed out');
+};
+
 export const searchUnsplashMedia = async ({ query, page = 1 }) => {
   const response = await axios.get(`${API}/media-sources/unsplash/search`, {
     headers: getAuthHeaders(),

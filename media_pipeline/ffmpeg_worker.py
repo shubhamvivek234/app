@@ -127,6 +127,112 @@ async def add_silent_audio_track(input_path: str) -> str:
     return output_path
 
 
+def _seconds_from_ms(value: int | float | None) -> float:
+    try:
+        return max(float(value or 0) / 1000.0, 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def build_audio_mix_command(
+    *,
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    video_duration_seconds: float,
+    video_has_audio: bool,
+    mix: dict,
+) -> list[str]:
+    """Build the FFmpeg command for baking selected audio into a video."""
+    duration = max(float(video_duration_seconds or 0), 0.1)
+    trim_start = _seconds_from_ms(mix.get("trim_start_ms"))
+    trim_end = mix.get("trim_end_ms")
+    trim_end_seconds = _seconds_from_ms(trim_end) if trim_end is not None else None
+    offset_seconds = min(_seconds_from_ms(mix.get("video_offset_ms")), max(duration - 0.1, 0.0))
+    selected_duration = max(duration - offset_seconds, 0.1)
+    selected_volume = max(float(mix.get("selected_volume", 1.0) or 0), 0.0)
+    original_volume = max(float(mix.get("original_volume", 1.0) or 0), 0.0)
+    fade_in = min(_seconds_from_ms(mix.get("fade_in_ms")), selected_duration)
+    fade_out = min(_seconds_from_ms(mix.get("fade_out_ms")), selected_duration)
+    delay_ms = int(round(offset_seconds * 1000))
+
+    selected_filters = []
+    atrim_parts = [f"start={trim_start:.3f}"]
+    if trim_end_seconds is not None and trim_end_seconds > trim_start:
+        atrim_parts.append(f"end={trim_end_seconds:.3f}")
+    selected_filters.append(f"atrim={':'.join(atrim_parts)}")
+    selected_filters.append("asetpts=PTS-STARTPTS")
+    if mix.get("loop_to_video_end", True):
+        selected_filters.append("aloop=loop=-1:size=2147483647")
+    selected_filters.append(f"atrim=duration={selected_duration:.3f}")
+    selected_filters.append("asetpts=PTS-STARTPTS")
+    selected_filters.append(f"volume={selected_volume:.4f}")
+    if mix.get("normalize_audio", True):
+        selected_filters.append("dynaudnorm=f=150:g=5")
+    if fade_in > 0:
+        selected_filters.append(f"afade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out > 0:
+        fade_start = max(selected_duration - fade_out, 0.0)
+        selected_filters.append(f"afade=t=out:st={fade_start:.3f}:d={fade_out:.3f}")
+    selected_filters.append(f"adelay={delay_ms}|{delay_ms}")
+    selected_filters.append(f"apad=whole_dur={duration:.3f}")
+    selected_filters.append("atrim=duration={:.3f}".format(duration))
+    selected_filters.append("aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo")
+
+    filter_parts = [f"[1:a]{','.join(selected_filters)}[selected]"]
+    use_original_audio = video_has_audio and not mix.get("mute_original", False) and original_volume > 0
+    if use_original_audio:
+        filter_parts.append(
+            f"[0:a]volume={original_volume:.4f},"
+            "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[original]"
+        )
+        filter_parts.append("[original][selected]amix=inputs=2:duration=longest:dropout_transition=0,alimiter=limit=0.95[aout]")
+    else:
+        filter_parts.append("[selected]alimiter=limit=0.95[aout]")
+
+    return [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-filter_complex", ";".join(filter_parts),
+        "-map", "0:v:0",
+        "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{duration:.3f}",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+
+async def render_video_with_audio(
+    *,
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    video_metadata: dict,
+    mix: dict,
+) -> str:
+    """Bake a selected audio track into a processed MP4 video."""
+    cmd_args = build_audio_mix_command(
+        video_path=video_path,
+        audio_path=audio_path,
+        output_path=output_path,
+        video_duration_seconds=float(video_metadata.get("duration") or 0),
+        video_has_audio=bool(video_metadata.get("has_audio")),
+        mix=mix,
+    )
+    await _run_process(
+        cmd_args,
+        timeout=max(
+            _ffmpeg_timeout_for_file(video_path),
+            _ffmpeg_timeout_for_file(audio_path),
+        ),
+    )
+    return output_path
+
+
 async def convert_gif_for_platforms(
     input_path: str, platforms: list[str], output_dir: str
 ) -> dict[str, str]:

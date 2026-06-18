@@ -15,20 +15,46 @@ router = APIRouter(tags=["media-assets"])
 
 _MAX_MEDIA_ASSET_BYTES = int(os.environ.get("MEDIA_ASSET_MAX_BYTES", str(500 * 1024 * 1024)))
 _STREAM_CHUNK_SIZE = 8 * 1024 * 1024
-_ALLOWED_MIME_PREFIXES = ("image/", "video/")
+_ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/")
+
+
+def _asset_kind_for_mime(content_type: str | None) -> str:
+    if content_type and content_type.startswith("video/"):
+        return "video"
+    if content_type and content_type.startswith("audio/"):
+        return "audio"
+    return "image"
+
+
+def _normalize_asset_doc(doc: dict) -> dict:
+    media_id = doc.get("media_id") or doc.get("asset_id") or doc.get("id") or ""
+    mime_type = doc.get("mime_type") or doc.get("content_type")
+    media_url = doc.get("media_url") or doc.get("url")
+    normalized = dict(doc)
+    normalized.setdefault("id", media_id)
+    normalized.setdefault("media_id", media_id)
+    normalized.setdefault("media_url", media_url)
+    normalized.setdefault("mime_type", mime_type)
+    normalized.setdefault("asset_kind", doc.get("asset_kind") or _asset_kind_for_mime(mime_type))
+    normalized.setdefault("source_label", doc.get("source_label") or doc.get("filename"))
+    return normalized
 
 
 @router.get("/media-assets", dependencies=[require_permission("media:read")])
-async def list_media_assets(current_user: CurrentUser, db: DB):
+async def list_media_assets(current_user: CurrentUser, db: DB, asset_kind: str | None = None):
     workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+    query = {
+        "$or": [{"workspace_id": workspace_id}, {"user_id": current_user["user_id"]}],
+        "status": {"$nin": ["deleted", "cleaned"]},
+    }
+    if asset_kind in {"image", "video", "audio"}:
+        query["asset_kind"] = asset_kind
     cursor = db.media_assets.find(
-        {"workspace_id": workspace_id, "status": {"$ne": "deleted"}},
+        query,
         {"_id": 0},
     ).sort("created_at", -1).limit(200)
     docs = await cursor.to_list(None)
-    for d in docs:
-        d.setdefault("id", d.get("asset_id", ""))
-    return docs
+    return [_normalize_asset_doc(d) for d in docs]
 
 
 @router.post("/media-assets", status_code=status.HTTP_201_CREATED,
@@ -83,13 +109,17 @@ async def upload_media_asset(
 
     doc = {
         "asset_id": asset_id,
+        "media_id": asset_id,
         "id": asset_id,
         "workspace_id": workspace_id,
         "user_id": user_id,
         "filename": original_name or safe_filename,
         "content_type": content_type,
+        "mime_type": content_type,
+        "asset_kind": _asset_kind_for_mime(content_type),
         "file_size_bytes": len(content),
         "url": url,
+        "media_url": url,
         "storage_key": storage_key,
         "status": "ready",
         "created_at": now,
