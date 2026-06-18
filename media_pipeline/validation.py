@@ -37,6 +37,8 @@ def _detect_mime(file_path: str) -> str:
             ".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo",
             ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
             ".gif": "image/gif", ".webp": "image/webp",
+            ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+            ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac",
         }.get(suffix, "application/octet-stream")
 
 
@@ -61,10 +63,11 @@ async def validate_media(file_path: str, claimed_mime: str | None = None) -> dic
         "file_size_bytes": size_bytes,
         "is_video": detected_mime.startswith("video/"),
         "is_image": detected_mime.startswith("image/") and detected_mime != "image/gif",
+        "is_audio": detected_mime.startswith("audio/"),
         "is_animated_gif": False,
     }
 
-    if result["is_video"] or detected_mime == "image/gif":
+    if result["is_video"] or result["is_audio"] or detected_mime == "image/gif":
         probe = await _ffprobe(str(path))
         result.update(_parse_ffprobe(probe))
     elif result["is_image"]:

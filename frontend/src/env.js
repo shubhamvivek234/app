@@ -98,6 +98,18 @@ const env = {
     || process.env.REACT_APP_CANVA_IMPORT_ENABLED
     || 'true'
   ).toLowerCase(),
+
+  AUDIO_PROVIDER_ENABLED: (
+    import.meta.env.VITE_AUDIO_PROVIDER_ENABLED
+    || import.meta.env.REACT_APP_AUDIO_PROVIDER_ENABLED
+    || process.env.REACT_APP_AUDIO_PROVIDER_ENABLED
+    || 'false'
+  ).toLowerCase(),
+
+  AUDIO_PROVIDER_NAME: import.meta.env.VITE_AUDIO_PROVIDER_NAME
+    || import.meta.env.REACT_APP_AUDIO_PROVIDER_NAME
+    || process.env.REACT_APP_AUDIO_PROVIDER_NAME
+    || '',
 };
 
 export default env;

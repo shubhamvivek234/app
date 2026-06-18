@@ -42,7 +42,7 @@ _DEFAULT_MAX_BYTES = _MAX_FILE_BYTES["starter"]
 _CONCURRENT_LIMIT: dict[str, int] = {"starter": 2, "pro": 5, "agency": 10}
 _PENDING_UPLOAD_LIMIT: dict[str, int] = {"starter": 10, "pro": 30, "agency": 75}
 
-_ALLOWED_MIME_PREFIXES = ("image/", "video/")
+_ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/")
 _QUEUE_DEPTH_LIMIT = 200
 _QUARANTINE_BASE = os.environ.get("QUARANTINE_PATH", "/tmp/quarantine")
 _UPLOAD_SESSION_EXPIRES_IN = int(os.environ.get("UPLOAD_SESSION_EXPIRES_IN_SECONDS", "14400"))
@@ -169,6 +169,14 @@ def _ensure_allowed_mime(content_type: str) -> None:
         )
 
 
+def _asset_kind_for_mime(content_type: str | None) -> str:
+    if content_type and content_type.startswith("video/"):
+        return "video"
+    if content_type and content_type.startswith("audio/"):
+        return "audio"
+    return "image"
+
+
 def _max_bytes_for_plan(plan: str) -> int:
     return _MAX_FILE_BYTES.get(plan, _DEFAULT_MAX_BYTES)
 
@@ -283,8 +291,10 @@ async def create_upload_session(
     asset_doc = {
         "media_id": media_job_id,
         "user_id": user_id,
+        "workspace_id": current_user.get("default_workspace_id") or user_id,
         "status": MediaStatus.PENDING_UPLOAD,
         "mime_type": payload.content_type,
+        "asset_kind": _asset_kind_for_mime(payload.content_type),
         "file_size_bytes": payload.file_size_bytes,
         "original_filename": safe_name,
         "source_storage_key": source_storage_key,
@@ -565,8 +575,10 @@ async def upload_media(
         asset_doc = {
             "media_id": media_job_id,
             "user_id": user_id,
+            "workspace_id": current_user.get("default_workspace_id") or user_id,
             "status": MediaStatus.QUARANTINE,
             "mime_type": mime_type,
+            "asset_kind": _asset_kind_for_mime(mime_type),
             "file_size_bytes": total_bytes,
             "quarantine_path": quarantine_path,
             "original_filename_discarded": True,
@@ -683,5 +695,14 @@ def _mime_to_ext(mime_type: str) -> str:
         "video/quicktime": ".mov",
         "video/x-msvideo": ".avi",
         "video/webm": ".webm",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/aac": ".aac",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg",
+        "audio/flac": ".flac",
     }
     return mapping.get(mime_type, ".bin")
