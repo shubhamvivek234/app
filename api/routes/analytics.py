@@ -376,6 +376,40 @@ def _append_feed_error(
     return True
 
 
+async def _mark_account_auth_failure_if_needed(
+    db,
+    account: dict[str, Any],
+    *,
+    platform: str | None,
+    message: str,
+) -> None:
+    if _publish_feed_error_type(platform, message) != "auth":
+        return
+    try:
+        from api.routes.accounts import _mark_account_reconnect_required
+
+        await _mark_account_reconnect_required(
+            db,
+            account,
+            platform=platform or account.get("platform"),
+            reason=message,
+            error_code="analytics_auth_failed",
+        )
+    except Exception as exc:
+        event_log(
+            logger,
+            "warning",
+            "analytics.account_health_marker_failed",
+            exc_info=exc,
+            route="/analytics/*",
+            platform=platform or account.get("platform"),
+            account_id=account.get("account_id") or account.get("id"),
+            failure_type="account_health_marker_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="degraded",
+        )
+
+
 def _has_account_error(errors: list[dict[str, str]], account: dict[str, Any]) -> bool:
     label = _account_error_label(account)
     return any(item.get("account") == label for item in errors)
@@ -447,7 +481,14 @@ async def _collect_provider_window_metrics(
                 fetch_mode="refresh_api",
                 outcome="failed",
             )
-            _append_account_error(errors, account, _analytics_error_message(account.get("platform"), exc))
+            message = _analytics_error_message(account.get("platform"), exc)
+            await _mark_account_auth_failure_if_needed(
+                db,
+                account,
+                platform=account.get("platform"),
+                message=message,
+            )
+            _append_account_error(errors, account, message)
             continue
 
         filtered_feed: list[dict[str, Any]] = []
@@ -1964,11 +2005,15 @@ async def analytics_instagram_report(
 
         feed = task_results.get("feed", [])
         if isinstance(feed, Exception):
-            _append_account_error(errors, account, _analytics_error_message("instagram", feed))
+            message = _analytics_error_message("instagram", feed)
+            await _mark_account_auth_failure_if_needed(db, account, platform="instagram", message=message)
+            _append_account_error(errors, account, message)
             feed = []
         engagement = task_results.get("engagement", {})
         if isinstance(engagement, Exception):
-            _append_account_error(errors, account, _analytics_error_message("instagram", engagement))
+            message = _analytics_error_message("instagram", engagement)
+            await _mark_account_auth_failure_if_needed(db, account, platform="instagram", message=message)
+            _append_account_error(errors, account, message)
             engagement = {}
         growth = task_results.get("growth", {})
         if isinstance(growth, Exception):
@@ -2552,7 +2597,9 @@ async def analytics_youtube_report(
                 access_token = await _get_youtube_access_token(db, account, force_refresh=True)
                 channel = await auth.get_channel_info(access_token)
             except Exception as exc:
-                _append_account_error(errors, account, _analytics_error_message("youtube", exc))
+                message = _analytics_error_message("youtube", exc)
+                await _mark_account_auth_failure_if_needed(db, account, platform="youtube", message=message)
+                _append_account_error(errors, account, message)
                 continue
 
         channel_id = str(channel.get("id") or platform_user_id or "")
@@ -3512,7 +3559,9 @@ async def analytics_tiktok_report(
             access_token = decrypt(encrypted_token)
             profile = await auth.get_user_profile(access_token)
         except Exception as exc:
-            _append_account_error(errors, account, _analytics_error_message("tiktok", exc))
+            message = _analytics_error_message("tiktok", exc)
+            await _mark_account_auth_failure_if_needed(db, account, platform="tiktok", message=message)
+            _append_account_error(errors, account, message)
             continue
 
         summary_totals["followers_total"] += _metric_int(profile.get("followers_count"))
@@ -3764,7 +3813,9 @@ async def analytics_bluesky_report(
                     fallback_actor=account.get("platform_username"),
                 )
             except Exception as exc:
-                _append_account_error(summary_errors, account, _analytics_error_message("bluesky", exc))
+                message = _analytics_error_message("bluesky", exc)
+                await _mark_account_auth_failure_if_needed(db, account, platform="bluesky", message=message)
+                _append_account_error(summary_errors, account, message)
                 continue
 
         handle = profile.get("username") or account.get("platform_username") or platform_user_id
@@ -4113,9 +4164,13 @@ async def analytics_overview(
                 try:
                     _, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
                     if engagement.get("error"):
-                        _append_account_error(overview_errors, account, str(engagement["error"]))
+                        message = str(engagement["error"])
+                        await _mark_account_auth_failure_if_needed(db, account, platform=plat, message=message)
+                        _append_account_error(overview_errors, account, message)
                 except Exception as exc:
-                    _append_account_error(overview_errors, account, _analytics_error_message(plat, exc))
+                    message = _analytics_error_message(plat, exc)
+                    await _mark_account_auth_failure_if_needed(db, account, platform=plat, message=message)
+                    _append_account_error(overview_errors, account, message)
             return _normalize_connected_account(account, engagement)
 
         connected_accounts = await asyncio.gather(*[_build_account_summary(account) for account in accounts])
@@ -4217,9 +4272,13 @@ async def analytics_engagement(
             try:
                 feed, engagement = await _fetch_account_feed_and_stats(db, account, days=days)
                 if engagement.get("error"):
-                    _append_account_error(errors, account, str(engagement["error"]))
+                    message = str(engagement["error"])
+                    await _mark_account_auth_failure_if_needed(db, account, platform=plat, message=message)
+                    _append_account_error(errors, account, message)
             except Exception as exc:
-                _append_account_error(errors, account, _analytics_error_message(plat, exc))
+                message = _analytics_error_message(plat, exc)
+                await _mark_account_auth_failure_if_needed(db, account, platform=plat, message=message)
+                _append_account_error(errors, account, message)
                 feed, engagement = [], {}
 
         connected_accounts.append(_normalize_connected_account(account, engagement))
@@ -4459,6 +4518,7 @@ async def publish_feed(
                         used_live = True
                 except Exception as exc:
                     message = _analytics_error_message(plat, exc)
+                    await _mark_account_auth_failure_if_needed(db, account, platform=plat, message=message)
                     _append_feed_error(errors, account, platform=plat, message=message)
                     error_accounts.add(str(account_identifier or account.get("platform_username") or plat or "unknown"))
                     feed = []

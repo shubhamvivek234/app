@@ -105,6 +105,88 @@ def _connection_health(doc: dict, now: datetime) -> dict[str, object]:
     }
 
 
+def _provider_display_name(platform: str | None) -> str:
+    labels = {
+        "youtube": "YouTube",
+        "linkedin": "LinkedIn",
+        "twitter": "X",
+        "bluesky": "Bluesky",
+    }
+    return labels.get(platform or "", (platform or "This account").title())
+
+
+def _exception_detail(exc: Exception | None) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    if exc is None:
+        return ""
+    return str(exc).strip()
+
+
+def _account_update_query(doc: dict, platform: str | None = None) -> dict[str, object]:
+    identifiers: list[dict[str, object]] = []
+    for key in ("account_id", "id", "platform_user_id"):
+        value = doc.get(key)
+        if value:
+            identifiers.append({key: value})
+
+    query: dict[str, object] = {
+        "user_id": doc.get("user_id"),
+        "platform": platform or doc.get("platform"),
+        "is_active": True,
+    }
+    if identifiers:
+        query["$or"] = identifiers
+    return query
+
+
+def _token_health_clear_fields(now: datetime) -> dict[str, object]:
+    return {
+        "requires_reconnect": False,
+        "reconnect_reason": None,
+        "reconnect_required_at": None,
+        "token_error": None,
+        "token_error_code": None,
+        "updated_at": now,
+    }
+
+
+def _refresh_failure_reason(platform: str, exc: Exception | None = None) -> str:
+    message = _exception_detail(exc)
+    if message and "failed to refresh" not in message.lower():
+        return message
+    return f"{_provider_display_name(platform)} access was revoked or expired. Reconnect the account."
+
+
+async def _mark_account_reconnect_required(
+    db: DB,
+    doc: dict,
+    *,
+    platform: str | None = None,
+    reason: str | None = None,
+    error_code: str = "token_refresh_failed",
+) -> None:
+    """Persist a lightweight reconnect marker without pausing scheduled posts."""
+    now = datetime.now(timezone.utc)
+    platform_name = platform or doc.get("platform") or "account"
+    reconnect_reason = reason or f"{_provider_display_name(platform_name)} access expired. Reconnect the account."
+    updates: dict[str, object] = {
+        "requires_reconnect": True,
+        "reconnect_reason": reconnect_reason,
+        "reconnect_required_at": now,
+        "token_error": reconnect_reason,
+        "token_error_code": error_code,
+        "updated_at": now,
+    }
+    await db.social_accounts.update_one(
+        _account_update_query(doc, str(platform_name)),
+        {"$set": updates},
+    )
+    doc.update(updates)
+
+
 def _linkedin_account_type(value: str | None = None) -> str:
     raw = str(value or _LINKEDIN_PROFILE_ACCOUNT_TYPE).strip().lower().replace("-", "_")
     if raw in {"profile", "member", "personal", "person"}:
@@ -532,7 +614,9 @@ async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = Fal
     """Return a usable YouTube access token, refreshing it when needed."""
     encrypted_access_token = doc.get("access_token")
     if not encrypted_access_token:
-        raise ValueError("Missing YouTube access token")
+        reason = "YouTube access token is missing. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="youtube", reason=reason, error_code="missing_access_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     access_token = decrypt(encrypted_access_token)
     refresh_token_encrypted = doc.get("refresh_token")
@@ -555,36 +639,45 @@ async def _get_youtube_access_token(db: DB, doc: dict, force_refresh: bool = Fal
         return access_token
 
     if not refresh_token_encrypted:
-        return access_token
+        reason = "YouTube access expired and no refresh token is available. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="youtube", reason=reason, error_code="missing_refresh_token")
+        raise HTTPException(status_code=401, detail=reason)
 
-    refresh_token = decrypt(refresh_token_encrypted)
+    try:
+        refresh_token = decrypt(refresh_token_encrypted)
+    except Exception as exc:
+        reason = "YouTube refresh token could not be read. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="youtube", reason=reason, error_code="refresh_token_decrypt_failed")
+        raise HTTPException(status_code=401, detail=reason) from exc
 
     from backend.app.social.google import GoogleAuth
 
-    refreshed = await GoogleAuth().refresh_access_token(refresh_token)
+    try:
+        refreshed = await GoogleAuth().refresh_access_token(refresh_token)
+    except Exception as exc:
+        reason = _refresh_failure_reason("youtube", exc)
+        await _mark_account_reconnect_required(db, doc, platform="youtube", reason=reason)
+        raise
     new_access_token = refreshed.get("access_token")
     if not new_access_token:
-        raise ValueError("Failed to refresh YouTube access token")
+        reason = "Failed to refresh YouTube access token. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="youtube", reason=reason)
+        raise HTTPException(status_code=401, detail=reason)
 
+    now = datetime.now(timezone.utc)
     updates: dict[str, object] = {
         "access_token": encrypt(new_access_token),
-        "token_error": None,
-        "updated_at": datetime.now(timezone.utc),
+        **_token_health_clear_fields(now),
     }
     expires_in = refreshed.get("expires_in")
     if expires_in:
-        updates["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        updates["expires_at"] = now + timedelta(seconds=int(expires_in))
     new_refresh_token = refreshed.get("refresh_token")
     if new_refresh_token:
         updates["refresh_token"] = encrypt(new_refresh_token)
 
     await db.social_accounts.update_one(
-        {
-            "user_id": doc.get("user_id"),
-            "platform": "youtube",
-            "platform_user_id": doc.get("platform_user_id"),
-            "is_active": True,
-        },
+        _account_update_query(doc, "youtube"),
         {"$set": updates},
     )
     doc.update(updates)
@@ -595,7 +688,9 @@ async def _get_bluesky_access_token(db: DB, doc: dict, force_refresh: bool = Fal
     """Return a usable Bluesky access token, refreshing the session when needed."""
     encrypted_access_token = doc.get("access_token")
     if not encrypted_access_token:
-        raise ValueError("Missing Bluesky access token")
+        reason = "Bluesky access token is missing. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="bluesky", reason=reason, error_code="missing_access_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     access_token = decrypt(encrypted_access_token)
     if not force_refresh:
@@ -603,33 +698,42 @@ async def _get_bluesky_access_token(db: DB, doc: dict, force_refresh: bool = Fal
 
     refresh_token_encrypted = doc.get("refresh_token")
     if not refresh_token_encrypted:
-        raise HTTPException(status_code=401, detail="Bluesky session expired. Reconnect the account.")
+        reason = "Bluesky session expired. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="bluesky", reason=reason, error_code="missing_refresh_token")
+        raise HTTPException(status_code=401, detail=reason)
 
-    refresh_token = decrypt(refresh_token_encrypted)
+    try:
+        refresh_token = decrypt(refresh_token_encrypted)
+    except Exception as exc:
+        reason = "Bluesky refresh token could not be read. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="bluesky", reason=reason, error_code="refresh_token_decrypt_failed")
+        raise HTTPException(status_code=401, detail=reason) from exc
 
     from backend.app.social.bluesky import BlueskyAuth
 
-    refreshed = await BlueskyAuth().refresh_session(refresh_token)
+    try:
+        refreshed = await BlueskyAuth().refresh_session(refresh_token)
+    except Exception as exc:
+        reason = _refresh_failure_reason("bluesky", exc)
+        await _mark_account_reconnect_required(db, doc, platform="bluesky", reason=reason)
+        raise
     new_access_token = refreshed.get("accessJwt")
     if not new_access_token:
-        raise HTTPException(status_code=401, detail="Bluesky session expired. Reconnect the account.")
+        reason = "Bluesky session expired. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="bluesky", reason=reason)
+        raise HTTPException(status_code=401, detail=reason)
 
+    now = datetime.now(timezone.utc)
     updates: dict[str, object] = {
         "access_token": encrypt(new_access_token),
-        "token_error": None,
-        "updated_at": datetime.now(timezone.utc),
+        **_token_health_clear_fields(now),
     }
     new_refresh_token = refreshed.get("refreshJwt")
     if new_refresh_token:
         updates["refresh_token"] = encrypt(new_refresh_token)
 
     await db.social_accounts.update_one(
-        {
-            "user_id": doc.get("user_id"),
-            "platform": "bluesky",
-            "platform_user_id": doc.get("platform_user_id"),
-            "is_active": True,
-        },
+        _account_update_query(doc, "bluesky"),
         {"$set": updates},
     )
     doc.update(updates)
@@ -640,7 +744,9 @@ async def _get_linkedin_access_token(db: DB, doc: dict, force_refresh: bool = Fa
     """Return a usable LinkedIn access token, refreshing it when possible."""
     encrypted_access_token = doc.get("access_token")
     if not encrypted_access_token:
-        raise ValueError("Missing LinkedIn access token")
+        reason = "LinkedIn access token is missing. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="linkedin", reason=reason, error_code="missing_access_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     access_token = decrypt(encrypted_access_token)
     refresh_token_encrypted = doc.get("refresh_token")
@@ -663,40 +769,46 @@ async def _get_linkedin_access_token(db: DB, doc: dict, force_refresh: bool = Fa
         return access_token
 
     if not refresh_token_encrypted:
-        return access_token
+        reason = "LinkedIn access expired and no refresh token is available. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="linkedin", reason=reason, error_code="missing_refresh_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     try:
         refresh_token = decrypt(refresh_token_encrypted)
-    except Exception:
-        return access_token
+    except Exception as exc:
+        reason = "LinkedIn refresh token could not be read. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="linkedin", reason=reason, error_code="refresh_token_decrypt_failed")
+        raise HTTPException(status_code=401, detail=reason) from exc
 
     from backend.app.social.linkedin import LinkedInAuth
 
-    refreshed = await LinkedInAuth().refresh_access_token(refresh_token)
+    try:
+        refreshed = await LinkedInAuth().refresh_access_token(refresh_token)
+    except Exception as exc:
+        reason = _refresh_failure_reason("linkedin", exc)
+        await _mark_account_reconnect_required(db, doc, platform="linkedin", reason=reason)
+        raise
     new_access_token = refreshed.get("access_token")
     if not new_access_token:
-        raise ValueError("Failed to refresh LinkedIn access token")
+        reason = "Failed to refresh LinkedIn access token. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="linkedin", reason=reason)
+        raise HTTPException(status_code=401, detail=reason)
 
+    now = datetime.now(timezone.utc)
     updates: dict[str, object] = {
         "access_token": encrypt(new_access_token),
-        "token_error": None,
-        "updated_at": datetime.now(timezone.utc),
+        **_token_health_clear_fields(now),
     }
     expires_in = refreshed.get("expires_in")
     if expires_in:
-        updates["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        updates["expires_at"] = now + timedelta(seconds=int(expires_in))
         updates["token_expiry"] = updates["expires_at"]
     new_refresh_token = refreshed.get("refresh_token")
     if new_refresh_token:
         updates["refresh_token"] = encrypt(new_refresh_token)
 
     await db.social_accounts.update_one(
-        {
-            "user_id": doc.get("user_id"),
-            "platform": "linkedin",
-            "platform_user_id": doc.get("platform_user_id"),
-            "is_active": True,
-        },
+        _account_update_query(doc, "linkedin"),
         {"$set": updates},
     )
     doc.update(updates)
@@ -707,7 +819,9 @@ async def _get_twitter_access_token(db: DB, doc: dict, force_refresh: bool = Fal
     """Return a usable Twitter access token, refreshing it when needed."""
     encrypted_access_token = doc.get("access_token")
     if not encrypted_access_token:
-        raise ValueError("Missing Twitter access token")
+        reason = "X access token is missing. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="twitter", reason=reason, error_code="missing_access_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     access_token = decrypt(encrypted_access_token)
     refresh_token_encrypted = doc.get("refresh_token")
@@ -731,40 +845,46 @@ async def _get_twitter_access_token(db: DB, doc: dict, force_refresh: bool = Fal
         return access_token
 
     if not refresh_token_encrypted:
-        return access_token
+        reason = "X access expired and no refresh token is available. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="twitter", reason=reason, error_code="missing_refresh_token")
+        raise HTTPException(status_code=401, detail=reason)
 
     try:
         refresh_token = decrypt(refresh_token_encrypted)
-    except Exception:
-        return access_token
+    except Exception as exc:
+        reason = "X refresh token could not be read. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="twitter", reason=reason, error_code="refresh_token_decrypt_failed")
+        raise HTTPException(status_code=401, detail=reason) from exc
 
     from backend.app.social.twitter import TwitterAuth
 
-    refreshed = await TwitterAuth().refresh_token(refresh_token)
+    try:
+        refreshed = await TwitterAuth().refresh_token(refresh_token)
+    except Exception as exc:
+        reason = _refresh_failure_reason("twitter", exc)
+        await _mark_account_reconnect_required(db, doc, platform="twitter", reason=reason)
+        raise
     new_access_token = refreshed.get("access_token")
     if not new_access_token:
-        raise ValueError("Failed to refresh Twitter access token")
+        reason = "Failed to refresh X access token. Reconnect the account."
+        await _mark_account_reconnect_required(db, doc, platform="twitter", reason=reason)
+        raise HTTPException(status_code=401, detail=reason)
 
+    now = datetime.now(timezone.utc)
     updates: dict[str, object] = {
         "access_token": encrypt(new_access_token),
-        "token_error": None,
-        "updated_at": datetime.now(timezone.utc),
+        **_token_health_clear_fields(now),
     }
     expires_in = refreshed.get("expires_in")
     if expires_in:
-        updates["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        updates["expires_at"] = now + timedelta(seconds=int(expires_in))
         updates["token_expiry"] = updates["expires_at"]
     new_refresh_token = refreshed.get("refresh_token")
     if new_refresh_token:
         updates["refresh_token"] = encrypt(new_refresh_token)
 
     await db.social_accounts.update_one(
-        {
-            "user_id": doc.get("user_id"),
-            "platform": "twitter",
-            "platform_user_id": doc.get("platform_user_id"),
-            "is_active": True,
-        },
+        _account_update_query(doc, "twitter"),
         {"$set": updates},
     )
     doc.update(updates)
