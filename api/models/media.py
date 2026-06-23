@@ -101,6 +101,7 @@ class MediaAssetResponse(BaseModel):
     width: int | None = None
     height: int | None = None
     has_audio: bool | None = None
+    waveform_peaks: list[float] | None = None
     created_at: datetime
     processed_at: datetime | None = None
     error_message: str | None = None
@@ -196,8 +197,8 @@ class AudioMixSettings(BaseModel):
     loop_to_video_end: bool = True
     fade_in_ms: int = Field(default=0, ge=0, le=10_000)
     fade_out_ms: int = Field(default=0, ge=0, le=10_000)
-    original_volume: float = Field(default=1.0, ge=0.0, le=2.0)
-    selected_volume: float = Field(default=1.0, ge=0.0, le=2.0)
+    original_volume: float = Field(default=1.0, ge=0.0, le=1.0)
+    selected_volume: float = Field(default=1.0, ge=0.0, le=1.0)
     mute_original: bool = False
     normalize_audio: bool = True
 

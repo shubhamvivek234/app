@@ -44,34 +44,38 @@ def _payload(audio_media_id="audio-1"):
     )
 
 
+def _base_render_docs(video_overrides=None, audio_overrides=None):
+    video_doc = {
+        "media_id": "video-1",
+        "user_id": "user-1",
+        "status": "ready",
+        "asset_kind": "video",
+        "mime_type": "video/mp4",
+        "storage_key": "media/user-1/video-1.mp4",
+        "thumbnail_url": "https://cdn.example/thumb.webp",
+        "duration_seconds": 12,
+        "width": 1080,
+        "height": 1920,
+        "has_audio": True,
+    }
+    audio_doc = {
+        "media_id": "audio-1",
+        "user_id": "user-1",
+        "status": "ready",
+        "asset_kind": "audio",
+        "mime_type": "audio/mpeg",
+        "storage_key": "media/user-1/audio-1.mp3",
+        "source_label": "Brand bed",
+    }
+    video_doc.update(video_overrides or {})
+    audio_doc.update(audio_overrides or {})
+    return [video_doc, audio_doc]
+
+
 @pytest.mark.asyncio
 async def test_render_video_audio_queues_placeholder_asset(monkeypatch):
     queued = []
-    db = _FakeDB(
-        [
-            {
-                "media_id": "video-1",
-                "user_id": "user-1",
-                "status": "ready",
-                "asset_kind": "video",
-                "mime_type": "video/mp4",
-                "storage_key": "media/user-1/video-1.mp4",
-                "thumbnail_url": "https://cdn.example/thumb.webp",
-                "duration_seconds": 12,
-                "width": 1080,
-                "height": 1920,
-            },
-            {
-                "media_id": "audio-1",
-                "user_id": "user-1",
-                "status": "ready",
-                "asset_kind": "audio",
-                "mime_type": "audio/mpeg",
-                "storage_key": "media/user-1/audio-1.mp3",
-                "source_label": "Brand bed",
-            },
-        ]
-    )
+    db = _FakeDB(_base_render_docs())
     monkeypatch.setattr(audio_route, "enqueue_task", lambda task_name, **kwargs: queued.append((task_name, kwargs)))
 
     response = await audio_route.render_video_audio(
@@ -132,3 +136,65 @@ async def test_render_video_audio_rejects_non_audio_selection():
         )
 
     assert getattr(excinfo.value, "status_code", None) == 422
+
+
+@pytest.mark.asyncio
+async def test_render_video_audio_rejects_fully_silent_mix():
+    db = _FakeDB(_base_render_docs())
+    payload = AudioRenderRequest.model_validate(
+        {
+            "mix": {
+                "audio_media_id": "audio-1",
+                "selected_volume": 0,
+                "original_volume": 0.5,
+                "mute_original": True,
+            }
+        }
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        await audio_route.render_video_audio(
+            video_media_id="video-1",
+            payload=payload,
+            current_user={
+                "user_id": "user-1",
+                "default_workspace_id": "ws-1",
+                "subscription_status": "active",
+            },
+            db=db,
+        )
+
+    assert getattr(excinfo.value, "status_code", None) == 422
+    assert "silent" in str(getattr(excinfo.value, "detail", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_render_video_audio_allows_zero_selected_when_original_is_audible(monkeypatch):
+    queued = []
+    db = _FakeDB(_base_render_docs())
+    payload = AudioRenderRequest.model_validate(
+        {
+            "mix": {
+                "audio_media_id": "audio-1",
+                "selected_volume": 0,
+                "original_volume": 0.4,
+                "mute_original": False,
+            }
+        }
+    )
+    monkeypatch.setattr(audio_route, "enqueue_task", lambda task_name, **kwargs: queued.append((task_name, kwargs)))
+
+    response = await audio_route.render_video_audio(
+        video_media_id="video-1",
+        payload=payload,
+        current_user={
+            "user_id": "user-1",
+            "default_workspace_id": "ws-1",
+            "subscription_status": "active",
+        },
+        db=db,
+    )
+
+    assert response.status == "processing"
+    assert queued[0][1]["args"][-1]["selected_volume"] == 0
+    assert queued[0][1]["args"][-1]["mute_original"] is False

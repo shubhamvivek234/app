@@ -7,6 +7,7 @@ Paths are server-generated UUIDs — never user-supplied strings passed to shell
 import asyncio
 import logging
 import os
+import struct
 import uuid
 from pathlib import Path
 
@@ -134,6 +135,13 @@ def _seconds_from_ms(value: int | float | None) -> float:
         return 0.0
 
 
+def _volume_fraction(value: int | float | None, default: float = 1.0) -> float:
+    try:
+        return min(max(float(default if value is None else value), 0.0), 1.0)
+    except (TypeError, ValueError):
+        return min(max(float(default), 0.0), 1.0)
+
+
 def build_audio_mix_command(
     *,
     video_path: str,
@@ -150,8 +158,8 @@ def build_audio_mix_command(
     trim_end_seconds = _seconds_from_ms(trim_end) if trim_end is not None else None
     offset_seconds = min(_seconds_from_ms(mix.get("video_offset_ms")), max(duration - 0.1, 0.0))
     selected_duration = max(duration - offset_seconds, 0.1)
-    selected_volume = max(float(mix.get("selected_volume", 1.0) or 0), 0.0)
-    original_volume = max(float(mix.get("original_volume", 1.0) or 0), 0.0)
+    selected_volume = _volume_fraction(mix.get("selected_volume"), 1.0)
+    original_volume = _volume_fraction(mix.get("original_volume"), 1.0)
     fade_in = min(_seconds_from_ms(mix.get("fade_in_ms")), selected_duration)
     fade_out = min(_seconds_from_ms(mix.get("fade_out_ms")), selected_duration)
     delay_ms = int(round(offset_seconds * 1000))
@@ -179,8 +187,11 @@ def build_audio_mix_command(
     selected_filters.append("atrim=duration={:.3f}".format(duration))
     selected_filters.append("aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo")
 
-    filter_parts = [f"[1:a]{','.join(selected_filters)}[selected]"]
     use_original_audio = video_has_audio and not mix.get("mute_original", False) and original_volume > 0
+    if selected_volume <= 0 and not use_original_audio:
+        raise ValueError("Audio mix would be silent")
+
+    filter_parts = [f"[1:a]{','.join(selected_filters)}[selected]"]
     if use_original_audio:
         filter_parts.append(
             f"[0:a]volume={original_volume:.4f},"
@@ -231,6 +242,59 @@ async def render_video_with_audio(
         ),
     )
     return output_path
+
+
+async def extract_audio_waveform_peaks(audio_path: str, bar_count: int = 64) -> list[float]:
+    """Return normalized RMS peaks for a compact UI waveform."""
+    safe_bar_count = max(16, min(int(bar_count or 64), 256))
+    cmd_args = [
+        "ffmpeg", "-v", "error",
+        "-i", audio_path,
+        "-vn",
+        "-ac", "1",
+        "-ar", "2000",
+        "-f", "f32le",
+        "pipe:1",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=_ffmpeg_timeout_for_file(audio_path),
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("Waveform extraction timed out")
+    if proc.returncode != 0:
+        raise RuntimeError((stderr or b"Waveform extraction failed").decode(errors="ignore").strip())
+    sample_count = len(stdout) // 4
+    if sample_count <= 0:
+        return []
+
+    samples_per_bar = max(1, sample_count // safe_bar_count)
+    peaks: list[float] = []
+    for index in range(safe_bar_count):
+        start = index * samples_per_bar
+        end = sample_count if index == safe_bar_count - 1 else min(sample_count, start + samples_per_bar)
+        if start >= sample_count:
+            peaks.append(0.0)
+            continue
+        total = 0.0
+        count = 0
+        for (sample,) in struct.iter_unpack("<f", stdout[start * 4:end * 4]):
+            total += float(sample) * float(sample)
+            count += 1
+        peaks.append((total / max(count, 1)) ** 0.5)
+
+    max_peak = max(peaks) if peaks else 0.0
+    if max_peak <= 0:
+        return [0.0 for _ in range(safe_bar_count)]
+    return [round(min(max(peak / max_peak, 0.0), 1.0), 4) for peak in peaks]
 
 
 async def convert_gif_for_platforms(

@@ -78,6 +78,17 @@ async def render_video_audio(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Audio can only be added to videos")
     if not _storage_ref(video_doc):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Video storage reference is missing")
+    selected_audible = float(mix.get("selected_volume") or 0) > 0
+    original_audible = (
+        video_doc.get("has_audio") is not False
+        and not mix.get("mute_original", False)
+        and float(mix.get("original_volume") or 0) > 0
+    )
+    if not selected_audible and not original_audible:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Audio mix would be silent. Increase selected audio volume or keep original video audio enabled.",
+        )
 
     audio_doc = await db.media_assets.find_one(
         {"media_id": mix["audio_media_id"], "user_id": user_id},
