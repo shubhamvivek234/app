@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote, retryFailedPost } from '@/lib/api';
+import { getPosts, deletePost, getSocialAccounts, duplicatePost, submitPostForReview, addInternalNote, deleteInternalNote, retryFailedPost, returnPostToDraft } from '@/lib/api';
 import { getPublishFailureAction, getPublishFailureMessage, isTikTokPublicPostingRestriction } from '@/lib/publishFailures';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -399,6 +399,18 @@ const ContentLibrary = () => {
     }
   };
 
+  const handleReturnApprovedToDraft = async (postId) => {
+    try {
+      await returnPostToDraft(postId);
+      setPosts((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, status: 'draft', approved_by: null, approved_at: null } : p))
+      );
+      toast.success('Post returned to draft for edits');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to return post to draft');
+    }
+  };
+
   const handlePostUpdated = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
     setPosts((prev) => prev.map((post) => (post.id === updatedPost.id ? updatedPost : post)));
@@ -654,7 +666,8 @@ const ContentLibrary = () => {
               const MediaKindIcon = mediaKindMeta.icon;
               const cardThumbnail = post.published_card_thumbnail_url || post.thumbnail_urls?.[0] || post.cover_image || post.media_urls?.[0] || null;
               const showCardMediaMeta = initialStatus === 'published' || initialStatus === 'scheduled';
-              const canEditPost = ['draft', 'scheduled', 'pending_approval'].includes(post.status);
+              const isApprovedScheduled = post.status === 'scheduled' && (post.approved_by || post.approved_at);
+              const canEditPost = ['draft', 'scheduled'].includes(post.status) && !isApprovedScheduled;
 
               return (
                 <div
@@ -684,6 +697,16 @@ const ContentLibrary = () => {
                         <FaPaperPlane className="text-[10px]" />
                       </button>
                     )}
+                    {isApprovedScheduled ? (
+                      <button
+                        onClick={() => handleReturnApprovedToDraft(post.id)}
+                        title="Return approved post to draft"
+                        className="p-1 px-2 text-slate-500 hover:text-amber-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
+                      >
+                        <FaRedo className="text-[10px]" />
+                        Return
+                      </button>
+                    ) : null}
                     <button onClick={() => handleDelete(post.id)} className="p-1 px-2 text-slate-500 hover:text-red-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
                       Delete
                     </button>

@@ -95,6 +95,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 172800,  # every 2 days
         "options": {"queue": "default"},
     },
+    "send-approval-overdue-reminders": {
+        "task": "celery_workers.tasks.approval_reminders.send_approval_overdue_reminders",
+        "schedule": 3600,  # hourly
+        "options": {"queue": "default"},
+    },
     "api-version-monitor": {
         "task": "celery_workers.tasks.api_version_monitor.check_platform_api_versions",
         "schedule": 86400,  # daily

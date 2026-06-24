@@ -97,6 +97,11 @@ async def test_notification_preferences_routes_return_supported_catalog_only():
         "subscription.expiring",
         "account.expiring",
         "billing.failed",
+        "approval.submitted",
+        "approval.approved",
+        "approval.changes_requested",
+        "approval.returned",
+        "approval.overdue",
     }
     assert "analytics.weekly" not in initial.preferences
 

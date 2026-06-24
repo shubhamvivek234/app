@@ -6,10 +6,12 @@ import {
   FaCheckDouble,
   FaClock,
   FaExclamationTriangle,
+  FaHistory,
   FaImage,
   FaPaperPlane,
   FaRedo,
   FaTimes,
+  FaUserCheck,
   FaVideo,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
@@ -18,6 +20,9 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import {
   approvePost,
+  bulkApprovePosts,
+  bulkRejectPosts,
+  getApprovalActivity,
   getApprovalQueue,
   rejectPost,
   resubmitPost,
@@ -55,6 +60,18 @@ const relativeTime = (value) => {
 
 const primaryMedia = (post) => post.thumbnail_urls?.[0] || post.media_urls?.[0] || null;
 
+const ACTIVITY_LABELS = {
+  submitted: 'Submitted for review',
+  resubmitted: 'Resubmitted',
+  approved: 'Approved',
+  bulk_approved: 'Approved in bulk',
+  changes_requested: 'Changes requested',
+  bulk_changes_requested: 'Changes requested in bulk',
+  returned: 'Returned to draft',
+};
+
+const activityLabel = (action) => ACTIVITY_LABELS[action] || action || 'Approval activity';
+
 const TabButton = ({ active, count, label, onClick }) => (
   <button
     type="button"
@@ -72,6 +89,88 @@ const TabButton = ({ active, count, label, onClick }) => (
   </button>
 );
 
+const ApprovalTimeline = ({ post }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [activity, setActivity] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const latest = post.approval_latest_activity;
+
+  const loadActivity = async () => {
+    if (loaded || loading) return;
+    setLoading(true);
+    try {
+      const items = await getApprovalActivity(post.id);
+      setActivity(Array.isArray(items) ? items : []);
+      setLoaded(true);
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to load approval timeline');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggle = async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next) {
+      await loadActivity();
+    }
+  };
+
+  if (!latest && !expanded) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+          <FaHistory className="text-slate-400" />
+          Approval timeline
+        </span>
+        <span className="text-xs font-medium text-slate-500">
+          {expanded ? 'Hide' : 'View all'}
+        </span>
+      </button>
+
+      {latest ? (
+        <div className="mt-3 rounded-md bg-white px-3 py-2 text-sm text-slate-700">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-slate-900">{activityLabel(latest.action)}</span>
+            <span className="text-xs text-slate-400">{relativeTime(latest.created_at)}</span>
+          </div>
+          {latest.reason ? <p className="mt-1 text-xs leading-5 text-slate-500">{latest.reason}</p> : null}
+        </div>
+      ) : null}
+
+      {expanded ? (
+        <div className="mt-3 space-y-2">
+          {loading ? (
+            <div className="h-16 animate-pulse rounded-md bg-white" />
+          ) : activity.length === 0 ? (
+            <p className="rounded-md bg-white px-3 py-2 text-xs text-slate-500">No approval activity has been recorded yet.</p>
+          ) : (
+            activity.map((item) => (
+              <div key={item.id || `${item.action}-${item.created_at}`} className="rounded-md bg-white px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-slate-900">{activityLabel(item.action)}</span>
+                  <span className="text-xs text-slate-400">{relativeTime(item.created_at)}</span>
+                </div>
+                {item.reason ? <p className="mt-1 text-xs leading-5 text-slate-500">{item.reason}</p> : null}
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const ApprovalCard = ({
   post,
   mode,
@@ -83,6 +182,8 @@ const ApprovalCard = ({
   onOpenDraft,
   busyId,
   permissions,
+  selected,
+  onToggleSelected,
 }) => {
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');
@@ -100,6 +201,18 @@ const ApprovalCard = ({
   return (
     <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-4 p-4 lg:flex-row">
+        {mode === 'awaiting' && canReview && onToggleSelected ? (
+          <label className="flex items-start pt-1">
+            <input
+              type="checkbox"
+              checked={Boolean(selected)}
+              onChange={() => onToggleSelected(post.id)}
+              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              aria-label={`Select ${creatorLabel} post for bulk review`}
+            />
+          </label>
+        ) : null}
+
         <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
           {mediaUrl ? (
             <img src={mediaUrl} alt="" className="h-full w-full object-cover" />
@@ -135,13 +248,29 @@ const ApprovalCard = ({
                 Approval expired
               </span>
             ) : null}
+            {post.approval_assigned_to_me ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                <FaUserCheck className="text-[10px]" />
+                Assigned to you
+              </span>
+            ) : null}
+            {post.approval_overdue ? (
+              <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">
+                Review overdue
+              </span>
+            ) : null}
+            {!post.approval_overdue && post.approval_expiring_soon ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+                Due soon
+              </span>
+            ) : null}
           </div>
 
           <p className="mt-3 text-sm leading-6 text-slate-800 whitespace-pre-line">
             {post.content || 'No post copy added yet.'}
           </p>
 
-          <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Creator</span>
               <span>{creatorLabel}</span>
@@ -149,6 +278,10 @@ const ApprovalCard = ({
             <div>
               <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Scheduled</span>
               <span>{formatScheduled(post.scheduled_time, scheduledTimeZone)}</span>
+            </div>
+            <div>
+              <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Review due</span>
+              <span>{formatScheduled(post.approval_due_at, scheduledTimeZone)}</span>
             </div>
             <div>
               <span className="block font-semibold uppercase tracking-[0.12em] text-slate-400">Updated</span>
@@ -165,6 +298,8 @@ const ApprovalCard = ({
               {reasonText}
             </div>
           ) : null}
+
+          <ApprovalTimeline post={post} />
 
           {mode === 'awaiting' && showReject ? (
             <div className="mt-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -303,6 +438,9 @@ const ApprovalQueue = () => {
   const [activeTab, setActiveTab] = useState('awaiting');
   const [busyId, setBusyId] = useState(null);
   const [loadErrorStatus, setLoadErrorStatus] = useState(null);
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkReason, setBulkReason] = useState('');
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -325,6 +463,11 @@ const ApprovalQueue = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setBulkReason('');
+  }, [activeTab, reviewFilter]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -358,6 +501,53 @@ const ApprovalQueue = () => {
       toast.success('Changes requested');
     } catch (error) {
       toast.error(error?.response?.data?.detail || 'Failed to request changes');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedIds.length === 0) return;
+    setBusyId('bulk-approve');
+    try {
+      const result = await bulkApprovePosts(selectedIds);
+      await load({ silent: true });
+      setSelectedIds([]);
+      const errors = result?.errors || [];
+      if (errors.length) {
+        toast.warning(`${result?.approved?.length || 0} approved, ${errors.length} could not be approved`);
+      } else {
+        toast.success(`${result?.approved?.length || selectedIds.length} post${selectedIds.length === 1 ? '' : 's'} approved`);
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to approve selected posts');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleBulkReject = async () => {
+    const reason = bulkReason.trim();
+    if (selectedIds.length === 0) return;
+    if (!reason) {
+      toast.error('Add a reason before requesting changes in bulk');
+      return;
+    }
+    setBusyId('bulk-reject');
+    try {
+      const result = await bulkRejectPosts(selectedIds, reason);
+      await load({ silent: true });
+      setActiveTab('changes_requested');
+      setSelectedIds([]);
+      setBulkReason('');
+      const errors = result?.errors || [];
+      if (errors.length) {
+        toast.warning(`${result?.rejected?.length || 0} returned, ${errors.length} could not be updated`);
+      } else {
+        toast.success(`${result?.rejected?.length || selectedIds.length} post${selectedIds.length === 1 ? '' : 's'} returned for changes`);
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to request changes for selected posts');
     } finally {
       setBusyId(null);
     }
@@ -403,8 +593,36 @@ const ApprovalQueue = () => {
     { key: 'expired', label: 'Expired', count: queue.summary?.expired || 0 },
   ]), [queue.summary]);
 
-  const activeItems = queue[activeTab] || [];
+  const activeItems = useMemo(() => {
+    const activeItemsRaw = queue[activeTab] || [];
+    if (activeTab !== 'awaiting') return activeItemsRaw;
+    if (reviewFilter === 'mine') return activeItemsRaw.filter((post) => post.approval_assigned_to_me);
+    if (reviewFilter === 'overdue') return activeItemsRaw.filter((post) => post.approval_overdue);
+    if (reviewFilter === 'soon') return activeItemsRaw.filter((post) => post.approval_expiring_soon && !post.approval_overdue);
+    return activeItemsRaw;
+  }, [queue, activeTab, reviewFilter]);
   const queuePermissions = queue.permissions || {};
+  const selectedVisibleCount = selectedIds.filter((id) => activeItems.some((post) => post.id === id)).length;
+  const canBulkReview = activeTab === 'awaiting' && queuePermissions.can_review;
+
+  const toggleSelected = useCallback((postId) => {
+    setSelectedIds((current) => (
+      current.includes(postId)
+        ? current.filter((id) => id !== postId)
+        : [...current, postId]
+    ));
+  }, []);
+
+  const toggleAllVisible = useCallback(() => {
+    const visibleIds = activeItems.map((post) => post.id);
+    setSelectedIds((current) => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => current.includes(id));
+      if (allSelected) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  }, [activeItems]);
 
   if (!loading && loadErrorStatus === 403) {
     return (
@@ -484,6 +702,73 @@ const ApprovalQueue = () => {
               Refresh
             </button>
           </div>
+
+          {activeTab === 'awaiting' ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+              {[
+                ['all', 'All awaiting'],
+                ['mine', 'Assigned to me'],
+                ['overdue', 'Overdue'],
+                ['soon', 'Due soon'],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setReviewFilter(key)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    reviewFilter === key
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {canBulkReview && activeItems.length > 0 ? (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleAllVisible}
+                    className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    {selectedVisibleCount === activeItems.length ? 'Clear visible' : 'Select visible'}
+                  </button>
+                  <span className="text-sm text-slate-600">
+                    {selectedIds.length} selected for bulk review
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    value={bulkReason}
+                    onChange={(event) => setBulkReason(event.target.value)}
+                    placeholder="Reason for bulk changes"
+                    className="h-9 min-w-[15rem] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-slate-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBulkReject}
+                    disabled={selectedIds.length === 0 || busyId === 'bulk-reject'}
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                  >
+                    {busyId === 'bulk-reject' ? 'Sending…' : 'Request changes'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBulkApprove}
+                    disabled={selectedIds.length === 0 || busyId === 'bulk-approve'}
+                    className="inline-flex h-9 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                  >
+                    {busyId === 'bulk-approve' ? 'Approving…' : 'Approve selected'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="space-y-4">
@@ -531,6 +816,8 @@ const ApprovalQueue = () => {
                 onOpenDraft={handleOpenDraft}
                 busyId={busyId}
                 permissions={queuePermissions}
+                selected={selectedIds.includes(post.id)}
+                onToggleSelected={canBulkReview ? toggleSelected : null}
               />
             ))
           )}
