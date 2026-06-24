@@ -233,6 +233,9 @@ const AddAudioDialog = ({
   const originalVolumePercent = Math.round(mixState.originalVolume * 100);
   const selectedVolumePercent = Math.round(mixState.selectedVolume * 100);
   const canRender = Boolean(video?.mediaId && selectedAudio?.media_id && !rendering && !uploadingAudio && !mixState.silent);
+  const videoPreviewAspectRatio = video?.width && video?.height
+    ? `${video.width} / ${video.height}`
+    : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -605,16 +608,19 @@ const AddAudioDialog = ({
       if (!value) stopPreview();
       onOpenChange?.(value);
     }}>
-      <DialogContent className="max-w-5xl p-0 overflow-hidden">
-        <DialogHeader className="border-b border-gray-200 px-6 py-4 text-left">
+      <DialogContent
+        motionPreset="centered"
+        className="flex max-h-[92dvh] w-[min(1120px,calc(100vw-1.5rem))] max-w-none flex-col gap-0 overflow-hidden p-0"
+      >
+        <DialogHeader className="shrink-0 border-b border-gray-200 px-5 py-4 text-left sm:px-6">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <FaMusic className="text-blue-600" />
             Add audio to video
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-0 md:grid-cols-[1.05fr_0.95fr]">
-          <div className="space-y-5 border-r border-gray-200 bg-slate-50/70 p-6">
+        <div className="grid min-h-0 flex-1 gap-0 overflow-y-auto md:grid-cols-[1.05fr_0.95fr]">
+          <div className="space-y-4 bg-slate-50/70 p-4 sm:p-5 md:border-r md:border-gray-200">
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -871,7 +877,7 @@ const AddAudioDialog = ({
             </div>
           </div>
 
-          <div className="space-y-5 p-6">
+          <div className="space-y-4 p-4 sm:p-5">
             {video?.audioMix && onRemoveCustomAudio && (
               <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -887,12 +893,15 @@ const AddAudioDialog = ({
             )}
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-black shadow-sm">
               {video?.url ? (
-                <div className="relative">
+                <div
+                  className="relative flex max-h-[42dvh] min-h-[180px] items-center justify-center bg-black"
+                  style={videoPreviewAspectRatio ? { aspectRatio: videoPreviewAspectRatio } : undefined}
+                >
                   <video
                     ref={videoRef}
                     src={video.url}
                     poster={video.thumbnailUrl && video.thumbnailUrl !== video.url ? video.thumbnailUrl : undefined}
-                    className="aspect-video w-full cursor-pointer object-contain"
+                    className="h-full max-h-[42dvh] w-full max-w-full cursor-pointer object-contain"
                     preload="metadata"
                     playsInline
                     onLoadedMetadata={(event) => {
@@ -1070,7 +1079,7 @@ const AddAudioDialog = ({
           </div>
         </div>
 
-        <DialogFooter className="border-t border-gray-200 px-6 py-4">
+        <DialogFooter className="shrink-0 border-t border-gray-200 px-5 py-4 sm:px-6">
           <Button type="button" variant="outline" onClick={() => onOpenChange?.(false)} disabled={rendering}>
             Cancel
           </Button>

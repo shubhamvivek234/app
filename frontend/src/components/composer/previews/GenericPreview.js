@@ -1,5 +1,6 @@
 import React from 'react';
 import PollPreviewCard from './PollPreviewCard';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 const GenericPreview = ({ content, media, account, platform, poll }) => {
   const name = account?.platform_username || 'Your Account';
@@ -36,7 +37,7 @@ const GenericPreview = ({ content, media, account, platform, poll }) => {
         {firstItem && (
           <div className="mt-2 rounded-lg overflow-hidden border border-gray-100 relative">
             {firstItem.type === 'video' ? (
-              <video src={firstItem.url} className="w-full max-h-48 object-cover" />
+              <PlayableVideoPreview src={firstItem.url} className="max-h-48 w-full" />
             ) : (
               <img src={firstItem.url} alt="" className="w-full max-h-48 object-cover" />
             )}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { FaYoutube, FaEllipsisV, FaThumbsUp, FaThumbsDown, FaShare, FaDownload } from 'react-icons/fa';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 const YouTubePreview = ({ content, media, account, videoTitle }) => {
   const channelName = account?.platform_username || 'Your Channel';
@@ -20,7 +21,7 @@ const YouTubePreview = ({ content, media, account, videoTitle }) => {
       <div className="relative bg-gray-900 overflow-hidden" style={{ aspectRatio: previewAspectRatio }}>
         {firstItem ? (
           firstItem.type === 'video' ? (
-            <video src={firstItem.url} className="w-full h-full object-contain bg-black" />
+            <PlayableVideoPreview src={firstItem.url} className="h-full w-full" />
           ) : (
             <img src={firstItem.url} alt="" className="w-full h-full object-contain bg-black" />
           )
@@ -36,7 +37,7 @@ const YouTubePreview = ({ content, media, account, videoTitle }) => {
 
         {/* Play button overlay (only when media present) */}
         {firstItem && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10">
             <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors cursor-pointer">
               <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M8 5v14l11-7z" />
