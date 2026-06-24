@@ -960,6 +960,21 @@ export const getApprovalQueue = async () => {
   return response.data;
 };
 
+export const getApprovalActivity = async (postId) => {
+  const response = await axios.get(`${API}/approvals/${postId}/activity`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const bulkApprovePosts = async (postIds) => {
+  const response = await axios.post(`${API}/approvals/bulk/approve`, { post_ids: postIds }, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const bulkRejectPosts = async (postIds, reason = '') => {
+  const response = await axios.post(`${API}/approvals/bulk/reject`, { post_ids: postIds, reason }, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const approvePost = async (postId) => {
   const response = await axios.post(`${API}/posts/${postId}/approve`, {}, { headers: getAuthHeaders() });
   return response.data;

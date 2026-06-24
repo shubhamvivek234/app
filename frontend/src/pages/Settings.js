@@ -103,6 +103,36 @@ const NOTIFICATION_EVENTS = [
     description: 'Payment failures that need action.',
     defaultChannels: ['email', 'in_app'],
   },
+  {
+    key: 'approval.submitted',
+    label: 'Approval requests',
+    description: 'A post is submitted or resubmitted for review.',
+    defaultChannels: ['in_app'],
+  },
+  {
+    key: 'approval.approved',
+    label: 'Approval decisions',
+    description: 'A submitted post is approved and returned to the schedule.',
+    defaultChannels: ['in_app'],
+  },
+  {
+    key: 'approval.changes_requested',
+    label: 'Changes requested',
+    description: 'A reviewer sends a post back with requested changes.',
+    defaultChannels: ['in_app'],
+  },
+  {
+    key: 'approval.returned',
+    label: 'Returned approval drafts',
+    description: 'A reviewer returns an approval item to draft for recovery.',
+    defaultChannels: ['in_app'],
+  },
+  {
+    key: 'approval.overdue',
+    label: 'Overdue approvals',
+    description: 'Approval requests that are close to missing their scheduled window.',
+    defaultChannels: ['email', 'in_app'],
+  },
 ];
 
 const buildNotificationDefaults = () => (

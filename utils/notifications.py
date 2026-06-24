@@ -15,6 +15,11 @@ IMPORTANT_NOTIFICATION_EVENTS = {
     "account.reconnect_required",
     "subscription.expiring",
     "billing.failed",
+    "approval.submitted",
+    "approval.approved",
+    "approval.changes_requested",
+    "approval.returned",
+    "approval.overdue",
 }
 
 IMPORTANT_NOTIFICATION_TYPES = {
@@ -40,6 +45,11 @@ IMPORTANT_NOTIFICATION_TYPES = {
     "subscription.posts_deleted",
     "billing.payment_failed",
     "billing.payment_failed_final",
+    "approval.submitted",
+    "approval.approved",
+    "approval.changes_requested",
+    "approval.returned",
+    "approval.overdue",
 }
 
 DEFAULT_CHANNELS: dict[str, tuple[str, ...]] = {
@@ -50,6 +60,11 @@ DEFAULT_CHANNELS: dict[str, tuple[str, ...]] = {
     "account.reconnect_required": ("email", "in_app"),
     "subscription.expiring": ("email", "in_app"),
     "billing.failed": ("email", "in_app"),
+    "approval.submitted": ("in_app",),
+    "approval.approved": ("in_app",),
+    "approval.changes_requested": ("in_app",),
+    "approval.returned": ("in_app",),
+    "approval.overdue": ("email", "in_app"),
 }
 
 
@@ -61,6 +76,8 @@ def default_target_path(event: str, metadata: dict[str, Any] | None = None) -> s
         return "/accounts"
     if event in {"subscription.expiring", "billing.failed"}:
         return "/billing"
+    if event.startswith("approval."):
+        return "/approvals"
     return "/dashboard"
 
 

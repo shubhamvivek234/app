@@ -138,7 +138,7 @@ const NotificationCenter = () => {
           <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-3">
             <div>
               <h3 className="text-sm font-semibold text-slate-950">Notifications</h3>
-              <p className="text-xs text-slate-500">Important publishing and billing updates</p>
+              <p className="text-xs text-slate-500">Important publishing, approval, and billing updates</p>
             </div>
             {unreadCount > 0 && (
               <span className="rounded-full bg-slate-900 px-2 py-1 text-[11px] font-medium text-white">

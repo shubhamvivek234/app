@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from api.models.post import PostStatus
 from api.routes import posts as posts_route
+from celery_workers.tasks import approval_reminders as approval_reminder_tasks
 
 
 def _matches_value(value, expected):
@@ -109,12 +110,43 @@ class FakeCollection:
                 return result
         return None
 
+    async def insert_one(self, doc):
+        self.docs.append(dict(doc))
+        return type("InsertResult", (), {"inserted_id": doc.get("id")})()
+
+    async def update_one(self, query, update, upsert=False):
+        for doc in self.docs:
+            if _matches_query(doc, query):
+                for key, value in update.get("$set", {}).items():
+                    doc[key] = value
+                for key, value in update.get("$inc", {}).items():
+                    doc[key] = doc.get(key, 0) + value
+                for key in update.get("$unset", {}):
+                    doc.pop(key, None)
+                for key, value in update.get("$push", {}).items():
+                    current = list(doc.get(key) or [])
+                    current.append(value)
+                    doc[key] = current
+                return type("UpdateResult", (), {"matched_count": 1, "modified_count": 1, "upserted_id": None})()
+        if upsert:
+            inserted = {}
+            inserted.update(query)
+            inserted.update(update.get("$setOnInsert", {}))
+            inserted.update(update.get("$set", {}))
+            self.docs.append(inserted)
+            return type("UpdateResult", (), {"matched_count": 0, "modified_count": 0, "upserted_id": inserted.get("id")})()
+        return type("UpdateResult", (), {"matched_count": 0, "modified_count": 0, "upserted_id": None})()
+
 
 class FakeDB:
-    def __init__(self, *, posts=None, users=None, workspace_members=None):
+    def __init__(self, *, posts=None, users=None, workspace_members=None, approval_activity=None):
         self.posts = FakeCollection(posts or [])
         self.users = FakeCollection(users or [])
         self.workspace_members = FakeCollection(workspace_members or [])
+        self.approval_activity = FakeCollection(approval_activity or [])
+        self.notifications = FakeCollection([])
+        self.notification_prefs = FakeCollection([])
+        self.audit_events = FakeCollection([])
 
 
 def _post(
@@ -488,3 +520,233 @@ async def test_approve_post_blocks_expired_pending_items_and_schedules_future_it
     assert approved_doc["status"] == PostStatus.SCHEDULED
     assert approved_doc["approved_by"] == "reviewer-1"
     assert approved_doc["status_history"][-1]["status"] == PostStatus.SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_approval_queue_includes_due_assignment_and_latest_activity(monkeypatch):
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "awaiting-meta",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=4),
+                updated_at=now - timedelta(minutes=20),
+            )
+        ],
+        users=[{"user_id": "author-1", "display_name": "Author One", "email": "one@example.com"}],
+        workspace_members=[{"workspace_id": "ws-1", "user_id": "reviewer-1", "role": "editor"}],
+        approval_activity=[
+            {
+                "id": "activity-1",
+                "workspace_id": "ws-1",
+                "post_id": "awaiting-meta",
+                "actor_id": "author-1",
+                "action": "submitted",
+                "reason": "Ready for review",
+                "created_at": now - timedelta(minutes=15),
+            }
+        ],
+    )
+    db.posts.docs[0]["assigned_reviewer_id"] = "reviewer-1"
+    db.posts.docs[0]["approval_due_at"] = now - timedelta(minutes=1)
+    monkeypatch.setattr(posts_route, "_hydrate_post_card_fields_for_docs", _identity_hydrate)
+
+    result = await posts_route.list_approval_queue(
+        current_user={"user_id": "reviewer-1", "default_workspace_id": "ws-1"},
+        db=db,
+        limit=10,
+    )
+
+    item = result["awaiting"][0]
+    assert item["assigned_reviewer_id"] == "reviewer-1"
+    assert item["approval_assigned_to_me"] is True
+    assert item["approval_overdue"] is True
+    assert item["approval_expiring_soon"] is False
+    assert item["approval_latest_activity"]["action"] == "submitted"
+    assert item["approval_latest_activity"]["reason"] == "Ready for review"
+
+
+@pytest.mark.asyncio
+async def test_approval_actions_write_activity_and_action_notifications():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "pending-audit",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=3),
+            )
+        ],
+        workspace_members=[
+            {"workspace_id": "ws-1", "user_id": "reviewer-1", "role": "editor"},
+            {"workspace_id": "ws-1", "user_id": "author-1", "role": "editor"},
+        ],
+    )
+
+    rejected = await posts_route.reject_post(
+        "pending-audit",
+        posts_route.ApprovalDecisionBody(reason="Needs brand-safe wording."),
+        {"user_id": "reviewer-1", "default_workspace_id": "ws-1"},
+        db,
+    )
+
+    assert rejected["status"] == PostStatus.DRAFT
+    assert db.approval_activity.docs[-1]["action"] == "changes_requested"
+    assert db.approval_activity.docs[-1]["old_status"] == PostStatus.PENDING_APPROVAL
+    assert db.approval_activity.docs[-1]["new_status"] == PostStatus.DRAFT
+    assert db.approval_activity.docs[-1]["reason"] == "Needs brand-safe wording."
+    assert db.notifications.docs[-1]["event"] == "approval.changes_requested"
+    assert db.notifications.docs[-1]["user_id"] == "author-1"
+
+    await posts_route.resubmit_post(
+        "pending-audit",
+        posts_route.ApprovalResubmitBody(content="Updated brand-safe wording."),
+        {"user_id": "author-1", "default_workspace_id": "ws-1"},
+        db,
+    )
+    assert db.approval_activity.docs[-1]["action"] == "resubmitted"
+    assert any(
+        notification["event"] == "approval.submitted" and notification["user_id"] == "reviewer-1"
+        for notification in db.notifications.docs
+    )
+
+    await posts_route.approve_post(
+        "pending-audit",
+        {"user_id": "reviewer-1", "default_workspace_id": "ws-1", "email_verified": True},
+        db,
+    )
+    assert db.approval_activity.docs[-1]["action"] == "approved"
+    assert db.notifications.docs[-1]["event"] == "approval.approved"
+    assert db.notifications.docs[-1]["user_id"] == "author-1"
+
+
+@pytest.mark.asyncio
+async def test_approval_overdue_task_notifies_assigned_reviewer_once():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "overdue-review",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=2),
+                updated_at=now - timedelta(hours=2),
+            )
+        ],
+        workspace_members=[
+            {"workspace_id": "ws-1", "user_id": "reviewer-1", "role": "editor"},
+            {"workspace_id": "ws-1", "user_id": "reviewer-2", "role": "editor"},
+        ],
+    )
+    db.posts.docs[0]["approval_due_at"] = now - timedelta(minutes=5)
+    db.posts.docs[0]["assigned_reviewer_id"] = "reviewer-2"
+
+    result = await approval_reminder_tasks._async_send_approval_overdue_reminders(db, now=now)
+
+    assert result == {"scanned": 1, "reminded_posts": 1, "notified_users": 1}
+    assert {notice["channel"] for notice in db.notifications.docs} == {"email", "in_app"}
+    assert {notice["user_id"] for notice in db.notifications.docs} == {"reviewer-2"}
+    assert all(notice["event"] == "approval.overdue" for notice in db.notifications.docs)
+    assert db.approval_activity.docs[-1]["action"] == "overdue_reminder"
+    assert db.approval_activity.docs[-1]["metadata"]["reviewer_user_ids"] == ["reviewer-2"]
+    assert db.posts.docs[0]["approval_overdue_notified_at"] == now
+
+    second_result = await approval_reminder_tasks._async_send_approval_overdue_reminders(
+        db,
+        now=now + timedelta(hours=1),
+    )
+
+    assert second_result == {"scanned": 0, "reminded_posts": 0, "notified_users": 0}
+    assert len(db.notifications.docs) == 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_approval_returns_partial_results_and_records_activity():
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "bulk-ok",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=3),
+            ),
+            _post(
+                "bulk-expired",
+                user_id="author-2",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now - timedelta(minutes=5),
+            ),
+        ],
+        workspace_members=[{"workspace_id": "ws-1", "user_id": "reviewer-1", "role": "editor"}],
+    )
+
+    approved = await posts_route.bulk_approve_posts(
+        posts_route.ApprovalBulkDecisionBody(post_ids=["bulk-ok", "bulk-expired", "missing"]),
+        {"user_id": "reviewer-1", "default_workspace_id": "ws-1", "email_verified": True},
+        db,
+    )
+
+    assert approved["approved"] == ["bulk-ok"]
+    assert {item["post_id"] for item in approved["errors"]} == {"bulk-expired", "missing"}
+    assert (await db.posts.find_one({"id": "bulk-ok"}))["status"] == PostStatus.SCHEDULED
+    assert any(activity["post_id"] == "bulk-ok" and activity["action"] == "bulk_approved" for activity in db.approval_activity.docs)
+
+    db.posts.docs[0]["status"] = PostStatus.PENDING_APPROVAL
+    rejected = await posts_route.bulk_reject_posts(
+        posts_route.ApprovalBulkDecisionBody(post_ids=["bulk-ok"], reason="Campaign timing changed."),
+        {"user_id": "reviewer-1", "default_workspace_id": "ws-1"},
+        db,
+    )
+
+    assert rejected["rejected"] == ["bulk-ok"]
+    assert (await db.posts.find_one({"id": "bulk-ok"}))["status"] == PostStatus.DRAFT
+    assert db.approval_activity.docs[-1]["action"] == "bulk_changes_requested"
+    assert db.approval_activity.docs[-1]["reason"] == "Campaign timing changed."
+
+
+@pytest.mark.asyncio
+async def test_update_post_blocks_review_locked_items(monkeypatch):
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "pending-lock",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=2),
+            ),
+            _post(
+                "approved-lock",
+                user_id="author-1",
+                workspace_id="ws-1",
+                status=PostStatus.SCHEDULED,
+                scheduled_time=now + timedelta(hours=4),
+            ),
+        ]
+    )
+    db.posts.docs[0]["version"] = 1
+    db.posts.docs[1]["version"] = 1
+    db.posts.docs[1]["approved_by"] = "reviewer-1"
+    db.posts.docs[1]["approved_at"] = now - timedelta(minutes=10)
+    monkeypatch.setattr(posts_route, "_hydrate_post_card_fields", lambda _db, doc: doc)
+
+    for post_id in ("pending-lock", "approved-lock"):
+        with pytest.raises(HTTPException) as exc:
+            await posts_route.update_post(
+                post_id,
+                posts_route.UpdatePostRequest(content="Edited after review", version=1),
+                {"user_id": "author-1", "default_workspace_id": "ws-1", "email_verified": True},
+                db,
+            )
+        assert exc.value.status_code == 409
+        assert "approval" in exc.value.detail.lower()

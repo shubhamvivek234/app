@@ -32,6 +32,11 @@ SUPPORTED_NOTIFICATION_EVENTS: tuple[str, ...] = (
     "subscription.expiring",
     "account.expiring",
     "billing.failed",
+    "approval.submitted",
+    "approval.approved",
+    "approval.changes_requested",
+    "approval.returned",
+    "approval.overdue",
 )
 
 # Default preferences applied to new users and returned to Settings.
@@ -44,6 +49,11 @@ DEFAULT_PREFERENCES: dict[str, dict[str, Any]] = {
     "subscription.expiring": {"channels": ["email", "in_app"], "digest": "immediate"},
     "account.expiring": {"channels": ["email", "in_app"], "digest": "immediate"},
     "billing.failed": {"channels": ["email", "in_app"], "digest": "immediate"},
+    "approval.submitted": {"channels": ["in_app"], "digest": "immediate"},
+    "approval.approved": {"channels": ["in_app"], "digest": "immediate"},
+    "approval.changes_requested": {"channels": ["in_app"], "digest": "immediate"},
+    "approval.returned": {"channels": ["in_app"], "digest": "immediate"},
+    "approval.overdue": {"channels": ["email", "in_app"], "digest": "immediate"},
 }
 
 _EVENT_ALIASES: dict[str, tuple[str, ...]] = {
