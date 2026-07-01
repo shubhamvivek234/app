@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FaCheck,
   FaCheckDouble,
@@ -183,7 +183,7 @@ const ApprovalCard = ({
   busyId,
   permissions,
   selected,
-  onToggleSelected,
+  highlighted,
 }) => {
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');
@@ -199,7 +199,11 @@ const ApprovalCard = ({
   const reasonText = post.rejection_reason || post.rejection_note;
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <article className={`rounded-lg border shadow-sm transition-all duration-500 ${
+      highlighted
+        ? 'border-indigo-500 ring-2 ring-indigo-200 bg-indigo-50/5'
+        : 'border-slate-200 bg-white'
+    }`}>
       <div className="flex flex-col gap-4 p-4 lg:flex-row">
         {mode === 'awaiting' && canReview && onToggleSelected ? (
           <label className="flex items-start pt-1">
@@ -432,6 +436,7 @@ const EmptyState = ({ icon: Icon, title, description }) => (
 const ApprovalQueue = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [queue, setQueue] = useState({ awaiting: [], changes_requested: [], expired: [], summary: {} });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -441,6 +446,8 @@ const ApprovalQueue = () => {
   const [reviewFilter, setReviewFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkReason, setBulkReason] = useState('');
+
+  const highlightedPostId = searchParams.get('post_id');
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -463,6 +470,17 @@ const ApprovalQueue = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!highlightedPostId || !queue) return;
+    if (queue.awaiting?.some(p => p.id === highlightedPostId)) {
+      setActiveTab('awaiting');
+    } else if (queue.changes_requested?.some(p => p.id === highlightedPostId)) {
+      setActiveTab('changes_requested');
+    } else if (queue.expired?.some(p => p.id === highlightedPostId)) {
+      setActiveTab('expired');
+    }
+  }, [highlightedPostId, queue]);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -818,6 +836,7 @@ const ApprovalQueue = () => {
                 permissions={queuePermissions}
                 selected={selectedIds.includes(post.id)}
                 onToggleSelected={canBulkReview ? toggleSelected : null}
+                highlighted={post.id === highlightedPostId}
               />
             ))
           )}

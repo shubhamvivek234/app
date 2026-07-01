@@ -47,6 +47,7 @@ import SocialTools from '@/pages/SocialTools';
 import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
+import MagicLogin from '@/pages/MagicLogin';
 import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
 import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
 import BulkCSVUpload from '@/pages/BulkCSVUpload';
@@ -200,7 +201,7 @@ const ThemeApplier = () => {
   const { pathname } = useLocation();
 
   React.useEffect(() => {
-    const publicRoutes = ['/login', '/signup', '/forgot-password', '/verify-email', '/terms', '/privacy', '/data-deletion', '/auth/callback', '/oauth/callback', '/accept-invite', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
+    const publicRoutes = ['/login', '/signup', '/forgot-password', '/verify-email', '/terms', '/privacy', '/data-deletion', '/auth/callback', '/oauth/callback', '/accept-invite', '/magic-login', '/resources/social-media-image-guide', '/resources/social-media-video-guide'];
     const isPublicRoute = pathname === '/' || 
                         publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
 
@@ -285,6 +286,7 @@ function App() {
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/oauth/callback" element={<OAuthCallback />} />
               <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+              <Route path="/magic-login/:token" element={<MagicLogin />} />
 
               {/* Private routes */}
               <Route

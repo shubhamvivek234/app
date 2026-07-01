@@ -1,4 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import { signInWithCustomToken } from 'firebase/auth';
+import { auth } from '../firebase';
 import { setUserContext } from '../lib/sentry';
 import { toast } from 'sonner';
 import {
@@ -305,6 +307,21 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithCustomToken = async (customToken) => {
+    try {
+      setLoading(true);
+      const credential = await signInWithCustomToken(auth, customToken);
+      await syncFirebaseSession(credential.user);
+      return true;
+    } catch (error) {
+      console.error('[AuthContext] Custom token login error:', error);
+      toast.error(error.message || 'Magic Link login failed');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = async () => {
     try {
       try {
@@ -408,6 +425,7 @@ export const AuthProvider = ({ children }) => {
       authIssue,
       login,
       signup,
+      loginWithCustomToken,
       loginWithGoogle,
       logout,
       token,

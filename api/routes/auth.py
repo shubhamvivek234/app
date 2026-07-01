@@ -23,6 +23,7 @@ from utils.auth_emails import (
     get_auth_email_config_status,
     send_password_reset_email,
     send_verification_email,
+    send_magic_link_email,
 )
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 from utils.roles import has_permission
@@ -72,6 +73,10 @@ class PasswordResetRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     return_to: str | None = None
+
+
+class MagicLinkExchangeRequest(BaseModel):
+    token: str
 
 
 # ── Turnstile helper ──────────────────────────────────────────────────────────
@@ -451,6 +456,81 @@ async def request_password_reset(
     }
 
 
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+    cf_turnstile_token: str | None = None
+
+
+@router.post("/auth/magic-link/request")
+@limiter.limit("10/minute")
+async def request_magic_link(
+    request: Request,
+    body: MagicLinkRequest,
+    db: DB,
+    cache_redis: CacheRedis,
+) -> dict:
+    client_ip = request.client.host if request.client else ""
+    await _verify_turnstile_if_enabled(body.cf_turnstile_token, client_ip)
+
+    config_status = get_auth_email_config_status()
+    if not config_status["configured"]:
+        event_log(
+            logger,
+            "error",
+            "auth.magic_link.unavailable",
+            route="/auth/magic-link/request",
+            failure_type="missing_auth_email_config",
+            missing_config=config_status["missing"],
+            outcome="misconfigured",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Magic Link is temporarily unavailable. Please try again later.",
+        )
+
+    email = str(body.email).strip().lower()
+    
+    user = await db.users.find_one({"email": email}, {"_id": 0, "display_name": 1})
+    if not user:
+        return {
+            "message": "If the address is registered, a magic login link will be sent shortly.",
+        }
+
+    token = secrets.token_hex(16)
+    redis_key = f"magic_link:{token}"
+    await cache_redis.setex(redis_key, 86400, email)
+
+    try:
+        await send_magic_link_email(email, token, display_name=user.get("display_name"))
+        event_log(
+            logger,
+            "info",
+            "auth.magic_link.queued",
+            route="/auth/magic-link/request",
+            email=email,
+            outcome="queued",
+        )
+    except Exception as exc:
+        event_log(
+            logger,
+            "error",
+            "auth.magic_link.delivery_failed",
+            route="/auth/magic-link/request",
+            email=email,
+            failure_type=type(exc).__name__,
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to send magic login link. Please try again later.",
+        ) from exc
+
+    return {
+        "message": "If the address is registered, a magic login link will be sent shortly.",
+    }
+
+
 @router.post("/auth/verify-email/request")
 @limiter.limit("10/minute")
 async def request_verification_email(
@@ -758,6 +838,131 @@ async def signup(
         outcome="verified",
     )
     return await _build_user_response(db, user)
+
+
+def _is_expired(invite: dict, now: datetime) -> bool:
+    expires_at = invite.get("expires_at")
+    if not expires_at:
+        return False
+    if isinstance(expires_at, str):
+        try:
+            from dateutil.parser import isoparse
+            expires_at = isoparse(expires_at)
+        except Exception:
+            return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return now > expires_at
+
+
+@router.post("/auth/magic-link/exchange")
+@limiter.limit("15/minute")
+async def exchange_magic_link(
+    request: Request,
+    body: MagicLinkExchangeRequest,
+    db: DB,
+    cache_redis: CacheRedis,
+) -> dict:
+    token = body.token.strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token is required")
+
+    # 1. Try to find the token in Redis
+    redis_key = f"magic_link:{token}"
+    email_bytes = await cache_redis.get(redis_key)
+    invite = None
+    if not email_bytes:
+        # Check if it matches a workspace invite token
+        invite = await db.workspace_invites.find_one(
+            {"token": token, "status": "pending"},
+            {"_id": 0}
+        )
+        if not invite:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This login link has expired or is invalid.",
+            )
+        now = datetime.now(timezone.utc)
+        if _is_expired(invite, now):
+            await db.workspace_invites.update_one(
+                {"invite_id": invite["invite_id"]},
+                {"$set": {"status": "expired", "updated_at": now}},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This login link has expired or is invalid.",
+            )
+        email = invite["email"]
+    else:
+        email = email_bytes.decode("utf-8") if isinstance(email_bytes, bytes) else email_bytes
+        await cache_redis.delete(redis_key)
+
+    email = email.strip().lower()
+
+    # 2. Check if user exists in Firebase/MongoDB
+    import firebase_admin.auth as fb_auth
+    from api.deps import get_firebase_app
+    get_firebase_app()
+
+    try:
+        fb_user = fb_auth.get_user_by_email(email)
+        uid = fb_user.uid
+    except fb_auth.UserNotFoundError:
+        try:
+            fb_user = fb_auth.create_user(email=email, email_verified=True)
+            uid = fb_user.uid
+        except Exception as exc:
+            logger.error("Failed to create Firebase user for magic link: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to provision user.",
+            ) from exc
+
+    # 3. Get or create MongoDB user
+    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+    if user is None:
+        user = await _auto_create_user(
+            db,
+            uid,
+            email,
+            email.split("@")[0],
+            email_verified=True,
+        )
+    elif not user.get("email_verified"):
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"email_verified": True, "updated_at": datetime.now(timezone.utc)}}
+        )
+        user["email_verified"] = True
+
+    # 4. Generate Custom Token
+    try:
+        custom_token = fb_auth.create_custom_token(uid)
+        if isinstance(custom_token, bytes):
+            custom_token = custom_token.decode("utf-8")
+    except Exception as exc:
+        logger.error("Failed to generate custom token: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate login token.",
+        ) from exc
+
+    event_log(
+        logger,
+        "info",
+        "auth.magic_link.exchanged",
+        route="/auth/magic-link/exchange",
+        user_id=user["user_id"],
+        email=email,
+        outcome="succeeded",
+    )
+
+    return {
+        "custom_token": custom_token,
+        "email": email,
+        "user_id": user["user_id"],
+        "is_invite": invite is not None,
+    }
 
 
 # ── /logout ───────────────────────────────────────────────────────────────────

@@ -349,3 +349,105 @@ async def send_verification_email(email: str, *, display_name: str | None = None
         raise AuthEmailDeliveryError(str(exc)) from exc
 
     await _send_email("verify_email", email, action_url, display_name)
+
+
+async def send_magic_link_email(email: str, token: str, display_name: str | None = None) -> None:
+    status = _require_auth_email_config()
+    frontend_url = status["frontend_url"]
+    action_url = f"{frontend_url.rstrip('/')}/magic-login/{token}"
+    resend_api_key = _clean_env("RESEND_API_KEY")
+
+    try:
+        import resend
+    except Exception as exc:
+        raise AuthEmailDeliveryError(f"Resend SDK unavailable: {exc}") from exc
+
+    resend.api_key = resend_api_key
+    subject = "Your Unravler Magic Login Link"
+    greeting = f"Hi {display_name}," if display_name else "Hi,"
+    
+    html_body = f"""\
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h2>{subject}</h2>
+  <p>{greeting}</p>
+  <p>Click the button below to log in to your Unravler account instantly. No password required.</p>
+  <p>
+    <a href="{action_url}" style="display: inline-block; padding: 12px 20px; background-color: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
+      Log In Instantly
+    </a>
+  </p>
+  <p>Or copy and paste this link in your browser:</p>
+  <p style="word-break: break-all;"><a href="{action_url}">{action_url}</a></p>
+  <p style="color: #666; font-size: 13px;">This link is valid for 24 hours and can only be used once.</p>
+</body>
+</html>
+"""
+
+    text_body = f"{greeting}\n\nClick the link below to log in to Unravler:\n{action_url}\n\nThis link is valid for 24 hours and can only be used once."
+
+    params = {
+        "from": _sender_header(),
+        "to": [email],
+        "reply_to": [status["sender_email"]],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body,
+    }
+
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as exc:
+        raise AuthEmailDeliveryError(str(exc)) from exc
+
+
+async def send_approval_notification_email(email: str, name: str | None, post_title: str, action_url: str) -> None:
+    status = _require_auth_email_config()
+    resend_api_key = _clean_env("RESEND_API_KEY")
+
+    try:
+        import resend
+    except Exception as exc:
+        raise AuthEmailDeliveryError(f"Resend SDK unavailable: {exc}") from exc
+
+    resend.api_key = resend_api_key
+    subject = f"Approval Required: {post_title}"
+    greeting = f"Hi {name}," if name else "Hi,"
+    
+    html_body = f"""\
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h2>Approval Required</h2>
+  <p>{greeting}</p>
+  <p>A new social media post, <strong>"{post_title}"</strong>, has been submitted and requires your approval before it can go live.</p>
+  <p>
+    <a href="{action_url}" style="display: inline-block; padding: 12px 20px; background-color: #10b981; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
+      Review & Approve Post
+    </a>
+  </p>
+  <p>Or copy and paste this link in your browser:</p>
+  <p style="word-break: break-all;"><a href="{action_url}">{action_url}</a></p>
+  <p style="color: #666; font-size: 13px;">This login link is valid for 7 days.</p>
+</body>
+</html>
+"""
+
+    text_body = f"{greeting}\n\nA new post, \"{post_title}\", requires your approval. Review it here:\n{action_url}\n\nThis link is valid for 7 days."
+
+    params = {
+        "from": _sender_header(),
+        "to": [email],
+        "reply_to": [status["sender_email"]],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body,
+    }
+
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as exc:
+        raise AuthEmailDeliveryError(str(exc)) from exc
+
+

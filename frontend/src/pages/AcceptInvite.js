@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { getWorkspaceInviteDetails, acceptWorkspaceInvite } from '@/lib/api';
+import { getWorkspaceInviteDetails, acceptWorkspaceInvite, exchangeMagicLink } from '@/lib/api';
 
 const ROLE_LABELS = {
   owner:  'Owner',
@@ -70,7 +70,7 @@ const AcceptInvite = () => {
   const [searchParams] = useSearchParams();
   const { token: routeToken } = useParams();
   const navigate = useNavigate();
-  const { user, login, signup, refreshUser } = useAuth();
+  const { user, login, signup, loginWithCustomToken, refreshUser } = useAuth();
 
   const token = routeToken || searchParams.get('token');
 
@@ -92,15 +92,37 @@ const AcceptInvite = () => {
       .then((data) => {
         setInvite(data);
         setFormData((prev) => ({ ...prev, email: data.invited_email || data.email || '' }));
-        // Default form shown based on whether user already has an account
-        setShowForm(data.user_exists ? 'login' : 'signup');
-        setPageState('preview');
+        
+        if (data.role === 'client') {
+          const inviteEmail = (data.invited_email || data.email || '').toLowerCase();
+          if (user && user.email.toLowerCase() === inviteEmail) {
+            setPageState('preview');
+            return;
+          }
+          setPageState('client_auto_login');
+          exchangeMagicLink(token)
+            .then(async (loginData) => {
+              if (loginData.custom_token) {
+                await loginWithCustomToken(loginData.custom_token);
+              } else {
+                throw new Error('No custom token returned');
+              }
+            })
+            .catch((err) => {
+              console.error('Magic invite auto login failed:', err);
+              setErrorMsg(err.response?.data?.detail || 'Client authentication failed. Please request a new invite.');
+              setPageState('error');
+            });
+        } else {
+          setShowForm(data.user_exists ? 'login' : 'signup');
+          setPageState('preview');
+        }
       })
       .catch((err) => {
         setErrorMsg(err.response?.data?.detail || 'This invite link is invalid or has expired.');
         setPageState('error');
       });
-  }, [token]);
+  }, [token, user, loginWithCustomToken]);
 
   // ── Step 2: Accept invite once user is authenticated ─────────────────────
   const handleAccept = useCallback(async () => {
@@ -165,6 +187,18 @@ const AcceptInvite = () => {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
           <div style={{ width: 36, height: 36, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           <p style={{ color: '#6b7280', fontSize: '14px' }}>Loading invite…</p>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </CenteredCard>
+    );
+  }
+
+  if (pageState === 'client_auto_login') {
+    return (
+      <CenteredCard>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+          <div style={{ width: 36, height: 36, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ color: '#6b7280', fontSize: '14px' }}>Setting up your client account…</p>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </CenteredCard>

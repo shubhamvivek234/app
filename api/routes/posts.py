@@ -466,9 +466,34 @@ async def _emit_approval_notification(
                 created_at=now,
                 update_existing=True,
             )
+
+            # E-mail notification with Magic Login Link for submitted or overdue approvals
+            if event in ("approval.submitted", "approval.overdue"):
+                user = await db.users.find_one({"user_id": target_user_id}, {"_id": 0, "email": 1, "display_name": 1})
+                if user and user.get("email"):
+                    from utils.auth_emails import get_auth_email_config_status, send_approval_notification_email
+                    config = get_auth_email_config_status()
+                    if config["configured"]:
+                        import secrets
+                        from db.redis_client import get_cache_redis
+                        token = secrets.token_hex(16)
+                        cache_redis = get_cache_redis()
+                        # TTL: 7 days (604800 seconds)
+                        await cache_redis.setex(f"magic_link:{token}", 604800, user["email"])
+                        
+                        action_url = f"{config['frontend_url'].rstrip('/')}/magic-login/{token}?post_id={post_id}"
+                        post_title = post_doc.get("title") or (post_doc.get("content") or "")[:50] or "Untitled Post"
+                        
+                        await send_approval_notification_email(
+                            email=user["email"],
+                            name=user.get("display_name"),
+                            post_title=post_title,
+                            action_url=action_url,
+                        )
+                        logger.info("Approval notification email sent to %s for post %s", user["email"], post_id)
         except Exception as exc:
             logger.warning(
-                "Failed to store approval notification for post %s user %s event %s: %s",
+                "Failed to store or send approval notification for post %s user %s event %s: %s",
                 post_id,
                 target_user_id,
                 event,

@@ -1208,3 +1208,22 @@ export const getTikTokAnalyticsReport = async (params) => {
   const response = await axios.get(`${API}/analytics/tiktok-report`, { headers: getAuthHeaders(), params });
   return response.data;
 };
+
+// ── Magic Links ──
+export const exchangeMagicLink = async (token) => {
+  const response = await axios.post(`${API}/auth/magic-link/exchange`, { token }, {
+    withCredentials: true,
+  });
+  return response.data;
+};
+
+export const requestMagicLink = async (email, cfTurnstileToken = null) => {
+  const response = await axios.post(`${API}/auth/magic-link/request`, {
+    email,
+    cf_turnstile_token: cfTurnstileToken,
+  }, {
+    withCredentials: true,
+  });
+  return response.data;
+};
+
