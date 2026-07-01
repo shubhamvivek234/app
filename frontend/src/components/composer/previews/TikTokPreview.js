@@ -2,6 +2,7 @@ import React from 'react';
 import { FaHeart, FaRegComment, FaShare, FaMusic, FaPlus } from 'react-icons/fa';
 import { FaTiktok } from 'react-icons/fa';
 import { RiSendPlaneLine } from 'react-icons/ri';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 const TikTokPreview = ({ content, media, account }) => {
   const name   = account?.platform_username || 'your_account';
@@ -20,13 +21,13 @@ const TikTokPreview = ({ content, media, account }) => {
       {firstItem ? (
         <div className="absolute inset-0">
           {firstItem.type === 'video' ? (
-            <video src={firstItem.url} className="w-full h-full object-cover" />
+            <PlayableVideoPreview src={firstItem.url} className="h-full w-full" />
           ) : (
             <img src={firstItem.url} alt="" className="w-full h-full object-cover" />
           )}
           {/* Gradient overlays for readability */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-transparent" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-transparent" />
         </div>
       ) : (
         /* Empty state */
@@ -37,7 +38,7 @@ const TikTokPreview = ({ content, media, account }) => {
       )}
 
       {/* Top bar */}
-      <div className="absolute top-3 left-0 right-0 flex items-center justify-between px-4 z-10">
+      <div className="pointer-events-none absolute left-0 right-0 top-3 z-10 flex items-center justify-between px-4">
         <span className="text-white/70 text-sm">Following</span>
         <span className="text-white text-sm font-semibold border-b-2 border-white pb-0.5">For You</span>
         <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -46,7 +47,7 @@ const TikTokPreview = ({ content, media, account }) => {
       </div>
 
       {/* Right action bar */}
-      <div className="absolute right-3 bottom-24 flex flex-col items-center gap-5 z-10">
+      <div className="pointer-events-none absolute bottom-24 right-3 z-10 flex flex-col items-center gap-5">
         {/* Avatar with follow */}
         <div className="relative mb-1">
           {avatar ? (
@@ -102,7 +103,7 @@ const TikTokPreview = ({ content, media, account }) => {
       </div>
 
       {/* Bottom info overlay */}
-      <div className="absolute bottom-0 left-0 right-14 px-3 pb-5 z-10">
+      <div className="pointer-events-none absolute bottom-0 left-0 right-14 z-10 px-3 pb-5">
         <p className="text-white text-sm font-bold mb-1 drop-shadow">@{name}</p>
         {content ? (
           <p className="text-white text-xs leading-relaxed line-clamp-3 opacity-90 whitespace-pre-wrap drop-shadow">

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FaGlobeAmericas, FaThumbsUp, FaRegComment, FaShare, FaEllipsisH, FaVideo } from 'react-icons/fa';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 /* Colored backgrounds for short text-only posts (like real Facebook) */
 const TEXT_BG_STYLES = [
@@ -19,7 +20,7 @@ const MediaGrid = ({ mediaArray }) => {
   if (video) {
     return (
       <div className="relative aspect-video flex items-center justify-center bg-gray-900">
-        <video src={video.url} className="w-full h-full object-contain" />
+        <PlayableVideoPreview src={video.url} className="h-full w-full" />
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-14 h-14 rounded-full bg-black/50 flex items-center justify-center">
             <svg className="w-6 h-6 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">

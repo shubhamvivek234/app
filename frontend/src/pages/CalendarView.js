@@ -252,14 +252,6 @@ const CalendarView = () => {
           shareLoading={shareLoading}
         />
 
-        {visibleScheduledCount === 0 ? (
-          <div className="mb-5 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-center">
-            <p className="text-lg font-semibold text-slate-900">No scheduled posts in this range</p>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Move to another month or week, or use this quieter view to add planning notes before the queue fills up.
-            </p>
-          </div>
-        ) : null}
 
         <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_60px_-48px_rgba(15,23,42,0.5)]">
           <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80">

@@ -2,6 +2,7 @@ import React from 'react';
 import { FaRegComment, FaRetweet, FaRegHeart, FaRegBookmark } from 'react-icons/fa';
 import { RiUpload2Line, RiBarChartFill } from 'react-icons/ri';
 import PollPreviewCard from './PollPreviewCard';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 /* ── Twitter-style media grid ────────────────────────────────────────────── */
 const TwitterMediaGrid = ({ mediaArray }) => {
@@ -11,9 +12,9 @@ const TwitterMediaGrid = ({ mediaArray }) => {
   if (video) {
     return (
       <div className="rounded-2xl overflow-hidden border border-gray-200 mb-2 relative" style={{ maxHeight: '200px' }}>
-        <video src={video.url} className="w-full max-h-48 object-cover" />
+        <PlayableVideoPreview src={video.url} className="max-h-48 w-full" />
         {/* Play overlay */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20">
           <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center">
             <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />

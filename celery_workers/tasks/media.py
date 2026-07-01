@@ -430,7 +430,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     completed_successfully = False
     try:
         from media_pipeline.validation import validate_media
-        from media_pipeline.ffmpeg_worker import process_video
+        from media_pipeline.ffmpeg_worker import extract_audio_waveform_peaks, process_video
         from media_pipeline.thumbnail import generate_thumbnail
         from utils.storage import (
             copy_storage_object_async,
@@ -506,6 +506,16 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         thumbnail_path = None
         if asset_kind != "audio":
             thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
+        waveform_peaks = None
+        if asset_kind == "audio":
+            try:
+                waveform_peaks = await extract_audio_waveform_peaks(processed_path)
+            except Exception as waveform_exc:
+                logger.warning(
+                    "Could not extract audio waveform peaks: media_id=%s error=%s",
+                    media_job_id,
+                    waveform_exc,
+                )
 
         # Step 4: Upload media to permanent storage (R2 or Firebase)
         ext = pathlib.Path(processed_path).suffix or ""
@@ -591,6 +601,8 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 "source_stage": "ready",
             },
         }
+        if waveform_peaks:
+            media_update["$set"]["waveform_peaks"] = waveform_peaks
         if source_storage_deleted:
             media_update["$set"]["source_storage_deleted_at"] = source_storage_deleted_at
             media_update["$unset"] = {"source_storage_key": ""}

@@ -4,8 +4,10 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fastapi import HTTPException
 
 from api.routes import accounts as accounts_route
+from backend.app.social import google as google_module
 from backend.app.social import linkedin as linkedin_module
 
 
@@ -201,6 +203,102 @@ async def test_list_accounts_keeps_expired_refreshable_accounts_healthy():
     assert response.connection_state == "healthy"
     assert response.connection_message == "Connection is healthy."
     assert response.requires_reconnect is False
+
+
+@pytest.mark.asyncio
+async def test_youtube_refresh_failure_marks_account_reconnect_required(monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    def fake_decrypt(value):
+        return {
+            "encrypted-access-token": "stale-access-token",
+            "encrypted-refresh-token": "revoked-refresh-token",
+        }[value]
+
+    class _FakeGoogleAuth:
+        async def refresh_access_token(self, refresh_token: str) -> dict:
+            assert refresh_token == "revoked-refresh-token"
+            raise HTTPException(
+                status_code=400,
+                detail="YouTube access was revoked or expired. Reconnect the account.",
+            )
+
+    monkeypatch.setattr(accounts_route, "decrypt", fake_decrypt)
+    monkeypatch.setattr(google_module, "GoogleAuth", _FakeGoogleAuth)
+
+    db = _FakeDB([
+        {
+            "id": "youtube-account-1",
+            "account_id": "youtube-account-1",
+            "user_id": "user-1",
+            "platform": "youtube",
+            "platform_user_id": "UC123",
+            "is_active": True,
+            "access_token": "encrypted-access-token",
+            "refresh_token": "encrypted-refresh-token",
+            "expires_at": now - timedelta(hours=1),
+        }
+    ])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await accounts_route._get_youtube_access_token(db, db.social_accounts.docs[0], force_refresh=True)
+
+    assert exc_info.value.status_code == 400
+    account = db.social_accounts.docs[0]
+    assert account["requires_reconnect"] is True
+    assert account["reconnect_reason"] == "YouTube access was revoked or expired. Reconnect the account."
+    assert account["token_error"] == "YouTube access was revoked or expired. Reconnect the account."
+    assert account["reconnect_required_at"].tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_youtube_successful_refresh_clears_stale_reconnect_fields(monkeypatch):
+    now = datetime.now(timezone.utc)
+
+    def fake_decrypt(value):
+        return {
+            "encrypted-access-token": "stale-access-token",
+            "encrypted-refresh-token": "valid-refresh-token",
+        }[value]
+
+    class _FakeGoogleAuth:
+        async def refresh_access_token(self, refresh_token: str) -> dict:
+            assert refresh_token == "valid-refresh-token"
+            return {"access_token": "fresh-access-token", "expires_in": 3600}
+
+    monkeypatch.setattr(accounts_route, "decrypt", fake_decrypt)
+    monkeypatch.setattr(accounts_route, "encrypt", lambda value: f"encrypted:{value}")
+    monkeypatch.setattr(google_module, "GoogleAuth", _FakeGoogleAuth)
+
+    db = _FakeDB([
+        {
+            "id": "youtube-account-1",
+            "account_id": "youtube-account-1",
+            "user_id": "user-1",
+            "platform": "youtube",
+            "platform_user_id": "UC123",
+            "is_active": True,
+            "access_token": "encrypted-access-token",
+            "refresh_token": "encrypted-refresh-token",
+            "expires_at": now - timedelta(hours=1),
+            "requires_reconnect": True,
+            "reconnect_reason": "Old refresh failure",
+            "reconnect_required_at": now - timedelta(days=1),
+            "token_error": "Old refresh failure",
+            "token_error_code": "token_refresh_failed",
+        }
+    ])
+
+    token = await accounts_route._get_youtube_access_token(db, db.social_accounts.docs[0], force_refresh=True)
+
+    assert token == "fresh-access-token"
+    account = db.social_accounts.docs[0]
+    assert account["access_token"] == "encrypted:fresh-access-token"
+    assert account["requires_reconnect"] is False
+    assert account["reconnect_reason"] is None
+    assert account["reconnect_required_at"] is None
+    assert account["token_error"] is None
+    assert account["token_error_code"] is None
 
 
 def test_account_connection_routes_allow_authenticated_unverified_users():

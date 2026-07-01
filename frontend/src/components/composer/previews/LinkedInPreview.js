@@ -4,6 +4,7 @@ import {
   FaEllipsisH, FaGlobeAmericas, FaLock,
 } from 'react-icons/fa';
 import PollPreviewCard from './PollPreviewCard';
+import PlayableVideoPreview from './PlayableVideoPreview';
 
 /* Highlight #hashtags and @mentions in text */
 const RichText = ({ text }) => {
@@ -32,7 +33,7 @@ const MediaGrid = ({ mediaArray }) => {
   if (video) {
     return (
       <div className="relative aspect-video bg-gray-900 overflow-hidden">
-        <video src={video.url} className="w-full h-full object-cover" />
+        <PlayableVideoPreview src={video.url} className="h-full w-full" />
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-14 h-14 rounded-full bg-black/50 flex items-center justify-center">
             <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">

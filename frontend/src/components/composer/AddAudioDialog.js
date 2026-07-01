@@ -24,6 +24,16 @@ const fallbackWaveformBars = Array.from({ length: 64 }, (_, index) => {
   return Math.max(18, Math.min(92, Math.round(value * 56)));
 });
 
+const waveformPeaksToBars = (peaks) => {
+  if (!Array.isArray(peaks) || peaks.length === 0) return null;
+  const normalized = peaks
+    .map((peak) => Number(peak))
+    .filter((peak) => Number.isFinite(peak));
+  if (normalized.length === 0) return null;
+  const max = Math.max(...normalized, 1);
+  return normalized.map((peak) => Math.max(14, Math.min(96, Math.round((peak / max) * 92))));
+};
+
 const buildWaveformBars = async (url, barCount = 64) => {
   if (!url || typeof window === 'undefined') return fallbackWaveformBars;
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
@@ -120,11 +130,40 @@ const seekMedia = (element, seconds) => {
   element.currentTime = Math.max(target, 0);
 };
 
+export const getAudioMixPreviewState = ({
+  selectedAudio,
+  selectedVolume,
+  originalVolume,
+  muteOriginal,
+  originalMuteTouched,
+  hasOriginalAudio,
+}) => {
+  const hasSelectedAudio = Boolean(selectedAudio?.media_id || selectedAudio?.media_url);
+  const selectedVolumeValue = clampVolume(selectedVolume);
+  const selectedAudible = hasSelectedAudio && selectedVolumeValue > 0;
+  const autoUseOriginal = Boolean(hasOriginalAudio) && !originalMuteTouched && (!hasSelectedAudio || !selectedAudible);
+  const effectiveMuteOriginal = Boolean(muteOriginal) && !autoUseOriginal;
+  const originalVolumeValue = effectiveMuteOriginal ? 0 : clampVolume(originalVolume);
+  const originalAudible = Boolean(hasOriginalAudio) && originalVolumeValue > 0;
+  const silent = hasSelectedAudio && !selectedAudible && !originalAudible;
+  return {
+    hasSelectedAudio,
+    selectedVolume: selectedVolumeValue,
+    originalVolume: originalVolumeValue,
+    selectedAudible,
+    originalAudible,
+    autoUseOriginal,
+    effectiveMuteOriginal,
+    silent,
+  };
+};
+
 const AddAudioDialog = ({
   open,
   onOpenChange,
   video,
   onRenderComplete,
+  onRemoveCustomAudio,
   composerSessionId,
   onTemporaryAudioUploaded,
   onTemporaryAudioRemoved,
@@ -146,25 +185,40 @@ const AddAudioDialog = ({
   const [selectedVolume, setSelectedVolume] = useState(0.9);
   const [waveformBars, setWaveformBars] = useState(fallbackWaveformBars);
   const [muteOriginal, setMuteOriginal] = useState(true);
+  const [originalMuteTouched, setOriginalMuteTouched] = useState(false);
+  const [measuredVideoDuration, setMeasuredVideoDuration] = useState(0);
+  const [measuredAudioDuration, setMeasuredAudioDuration] = useState(0);
+  const [activeDrag, setActiveDrag] = useState(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const videoRef = useRef(null);
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
+  const trimTrackRef = useRef(null);
+  const offsetTrackRef = useRef(null);
   const delayedAudioTimerRef = useRef(null);
   const licensedAudioEnabled = env.AUDIO_PROVIDER_ENABLED === 'true';
   const licensedAudioProviderName = env.AUDIO_PROVIDER_NAME || 'licensed audio provider';
 
   const selectedAudio = audioAssets.find((asset) => asset.media_id === selectedAudioId) || null;
-  const videoDuration = Number(video?.duration || 0);
+  const videoDuration = Number(video?.duration || measuredVideoDuration || 0);
   const hasVideoDuration = Number.isFinite(videoDuration) && videoDuration > 0;
-  const selectedAudioDuration = Number(selectedAudio?.duration_seconds || 0);
+  const selectedAudioDuration = Number(selectedAudio?.duration_seconds || measuredAudioDuration || 0);
   const hasAudioDuration = Number.isFinite(selectedAudioDuration) && selectedAudioDuration > 0;
+  const hasOriginalAudio = video?.hasAudio !== false;
   const trimStartSeconds = clampSeconds(trimStart, hasAudioDuration ? selectedAudioDuration : null);
   const trimEndSeconds = trimEnd === '' ? null : clampSeconds(trimEnd, hasAudioDuration ? selectedAudioDuration : null);
   const effectiveTrimEnd = trimEndSeconds || selectedAudioDuration || videoDuration || null;
   const offsetSeconds = clampSeconds(offset, hasVideoDuration ? videoDuration : null);
+  const mixState = getAudioMixPreviewState({
+    selectedAudio,
+    selectedVolume,
+    originalVolume,
+    muteOriginal,
+    originalMuteTouched,
+    hasOriginalAudio,
+  });
   const audioTimelineDuration = Math.max(
     selectedAudioDuration || 0,
     effectiveTrimEnd || 0,
@@ -176,9 +230,12 @@ const AddAudioDialog = ({
     ? clamp((effectiveTrimEnd / audioTimelineDuration) * 100, trimStartPercent, 100)
     : 100;
   const offsetPercent = hasVideoDuration ? clamp((offsetSeconds / videoDuration) * 100, 0, 100) : 0;
-  const originalVolumePercent = Math.round(clampVolume(originalVolume) * 100);
-  const selectedVolumePercent = Math.round(clampVolume(selectedVolume) * 100);
-  const canRender = Boolean(video?.mediaId && selectedAudio?.media_id && !rendering && !uploadingAudio);
+  const originalVolumePercent = Math.round(mixState.originalVolume * 100);
+  const selectedVolumePercent = Math.round(mixState.selectedVolume * 100);
+  const canRender = Boolean(video?.mediaId && selectedAudio?.media_id && !rendering && !uploadingAudio && !mixState.silent);
+  const videoPreviewAspectRatio = video?.width && video?.height
+    ? `${video.width} / ${video.height}`
+    : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -201,29 +258,70 @@ const AddAudioDialog = ({
       setPreviewLoading(false);
       setPreviewError('');
       setRenderProgress(0);
+      setActiveDrag(null);
       clearTimeout(delayedAudioTimerRef.current);
     }
   }, [open]);
 
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.volume = muteOriginal ? 0 : clampVolume(originalVolume);
-      videoRef.current.muted = muteOriginal;
+      videoRef.current.volume = mixState.originalVolume;
+      videoRef.current.muted = mixState.effectiveMuteOriginal || mixState.originalVolume <= 0;
     }
     if (audioRef.current) {
-      audioRef.current.volume = clampVolume(selectedVolume);
+      audioRef.current.volume = mixState.selectedVolume;
     }
-  }, [muteOriginal, originalVolume, selectedVolume]);
+  }, [mixState.effectiveMuteOriginal, mixState.originalVolume, mixState.selectedVolume]);
 
   useEffect(() => {
     stopPreview();
+    setMeasuredAudioDuration(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAudioId]);
+
+  useEffect(() => {
+    setMeasuredVideoDuration(0);
+  }, [video?.mediaId]);
+
+  useEffect(() => {
+    if (!hasAudioDuration) return;
+    if (trimStartSeconds >= selectedAudioDuration) {
+      setTrimStart(Math.max(selectedAudioDuration - 0.1, 0));
+    }
+    if (trimEndSeconds !== null && trimEndSeconds > selectedAudioDuration) {
+      setTrimEnd(String(selectedAudioDuration));
+    }
+  }, [hasAudioDuration, selectedAudioDuration, trimStartSeconds, trimEndSeconds]);
+
+  useEffect(() => {
+    if (!hasVideoDuration) return;
+    if (offsetSeconds >= videoDuration) {
+      setOffset(Math.max(videoDuration - 0.1, 0));
+    }
+  }, [hasVideoDuration, offsetSeconds, videoDuration]);
+
+  useEffect(() => {
+    if (
+      open
+      && selectedAudio?.media_id
+      && mixState.selectedVolume <= 0
+      && hasOriginalAudio
+      && !originalMuteTouched
+      && clampVolume(originalVolume) <= 0
+    ) {
+      setOriginalVolume(0.35);
+    }
+  }, [open, selectedAudio?.media_id, mixState.selectedVolume, hasOriginalAudio, originalMuteTouched, originalVolume]);
 
   useEffect(() => {
     let cancelled = false;
     if (!open || !selectedAudio?.media_url) {
       setWaveformBars(fallbackWaveformBars);
+      return undefined;
+    }
+    const storedBars = waveformPeaksToBars(selectedAudio.waveform_peaks);
+    if (storedBars) {
+      setWaveformBars(storedBars);
       return undefined;
     }
     buildWaveformBars(selectedAudio.media_url)
@@ -236,7 +334,47 @@ const AddAudioDialog = ({
     return () => {
       cancelled = true;
     };
-  }, [open, selectedAudio?.media_url]);
+  }, [open, selectedAudio?.media_id, selectedAudio?.media_url, selectedAudio?.waveform_peaks]);
+
+  const percentFromPointer = (event, ref) => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
+    return clamp((event.clientX - rect.left) / rect.width, 0, 1);
+  };
+
+  const applyDrag = (mode, event) => {
+    if (mode === 'trimStart' && hasAudioDuration) {
+      const seconds = percentFromPointer(event, trimTrackRef) * selectedAudioDuration;
+      const maxStart = Math.max((trimEndSeconds ?? selectedAudioDuration) - 0.1, 0);
+      setTrimStart(Number(clamp(seconds, 0, maxStart).toFixed(1)));
+      return;
+    }
+    if (mode === 'trimEnd' && hasAudioDuration) {
+      const seconds = percentFromPointer(event, trimTrackRef) * selectedAudioDuration;
+      const minEnd = Math.min(trimStartSeconds + 0.1, selectedAudioDuration);
+      setTrimEnd(String(Number(clamp(seconds, minEnd, selectedAudioDuration).toFixed(1))));
+      return;
+    }
+    if (mode === 'offset' && hasVideoDuration) {
+      const seconds = percentFromPointer(event, offsetTrackRef) * videoDuration;
+      setOffset(Number(clamp(seconds, 0, Math.max(videoDuration - 0.1, 0)).toFixed(1)));
+    }
+  };
+
+  useEffect(() => {
+    if (!activeDrag) return undefined;
+    const handleMove = (event) => {
+      event.preventDefault();
+      applyDrag(activeDrag, event);
+    };
+    const handleUp = () => setActiveDrag(null);
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  });
 
   const stopPreview = () => {
     clearTimeout(delayedAudioTimerRef.current);
@@ -257,12 +395,12 @@ const AddAudioDialog = ({
     try {
       await waitForMediaMetadata(videoEl);
       seekMedia(videoEl, 0);
-      videoEl.volume = muteOriginal ? 0 : clampVolume(originalVolume);
-      videoEl.muted = muteOriginal;
+      videoEl.volume = mixState.originalVolume;
+      videoEl.muted = mixState.effectiveMuteOriginal || mixState.originalVolume <= 0;
 
       if (hasSelectedAudio) {
         await waitForMediaMetadata(audioEl);
-        audioEl.volume = clampVolume(selectedVolume);
+        audioEl.volume = mixState.selectedVolume;
         seekMedia(audioEl, trimStartSeconds);
       }
 
@@ -375,6 +513,47 @@ const AddAudioDialog = ({
     }
   };
 
+  const resetMix = () => {
+    stopPreview();
+    setTrimStart(0);
+    setTrimEnd('');
+    setOffset(0);
+    setLoopToEnd(true);
+    setFadeIn(0.4);
+    setFadeOut(0.8);
+    setOriginalVolume(0.35);
+    setSelectedVolume(0.9);
+    setMuteOriginal(true);
+    setOriginalMuteTouched(false);
+    setPreviewError('');
+  };
+
+  const applyPreset = (preset) => {
+    stopPreview();
+    setOriginalMuteTouched(true);
+    if (preset === 'replace') {
+      setSelectedVolume(0.9);
+      setOriginalVolume(0.35);
+      setMuteOriginal(true);
+      return;
+    }
+    if (preset === 'background') {
+      setSelectedVolume(0.35);
+      setOriginalVolume(0.75);
+      setMuteOriginal(false);
+      return;
+    }
+    setSelectedVolume(0.25);
+    setOriginalVolume(0.9);
+    setMuteOriginal(false);
+  };
+
+  const handleRemoveExistingCustomAudio = () => {
+    stopPreview();
+    onRemoveCustomAudio?.();
+    onOpenChange?.(false);
+  };
+
   const handleRender = async () => {
     if (!canRender) return;
     if (trimEndSeconds !== null && trimEndSeconds <= trimStartSeconds) {
@@ -400,9 +579,9 @@ const AddAudioDialog = ({
         loop_to_video_end: loopToEnd,
         fade_in_ms: Math.round(fadeIn * 1000),
         fade_out_ms: Math.round(fadeOut * 1000),
-        original_volume: muteOriginal ? 0 : clampVolume(originalVolume),
-        selected_volume: clampVolume(selectedVolume),
-        mute_original: muteOriginal,
+        original_volume: mixState.originalVolume,
+        selected_volume: mixState.selectedVolume,
+        mute_original: mixState.effectiveMuteOriginal,
         normalize_audio: true,
       });
       const renderedAsset = await waitForAudioRenderReady(render.render_job_id, {
@@ -429,16 +608,19 @@ const AddAudioDialog = ({
       if (!value) stopPreview();
       onOpenChange?.(value);
     }}>
-      <DialogContent className="max-w-5xl p-0 overflow-hidden">
-        <DialogHeader className="border-b border-gray-200 px-6 py-4 text-left">
+      <DialogContent
+        motionPreset="centered"
+        className="flex max-h-[92dvh] w-[min(1120px,calc(100vw-1.5rem))] max-w-none flex-col gap-0 overflow-hidden p-0"
+      >
+        <DialogHeader className="shrink-0 border-b border-gray-200 px-5 py-4 text-left sm:px-6">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <FaMusic className="text-blue-600" />
             Add audio to video
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-0 md:grid-cols-[1.05fr_0.95fr]">
-          <div className="space-y-5 border-r border-gray-200 bg-slate-50/70 p-6">
+        <div className="grid min-h-0 flex-1 gap-0 overflow-y-auto md:grid-cols-[1.05fr_0.95fr]">
+          <div className="space-y-4 bg-slate-50/70 p-4 sm:p-5 md:border-r md:border-gray-200">
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -541,9 +723,12 @@ const AddAudioDialog = ({
 
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm font-semibold text-gray-900">Trim and align</p>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Trim and align</p>
+                  <p className="text-xs text-gray-500">Drag the cyan handles to trim. Drag the amber handle to align audio with the video.</p>
+                </div>
                 <span className="text-xs text-gray-500">
-                  Audio {formatDuration(selectedAudioDuration)} · Video {formatDuration(video?.duration)}
+                  Audio {formatDuration(selectedAudioDuration)} · Video {formatDuration(videoDuration)}
                 </span>
               </div>
               <div className="rounded-xl bg-slate-950 px-3 py-3">
@@ -564,10 +749,39 @@ const AddAudioDialog = ({
                     );
                   })}
                 </div>
-                <div className="relative mt-3 h-3 rounded-full bg-slate-800">
+                <div
+                  ref={trimTrackRef}
+                  className={`relative mt-3 h-3 rounded-full bg-slate-800 ${hasAudioDuration ? 'cursor-ew-resize' : 'cursor-not-allowed opacity-70'}`}
+                >
                   <div
                     className="absolute top-0 h-3 rounded-full bg-cyan-300/80"
                     style={{ left: `${trimStartPercent}%`, width: `${Math.max(trimEndPercent - trimStartPercent, 1)}%` }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!hasAudioDuration}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      setActiveDrag('trimStart');
+                      applyDrag('trimStart', event);
+                    }}
+                    className="absolute top-1/2 h-6 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100 bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.7)] disabled:opacity-40"
+                    style={{ left: `${trimStartPercent}%` }}
+                    title="Drag trim start"
+                    aria-label="Drag trim start"
+                  />
+                  <button
+                    type="button"
+                    disabled={!hasAudioDuration}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      setActiveDrag('trimEnd');
+                      applyDrag('trimEnd', event);
+                    }}
+                    className="absolute top-1/2 h-6 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-100 bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.7)] disabled:opacity-40"
+                    style={{ left: `${trimEndPercent}%` }}
+                    title="Drag trim end"
+                    aria-label="Drag trim end"
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
@@ -578,11 +792,28 @@ const AddAudioDialog = ({
                   <span>Video alignment</span>
                   <span>{formatDuration(videoDuration)}</span>
                 </div>
-                <div className="relative mt-2 h-3 rounded-full bg-slate-800">
-                  <div
-                    className="absolute -top-1 h-5 w-0.5 rounded-full bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.8)]"
+                <div
+                  ref={offsetTrackRef}
+                  className={`relative mt-2 h-3 rounded-full bg-slate-800 ${hasVideoDuration ? 'cursor-ew-resize' : 'cursor-not-allowed opacity-70'}`}
+                  onPointerDown={(event) => {
+                    if (!hasVideoDuration) return;
+                    event.preventDefault();
+                    setActiveDrag('offset');
+                    applyDrag('offset', event);
+                  }}
+                >
+                  <button
+                    type="button"
+                    disabled={!hasVideoDuration}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      setActiveDrag('offset');
+                      applyDrag('offset', event);
+                    }}
+                    className="absolute -top-1 h-5 w-3 -translate-x-1/2 rounded-full border border-amber-100 bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,0.8)] disabled:opacity-40"
                     style={{ left: `${offsetPercent}%` }}
                     title="Custom audio starts at this video time"
+                    aria-label="Drag custom audio start time"
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
@@ -631,8 +862,8 @@ const AddAudioDialog = ({
                 <div>
                   <Label className="text-xs">Fade in / out (sec)</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <Input type="number" min="0" step="0.1" value={fadeIn} onChange={(event) => setFadeIn(toSeconds(event.target.value))} />
-                    <Input type="number" min="0" step="0.1" value={fadeOut} onChange={(event) => setFadeOut(toSeconds(event.target.value))} />
+                    <Input type="number" min="0" max="10" step="0.1" value={fadeIn} onChange={(event) => setFadeIn(clampSeconds(event.target.value, 10))} />
+                    <Input type="number" min="0" max="10" step="0.1" value={fadeOut} onChange={(event) => setFadeOut(clampSeconds(event.target.value, 10))} />
                   </div>
                 </div>
               </div>
@@ -646,17 +877,39 @@ const AddAudioDialog = ({
             </div>
           </div>
 
-          <div className="space-y-5 p-6">
+          <div className="space-y-4 p-4 sm:p-5">
+            {video?.audioMix && onRemoveCustomAudio && (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-blue-950">This video already has custom audio</p>
+                    <p className="mt-1 text-xs text-blue-800">Remove it to restore the original uploaded video before adding a different mix.</p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={handleRemoveExistingCustomAudio} disabled={rendering}>
+                    Remove custom audio
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="overflow-hidden rounded-2xl border border-gray-200 bg-black shadow-sm">
               {video?.url ? (
-                <div className="relative">
+                <div
+                  className="relative flex max-h-[42dvh] min-h-[180px] items-center justify-center bg-black"
+                  style={videoPreviewAspectRatio ? { aspectRatio: videoPreviewAspectRatio } : undefined}
+                >
                   <video
                     ref={videoRef}
                     src={video.url}
                     poster={video.thumbnailUrl && video.thumbnailUrl !== video.url ? video.thumbnailUrl : undefined}
-                    className="aspect-video w-full cursor-pointer object-contain"
+                    className="h-full max-h-[42dvh] w-full max-w-full cursor-pointer object-contain"
                     preload="metadata"
                     playsInline
+                    onLoadedMetadata={(event) => {
+                      const duration = event.currentTarget.duration;
+                      if (Number.isFinite(duration) && duration > 0) {
+                        setMeasuredVideoDuration(duration);
+                      }
+                    }}
                     onClick={togglePreview}
                     onPause={() => {
                       clearTimeout(delayedAudioTimerRef.current);
@@ -696,6 +949,12 @@ const AddAudioDialog = ({
                   ref={audioRef}
                   src={selectedAudio.media_url}
                   preload="metadata"
+                  onLoadedMetadata={(event) => {
+                    const duration = event.currentTarget.duration;
+                    if (Number.isFinite(duration) && duration > 0) {
+                      setMeasuredAudioDuration(duration);
+                    }
+                  }}
                   onTimeUpdate={handleAudioTimeUpdate}
                   onError={() => {
                     setPreviewError('Selected audio preview could not load');
@@ -711,14 +970,29 @@ const AddAudioDialog = ({
                   <p className="text-sm font-semibold text-gray-900">Preview mix</p>
                   <p className="text-xs text-gray-500">Browser preview approximates the final render.</p>
                 </div>
-                <Button type="button" variant="outline" onClick={togglePreview} disabled={!video?.url || previewLoading}>
-                  {previewLoading ? <FaSpinner className="mr-2 animate-spin" /> : isPreviewing ? <FaPause className="mr-2" /> : <FaPlay className="mr-2" />}
-                  {previewLoading ? 'Loading' : isPreviewing ? 'Pause' : selectedAudio?.media_url ? 'Play mix' : 'Play video'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={resetMix} disabled={rendering}>
+                    Reset mix
+                  </Button>
+                  <Button type="button" variant="outline" onClick={togglePreview} disabled={!video?.url || previewLoading}>
+                    {previewLoading ? <FaSpinner className="mr-2 animate-spin" /> : isPreviewing ? <FaPause className="mr-2" /> : <FaPlay className="mr-2" />}
+                    {previewLoading ? 'Loading' : isPreviewing ? 'Pause' : selectedAudio?.media_url ? 'Play mix' : 'Play video'}
+                  </Button>
+                </div>
               </div>
               {previewError && (
                 <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
                   {previewError}
+                </p>
+              )}
+              {mixState.autoUseOriginal && mixState.hasSelectedAudio && !mixState.silent && (
+                <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Selected audio is silent, so preview and render will keep the original video audio.
+                </p>
+              )}
+              {mixState.silent && (
+                <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  This mix would be silent. Raise selected audio volume or turn off “Mute original audio”.
                 </p>
               )}
               {!selectedAudio?.media_url && (
@@ -730,15 +1004,31 @@ const AddAudioDialog = ({
               <div className="mt-5 space-y-5">
                 <div>
                   <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+                    <span>Mix presets</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => applyPreset('replace')} disabled={rendering}>
+                      Replace
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => applyPreset('background')} disabled={rendering}>
+                      Background
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => applyPreset('original')} disabled={rendering}>
+                      Original louder
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
                     <span>Original video audio</span>
-                    <span>{muteOriginal ? 'Muted' : `${originalVolumePercent}%`}</span>
+                    <span>{mixState.effectiveMuteOriginal ? 'Muted' : `${originalVolumePercent}%`}</span>
                   </div>
                   <Slider
                     value={[originalVolumePercent]}
                     min={0}
                     max={100}
                     step={1}
-                    disabled={muteOriginal}
+                    disabled={mixState.effectiveMuteOriginal}
                     onValueChange={(value) => setOriginalVolume(clampVolume((value?.[0] || 0) / 100))}
                   />
                 </div>
@@ -760,9 +1050,19 @@ const AddAudioDialog = ({
               <div className="mt-4 flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2">
                 <div>
                   <p className="text-sm font-medium text-gray-800">Mute original audio</p>
-                  <p className="text-xs text-gray-500">Replace existing video sound with the selected track.</p>
+                  <p className="text-xs text-gray-500">
+                    {mixState.autoUseOriginal
+                      ? 'Original audio is being kept because selected audio is at 0%.'
+                      : 'Replace existing video sound with the selected track.'}
+                  </p>
                 </div>
-                <Switch checked={muteOriginal} onCheckedChange={setMuteOriginal} />
+                <Switch
+                  checked={mixState.effectiveMuteOriginal}
+                  onCheckedChange={(checked) => {
+                    setOriginalMuteTouched(true);
+                    setMuteOriginal(checked);
+                  }}
+                />
               </div>
             </div>
 
@@ -779,7 +1079,7 @@ const AddAudioDialog = ({
           </div>
         </div>
 
-        <DialogFooter className="border-t border-gray-200 px-6 py-4">
+        <DialogFooter className="shrink-0 border-t border-gray-200 px-5 py-4 sm:px-6">
           <Button type="button" variant="outline" onClick={() => onOpenChange?.(false)} disabled={rendering}>
             Cancel
           </Button>

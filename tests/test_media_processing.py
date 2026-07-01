@@ -196,6 +196,44 @@ def test_build_audio_mix_command_mutes_original_and_offsets_selected_track():
     assert command[-1] == "/tmp/out.mp4"
 
 
+def test_build_audio_mix_command_keeps_original_when_selected_volume_is_zero():
+    command = ffmpeg_worker.build_audio_mix_command(
+        video_path="/tmp/video.mp4",
+        audio_path="/tmp/audio.mp3",
+        output_path="/tmp/out.mp4",
+        video_duration_seconds=10,
+        video_has_audio=True,
+        mix={
+            "selected_volume": 0,
+            "original_volume": 0.5,
+            "mute_original": False,
+            "normalize_audio": False,
+        },
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[0:a]volume=0.5000" in filter_complex
+    assert "[original][selected]amix=inputs=2" in filter_complex
+    assert "volume=0.0000" in filter_complex
+
+
+def test_build_audio_mix_command_rejects_silent_mix():
+    with pytest.raises(ValueError, match="Audio mix would be silent"):
+        ffmpeg_worker.build_audio_mix_command(
+            video_path="/tmp/video.mp4",
+            audio_path="/tmp/audio.mp3",
+            output_path="/tmp/out.mp4",
+            video_duration_seconds=10,
+            video_has_audio=True,
+            mix={
+                "selected_volume": 0,
+                "original_volume": 0.5,
+                "mute_original": True,
+                "normalize_audio": False,
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_process_media_audio_skips_thumbnail_and_marks_audio_ready(monkeypatch, tmp_path):
     os.environ["DB_NAME"] = "testdb"
@@ -230,6 +268,39 @@ async def test_process_media_audio_skips_thumbnail_and_marks_audio_ready(monkeyp
     assert fake_db.media_assets.asset_doc["asset_kind"] == "audio"
     assert fake_db.media_assets.asset_doc["duration_seconds"] == 12.5
     assert fake_db.media_assets.asset_doc["thumbnail_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_process_media_audio_stores_waveform_peaks(monkeypatch, tmp_path):
+    os.environ["DB_NAME"] = "testdb"
+    source = tmp_path / "track.mp3"
+    source.write_bytes(b"audio")
+    asset_doc = {
+        "media_id": "audio-1",
+        "user_id": "user-1",
+        "quarantine_path": str(source),
+        "mime_type": "audio/mpeg",
+        "original_filename": "track.mp3",
+    }
+    fake_db = _FakeDB(asset_doc)
+    fake_task = SimpleNamespace(request=SimpleNamespace(retries=0), max_retries=2)
+
+    monkeypatch.setattr(media_tasks, "get_client", AsyncMock(return_value=_FakeClient(fake_db)))
+    monkeypatch.setattr(
+        "media_pipeline.validation.validate_media",
+        AsyncMock(return_value={"duration": 12.5, "is_audio": True, "has_audio": True}),
+    )
+    monkeypatch.setattr("media_pipeline.thumbnail.generate_thumbnail", AsyncMock(return_value=None))
+    monkeypatch.setattr("media_pipeline.ffmpeg_worker.extract_audio_waveform_peaks", AsyncMock(return_value=[0.1, 0.5, 1.0]))
+    monkeypatch.setattr("utils.storage.copy_storage_object_async", AsyncMock(return_value="unused"))
+    monkeypatch.setattr("utils.storage.upload_file_from_path_async", AsyncMock(return_value="https://cdn.example/media/user-1/audio-1.mp3"))
+    monkeypatch.setattr("utils.storage.upload_file_async", AsyncMock(return_value="unused"))
+    monkeypatch.setattr("utils.storage.delete_file_async", AsyncMock(return_value=None))
+
+    result = await media_tasks._async_process_media(fake_task, "audio-1", "user-1")
+
+    assert result["status"] == "ready"
+    assert fake_db.media_assets.asset_doc["waveform_peaks"] == [0.1, 0.5, 1.0]
 
 
 @pytest.mark.asyncio

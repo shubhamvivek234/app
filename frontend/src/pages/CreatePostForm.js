@@ -2561,6 +2561,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         }}
         video={audioDialog.video}
         onRenderComplete={handleAudioRenderComplete}
+        onRemoveCustomAudio={() => handleRemoveAudioForPlatform(audioDialog.accountId, audioDialog.index)}
         composerSessionId={composerAudioSessionIdRef.current}
         onTemporaryAudioUploaded={registerTemporaryAudio}
         onTemporaryAudioRemoved={unregisterTemporaryAudio}
