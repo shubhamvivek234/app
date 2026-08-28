@@ -7,23 +7,16 @@ Branch: main
 Focus: important notifications + composer reliability + R2 migration
 
 ## Last Session Completed
-Date: 2026-06-14
+Date: 2026-08-29
 Completed:
-- Backend: added central important-notification emitter and consistent doc shape with event/type/title/severity/target/dedup/read fields.
-  Files: `utils/notifications.py`, `utils/notification_prefs.py`
-- Backend: wired schedule confirmations, aggregate publish results, reconnect-required, billing failed, and subscription-expiry/grace notices to the central emitter.
-  Files: `api/routes/posts.py`, `celery_workers/tasks/publish.py`, `utils/ghost_cascade.py`, `api/routes/webhooks.py`, `celery_workers/tasks/subscription_check.py`
-- Backend: normalized notification list/read/delete and dashboard activity to in-app important events only, with legacy `read` compatibility.
-  Files: `api/routes/notifications.py`, `api/routes/dashboard.py`
-- Frontend: rebuilt notification center to use shared API helpers and updated Settings notification categories/defaults.
-  Files: `frontend/src/components/NotificationCenter.js`, `frontend/src/lib/api.js`, `frontend/src/pages/Settings.js`
-- Tests: added focused notification tests and updated dashboard/reconnect fixtures.
-  Files: `tests/test_settings_notifications.py`, `tests/test_dashboard_overview.py`, `tests/test_youtube_oauth_and_reconnect.py`
+- Frontend: redesigned Hashtag Groups manager with clean pure-light minimalist architecture, collapsible AI generator drawer, streamlined card layout, and interactive 1-click tag copy feedback (`frontend/src/pages/HashtagGroups.js`).
+- Frontend: refined brand loading animation to be full-screen centered with pure-black Unravler logo mark, staggered ribbon wave motion, zero circular lines/arcs, and overlaying the entire viewport/sidebar (`frontend/src/components/BrandMarkLoader.js`, `Dashboard.js`, `CalendarView.js`).
+- Master Legal & App Verification Plan documented in `docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Commit/deploy the notification repair once requested and verify live notification center after first scheduled/published/failed events.
+- Implement legal & app verification roadmap (`docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`) when business details are provided.
 - Finish Cloudflare R2 migration (direct-to-R2 presigned uploads) and eliminate any remaining local-disk media paths.
 
 ## Deploy Notes
