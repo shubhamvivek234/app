@@ -229,11 +229,7 @@ const CalendarView = () => {
   const agendaNotes = agendaDay ? getNotesForDay(agendaDay) : [];
 
   if (loading) {
-    return (
-      <DashboardLayout>
-        <BrandMarkLoader overlay />
-      </DashboardLayout>
-    );
+    return <BrandMarkLoader />;
   }
 
   return (

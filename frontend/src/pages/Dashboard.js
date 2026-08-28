@@ -205,11 +205,7 @@ const Dashboard = () => {
   const headlineName = user?.display_name || user?.email?.split('@')?.[0] || 'there';
 
   if (loading && !dashboard) {
-    return (
-      <DashboardLayout>
-        <BrandMarkLoader overlay />
-      </DashboardLayout>
-    );
+    return <BrandMarkLoader />;
   }
 
   if (!dashboard) {
