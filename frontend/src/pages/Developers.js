@@ -53,18 +53,34 @@ const REST_GROUPS = [
     ],
   },
   {
-    title: 'Approvals',
+    title: 'Timeslots & Auto-Queue',
     items: [
-      { method: 'GET', path: '/approvals', scope: 'approval:read', description: 'Read awaiting, expired, and changes-requested review buckets.' },
-      { method: 'POST', path: '/posts/{post_id}/submit-review', scope: 'approval:write', description: 'Submit a future-scheduled draft for approval.' },
-      { method: 'POST', path: '/posts/{post_id}/approve', scope: 'approval:write', description: 'Approve a pending item back into scheduled status.' },
-      { method: 'POST', path: '/posts/{post_id}/reject', scope: 'approval:write', description: 'Reject a pending item back to draft with a reason.' },
-      { method: 'POST', path: '/posts/{post_id}/return-to-draft', scope: 'approval:write', description: 'Recover expired approval items into draft status.' },
-      { method: 'POST', path: '/posts/{post_id}/resubmit', scope: 'approval:write', description: 'Resubmit a creator-owned draft after changes and rescheduling.' },
+      { method: 'GET', path: '/timeslots', scope: 'accounts:read', description: 'List recurring weekly timeslot schedules by account and category.' },
+      { method: 'GET', path: '/timeslots/next-slot', scope: 'accounts:read', description: 'Find the next available auto-scheduling timeslot in your timezone.' },
     ],
   },
   {
-    title: 'Workspace',
+    title: 'Approvals',
+    items: [
+      { method: 'GET', path: '/approvals', scope: 'approval:read', description: 'Read awaiting, expired, and changes-requested review buckets.' },
+      { method: 'POST', path: '/posts/{post_id}/submit-review', scope: 'posts:write', description: 'Submit a future-scheduled draft for approval.' },
+      { method: 'POST', path: '/posts/{post_id}/approve', scope: 'approval:write', description: 'Approve a pending item back into scheduled status.' },
+      { method: 'POST', path: '/posts/{post_id}/reject', scope: 'approval:write', description: 'Reject a pending item back to draft with a reason.' },
+      { method: 'POST', path: '/posts/{post_id}/return-to-draft', scope: 'approval:write', description: 'Recover expired approval items into draft status.' },
+      { method: 'POST', path: '/posts/{post_id}/resubmit', scope: 'posts:write', description: 'Resubmit a creator-owned draft after changes and rescheduling.' },
+    ],
+  },
+  {
+    title: 'Webhooks',
+    items: [
+      { method: 'GET', path: '/webhooks', scope: 'webhooks:manage', description: 'List registered outbound HTTPS webhooks.' },
+      { method: 'POST', path: '/webhooks', scope: 'webhooks:manage', description: 'Register an HTTPS endpoint with HMAC SHA-256 signature verification.' },
+      { method: 'DELETE', path: '/webhooks/{webhook_id}', scope: 'webhooks:manage', description: 'Revoke and delete a registered outbound webhook.' },
+      { method: 'POST', path: '/webhooks/{webhook_id}/test', scope: 'webhooks:manage', description: 'Send a test event payload to verify delivery to your server.' },
+    ],
+  },
+  {
+    title: 'Workspace & AI',
     items: [
       { method: 'GET', path: '/accounts', scope: 'accounts:read', description: 'List connected social accounts available to the active workspace.' },
       { method: 'GET', path: '/stats', scope: 'stats:read', description: 'Fetch high-level operational stats used by dashboards and automations.' },
@@ -426,7 +442,8 @@ function DevelopersContent({ user, navigate }) {
   -d '{
     "content": "Launch day is here.",
     "account_ids": ["acc_123"],
-    "scheduled_at": "2026-06-15T09:30:00Z",
+    "scheduled_time": "2026-06-15T09:30:00Z",
+    "timeslot_category": "Category 1",
     "media_urls": ["https://example.com/banner.png"]
   }'`;
 

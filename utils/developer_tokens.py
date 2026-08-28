@@ -19,6 +19,7 @@ PUBLIC_SCOPES_IN_ORDER: list[str] = [
     "approval:write",
     "stats:read",
     "ai:generate",
+    "webhooks:manage",
 ]
 
 PUBLIC_READ_SCOPES: list[str] = [
@@ -38,9 +39,10 @@ PUBLIC_SCOPE_PERMISSIONS: dict[str, str] = {
     "posts:write": "post:update",
     "posts:delete": "post:delete",
     "approval:read": "approval:read",
-    "approval:write": "post:update",
+    "approval:write": "approval:decide",
     "stats:read": "analytics:read",
     "ai:generate": "post:read",
+    "webhooks:manage": "webhook:manage",
 }
 
 

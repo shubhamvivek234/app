@@ -40,6 +40,8 @@ class PublicCreatePostRequest(BaseModel):
     account_ids: list[str] = Field(default_factory=list, min_length=1, max_length=20)
     platforms: list[str] = Field(default_factory=list, max_length=10)
     scheduled_at: datetime | None = None
+    scheduled_time: datetime | None = None
+    timeslot_category: str | None = None
     publish_now: bool = False
     media_urls: list[str] = Field(default_factory=list, max_length=10)
     title: str | None = Field(default=None, max_length=500)
@@ -50,6 +52,7 @@ class PublicCreatePostRequest(BaseModel):
 class PublicUpdatePostRequest(BaseModel):
     content: str | None = Field(default=None, max_length=10000)
     scheduled_at: datetime | None = None
+    scheduled_time: datetime | None = None
     platforms: list[str] | None = Field(default=None, max_length=10)
     account_ids: list[str] | None = Field(default=None, max_length=20)
     media_urls: list[str] | None = Field(default=None, max_length=10)
@@ -427,12 +430,14 @@ async def public_create_post(
         _status, response_payload = cached
         return response_payload or {}
 
+    effective_scheduled_time = body.scheduled_time if body.scheduled_time is not None else body.scheduled_at
     core_request = posts_route.CreatePostRequest(
         content=body.content,
         account_ids=list(body.account_ids),
         platforms=platforms,
         publish_now=body.publish_now,
-        scheduled_time=body.scheduled_at,
+        scheduled_time=effective_scheduled_time,
+        timeslot_category=body.timeslot_category,
         media_urls=list(body.media_urls),
         title=body.title,
         post_type=body.post_type,
@@ -505,9 +510,10 @@ async def public_update_post(
     if body.account_ids is not None:
         platforms = await _resolve_accounts_to_platforms(db, current_user["user_id"], list(body.account_ids))
 
+    effective_scheduled_time = body.scheduled_time if body.scheduled_time is not None else body.scheduled_at
     core_request = UpdatePostRequest(
         content=body.content,
-        scheduled_time=body.scheduled_at,
+        scheduled_time=effective_scheduled_time,
         platforms=platforms,
         account_ids=list(body.account_ids) if body.account_ids is not None else None,
         media_urls=list(body.media_urls) if body.media_urls is not None else None,
@@ -979,3 +985,142 @@ async def public_return_post_to_draft(
         response_payload=response_payload,
     )
     return response_payload
+
+
+# ── Timeslots ─────────────────────────────────────────────────────────────────
+
+@router.get("/timeslots")
+@limiter.limit("60/minute")
+async def public_list_timeslots(
+    request: Request,
+    db: DB,
+    account_id: str = Query(..., description="Social account ID"),
+    category: str = Query("Category 1"),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="accounts:read",
+    )
+    from api.routes import timeslots as timeslots_route
+    return await timeslots_route.list_timeslots(
+        current_user=current_user,
+        db=db,
+        account_id=account_id,
+        category=category,
+    )
+
+
+@router.get("/timeslots/next-slot")
+@limiter.limit("60/minute")
+async def public_get_next_slot(
+    request: Request,
+    db: DB,
+    account_id: str = Query(..., description="Social account ID"),
+    category: str = Query("Category 1"),
+    timezone: str | None = Query(None, description="User timezone"),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="accounts:read",
+    )
+    from api.routes import timeslots as timeslots_route
+    return await timeslots_route.get_next_slot(
+        current_user=current_user,
+        db=db,
+        account_id=account_id,
+        category=category,
+        timezone=timezone,
+    )
+
+
+# ── Webhooks ──────────────────────────────────────────────────────────────────
+
+@router.get("/webhooks")
+@limiter.limit("60/minute")
+async def public_list_webhooks(
+    request: Request,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="webhooks:manage",
+    )
+    from api.routes import user_webhooks as webhooks_route
+    return await webhooks_route.list_webhooks(current_user=current_user, db=db)
+
+
+@router.post("/webhooks", status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
+async def public_create_webhook(
+    request: Request,
+    body: dict,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="webhooks:manage",
+    )
+    from api.routes import user_webhooks as webhooks_route
+    webhook_body = webhooks_route.WebhookEndpointCreate.model_validate(body)
+    return await webhooks_route.create_webhook(body=webhook_body, current_user=current_user, db=db)
+
+
+@router.delete("/webhooks/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+async def public_delete_webhook(
+    request: Request,
+    webhook_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="webhooks:manage",
+    )
+    from api.routes import user_webhooks as webhooks_route
+    return await webhooks_route.delete_webhook(webhook_id=webhook_id, current_user=current_user, db=db)
+
+
+@router.post("/webhooks/{webhook_id}/test")
+@limiter.limit("10/minute")
+async def public_test_webhook(
+    request: Request,
+    webhook_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="webhooks:manage",
+    )
+    from api.routes import user_webhooks as webhooks_route
+    return await webhooks_route.test_webhook(webhook_id=webhook_id, current_user=current_user, db=db)
+
