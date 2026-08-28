@@ -15,13 +15,13 @@ from utils.roles import has_permission
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["team"])
 
-VALID_ROLES = {"owner", "admin", "editor", "viewer", "client"}
+VALID_ROLES = {"owner", "admin", "editor", "client", "viewer"}
 ROLE_ORDER = {
     "owner": 5,
     "admin": 4,
     "editor": 3,
-    "viewer": 2,
-    "client": 1,
+    "client": 2,
+    "viewer": 1,
 }
 
 

@@ -110,6 +110,7 @@ _ACTIVE_WORKSPACE_PERMISSION_KEYS = (
     "workspace:remove_member",
     "workspace:update",
     "approval:read",
+    "approval:decide",
     "post:read",
     "post:update",
 )

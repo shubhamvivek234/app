@@ -22,7 +22,8 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     "post:update": WorkspaceRole.EDITOR,
     "post:delete": WorkspaceRole.EDITOR,
     "post:read": WorkspaceRole.VIEWER,
-    "approval:read": WorkspaceRole.CLIENT,
+    "approval:read": WorkspaceRole.VIEWER,
+    "approval:decide": WorkspaceRole.CLIENT,
 
     # Social account management
     "account:connect": WorkspaceRole.ADMIN,
@@ -61,8 +62,8 @@ _ROLE_RANK: dict[WorkspaceRole, int] = {
     WorkspaceRole.OWNER: 5,
     WorkspaceRole.ADMIN: 4,
     WorkspaceRole.EDITOR: 3,
-    WorkspaceRole.VIEWER: 2,
-    WorkspaceRole.CLIENT: 1,
+    WorkspaceRole.CLIENT: 2,
+    WorkspaceRole.VIEWER: 1,
 }
 
 

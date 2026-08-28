@@ -344,12 +344,13 @@ def _post_workspace_id(current_user: dict) -> str:
 
 
 def _approval_permission_flags(role: str) -> dict[str, bool]:
-    can_review = has_permission(role, "post:update")
+    can_decide = has_permission(role, "approval:decide")
+    can_update = has_permission(role, "post:update")
     return {
         "can_read": has_permission(role, "approval:read"),
-        "can_review": can_review,
-        "can_resubmit": can_review,
-        "can_return_to_draft": can_review,
+        "can_review": can_decide,
+        "can_resubmit": can_update,
+        "can_return_to_draft": can_decide,
     }
 
 
@@ -360,16 +361,35 @@ def _default_approval_due_at(scheduled_time: datetime | None) -> datetime | None
 
 
 def _normalize_approval_due_at(value, scheduled_time: datetime | None) -> datetime | None:
-    normalized = _normalized_schedule_datetime(value)
-    if normalized:
-        return normalized
+    parsed = _normalized_schedule_datetime(value)
+    if parsed is not None:
+        return parsed
     return _default_approval_due_at(scheduled_time)
 
 
+def _parse_timestamp_utc(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
 def _approval_activity_response(doc: dict) -> dict:
-    normalized = _normalize_post_datetime_value(dict(doc))
-    normalized.pop("_id", None)
-    return normalized
+    return {
+        "activity_id": doc.get("activity_id") or doc.get("id"),
+        "post_id": doc.get("post_id"),
+        "actor_id": doc.get("actor_id"),
+        "action": doc.get("action"),
+        "old_status": doc.get("old_status"),
+        "new_status": doc.get("new_status"),
+        "reason": doc.get("reason"),
+        "created_at": _parse_timestamp_utc(doc.get("created_at")),
+    }
 
 
 async def _record_approval_activity(
@@ -381,28 +401,26 @@ async def _record_approval_activity(
     old_status: str | None,
     new_status: str | None,
     reason: str | None = None,
-    metadata: dict | None = None,
     created_at: datetime | None = None,
-) -> dict:
+) -> None:
     now = created_at or datetime.now(timezone.utc)
     activity = {
-        "id": str(ObjectId()),
+        "activity_id": str(ObjectId()),
         "workspace_id": post_doc.get("workspace_id"),
-        "post_id": post_doc.get("id"),
+        "post_id": str(post_doc.get("id") or ""),
         "actor_id": actor_id,
         "action": action,
         "old_status": old_status,
         "new_status": new_status,
-        "reason": reason,
-        "post_version": post_doc.get("version"),
-        "metadata": metadata or {},
+        "reason": (reason or "").strip() or None,
         "created_at": now,
     }
     await db.approval_activity.insert_one(activity)
-    return activity
 
 
 async def _latest_approval_activity_for_posts(db, workspace_id: str, post_ids: list[str]) -> dict[str, dict]:
+    if not post_ids:
+        return {}
     latest: dict[str, dict] = {}
     for post_id in post_ids:
         docs = await db.approval_activity.find(
@@ -414,11 +432,19 @@ async def _latest_approval_activity_for_posts(db, workspace_id: str, post_ids: l
     return latest
 
 
-async def _approval_reviewer_user_ids(db, workspace_id: str, *, exclude_user_id: str | None = None) -> list[str]:
+async def _approval_reviewer_user_ids(
+    db,
+    workspace_id: str,
+    *,
+    exclude_user_id: str | None = None,
+    assigned_reviewer_id: str | None = None,
+) -> list[str]:
+    if assigned_reviewer_id and assigned_reviewer_id != exclude_user_id:
+        return [assigned_reviewer_id]
     docs = await db.workspace_members.find(
         {
             "workspace_id": workspace_id,
-            "role": {"$in": ["owner", "admin", "editor"]},
+            "role": {"$in": ["owner", "admin", "editor", "client"]},
         },
         {"_id": 0, "user_id": 1},
     ).to_list(length=100)
@@ -509,7 +535,12 @@ async def _notify_reviewers_of_submission(db, post_doc: dict, *, actor_id: str, 
     workspace_id = str(post_doc.get("workspace_id") or "")
     if not workspace_id:
         return
-    reviewer_ids = await _approval_reviewer_user_ids(db, workspace_id, exclude_user_id=actor_id)
+    reviewer_ids = await _approval_reviewer_user_ids(
+        db,
+        workspace_id,
+        exclude_user_id=actor_id,
+        assigned_reviewer_id=post_doc.get("assigned_reviewer_id"),
+    )
     await _emit_approval_notification(
         db,
         post_doc=post_doc,
@@ -2389,13 +2420,13 @@ def _bulk_unique_post_ids(post_ids: list[str]) -> list[str]:
     return unique
 
 
-@router.post("/posts/{post_id}/approve", dependencies=[require_permission("post:update")])
-async def approve_post(post_id: str, current_user: VerifiedUser, db: DB):
+@router.post("/posts/{post_id}/approve", dependencies=[require_permission("approval:decide")])
+async def approve_post(post_id: str, current_user: CurrentUser, db: DB):
     """Approve a post in review status → scheduled."""
     return await _approve_post_action(post_id, current_user, db)
 
 
-@router.post("/posts/{post_id}/reject", dependencies=[require_permission("post:update")])
+@router.post("/posts/{post_id}/reject", dependencies=[require_permission("approval:decide")])
 async def reject_post(post_id: str, body: ApprovalDecisionBody, current_user: CurrentUser, db: DB):
     """Reject a post in review — moves to draft with rejection note."""
     return await _reject_post_action(post_id, body, current_user, db)
@@ -2412,14 +2443,14 @@ async def submit_post_for_review(post_id: str, body: ApprovalResubmitBody, curre
     return await _resubmit_post_action(post_id, body, current_user, db)
 
 
-@router.post("/posts/{post_id}/return-to-draft", dependencies=[require_permission("post:update")])
+@router.post("/posts/{post_id}/return-to-draft", dependencies=[require_permission("approval:decide")])
 async def return_post_to_draft(post_id: str, current_user: CurrentUser, db: DB):
     """Return an expired approval item back to draft for rescheduling."""
     return await _return_post_to_draft_action(post_id, current_user, db)
 
 
-@router.post("/approvals/bulk/approve", dependencies=[require_permission("post:update")])
-async def bulk_approve_posts(body: ApprovalBulkDecisionBody, current_user: VerifiedUser, db: DB):
+@router.post("/approvals/bulk/approve", dependencies=[require_permission("approval:decide")])
+async def bulk_approve_posts(body: ApprovalBulkDecisionBody, current_user: CurrentUser, db: DB):
     approved: list[str] = []
     errors: list[dict] = []
     for post_id in _bulk_unique_post_ids(body.post_ids):
@@ -2431,7 +2462,7 @@ async def bulk_approve_posts(body: ApprovalBulkDecisionBody, current_user: Verif
     return {"approved": approved, "errors": errors}
 
 
-@router.post("/approvals/bulk/reject", dependencies=[require_permission("post:update")])
+@router.post("/approvals/bulk/reject", dependencies=[require_permission("approval:decide")])
 async def bulk_reject_posts(body: ApprovalBulkDecisionBody, current_user: CurrentUser, db: DB):
     rejected: list[str] = []
     errors: list[dict] = []

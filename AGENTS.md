@@ -9,11 +9,12 @@ Focus: important notifications + composer reliability + R2 migration
 ## Last Session Completed
 Date: 2026-08-29
 Completed:
+- Backend & Roles: implemented `approval:decide` permission for `Client` role, allowing invited clients to review, approve, and reject posts end-to-end without needing full workspace edit privileges (`utils/roles.py`, `api/routes/posts.py`, `api/routes/auth.py`, `api/routes/team.py`).
+- Backend: enhanced reviewer notification targeting to include client members and assigned reviewers with 7-day magic login tokens (`api/routes/posts.py`).
 - Backend & Frontend: implemented timezone-aware timeslot resolution using Python ZoneInfo (`utils/timeslots.py`, `api/routes/timeslots.py`, `api/routes/posts.py`, `api/routes/bulk_upload.py`), eliminating UTC offset drift.
 - Frontend: added live "Next Slot" preview inside the Post Composer's "Add to Timeslot" modal (`frontend/src/pages/CreatePostForm.js`).
 - Frontend: redesigned Timeslots manager (`frontend/src/pages/Timeslots.js`) with pure-light minimalist architecture, prominent timezone chip, and clean 7-day schedule grid.
 - Frontend: redesigned Hashtag Groups manager with clean pure-light minimalist architecture (`frontend/src/pages/HashtagGroups.js`).
-- Frontend: refined brand loading animation to be full-screen centered with pure-black Unravler logo mark (`frontend/src/components/BrandMarkLoader.js`).
 - Master Legal & App Verification Plan documented in `docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`.
 
 ## Active Work

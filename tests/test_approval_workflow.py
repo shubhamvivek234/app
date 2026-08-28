@@ -304,7 +304,7 @@ async def test_list_approval_queue_buckets_workspace_posts_and_preserves_rejecti
 
 
 @pytest.mark.asyncio
-async def test_list_approval_queue_allows_client_role_read_only_access(monkeypatch):
+async def test_list_approval_queue_allows_client_role_review_access(monkeypatch):
     now = datetime.now(timezone.utc)
     db = FakeDB(
         posts=[
@@ -334,9 +334,9 @@ async def test_list_approval_queue_allows_client_role_read_only_access(monkeypat
     assert result["current_user_role"] == "client"
     assert result["permissions"] == {
         "can_read": True,
-        "can_review": False,
+        "can_review": True,
         "can_resubmit": False,
-        "can_return_to_draft": False,
+        "can_return_to_draft": True,
     }
     assert [post["id"] for post in result["awaiting"]] == ["awaiting-client"]
 
@@ -750,3 +750,43 @@ async def test_update_post_blocks_review_locked_items(monkeypatch):
             )
         assert exc.value.status_code == 409
         assert "approval" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_client_role_can_approve_and_is_included_in_reviewers():
+    from utils.roles import has_permission, WorkspaceRole
+    # Check role permission mapping
+    assert has_permission(WorkspaceRole.CLIENT, "approval:decide") is True
+    assert has_permission(WorkspaceRole.CLIENT, "approval:read") is True
+    assert has_permission(WorkspaceRole.CLIENT, "post:update") is False
+
+    now = datetime.now(timezone.utc)
+    db = FakeDB(
+        posts=[
+            _post(
+                "client-review-post",
+                user_id="creator-1",
+                workspace_id="ws-1",
+                status=PostStatus.PENDING_APPROVAL,
+                scheduled_time=now + timedelta(hours=3),
+            ),
+        ],
+        workspace_members=[
+            {"workspace_id": "ws-1", "user_id": "owner-1", "role": "owner"},
+            {"workspace_id": "ws-1", "user_id": "client-1", "role": "client"},
+        ],
+    )
+
+    # Verify client is in the reviewer notification list
+    reviewers = await posts_route._approval_reviewer_user_ids(db, "ws-1", exclude_user_id="creator-1")
+    assert "client-1" in reviewers
+
+    # Verify client can approve post
+    approved = await posts_route.approve_post(
+        "client-review-post",
+        {"user_id": "client-1", "default_workspace_id": "ws-1"},
+        db,
+    )
+    assert approved["approved"] is True
+    assert approved["status"] == PostStatus.SCHEDULED
+
