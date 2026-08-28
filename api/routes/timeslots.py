@@ -253,6 +253,7 @@ async def get_next_slot(
     db: DB,
     account_id: str = Query(...),
     category: str = Query("Category 1"),
+    timezone: str | None = Query(None, description="User or workspace timezone"),
 ):
     """
     Return the next unfilled timeslot datetime for 'Add to Timeslot' post creation.
@@ -260,6 +261,7 @@ async def get_next_slot(
     """
     workspace_id = _timeslot_workspace_id(current_user)
     canonical_account_id = await _ensure_owned_account(db, current_user, account_id)
+    user_tz = timezone or current_user.get("timezone") or "UTC"
     try:
         next_slot, message, normalized_category = await resolve_next_timeslot_for_account(
             db,
@@ -267,6 +269,7 @@ async def get_next_slot(
             canonical_account_id,
             category,
             now=datetime.now(timezone.utc),
+            timezone_name=user_tz,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

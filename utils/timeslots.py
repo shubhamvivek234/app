@@ -141,33 +141,54 @@ async def collect_occupied_slot_keys(
     return occupied
 
 
+import zoneinfo
+
+
+def _get_tz(tz_name: str | None) -> timezone | zoneinfo.ZoneInfo:
+    if not tz_name:
+        return timezone.utc
+    try:
+        return zoneinfo.ZoneInfo(str(tz_name).strip())
+    except Exception:
+        return timezone.utc
+
+
 def find_next_available_timeslot(
     timeslots: list[dict],
     occupied_keys: set[str],
     *,
     now: datetime,
     horizon_days: int = 60,
+    timezone_name: str | None = None,
 ) -> datetime | None:
     if not timeslots:
         return None
 
+    tz = _get_tz(timezone_name)
+    now_utc = now.astimezone(timezone.utc)
+    now_local = now.astimezone(tz)
     day_map = build_day_map(timeslots)
-    check_date = now.date()
+    check_date = now_local.date()
     for _ in range(horizon_days):
         day_name = check_date.strftime("%A").upper()
         for hour_24, minute in day_map.get(day_name, []):
-            candidate = datetime(
-                check_date.year,
-                check_date.month,
-                check_date.day,
-                hour_24,
-                minute,
-                tzinfo=timezone.utc,
-            )
-            if candidate <= now:
+            try:
+                candidate_local = datetime(
+                    check_date.year,
+                    check_date.month,
+                    check_date.day,
+                    hour_24,
+                    minute,
+                    tzinfo=tz,
+                )
+            except (ValueError, OverflowError):
                 continue
-            if minute_key(candidate) not in occupied_keys:
-                return candidate
+
+            candidate_utc = candidate_local.astimezone(timezone.utc)
+            if candidate_utc <= now_utc:
+                continue
+            if minute_key(candidate_utc) not in occupied_keys:
+                return candidate_utc
         check_date += timedelta(days=1)
     return None
 
@@ -181,6 +202,7 @@ async def resolve_next_timeslot_for_account(
     now: datetime | None = None,
     reserved_keys: set[str] | None = None,
     horizon_days: int = 60,
+    timezone_name: str | None = None,
 ) -> tuple[datetime | None, str | None, str]:
     effective_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     normalized_category = normalize_timeslot_category(category)
@@ -211,6 +233,7 @@ async def resolve_next_timeslot_for_account(
         occupied,
         now=effective_now,
         horizon_days=horizon_days,
+        timezone_name=timezone_name,
     )
     if next_slot is None:
         return None, "No available slot found in the next 60 days", normalized_category

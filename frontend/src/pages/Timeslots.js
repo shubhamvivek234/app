@@ -3,7 +3,7 @@ import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { getSocialAccounts } from '@/lib/api';
 import { toast } from 'sonner';
-import { FaQuestionCircle, FaTrash, FaPlus, FaLightbulb, FaCopy } from 'react-icons/fa';
+import { FaTrash, FaPlus, FaLightbulb, FaCopy, FaClock, FaGlobe } from 'react-icons/fa';
 
 const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -23,7 +23,6 @@ const DAY_OPTIONS = [
   { value: 'SUNDAY', label: 'Sunday', days: ['SUNDAY'] },
 ];
 
-// Ideal posting times per platform (AI suggestion stub)
 const IDEAL_TIMES = [
   { day: 'MONDAY', hour: '09', minute: '00', ampm: 'AM' },
   { day: 'TUESDAY', hour: '11', minute: '00', ampm: 'AM' },
@@ -47,22 +46,21 @@ const getAccountLabel = (account) =>
 
 const Timeslots = () => {
   const { user } = useAuth();
-
   const [accounts, setAccounts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
-  const [slots, setSlots] = useState({}); // { MONDAY: [{id, hour, minute, ampm}], ... }
+  const [slots, setSlots] = useState({});
 
-  // Add slot form state
   const [dayOption, setDayOption] = useState('every_day');
-  const [showDayDropdown, setShowDayDropdown] = useState(false);
-  const [hour, setHour] = useState('12');
+  const [hour, setHour] = useState('09');
   const [minute, setMinute] = useState('00');
-  const [ampm, setAmpm] = useState('PM');
+  const [ampm, setAmpm] = useState('AM');
   const [copyFrom, setCopyFrom] = useState(false);
   const [copySourceAccountId, setCopySourceAccountId] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const activeTimezone = user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
   const loadTimeslots = useCallback(async (accountId, category) => {
     if (!accountId) return;
@@ -101,7 +99,6 @@ const Timeslots = () => {
     }
   }, []);
 
-  // Load accounts
   useEffect(() => {
     getSocialAccounts()
       .then((res) => {
@@ -117,7 +114,6 @@ const Timeslots = () => {
       .catch(() => {});
   }, []);
 
-  // Load timeslots when account/category changes
   useEffect(() => {
     if (!selectedAccountId) return;
     loadTimeslots(selectedAccountId, selectedCategory);
@@ -211,6 +207,7 @@ const Timeslots = () => {
         ...prev,
         [day]: prev[day].filter((s) => s.id !== slotId),
       }));
+      toast.success('Slot removed');
     } catch (error) {
       toast.error(error.message || 'Failed to delete timeslot');
     }
@@ -218,7 +215,7 @@ const Timeslots = () => {
 
   const handleClearAll = async () => {
     if (!selectedAccountId) return;
-    if (!window.confirm('Clear all timeslots for this account?')) return;
+    if (!window.confirm(`Clear all timeslots for ${selectedCategory}?`)) return;
     try {
       const response = await fetch(
         `${API}/timeslots?account_id=${selectedAccountId}&category=${encodeURIComponent(selectedCategory)}`,
@@ -267,7 +264,7 @@ const Timeslots = () => {
           throw new Error(failures[0]?.data?.detail || 'Failed to apply suggested schedule');
         }
         await loadTimeslots(selectedAccountId, selectedCategory);
-        toast.success('Suggested schedule applied');
+        toast.success('Optimal schedule applied!');
       })
       .catch((error) => {
         toast.error(error.message || 'Failed to apply suggested schedule');
@@ -323,7 +320,7 @@ const Timeslots = () => {
         throw new Error(failures[0]?.data?.detail || 'Failed to copy timeslots');
       }
       await loadTimeslots(selectedAccountId, selectedCategory);
-      toast.success('Timeslots copied');
+      toast.success('Timeslots copied successfully');
     } catch (error) {
       toast.error(error.message || 'Failed to copy timeslots');
     } finally {
@@ -335,62 +332,96 @@ const Timeslots = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto pb-12">
+      <div className="mx-auto max-w-5xl space-y-6 px-4 py-2 sm:px-6">
         {/* Header */}
-        <div className="flex items-center gap-2 mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Timeslots</h1>
-          <button className="text-gray-400 hover:text-gray-600 transition-colors" title="Creating a timeslot allows you to set predetermined posting times. When you choose 'Add to Timeslot', posts are added to the next unfilled slot.">
-            <FaQuestionCircle />
-          </button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl font-bold text-black">🕒</span>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Posting Timeslots</h1>
+              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                {totalSlots} Active {totalSlots === 1 ? 'Slot' : 'Slots'}
+              </span>
+            </div>
+            <p className="text-sm text-slate-500 mt-1">
+              Set predetermined recurring slots. Posts created with "Add to Timeslot" auto-queue into the next open slot.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm">
+              <FaGlobe className="text-slate-400 text-[11px]" />
+              <span>Timezone: {activeTimezone}</span>
+            </span>
+          </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          {/* Category */}
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white text-gray-700 focus:outline-none focus:border-green-400 shadow-sm min-w-[160px]"
-          >
-            {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
+        {/* Controls: Account & Category Selectors */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Account Selector */}
+          <div className="space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Target Account</span>
+            <select
+              value={selectedAccountId}
+              onChange={(e) => setSelectedAccountId(e.target.value)}
+              className="h-10 px-3.5 text-xs font-semibold border border-slate-200 rounded-xl bg-white text-slate-900 shadow-sm outline-none focus:border-black min-w-[200px]"
+            >
+              {accounts.length === 0 && <option value="">No accounts connected</option>}
+              {accounts.map((a) => (
+                <option key={getAccountValue(a)} value={getAccountValue(a)}>
+                  {getAccountLabel(a)} ({a.platform || 'social'})
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {/* Account */}
-          <select
-            value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white text-gray-700 focus:outline-none focus:border-green-400 shadow-sm min-w-[200px]"
-          >
-            {accounts.length === 0 && <option value="">No accounts connected</option>}
-            {accounts.map((a) => (
-              <option key={getAccountValue(a)} value={getAccountValue(a)}>
-                {getAccountLabel(a)}
-              </option>
-            ))}
-          </select>
+          {/* Category Selector */}
+          <div className="space-y-1">
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Content Pillar / Category</span>
+            <div className="flex items-center gap-1.5">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setSelectedCategory(c)}
+                  className={`h-10 px-3.5 text-xs font-semibold rounded-xl border transition ${
+                    selectedCategory === c
+                      ? 'border-black bg-black text-white shadow-sm'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Add New Timeslot */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm mb-6">
-          <div className="flex items-start justify-between mb-4">
-            <h3 className="text-sm font-bold text-gray-900">Add New Timeslot:</h3>
-            <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+        {/* Add New Slot Card */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FaPlus className="text-xs text-black" />
+              <h3 className="text-sm font-bold text-slate-900">Add New Timeslot</h3>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
               <input
                 type="checkbox"
                 checked={copyFrom}
                 onChange={(e) => setCopyFrom(e.target.checked)}
-                className="accent-green-500"
+                className="accent-black rounded"
               />
-              Copy timeslots from another account
+              <span>Copy schedule from another account</span>
             </label>
           </div>
 
           {copyFrom && (
-            <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex flex-wrap items-center gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-xs font-medium text-slate-600">Copy from:</span>
               <select
                 value={copySourceAccountId}
                 onChange={(e) => setCopySourceAccountId(e.target.value)}
-                className="px-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-white text-gray-700 focus:outline-none focus:border-green-400 shadow-sm min-w-[200px]"
+                className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white text-slate-800 outline-none"
               >
                 <option value="">Select source account</option>
                 {accounts
@@ -404,48 +435,33 @@ const Timeslots = () => {
               <button
                 onClick={handleCopySlots}
                 disabled={saving || !copySourceAccountId}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+                className="h-9 px-3.5 text-xs font-semibold bg-black text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 transition flex items-center gap-1.5 shadow-sm"
               >
-                <FaCopy className="text-xs" />
-                Copy Slots
+                <FaCopy className="text-[10px]" />
+                <span>Copy Slots</span>
               </button>
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Day picker */}
-            <div className="relative">
-              <button
-                onClick={() => setShowDayDropdown((v) => !v)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-500 text-white rounded-lg min-w-[130px] justify-between"
-              >
-                <span>{selectedDayObj.label}</span>
-                <span className="text-[10px]">▼</span>
-              </button>
-              {showDayDropdown && (
-                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-20 min-w-[160px] overflow-hidden">
-                  {DAY_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => { setDayOption(opt.value); setShowDayDropdown(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors ${
-                        dayOption === opt.value ? 'bg-green-50 text-green-700 font-semibold' : 'text-gray-700'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            {/* Day selector */}
+            <select
+              value={dayOption}
+              onChange={(e) => setDayOption(e.target.value)}
+              className="h-10 px-3.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 text-slate-900 outline-none focus:border-black focus:bg-white"
+            >
+              {DAY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
 
-            <span className="text-xs font-medium text-gray-600">Choose Time:</span>
+            <span className="text-xs font-semibold text-slate-500">at</span>
 
             {/* Hour */}
             <select
               value={hour}
               onChange={(e) => setHour(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-green-400 w-16"
+              className="h-10 px-3 text-xs font-bold border border-slate-200 rounded-xl bg-slate-50 text-slate-900 outline-none focus:border-black focus:bg-white w-16"
             >
               {HOURS.map((h) => <option key={h}>{h}</option>)}
             </select>
@@ -454,7 +470,7 @@ const Timeslots = () => {
             <select
               value={minute}
               onChange={(e) => setMinute(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-green-400 w-16"
+              className="h-10 px-3 text-xs font-bold border border-slate-200 rounded-xl bg-slate-50 text-slate-900 outline-none focus:border-black focus:bg-white w-16"
             >
               {MINUTES.map((m) => <option key={m}>{m}</option>)}
             </select>
@@ -463,7 +479,7 @@ const Timeslots = () => {
             <select
               value={ampm}
               onChange={(e) => setAmpm(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-green-400 w-20"
+              className="h-10 px-3 text-xs font-bold border border-slate-200 rounded-xl bg-slate-50 text-slate-900 outline-none focus:border-black focus:bg-white w-20"
             >
               <option>AM</option>
               <option>PM</option>
@@ -472,75 +488,81 @@ const Timeslots = () => {
             <button
               onClick={handleAddSlot}
               disabled={saving || !selectedAccountId}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 shadow-sm"
+              className="h-10 px-4 text-xs font-semibold bg-black hover:bg-slate-800 text-white rounded-xl transition disabled:opacity-50 flex items-center gap-1.5 shadow-sm ml-auto sm:ml-0"
             >
-              <FaPlus className="text-xs" />
-              {saving ? 'Adding…' : 'Add Slot'}
+              <FaPlus className="text-[10px]" />
+              <span>{saving ? 'Adding…' : 'Add Slot'}</span>
             </button>
           </div>
 
-          {/* Suggest ideal times */}
-          <button
-            onClick={handleSuggestIdeal}
-            disabled={saving || !selectedAccountId}
-            className="mt-4 flex items-center gap-2 px-4 py-2 text-xs font-bold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm disabled:opacity-50"
-          >
-            <FaLightbulb />
-            {saving ? 'Applying…' : 'Apply suggested schedule'}
-          </button>
-        </div>
+          <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <button
+              onClick={handleSuggestIdeal}
+              disabled={saving || !selectedAccountId}
+              className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 transition flex items-center gap-1.5"
+            >
+              <FaLightbulb className="text-amber-500 text-xs" />
+              <span>Apply Peak Engagement Schedule</span>
+            </button>
 
-        {/* Week grid */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-            <span className="text-xs font-semibold text-gray-500">
-              {totalSlots} slot{totalSlots !== 1 ? 's' : ''} scheduled
-            </span>
             {totalSlots > 0 && (
               <button
                 onClick={handleClearAll}
-                className="flex items-center gap-1.5 text-xs font-semibold text-red-500 hover:text-red-700 transition-colors"
+                className="text-xs font-semibold text-red-600 hover:text-red-700 transition flex items-center gap-1"
               >
                 <FaTrash className="text-[10px]" />
-                Clear all
+                <span>Clear All Slots</span>
               </button>
             )}
           </div>
+        </div>
+
+        {/* 7-Day Weekly Grid */}
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/50">
+            <span className="text-xs font-bold text-slate-900">
+              Weekly Schedule for {selectedCategory}
+            </span>
+            <span className="text-xs text-slate-500">
+              {totalSlots} configured {totalSlots === 1 ? 'slot' : 'slots'}
+            </span>
+          </div>
 
           {loading ? (
-            <div className="py-12 text-center text-sm text-gray-400">Loading timeslots…</div>
+            <div className="py-16 text-center text-xs text-slate-400 animate-pulse">Loading timeslot schedule…</div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[600px]">
-                {/* Day headers */}
-                <div className="grid grid-cols-7 border-b border-gray-100">
+              <div className="min-w-[640px]">
+                {/* Day Header Row */}
+                <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50/30">
                   {DAYS_OF_WEEK.map((day) => (
-                    <div key={day} className="px-3 py-3 text-center">
-                      <p className="text-[11px] font-bold text-gray-500 tracking-wide">{day.slice(0, 3)}</p>
+                    <div key={day} className="px-2 py-3 text-center border-r last:border-r-0 border-slate-100">
+                      <p className="text-[11px] font-bold text-slate-700">{day.slice(0, 3)}</p>
                     </div>
                   ))}
                 </div>
 
-                {/* Slots row */}
-                <div className="grid grid-cols-7 min-h-[80px] p-3 gap-2">
+                {/* Slots Columns */}
+                <div className="grid grid-cols-7 min-h-[140px] p-2 gap-1.5">
                   {DAYS_OF_WEEK.map((day) => (
-                    <div key={day} className="space-y-1.5">
+                    <div key={day} className="space-y-1.5 p-1 rounded-xl bg-slate-50/50 border border-slate-100/80 min-h-[120px]">
                       {(slots[day] || []).map((slot) => (
                         <div
                           key={slot.id}
-                          className="group flex items-center justify-between px-2 py-1.5 rounded-lg text-[11px] font-semibold bg-gray-100 text-gray-700 border border-gray-200"
+                          className="group flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-800 border border-slate-200/80 shadow-xs hover:border-slate-300 transition"
                         >
-                          <span>{slot.hour}:{slot.minute} {slot.ampm}</span>
+                          <span className="text-[11px]">{slot.hour}:{slot.minute} {slot.ampm}</span>
                           <button
                             onClick={() => handleDeleteSlot(day, slot.id)}
-                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all ml-1"
+                            className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-600 transition ml-1"
+                            title="Remove slot"
                           >
                             ×
                           </button>
                         </div>
                       ))}
                       {!(slots[day] || []).length && (
-                        <div className="text-[10px] text-gray-300 text-center pt-2">—</div>
+                        <div className="text-[11px] text-slate-300 text-center pt-8">—</div>
                       )}
                     </div>
                   ))}
@@ -550,11 +572,15 @@ const Timeslots = () => {
           )}
         </div>
 
-        {/* Info box */}
-        <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 leading-relaxed">
-          <strong>How timeslots work:</strong> When you create a post and choose "Add to Timeslot",
-          it will be scheduled to the next unfilled timeslot for the selected category and account.
-          This lets you maintain a consistent posting schedule without manually setting dates each time.
+        {/* Informative Guidance Card */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 space-y-1 shadow-sm">
+          <p className="font-bold text-slate-900 flex items-center gap-1.5">
+            <FaClock className="text-black text-[11px]" />
+            How Timeslots Auto-Queue Works:
+          </p>
+          <p className="leading-relaxed">
+            When creating a post, choosing <strong>"Add to Timeslot"</strong> schedules the post into the earliest unfilled slot for the selected account and category. It eliminates manual calendar date selection and prevents posts from double-booking or colliding.
+          </p>
         </div>
       </div>
     </DashboardLayout>

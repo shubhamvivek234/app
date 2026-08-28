@@ -50,6 +50,17 @@ def test_find_next_available_timeslot_skips_taken_slot():
     assert result == datetime(2026, 5, 24, 10, 0, tzinfo=timezone.utc)
 
 
+def test_find_next_available_timeslot_respects_user_timezone():
+    # 03:00 UTC is 08:30 IST on Sunday May 24, 2026
+    now = datetime(2026, 5, 24, 3, 0, tzinfo=timezone.utc)
+    slots = [
+        {"day_of_week": "SUNDAY", "hour": "10", "minute": "00", "ampm": "AM"},
+    ]
+    # 10:00 AM IST on May 24 is 04:30 AM UTC on May 24
+    result = find_next_available_timeslot(slots, set(), now=now, timezone_name="Asia/Kolkata")
+    assert result == datetime(2026, 5, 24, 4, 30, tzinfo=timezone.utc)
+
+
 class _FakeCursor:
     def __init__(self, docs):
         self._docs = docs

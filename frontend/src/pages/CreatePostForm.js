@@ -616,9 +616,39 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [scheduledDate,         setScheduledDate]         = useState('');
   const [scheduledTime,         setScheduledTime]         = useState('14:00');
   const [selectedTimeslotCategory, setSelectedTimeslotCategory] = useState('Category 1');
+  const [timeslotPreview,       setTimeslotPreview]       = useState({ loading: false, slot: null, message: null });
   const [selectedTimezone,      setSelectedTimezone]      = useState(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
   );
+
+  useEffect(() => {
+    if (!showTimeslotPicker || selectedAccounts.length !== 1) {
+      setTimeslotPreview({ loading: false, slot: null, message: null });
+      return;
+    }
+    let cancelled = false;
+    setTimeslotPreview({ loading: true, slot: null, message: null });
+    const acctId = selectedAccounts[0].account_id || selectedAccounts[0].id;
+    const tz = selectedTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    fetch(
+      `${process.env.REACT_APP_BACKEND_URL}/api/v1/timeslots/next-slot?account_id=${encodeURIComponent(acctId)}&category=${encodeURIComponent(selectedTimeslotCategory)}&timezone=${encodeURIComponent(tz)}`,
+      { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.next_slot) {
+          setTimeslotPreview({ loading: false, slot: data.next_slot, day: data.day, time: data.time, message: null });
+        } else {
+          setTimeslotPreview({ loading: false, slot: null, message: data?.message || 'No timeslots configured for this account' });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTimeslotPreview({ loading: false, slot: null, message: 'Could not fetch next slot' });
+      });
+    return () => { cancelled = true; };
+  }, [showTimeslotPicker, selectedAccounts, selectedTimeslotCategory, selectedTimezone]);
   const [loading,               setLoading]               = useState(false);
   const [altTexts,              setAltTexts]              = useState([]);
   const [audioDialog,           setAudioDialog]           = useState({
@@ -2567,43 +2597,74 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         onTemporaryAudioRemoved={unregisterTemporaryAudio}
       />
 
-      {/* ── Rich Schedule Picker ───────────────────────────────────────────── */}
+      {/* ── Timeslot Picker ───────────────────────────────────────────── */}
       <Dialog open={showTimeslotPicker} onOpenChange={setShowTimeslotPicker}>
-        <DialogContent className="max-w-[360px] rounded-2xl">
+        <DialogContent className="max-w-[400px] rounded-2xl border-slate-200 bg-white p-5 shadow-xl">
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold text-gray-900">Add to Timeslot</DialogTitle>
+            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <FaClock className="text-slate-700 text-sm" /> Add to Timeslot
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600 leading-relaxed">
-              This will schedule the post into the next unfilled timeslot for the selected account.
+          <div className="space-y-4 pt-1">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Auto-queue this post into your account's next unfilled timeslot.
             </p>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-gray-600">Timeslot category</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Timeslot Category</Label>
               <select
                 value={selectedTimeslotCategory}
                 onChange={(event) => setSelectedTimeslotCategory(event.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 bg-offwhite focus:outline-none focus:border-green-400 focus:ring-1 focus:ring-green-200"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 bg-slate-50 focus:outline-none focus:border-black focus:bg-white transition"
               >
                 {TIMESLOT_CATEGORIES.map((category) => (
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>
             </div>
+
+            {/* Live Next Slot Preview */}
             {selectedAccounts.length === 1 ? (
-              <p className="text-xs text-gray-500">
-                The post will use the next open slot in <span className="font-semibold text-gray-700">{selectedTimeslotCategory}</span>.
-              </p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-1">
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                  <span>Next Scheduled Slot</span>
+                  <span className="text-[11px] font-normal text-slate-500">{selectedTimezone}</span>
+                </div>
+                {timeslotPreview.loading ? (
+                  <p className="text-xs text-slate-400 animate-pulse">Checking available slots…</p>
+                ) : timeslotPreview.slot ? (
+                  <div className="pt-1">
+                    <p className="text-xs font-bold text-slate-900">
+                      {new Date(timeslotPreview.slot).toLocaleString(undefined, {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        timeZone: selectedTimezone,
+                      })}
+                    </p>
+                    <p className="text-[11px] text-emerald-600 font-medium mt-0.5">✓ Ready to queue</p>
+                  </div>
+                ) : (
+                  <div className="pt-1 text-xs text-amber-700">
+                    <p>{timeslotPreview.message || 'No timeslots configured for this category.'}</p>
+                    <a href="/timeslots" className="text-black font-semibold underline text-[11px] mt-1 inline-block">
+                      Configure timeslots →
+                    </a>
+                  </div>
+                )}
+              </div>
             ) : (
               <p className="text-xs text-red-500">
                 Select exactly one account to use timeslot scheduling.
               </p>
             )}
           </div>
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 pt-2">
             <Button
               variant="outline"
               onClick={() => setShowTimeslotPicker(false)}
-              className="h-9 text-xs"
+              className="h-9 text-xs border-slate-200 rounded-xl"
             >
               Cancel
             </Button>
@@ -2612,8 +2673,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 setShowTimeslotPicker(false);
                 handleSubmit('timeslot');
               }}
-              disabled={loading || selectedAccounts.length !== 1}
-              className="h-9 bg-green-600 hover:bg-green-700 text-white font-semibold text-xs"
+              disabled={loading || selectedAccounts.length !== 1 || (!timeslotPreview.loading && !timeslotPreview.slot)}
+              className="h-9 bg-black hover:bg-slate-800 text-white font-semibold text-xs rounded-xl"
             >
               {loading ? 'Scheduling…' : 'Add to Timeslot'}
             </Button>

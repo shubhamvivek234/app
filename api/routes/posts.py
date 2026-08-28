@@ -1055,12 +1055,14 @@ async def create_post(
             timeslot_category = normalize_timeslot_category(body.timeslot_category)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        user_tz = body.timezone or current_user.get("timezone") or "UTC"
         next_slot, message, _ = await resolve_next_timeslot_for_account(
             db,
             workspace_id,
             selected_accounts[0]["account_id"],
             timeslot_category,
             now=now,
+            timezone_name=user_tz,
         )
         if next_slot is None:
             raise HTTPException(

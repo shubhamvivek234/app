@@ -176,6 +176,7 @@ async def _layer7_validate(db, user_id: str, workspace_id: str, posts: list[Bulk
                     post_errors["timeslot_category"] = str(exc)
                 else:
                     reserved = reserved_keys.setdefault((acc_ids[0], category), set())
+                    row_tz = post.timezone or current_user.get("timezone") or "UTC"
                     next_slot, message, normalized_category = await resolve_next_timeslot_for_account(
                         db,
                         workspace_id,
@@ -183,6 +184,7 @@ async def _layer7_validate(db, user_id: str, workspace_id: str, posts: list[Bulk
                         category,
                         now=datetime.now(timezone.utc),
                         reserved_keys=reserved,
+                        timezone_name=row_tz,
                     )
                     if next_slot is None:
                         post_errors["scheduled_time"] = message or "No available timeslot found"
