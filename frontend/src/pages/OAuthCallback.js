@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 import { broadcastOAuthResult, clearOAuthPopupExpected, isOAuthPopupExpected } from '@/lib/oauthPopup';
 import { getGoogleOAuthHashParams, isGooglePhotosImportState } from '@/lib/googlePhotosAuth';
 import { submitOAuthCallback } from '@/lib/requestOAuthCallback';
@@ -214,11 +215,9 @@ const OAuthCallback = () => {
     <div className="min-h-screen bg-offwhite flex items-center justify-center px-4">
       <div className="max-w-md w-full bg-offwhite rounded-xl shadow-sm border border-border p-8 text-center">
         {status === 'processing' && (
-          <>
-            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-green-500 mx-auto mb-4"></div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">Connecting your account...</h2>
-            <p className="text-slate-600">{message}</p>
-          </>
+          <div className="py-4">
+            <BrandMarkLoader label={message || "Connecting your account..."} size="large" />
+          </div>
         )}
 
         {status === 'success' && (

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import axios from 'axios';
 import { toast } from 'sonner';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -70,10 +71,7 @@ const AuthCallback = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-offwhite">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-        <p className="text-slate-600">Completing sign in...</p>
-      </div>
+      <BrandMarkLoader label="Completing sign in..." size="large" />
     </div>
   );
 };

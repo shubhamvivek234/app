@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '@/context/AuthContext';
 import { exchangeMagicLink } from '@/lib/api';
+import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 const MagicLogin = () => {
   const { token } = useParams();
@@ -65,11 +66,9 @@ const MagicLogin = () => {
 
         <div className="mt-8 flex flex-col items-center text-center">
           {status === 'authenticating' && (
-            <>
-              <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-indigo-600" />
-              <h2 className="mt-6 text-lg font-semibold text-slate-900">Logging you in...</h2>
-              <p className="mt-2 text-sm text-slate-500">Securing your session. Please hold on.</p>
-            </>
+            <div className="py-2">
+              <BrandMarkLoader label="Securing your session..." size="large" />
+            </div>
           )}
 
           {status === 'success' && (
