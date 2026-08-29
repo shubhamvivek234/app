@@ -5,7 +5,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getSocialAccounts } from '@/lib/api';
+import { bulkCsvSchedule, getSocialAccounts, validateBulkUrls } from '@/lib/api';
 import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
@@ -372,12 +372,12 @@ const BulkCSVUpload = () => {
 
   // ── Template download ──────────────────────────────────────────────────────
   const downloadTemplate = () => {
-    const cols = 'content,platforms,accounts,scheduled_time,image_urls,video_url,title,tags,post_type';
+    const cols = 'content,platforms,accounts,scheduled_time,timeslot_category,timezone,image_urls,video_url,title,tags,post_type';
     const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const futureStr = `${pad(future.getDate())}/${MONTHS[future.getMonth()]}/${future.getFullYear()} 10:00`;
-    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
+    const example = `"Hello world! First post via CSV","instagram,twitter","all","${futureStr}","Category 1","Asia/Kolkata","https://images.unsplash.com/photo-1506744038136-46273834b3fb.jpg","","","social,marketing","image"`;
     const csv = [cols, example].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -413,17 +413,8 @@ const BulkCSVUpload = () => {
     const urlResults = {};
     if (urlsToCheck.length > 0) {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(
-          `${process.env.REACT_APP_BACKEND_URL}/api/bulk/validate-urls`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ urls: urlsToCheck }),
-          }
-        );
-        if (res.ok) {
-          const data = await res.json();
+        const data = await validateBulkUrls(urlsToCheck);
+        if (Array.isArray(data)) {
           data.forEach((r) => { urlResults[r.url] = r; });
         }
       } catch {
@@ -533,7 +524,6 @@ const BulkCSVUpload = () => {
     if (!posts.length) return;
     setScheduling(true);
     try {
-      const token = localStorage.getItem('token');
       const payload = posts.map((item) => {
         let scheduledTime = null;
         if (item.date && item.time) {
@@ -553,23 +543,18 @@ const BulkCSVUpload = () => {
         };
       });
 
-      const res = await fetch(
-        `${process.env.REACT_APP_BACKEND_URL}/api/bulk/csv-upload`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ posts: payload, selected_account_ids: selectedAccounts, fallback_timezone: bulkTimezone }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Server error');
+      const data = await bulkCsvSchedule({
+        posts: payload,
+        selected_account_ids: selectedAccounts,
+        fallback_timezone: bulkTimezone,
+      });
 
       setSentPosts(payload);
       setScheduleResults(data);
       setStep('done');
       toast.success(`${data.created} post${data.created !== 1 ? 's' : ''} scheduled`);
     } catch (err) {
-      toast.error(err.message || 'Scheduling failed. Please try again.');
+      toast.error(err?.response?.data?.detail || err.message || 'Scheduling failed. Please try again.');
     } finally {
       setScheduling(false);
     }

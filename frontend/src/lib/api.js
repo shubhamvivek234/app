@@ -1003,6 +1003,28 @@ export const bulkCreatePosts = async (payload) => {
   return response.data;
 };
 
+export const bulkCsvSchedule = async (payload) => {
+  const response = await axios.post(`${API}/bulk/csv-schedule`, payload, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const validateBulkUrls = async (urls) => {
+  const response = await axios.post(`${API}/bulk/validate-urls`, { urls }, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const downloadBulkCsvTemplate = async () => {
+  const response = await axios.get(`${API}/bulk/csv-template`, {
+    headers: getAuthHeaders(),
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
 export const downloadBulkTemplate = async () => {
   const response = await axios.get(`${API}/posts/bulk/template`, {
     headers: getAuthHeaders(),

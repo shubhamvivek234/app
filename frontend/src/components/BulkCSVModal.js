@@ -6,6 +6,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { bulkCsvSchedule } from '@/lib/api';
 import {
   FaTimes, FaDownload, FaCloudUploadAlt, FaCheckCircle,
   FaExclamationTriangle, FaSpinner, FaExternalLinkAlt, FaFileCsv,
@@ -257,16 +258,7 @@ const BulkCSVModal = ({ onClose }) => {
         };
       });
 
-      const res = await fetch(
-        `${process.env.REACT_APP_BACKEND_URL}/api/v1/bulk/csv-schedule`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ posts: postsPayload }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Server error');
+      const data = await bulkCsvSchedule({ posts: postsPayload });
 
       toast.success(
         asDraft
@@ -276,7 +268,7 @@ const BulkCSVModal = ({ onClose }) => {
       onClose();
       navigate('/content');
     } catch (err) {
-      toast.error(err.message || 'Import failed. Please try again.');
+      toast.error(err?.response?.data?.detail || err.message || 'Import failed. Please try again.');
     } finally {
       setSubmitting(false);
     }

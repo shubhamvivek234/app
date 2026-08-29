@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
-import { getSocialAccounts, uploadMedia, waitForUploadReady } from '@/lib/api';
+import { createPost, getSocialAccounts, uploadMedia, waitForUploadReady } from '@/lib/api';
 import { convertWallClockToUtcIso } from '@/lib/scheduledTime';
 import AccountSelector from '@/components/composer/AccountSelector';
 import { toast } from 'sonner';
@@ -370,38 +370,44 @@ const BulkVideoUpload = () => {
     try {
       // Upload each video via existing media pipeline then schedule posts
       let scheduled = 0;
+      let failed = 0;
       for (const video of ready) {
-        const uploadJob = await uploadMedia(video.file);
-        const asset = await waitForUploadReady(uploadJob.media_job_id);
-        const mediaId = asset.media_id;
+        try {
+          const uploadJob = await uploadMedia(video.file);
+          const asset = await waitForUploadReady(uploadJob.media_job_id);
+          const mediaId = asset.media_id;
 
-        let scheduledTime = null;
-        if (video.date && video.time) {
-          // Convert date+time in the selected timezone → UTC ISO string
-          scheduledTime = convertWallClockToUtcIso(video.date, video.time, bulkTimezone);
-        }
+          let scheduledTime = null;
+          if (video.date && video.time) {
+            // Convert date+time in the selected timezone → UTC ISO string
+            scheduledTime = convertWallClockToUtcIso(video.date, video.time, bulkTimezone);
+          }
 
-        await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v1/posts`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('token')}`,
-          },
-          body: JSON.stringify({
+          const targetPlatforms = [...new Set(
+            accounts.filter((a) => selectedAccounts.includes(a.id)).map((a) => a.platform)
+          )];
+
+          await createPost({
             content: video.caption,
             media_ids: mediaId ? [mediaId] : [],
-            platforms: [...new Set(
-              accounts.filter((a) => selectedAccounts.includes(a.id)).map((a) => a.platform)
-            )],
+            platforms: targetPlatforms,
             account_ids: selectedAccounts,
             scheduled_time: scheduledTime,
             timezone: bulkTimezone,
-          }),
-        });
-        scheduled++;
+            post_type: 'video',
+          });
+          scheduled++;
+        } catch (err) {
+          failed++;
+        }
       }
-      toast.success(`${scheduled} video${scheduled !== 1 ? 's' : ''} scheduled successfully`);
-      navigate('/content');
+
+      if (scheduled > 0) {
+        toast.success(`${scheduled} video${scheduled !== 1 ? 's' : ''} scheduled successfully${failed > 0 ? ` (${failed} failed)` : ''}`);
+        navigate('/content');
+      } else {
+        toast.error('Failed to schedule videos. Please try again.');
+      }
     } catch {
       toast.error('Failed to schedule some videos. Please try again.');
     } finally {
