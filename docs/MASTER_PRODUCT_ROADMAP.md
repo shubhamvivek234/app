@@ -152,7 +152,35 @@ This master roadmap outlines the end-to-end technical specifications, data schem
 
 ---
 
-## 4. Systematic "SocialEntangler" $\rightarrow$ "Unravler" Rebranding Plan
+## 4. Feature Specification: Tier 3 (Ecosystem & Extensions)
+
+### Feature 8: Unravler Chrome Browser Extension (Manifest V3)
+- **Problem**: Creators and social media managers browse articles, tweets, and images daily but have to copy-paste URLs back into the web app to schedule them.
+- **Solution**:
+  - Manifest V3 Chrome Extension connected to `api.unravler.com`.
+  - **Right-Click Context Menu**:
+    - Right-click any image $\rightarrow$ *"Schedule Image to Unravler"*.
+    - Right-click highlighted text $\rightarrow$ *"Create Unravler Post from Selection"*.
+  - **Quick Composer Popup**:
+    - Floating browser modal to choose target social accounts, edit copy, select timeslots, and schedule without leaving the active tab.
+  - **Authentication**:
+    - Authenticates seamlessly via API Key or active web session cookie.
+
+#### Extension Architecture (`chrome-extension/`):
+```
+chrome-extension/
+  ├── manifest.json         # Manifest V3 configuration & permissions
+  ├── background.js         # Service worker handling context menus & auth
+  ├── popup/
+  │   ├── popup.html        # Compact React / Vanilla UI
+  │   ├── popup.js          # Account selector, text editor, schedule button
+  │   └── popup.css
+  └── icons/                # 16px, 48px, 128px Unravler icons
+```
+
+---
+
+## 5. Systematic "SocialEntangler" $\rightarrow$ "Unravler" Rebranding Plan
 
 | Scope | Current Reference | Target Update | Action Required |
 |---|---|---|---|
@@ -166,22 +194,30 @@ This master roadmap outlines the end-to-end technical specifications, data schem
 
 ---
 
-## 5. Execution Timeline & Phases
+## 6. Execution Timeline & Phases
 
 ```
-Phase 1: Brand & Identity Normalization
+Phase 1: Brand & Identity Normalization (DONE & DEPLOYED)
   ├── Replace all user-facing "SocialEntangler" strings with "Unravler"
   └── Update CSV templates, page titles, and FastAPI metadata
 
-Phase 2: Client Magic Links & Inline Draft Comments
+Phase 2: Auto-UTM Tracking & Built-in Link Shortener (Priority 1)
+  ├── Automated campaign tracking parameters in Composer
+  └── Analytics click tracker & redirection engine (unrav.link)
+
+Phase 3: Shareable Client Review Magic Links & Draft Comments (Priority 2 & 5)
   ├── Public tokenized approval review interface (no login required)
   └── Post draft revision comment drawer & activity threads
 
-Phase 3: Auto-UTM Engine & Built-in Link Shortener
-  ├── Automated campaign tracking parameters in Composer
-  └── Analytics click tracker & redirection engine
-
-Phase 4: Link-in-Bio Page Builder
+Phase 4: Link-in-Bio Page Builder (Priority 3)
   ├── Mobile landing page at unravler.com/@handle
   └── Drag-and-drop links & Instagram post sync
+
+Phase 5: Branded PDF Analytics Reports & Email Automation (Priority 4)
+  ├── 1-click executive PDF report generator
+  └── Monthly automated client email scheduler
+
+Phase 6: Brand Voice Vault & Chrome Extension (Priority 6 & 7)
+  ├── Custom AI prompt guidelines per workspace
+  └── Manifest V3 Chrome Extension for 1-click web clipping
 ```
