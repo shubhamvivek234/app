@@ -125,6 +125,7 @@ _TASK_MODULES = (
     "celery_workers.tasks.container_status",
     "celery_workers.tasks.grace_period_reminders",
     "celery_workers.tasks.approval_reminders",
+    "celery_workers.tasks.rss_poller",
 )
 
 _SCHEDULE_MODULES = (
@@ -133,6 +134,7 @@ _SCHEDULE_MODULES = (
     "celery_workers.tasks.analytics",
     "celery_workers.tasks.poll_status",
     "celery_workers.tasks.approval_reminders",
+    "celery_workers.tasks.rss_poller",
 )
 
 # ── App factory ──────────────────────────────────────────────────────────────
