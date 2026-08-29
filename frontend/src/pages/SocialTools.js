@@ -62,59 +62,9 @@ const TOOLS = [
     badgeBg: 'bg-red-100 text-red-700',
     category: 'growth',
     title: 'QR Code Generator',
-    description: 'Create QR codes for links, media, text, and multi-store app downloads in seconds',
+    description: 'Create branded QR codes for links, Wi-Fi, digital vCards, plain text, and multi-store app downloads in seconds.',
     tag: 'Try Now →',
     available: true,
-  },
-  {
-    id: 'instagram-grid',
-    icon: MdGridOn,
-    iconColor: '#E1306C',
-    iconBg: 'bg-pink-50',
-    borderColor: 'border-green-200 hover:border-green-400',
-    tagColor: 'text-green-600',
-    category: 'image',
-    platform: SiInstagram,
-    title: 'Instagram Grid Maker',
-    description: 'Split any image into perfect Instagram grid posts. Upload one image and get individual pieces to create stunning grid effects.',
-    tag: 'Launch Tool →',
-    available: true,
-  },
-  {
-    id: 'instagram-carousel',
-    icon: MdViewCarousel,
-    iconColor: '#E1306C',
-    iconBg: 'bg-pink-50',
-    borderColor: 'border-green-200 hover:border-green-400',
-    tagColor: 'text-green-600',
-    category: 'image',
-    platform: SiInstagram,
-    title: 'Instagram Carousel Splitter',
-    description: 'Split images into seamless Instagram carousel posts. Create swipeable panoramas that boost engagement.',
-    tag: 'Launch Tool →',
-    available: true,
-  },
-  {
-    id: 'tiktok-username',
-    icon: SiTiktok,
-    iconColor: '#000000',
-    iconBg: 'bg-gray-50',
-    platform: SiTiktok,
-    title: 'TikTok Username Checker',
-    description: 'Check if your desired TikTok username is available. Find the perfect handle for your TikTok content creator or business account.',
-    tag: 'Coming soon',
-    available: false,
-  },
-  {
-    id: 'tiktok-caption',
-    icon: FaFilm,
-    iconColor: '#000000',
-    iconBg: 'bg-gray-50',
-    platform: SiTiktok,
-    title: 'TikTok Caption Generator',
-    description: 'Generate engaging, viral-worthy TikTok captions with AI. Choose your tone and audience for perfectly crafted captions.',
-    tag: 'Coming soon',
-    available: false,
   },
   {
     id: 'linkedin-formatter',
@@ -123,47 +73,46 @@ const TOOLS = [
     iconBg: 'bg-blue-50',
     borderColor: 'border-blue-200 hover:border-blue-400',
     tagColor: 'text-blue-600',
-    badge: 'Popular Suite',
+    badge: 'Unicode Suite',
     badgeBg: 'bg-blue-100 text-blue-700',
-    category: 'growth',
+    category: 'copy',
     platform: SiLinkedin,
     title: 'LinkedIn Text Formatter',
-    description: 'Format LinkedIn posts with bold, italic, lists, and Unicode typography. Preview posts in live desktop & mobile feed views.',
+    description: 'Format LinkedIn posts with bold, italic, numbered lists, and Unicode typography. Preview posts in live desktop & mobile feed views.',
     tag: 'Launch Studio →',
     available: true,
   },
   {
-    id: 'youtube-title',
-    icon: SiYoutube,
-    iconColor: '#FF0000',
-    iconBg: 'bg-red-50',
-    platform: SiYoutube,
-    title: 'YouTube Title Checker',
-    description: 'Check title length, prevent truncation, and see how your title looks in YouTube feeds. Upload thumbnails for complete preview.',
-    tag: 'Coming soon',
-    available: false,
-  },
-  {
-    id: 'youtube-tags',
-    icon: SiYoutube,
-    iconColor: '#FF0000',
-    iconBg: 'bg-red-50',
-    platform: SiYoutube,
-    title: 'YouTube Tag Generator',
-    description: 'Generate optimised YouTube tags with AI. Get relevant, SEO-friendly tags that boost video discoverability and rankings.',
-    tag: 'Coming soon',
-    available: false,
-  },
-  {
-    id: 'instagram-handle',
-    icon: SiInstagram,
+    id: 'instagram-grid',
+    icon: MdGridOn,
     iconColor: '#E1306C',
     iconBg: 'bg-pink-50',
+    borderColor: 'border-pink-200 hover:border-pink-400',
+    tagColor: 'text-pink-600',
+    badge: '100% Client-Side',
+    badgeBg: 'bg-pink-100 text-pink-700',
+    category: 'image',
     platform: SiInstagram,
-    title: 'Instagram Handle Checker',
-    description: 'Check if your desired Instagram username is available. Find the perfect handle for your brand, business, or personal account.',
-    tag: 'Coming soon',
-    available: false,
+    title: 'Instagram Grid Maker',
+    description: 'Split any panoramic photo or high-res image into multi-piece Instagram grid posts to create stunning profile layouts.',
+    tag: 'Split Grid →',
+    available: true,
+  },
+  {
+    id: 'instagram-carousel',
+    icon: MdViewCarousel,
+    iconColor: '#E1306C',
+    iconBg: 'bg-pink-50',
+    borderColor: 'border-pink-200 hover:border-pink-400',
+    tagColor: 'text-pink-600',
+    badge: 'Seamless Panoramas',
+    badgeBg: 'bg-pink-100 text-pink-700',
+    category: 'image',
+    platform: SiInstagram,
+    title: 'Instagram Carousel Splitter',
+    description: 'Split wide images into seamless Instagram carousel slides (2–10 parts) that boost dwell time and engagement.',
+    tag: 'Split Slides →',
+    available: true,
   },
 ];
 
@@ -202,29 +151,32 @@ const ToolCard = ({ tool, onSelect }) => {
   return (
     <div
       onClick={() => available && onSelect(tool)}
-      className={`rounded-2xl border-2 p-5 transition-all duration-200 relative flex flex-col justify-between ${
+      className={`group rounded-2xl border-2 p-5 transition-all duration-200 relative flex flex-col justify-between ${
         available
-          ? (borderColor || 'border-green-200 hover:border-green-400') + ' bg-white hover:shadow-lg hover:-translate-y-0.5 cursor-pointer'
+          ? (borderColor || 'border-gray-200 hover:border-indigo-400') + ' bg-white hover:shadow-lg hover:-translate-y-1 cursor-pointer'
           : 'border-gray-100 bg-gray-50/50 cursor-not-allowed opacity-70'
       }`}
     >
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center`}>
+        <div className="flex items-center justify-between mb-3.5">
+          <div className={`w-11 h-11 rounded-xl ${iconBg} flex items-center justify-center shadow-2xs group-hover:scale-105 transition-transform`}>
             <Icon style={{ color: iconColor }} className="text-xl" />
           </div>
           {badge && (
-            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${badgeBg || 'bg-gray-100 text-gray-700'}`}>
+            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-2xs ${badgeBg || 'bg-gray-100 text-gray-700'}`}>
               {badge}
             </span>
           )}
         </div>
-        <h3 className="text-sm font-bold text-gray-900 mb-1.5">{title}</h3>
-        <p className="text-xs text-gray-500 leading-relaxed mb-3">{description}</p>
+        <h3 className="text-sm font-bold text-gray-900 mb-1.5 group-hover:text-indigo-600 transition-colors">{title}</h3>
+        <p className="text-xs text-gray-500 leading-relaxed mb-4">{description}</p>
       </div>
-      <span className={`text-xs font-semibold ${available ? (tagColor || 'text-green-600') : 'text-gray-400'}`}>
-        {tag}
-      </span>
+      <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
+        <span className={`text-xs font-bold flex items-center gap-1 group-hover:translate-x-0.5 transition-transform ${tagColor || 'text-indigo-600'}`}>
+          {tag}
+        </span>
+        <span className="text-[10px] font-semibold text-gray-400">100% Free</span>
+      </div>
     </div>
   );
 };
@@ -1093,41 +1045,49 @@ const SocialTools = () => {
     ? TOOLS
     : filterCategory === 'growth'
       ? TOOLS.filter(t => t.category === 'growth')
-      : filterCategory === 'image'
-        ? TOOLS.filter(t => t.category === 'image')
-        : TOOLS.filter(t => !t.category || t.category === 'utility');
+      : filterCategory === 'copy'
+        ? TOOLS.filter(t => t.category === 'copy')
+        : TOOLS.filter(t => t.category === 'image');
+
+  const countFor = (cat) => {
+    if (cat === 'all') return TOOLS.length;
+    return TOOLS.filter(t => t.category === cat).length;
+  };
 
   return (
     <DashboardLayout>
-      <div className="max-w-5xl mx-auto pb-12">
+      <div className="max-w-5xl mx-auto pb-14">
         {activeTool ? (
           renderTool()
         ) : (
           <>
-            {/* Header */}
-            <div className="text-center mb-8">
-              <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
-                Social Growth & <span className="text-indigo-600">Creator Tools</span>
+            {/* Hero Header */}
+            <div className="text-center mb-10">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold mb-3 shadow-2xs">
+                <span>✦</span> 100% Free Creator & Growth Suite
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-3 tracking-tight">
+                Social Growth & <span className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">Creator Tools</span>
               </h1>
-              <p className="text-sm text-gray-500 max-w-lg mx-auto">
-                Professional-grade tools to supercharge your social growth, link monetization, and visual content.
+              <p className="text-sm text-gray-500 max-w-lg mx-auto leading-relaxed">
+                High-performance utilities to monetize bio links, format viral copy, track UTM campaigns, and split panoramic visuals.
               </p>
 
               {/* Category Filter Tabs */}
               <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
                 {[
-                  { id: 'all', label: 'All Tools' },
-                  { id: 'growth', label: '🚀 Growth & Bio Links' },
-                  { id: 'image', label: '🖼️ Image & Visuals' },
-                  { id: 'utility', label: '⚡ Utilities' },
+                  { id: 'all', label: `All Tools (${countFor('all')})` },
+                  { id: 'growth', label: `🚀 Growth & Links (${countFor('growth')})` },
+                  { id: 'copy', label: `✍️ Typography & Copy (${countFor('copy')})` },
+                  { id: 'image', label: `🖼️ Visuals & Grids (${countFor('image')})` },
                 ].map((cat) => (
                   <button
                     key={cat.id}
                     onClick={() => setFilterCategory(cat.id)}
-                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
                       filterCategory === cat.id
-                        ? 'bg-gray-900 text-white shadow-xs'
-                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                        ? 'bg-gray-900 text-white shadow-xs scale-102'
+                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300'
                     }`}
                   >
                     {cat.label}
@@ -1136,8 +1096,8 @@ const SocialTools = () => {
               </div>
             </div>
 
-            {/* Tools grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Tools Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredTools.map((tool) => (
                 <ToolCard key={tool.id} tool={tool} onSelect={handleSelectTool} />
               ))}
