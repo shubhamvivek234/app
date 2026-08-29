@@ -4,12 +4,13 @@
  * All processing is 100% client-side via Canvas API + JSZip
  */
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import {
-  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo,
+  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaSparkles
 } from 'react-icons/fa';
 import { SiInstagram, SiTiktok, SiYoutube, SiLinkedin } from 'react-icons/si';
 import { MdGridOn, MdViewCarousel } from 'react-icons/md';
@@ -17,14 +18,49 @@ import { MdGridOn, MdViewCarousel } from 'react-icons/md';
 // ── Tools catalogue ───────────────────────────────────────────────────────────
 const TOOLS = [
   {
+    id: 'link-in-bio',
+    route: '/link-in-bio',
+    icon: FaMobileAlt,
+    iconColor: '#7C3AED',
+    iconBg: 'bg-purple-50',
+    borderColor: 'border-purple-200 hover:border-purple-400',
+    tagColor: 'text-purple-600',
+    badge: 'Flagship Growth',
+    badgeBg: 'bg-purple-100 text-purple-700',
+    category: 'growth',
+    title: 'Link-in-Bio Page Builder',
+    description: 'Build your customized mobile bio link page with customizable themes, link buttons, and auto-synced Instagram post grids.',
+    tag: 'Open Builder →',
+    available: true,
+  },
+  {
+    id: 'short-links',
+    route: '/short-links',
+    icon: FaLink,
+    iconColor: '#2563EB',
+    iconBg: 'bg-blue-50',
+    borderColor: 'border-blue-200 hover:border-blue-400',
+    tagColor: 'text-blue-600',
+    badge: 'Auto-UTM & Analytics',
+    badgeBg: 'bg-blue-100 text-blue-700',
+    category: 'growth',
+    title: 'Auto-UTM & Link Shortener',
+    description: 'Shorten links, generate Google Analytics UTM campaign tags automatically, and monitor click analytics in real-time.',
+    tag: 'Manage Links →',
+    available: true,
+  },
+  {
     id: 'instagram-grid',
     icon: MdGridOn,
     iconColor: '#E1306C',
     iconBg: 'bg-pink-50',
+    borderColor: 'border-green-200 hover:border-green-400',
+    tagColor: 'text-green-600',
+    category: 'image',
     platform: SiInstagram,
     title: 'Instagram Grid Maker',
     description: 'Split any image into perfect Instagram grid posts. Upload one image and get individual pieces to create stunning grid effects.',
-    tag: 'Try it free →',
+    tag: 'Launch Tool →',
     available: true,
   },
   {
@@ -32,10 +68,13 @@ const TOOLS = [
     icon: MdViewCarousel,
     iconColor: '#E1306C',
     iconBg: 'bg-pink-50',
+    borderColor: 'border-green-200 hover:border-green-400',
+    tagColor: 'text-green-600',
+    category: 'image',
     platform: SiInstagram,
     title: 'Instagram Carousel Splitter',
     description: 'Split images into seamless Instagram carousel posts. Create swipeable panoramas that boost engagement.',
-    tag: 'Try it free →',
+    tag: 'Launch Tool →',
     available: true,
   },
   {
@@ -137,22 +176,31 @@ const CAROUSEL_DIMS = [
 
 // ── Tools grid ────────────────────────────────────────────────────────────────
 const ToolCard = ({ tool, onSelect }) => {
-  const { icon: Icon, iconColor, iconBg, title, description, tag, available } = tool;
+  const { icon: Icon, iconColor, iconBg, borderColor, tagColor, badge, badgeBg, title, description, tag, available } = tool;
   return (
     <div
-      onClick={() => available && onSelect(tool.id)}
-      className={`rounded-2xl border-2 p-5 transition-all duration-200 ${
+      onClick={() => available && onSelect(tool)}
+      className={`rounded-2xl border-2 p-5 transition-all duration-200 relative flex flex-col justify-between ${
         available
-          ? 'border-green-200 bg-white hover:border-green-400 hover:shadow-lg hover:-translate-y-0.5 cursor-pointer'
+          ? (borderColor || 'border-green-200 hover:border-green-400') + ' bg-white hover:shadow-lg hover:-translate-y-0.5 cursor-pointer'
           : 'border-gray-100 bg-gray-50/50 cursor-not-allowed opacity-70'
       }`}
     >
-      <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center mb-3`}>
-        <Icon style={{ color: iconColor }} className="text-xl" />
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center`}>
+            <Icon style={{ color: iconColor }} className="text-xl" />
+          </div>
+          {badge && (
+            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-xs ${badgeBg || 'bg-gray-100 text-gray-700'}`}>
+              {badge}
+            </span>
+          )}
+        </div>
+        <h3 className="text-sm font-bold text-gray-900 mb-1.5">{title}</h3>
+        <p className="text-xs text-gray-500 leading-relaxed mb-3">{description}</p>
       </div>
-      <h3 className="text-sm font-bold text-gray-900 mb-1.5">{title}</h3>
-      <p className="text-xs text-gray-500 leading-relaxed mb-3">{description}</p>
-      <span className={`text-xs font-semibold ${available ? 'text-green-600' : 'text-gray-400'}`}>
+      <span className={`text-xs font-semibold ${available ? (tagColor || 'text-green-600') : 'text-gray-400'}`}>
         {tag}
       </span>
     </div>
@@ -999,13 +1047,31 @@ const InstagramCarouselSplitter = ({ onBack }) => {
 
 // ── Main SocialTools page ─────────────────────────────────────────────────────
 const SocialTools = () => {
+  const navigate = useNavigate();
   const [activeTool, setActiveTool] = useState(null);
+  const [filterCategory, setFilterCategory] = useState('all');
+
+  const handleSelectTool = (tool) => {
+    if (tool.route) {
+      navigate(tool.route);
+      return;
+    }
+    setActiveTool(tool.id);
+  };
 
   const renderTool = () => {
     if (activeTool === 'instagram-grid') return <InstagramGridMaker onBack={() => setActiveTool(null)} />;
     if (activeTool === 'instagram-carousel') return <InstagramCarouselSplitter onBack={() => setActiveTool(null)} />;
     return null;
   };
+
+  const filteredTools = filterCategory === 'all'
+    ? TOOLS
+    : filterCategory === 'growth'
+      ? TOOLS.filter(t => t.category === 'growth')
+      : filterCategory === 'image'
+        ? TOOLS.filter(t => t.category === 'image')
+        : TOOLS.filter(t => !t.category || t.category === 'utility');
 
   return (
     <DashboardLayout>
@@ -1015,20 +1081,41 @@ const SocialTools = () => {
         ) : (
           <>
             {/* Header */}
-            <div className="text-center mb-10">
+            <div className="text-center mb-8">
               <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
-                Free <span className="text-green-500">Social Media</span> Tools
+                Social Growth & <span className="text-indigo-600">Creator Tools</span>
               </h1>
-              <p className="text-sm text-gray-500 max-w-md mx-auto">
-                Professional-grade tools to supercharge your social media content creation.
-                All free, all client-side — your images never leave your device.
+              <p className="text-sm text-gray-500 max-w-lg mx-auto">
+                Professional-grade tools to supercharge your social growth, link monetization, and visual content.
               </p>
+
+              {/* Category Filter Tabs */}
+              <div className="flex items-center justify-center gap-2 mt-6 flex-wrap">
+                {[
+                  { id: 'all', label: 'All Tools' },
+                  { id: 'growth', label: '🚀 Growth & Bio Links' },
+                  { id: 'image', label: '🖼️ Image & Visuals' },
+                  { id: 'utility', label: '⚡ Utilities' },
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setFilterCategory(cat.id)}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                      filterCategory === cat.id
+                        ? 'bg-gray-900 text-white shadow-xs'
+                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Tools grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {TOOLS.map((tool) => (
-                <ToolCard key={tool.id} tool={tool} onSelect={setActiveTool} />
+              {filteredTools.map((tool) => (
+                <ToolCard key={tool.id} tool={tool} onSelect={handleSelectTool} />
               ))}
             </div>
           </>
