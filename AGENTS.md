@@ -15,6 +15,7 @@ Completed:
 - Feature 4 (Branded PDF Analytics Reports): executive performance report generator (`api/routes/analytics.py`), printable PDF export, and automated weekly/monthly email scheduling (`ExportReportModal.js`).
 - Feature 5 (Post Draft Inline Comments): draft revision threads on post cards (`PostCommentsDrawer.js`), resolve/reopen status, and activity tracking.
 - Feature 6 (Brand Voice & AI Persona Vault): persona guidelines (`api/routes/ai.py`), prohibited words filter, and settings tab (`BrandVoiceSettings.js`).
+- Social Tools Hub Consolidation: integrated Link-in-Bio and Auto-UTM & Link Shortener as flagship growth tools in `frontend/src/pages/SocialTools.js` with category filters and streamlined the primary sidebar navigation.
 - Verified test suite: 255/255 tests passed (100%), frontend bundle compiled (`npm run build`), deployed to EC2 cluster and Vercel.
 
 ## Active Work
