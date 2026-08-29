@@ -29,9 +29,7 @@ const firebaseConfig = {
     storageBucket:     env.FIREBASE_STORAGE_BUCKET,
     messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID,
     appId:             env.FIREBASE_APP_ID,
-    measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
-      || import.meta.env.REACT_APP_FIREBASE_MEASUREMENT_ID
-      || process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+    measurementId:     env.FIREBASE_MEASUREMENT_ID || undefined,
 };
 
 const requiredFirebaseFields = [
