@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { FaSmile, FaLink, FaImage, FaHashtag, FaBold, FaItalic, FaStrikethrough, FaCode, FaMagic } from 'react-icons/fa';
-import { generateContent, getHashtagGroups } from '@/lib/api';
+import { generateContent, getHashtagGroups, createShortLink } from '@/lib/api';
 import { applyFormat, toBold, toItalic, toStrikethrough, toMonospace } from '@/lib/textFormat';
 import { toast } from 'sonner';
 
@@ -48,6 +48,10 @@ const ContentEditor = ({ content, onChange, selectedPlatforms, postType, onMedia
   const [hashtagOpen, setHashtagOpen]     = useState(false);
   const [hashtagGroups, setHashtagGroups] = useState([]);
   const [hashtagLoading, setHashtagLoading] = useState(false);
+  const [linkOpen, setLinkOpen]           = useState(false);
+  const [linkUrl, setLinkUrl]             = useState('');
+  const [linkUtmCampaign, setLinkUtmCampaign] = useState('');
+  const [linkShortening, setLinkShortening] = useState(false);
   const textareaRef = useRef(null);
 
   // Most restrictive limit among selected platforms
@@ -280,14 +284,82 @@ const ContentEditor = ({ content, onChange, selectedPlatforms, postType, onMedia
             </PopoverContent>
           </Popover>
 
-          {/* Link placeholder */}
-          <button
-            type="button"
-            className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
-            title="Add link"
-          >
-            <FaLink className="text-base" />
-          </button>
+          {/* UTM & Short Link Builder */}
+          <Popover open={linkOpen} onOpenChange={setLinkOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+                title="Shorten link & attach UTMs"
+              >
+                <FaLink className="text-base" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-3" align="start">
+              <p className="text-xs font-bold text-gray-800 mb-2 flex items-center gap-1">
+                <FaLink className="text-indigo-600" /> Insert Short Link + UTMs
+              </p>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase">Target URL *</label>
+                  <input
+                    type="url"
+                    placeholder="https://yourbrand.com/article"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg outline-hidden focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 uppercase">Campaign Name (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. spring_sale"
+                    value={linkUtmCampaign}
+                    onChange={(e) => setLinkUtmCampaign(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg outline-hidden focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={linkShortening || !linkUrl.trim()}
+                  onClick={async () => {
+                    setLinkShortening(true);
+                    try {
+                      const primaryPlat = (selectedPlatforms && selectedPlatforms[0]) || 'social';
+                      const res = await createShortLink({
+                        original_url: linkUrl.trim(),
+                        utm_source: primaryPlat,
+                        utm_medium: 'social',
+                        utm_campaign: linkUtmCampaign.trim() || undefined,
+                      });
+                      const insertText = ` ${res.short_url} `;
+                      const el = textareaRef.current;
+                      if (!el) {
+                        onChange(content + insertText);
+                      } else {
+                        const start = el.selectionStart;
+                        const end = el.selectionEnd;
+                        const newContent = content.slice(0, start) + insertText + content.slice(end);
+                        onChange(newContent);
+                      }
+                      toast.success('Short link attached!');
+                      setLinkOpen(false);
+                      setLinkUrl('');
+                      setLinkUtmCampaign('');
+                    } catch (err) {
+                      toast.error('Failed to create short link');
+                    } finally {
+                      setLinkShortening(false);
+                    }
+                  }}
+                  className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {linkShortening ? 'Shortening...' : 'Insert Short Link'}
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Hashtag Groups */}
           <Popover
