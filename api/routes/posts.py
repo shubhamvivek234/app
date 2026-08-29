@@ -2524,3 +2524,317 @@ async def complete_onboarding(body: dict, current_user: CurrentUser, db: DB):
         {"$set": {"onboarding_completed": True, "updated_at": datetime.now(timezone.utc)}},
     )
     return {"completed": True}
+
+
+# ── Inline Draft Comments & Activity Threads (Feature 5) ─────────────────────
+
+class AddCommentBody(BaseModel):
+    text: str
+
+
+@router.post("/posts/{post_id}/comments", dependencies=[require_permission("post:read")])
+async def add_post_comment(
+    post_id: str,
+    body: AddCommentBody,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Add an inline review/revision comment to a post card."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Comment text cannot be empty")
+
+    post = await db.posts.find_one(
+        {"id": post_id, "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}], "deleted_at": {"$exists": False}}
+    )
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    comment_id = str(ObjectId())
+    now = datetime.now(timezone.utc)
+    user_doc = await db.users.find_one({"user_id": user_id}) or {}
+    author_name = user_doc.get("name") or user_doc.get("email") or "Team Member"
+    author_avatar = user_doc.get("picture") or user_doc.get("avatar_url")
+
+    comment_doc = {
+        "id": comment_id,
+        "user_id": user_id,
+        "author_name": author_name,
+        "author_avatar": author_avatar,
+        "text": text,
+        "created_at": now,
+        "resolved": False,
+    }
+
+    await db.posts.update_one(
+        {"id": post_id},
+        {
+            "$push": {"comments": comment_doc},
+            "$set": {"updated_at": now},
+        }
+    )
+
+    if hasattr(db, "approval_activity") and post.get("status") == PostStatus.PENDING_APPROVAL.value:
+        try:
+            await _record_approval_activity(
+                db,
+                post_doc=post,
+                actor_id=user_id,
+                action="comment_added",
+                old_status=post.get("status", PostStatus.DRAFT.value),
+                new_status=post.get("status", PostStatus.DRAFT.value),
+                created_at=now,
+                note=text[:80],
+            )
+        except Exception:
+            pass
+
+    return comment_doc
+
+
+@router.patch("/posts/{post_id}/comments/{comment_id}/resolve", dependencies=[require_permission("post:read")])
+async def toggle_post_comment_resolve(
+    post_id: str,
+    comment_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Toggle resolved status of an inline comment."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    post = await db.posts.find_one(
+        {"id": post_id, "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}], "deleted_at": {"$exists": False}}
+    )
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    comments = post.get("comments") or []
+    target_comment = next((c for c in comments if c.get("id") == comment_id), None)
+    if not target_comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+    new_resolved = not target_comment.get("resolved", False)
+    await db.posts.update_one(
+        {"id": post_id, "comments.id": comment_id},
+        {"$set": {"comments.$.resolved": new_resolved, "updated_at": datetime.now(timezone.utc)}}
+    )
+    return {"resolved": new_resolved}
+
+
+@router.delete("/posts/{post_id}/comments/{comment_id}", dependencies=[require_permission("post:read")])
+async def delete_post_comment(
+    post_id: str,
+    comment_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Delete an inline comment."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    post = await db.posts.find_one(
+        {"id": post_id, "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}], "deleted_at": {"$exists": False}}
+    )
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    await db.posts.update_one(
+        {"id": post_id},
+        {"$pull": {"comments": {"id": comment_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}}
+    )
+    return {"deleted": True}
+
+
+# ── Shareable Client Review Magic Links (Feature 2) ──────────────────────────
+
+class ShareReviewLinkBody(BaseModel):
+    expires_in_days: int = 7
+    allow_comments: bool = True
+
+
+class PublicDecisionBody(BaseModel):
+    post_id: str
+    decision: str  # "approve" | "changes_requested"
+    feedback: str | None = None
+    reviewer_name: str | None = "Client Reviewer"
+
+
+@router.post("/approvals/share-link", dependencies=[require_permission("approval:read")])
+async def generate_shareable_review_link(
+    body: ShareReviewLinkBody,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Generate a signed public magic link for frictionless client reviews without login."""
+    import secrets
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    token = f"rev_{secrets.token_urlsafe(24)}"
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=max(1, min(body.expires_in_days, 30)))
+
+    doc = {
+        "token": token,
+        "workspace_id": workspace_id,
+        "created_by": user_id,
+        "allow_comments": body.allow_comments,
+        "expires_at": expires_at,
+        "created_at": now,
+    }
+    await db.approval_links.insert_one(doc)
+
+    return {
+        "token": token,
+        "share_url": f"https://www.unravler.com/review/{token}",
+        "expires_at": expires_at.isoformat(),
+        "allow_comments": body.allow_comments,
+    }
+
+
+@router.get("/approvals/public/{token}")
+async def get_public_approval_feed(
+    token: str,
+    db: DB,
+):
+    """Public read-only feed of pending posts for client review."""
+    link_doc = await db.approval_links.find_one({"token": token})
+    if not link_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired review link")
+
+    now = datetime.now(timezone.utc)
+    exp = link_doc.get("expires_at")
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and now > exp:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="This review link has expired")
+
+    workspace_id = link_doc.get("workspace_id")
+    posts_cursor = db.posts.find({
+        "$or": [{"workspace_id": workspace_id}, {"user_id": workspace_id}],
+        "status": PostStatus.PENDING_APPROVAL.value,
+        "deleted_at": {"$exists": False},
+    }).sort("scheduled_time", 1).limit(50)
+
+    pending_posts = []
+    async for p in posts_cursor:
+        pending_posts.append({
+            "id": p.get("id"),
+            "content": p.get("content", ""),
+            "platforms": p.get("platforms", []),
+            "media_urls": p.get("media_urls", []),
+            "post_type": p.get("post_type", "text"),
+            "title": p.get("title"),
+            "scheduled_time": p.get("scheduled_time").isoformat() if isinstance(p.get("scheduled_time"), datetime) else p.get("scheduled_time"),
+            "timezone": p.get("timezone", "UTC"),
+            "comments": [
+                {
+                    "id": c.get("id"),
+                    "author_name": c.get("author_name", "Reviewer"),
+                    "text": c.get("text", ""),
+                    "created_at": c.get("created_at").isoformat() if isinstance(c.get("created_at"), datetime) else c.get("created_at"),
+                    "resolved": c.get("resolved", False),
+                }
+                for c in (p.get("comments") or [])
+            ],
+        })
+
+    return {
+        "workspace_id": workspace_id,
+        "allow_comments": link_doc.get("allow_comments", True),
+        "posts": pending_posts,
+    }
+
+
+@router.post("/approvals/public/{token}/decision")
+async def submit_public_client_decision(
+    token: str,
+    body: PublicDecisionBody,
+    db: DB,
+):
+    """Submit client approval or change request via public magic link."""
+    link_doc = await db.approval_links.find_one({"token": token})
+    if not link_doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired review link")
+
+    now = datetime.now(timezone.utc)
+    exp = link_doc.get("expires_at")
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and now > exp:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="This review link has expired")
+
+    workspace_id = link_doc.get("workspace_id")
+    post = await db.posts.find_one({
+        "id": body.post_id,
+        "$or": [{"workspace_id": workspace_id}, {"user_id": workspace_id}],
+        "status": PostStatus.PENDING_APPROVAL.value,
+        "deleted_at": {"$exists": False},
+    })
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found or already reviewed")
+
+    reviewer = body.reviewer_name or "Client (Magic Link)"
+
+    if body.decision == "approve":
+        update_fields = {
+            "status": PostStatus.SCHEDULED.value,
+            "approved_at": now,
+            "approved_by": reviewer,
+            "rejection_reason": None,
+            "updated_at": now,
+        }
+        await db.posts.update_one(
+            {"id": body.post_id},
+            {
+                "$set": update_fields,
+                "$inc": {"version": 1},
+                "$push": {
+                    "status_history": {
+                        "status": PostStatus.SCHEDULED.value,
+                        "timestamp": now,
+                        "actor": reviewer,
+                        "message": f"Approved via client magic link by {reviewer}",
+                    }
+                },
+            },
+        )
+    else:
+        reason = (body.feedback or "Changes requested by client").strip()
+        update_fields = {
+            "status": PostStatus.DRAFT.value,
+            "rejected_at": now,
+            "rejected_by": reviewer,
+            "rejection_reason": reason,
+            "updated_at": now,
+        }
+        comment_item = {
+            "id": str(ObjectId()),
+            "user_id": "client_guest",
+            "author_name": reviewer,
+            "author_avatar": None,
+            "text": f"Change Request: {reason}",
+            "created_at": now,
+            "resolved": False,
+        }
+        await db.posts.update_one(
+            {"id": body.post_id},
+            {
+                "$set": update_fields,
+                "$inc": {"version": 1},
+                "$push": {
+                    "comments": comment_item,
+                    "status_history": {
+                        "status": PostStatus.DRAFT.value,
+                        "timestamp": now,
+                        "actor": reviewer,
+                        "message": f"Changes requested: {reason}",
+                    },
+                },
+            },
+        )
+
+    return {"ok": True, "post_id": body.post_id, "status": update_fields["status"]}
+

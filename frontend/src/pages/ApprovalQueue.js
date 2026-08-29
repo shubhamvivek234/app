@@ -13,10 +13,12 @@ import {
   FaTimes,
   FaUserCheck,
   FaVideo,
+  FaShareAlt,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
 
 import DashboardLayout from '@/components/DashboardLayout';
+import ShareReviewModal from '@/components/ShareReviewModal';
 import { useAuth } from '@/context/AuthContext';
 import {
   approvePost,
@@ -446,6 +448,7 @@ const ApprovalQueue = () => {
   const [reviewFilter, setReviewFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkReason, setBulkReason] = useState('');
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const highlightedPostId = searchParams.get('post_id');
 
@@ -682,6 +685,15 @@ const ApprovalQueue = () => {
                 Current role: {queue.current_user_role || user?.workspace_role || 'viewer'}
                 {queuePermissions.can_review ? ' • can review and recover items' : ' • read-only queue access'}
               </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowShareModal(true)}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200/60 shadow-2xs transition-all active:scale-95"
+                >
+                  <FaShareAlt className="text-xs" /> Share Client Review Link
+                </button>
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
@@ -842,6 +854,7 @@ const ApprovalQueue = () => {
           )}
         </section>
       </div>
+      <ShareReviewModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} />
     </DashboardLayout>
   );
 };

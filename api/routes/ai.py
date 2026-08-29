@@ -14,12 +14,13 @@ Provider order:
 import logging
 import os
 import re
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUser
+from api.deps import CurrentUser, DB
 from api.limiter import limiter
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 
@@ -43,11 +44,22 @@ _PLATFORM_HINTS: dict[str, str] = {
 }
 
 
+class BrandVoiceConfig(BaseModel):
+    brand_name: str | None = None
+    tone: str | None = None
+    target_audience: str | None = None
+    mission: str | None = None
+    banned_words: list[str] = Field(default_factory=list)
+    formatting_rules: str | None = None
+    custom_guidelines: str | None = None
+
+
 class AIContentRequest(BaseModel):
     prompt: str
     platform: str | None = None
     tone: str | None = None
     language: str | None = None
+    use_brand_voice: bool = True
 
 
 class AIContentResponse(BaseModel):
@@ -81,7 +93,12 @@ def _is_rate_limit(exc: Exception) -> bool:
     )
 
 
-def _build_system_message(platform: str | None, tone: str | None, language: str | None) -> str:
+def _build_system_message(
+    platform: str | None,
+    tone: str | None,
+    language: str | None,
+    brand_voice: dict | None = None,
+) -> str:
     platform_hint = _PLATFORM_HINTS.get((platform or "").lower(), "")
     tone_hint = f" Use a {tone} tone." if tone else ""
     language_hint = ""
@@ -91,7 +108,27 @@ def _build_system_message(platform: str | None, tone: str | None, language: str 
             "Use natural, fluent phrasing for that language and script. "
             "Do not mention translation or provide alternatives."
         )
-    return f"{_CONTENT_BASE}{platform_hint}{tone_hint}{language_hint}"
+    
+    brand_hint = ""
+    if brand_voice:
+        b_parts = []
+        if brand_voice.get("brand_name"):
+            b_parts.append(f"Brand: {brand_voice['brand_name']}.")
+        if brand_voice.get("target_audience"):
+            b_parts.append(f"Target Audience: {brand_voice['target_audience']}.")
+        if brand_voice.get("mission"):
+            b_parts.append(f"Mission: {brand_voice['mission']}.")
+        if brand_voice.get("formatting_rules"):
+            b_parts.append(f"Style Rules: {brand_voice['formatting_rules']}.")
+        if brand_voice.get("custom_guidelines"):
+            b_parts.append(f"Guidelines: {brand_voice['custom_guidelines']}.")
+        banned = [w.strip() for w in brand_voice.get("banned_words", []) if w and w.strip()]
+        if banned:
+            b_parts.append(f"NEVER use these words/phrases: {', '.join(banned)}.")
+        if b_parts:
+            brand_hint = " BRAND VOICE & GUIDELINES: " + " ".join(b_parts)
+
+    return f"{_CONTENT_BASE}{platform_hint}{tone_hint}{brand_hint}{language_hint}"
 
 
 async def _ai_waterfall(system_message: str, prompt: str) -> tuple[str, str, str]:
@@ -276,6 +313,7 @@ async def generate_content(
     request: Request,
     body: AIContentRequest,
     current_user: CurrentUser,
+    db: DB,
 ) -> AIContentResponse:
     if not body.prompt or not body.prompt.strip():
         raise HTTPException(
@@ -283,9 +321,15 @@ async def generate_content(
             detail="Prompt cannot be empty",
         )
 
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    brand_voice = None
+    if body.use_brand_voice:
+        brand_voice = await db.brand_voices.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+
     try:
         content, provider, model = await _ai_waterfall(
-            _build_system_message(body.platform, body.tone, body.language),
+            _build_system_message(body.platform, body.tone, body.language, brand_voice=brand_voice),
             body.prompt.strip(),
         )
     except HTTPException:
@@ -413,3 +457,61 @@ async def generate_hashtags(
         provider=provider,
         model=model,
     )
+
+
+# ── Brand Voice & AI Persona Vault (Feature 6) ────────────────────────────────
+
+@router.get("/ai/brand-voice", response_model=BrandVoiceConfig)
+async def get_brand_voice(
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Retrieve the workspace Brand Voice and AI persona guidelines."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    doc = await db.brand_voices.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+    if not doc:
+        return BrandVoiceConfig()
+    return BrandVoiceConfig(
+        brand_name=doc.get("brand_name"),
+        tone=doc.get("tone"),
+        target_audience=doc.get("target_audience"),
+        mission=doc.get("mission"),
+        banned_words=doc.get("banned_words", []),
+        formatting_rules=doc.get("formatting_rules"),
+        custom_guidelines=doc.get("custom_guidelines"),
+    )
+
+
+@router.put("/ai/brand-voice", response_model=BrandVoiceConfig)
+async def save_brand_voice(
+    payload: BrandVoiceConfig,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Save or update the workspace Brand Voice and AI persona guidelines."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    now = datetime.now(timezone.utc)
+
+    doc_data = {
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "brand_name": payload.brand_name.strip() if payload.brand_name else None,
+        "tone": payload.tone.strip() if payload.tone else None,
+        "target_audience": payload.target_audience.strip() if payload.target_audience else None,
+        "mission": payload.mission.strip() if payload.mission else None,
+        "banned_words": [w.strip() for w in payload.banned_words if w and w.strip()],
+        "formatting_rules": payload.formatting_rules.strip() if payload.formatting_rules else None,
+        "custom_guidelines": payload.custom_guidelines.strip() if payload.custom_guidelines else None,
+        "updated_at": now,
+    }
+
+    await db.brand_voices.update_one(
+        {"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]},
+        {"$set": doc_data, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+
+    return payload
+

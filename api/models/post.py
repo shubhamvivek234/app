@@ -49,6 +49,16 @@ class StatusHistoryEntry(BaseModel):
     message: str | None = None
 
 
+class CommentEntry(BaseModel):
+    id: str
+    user_id: str
+    author_name: str
+    author_avatar: str | None = None
+    text: str
+    created_at: datetime
+    resolved: bool = False
+
+
 class PlatformResult(BaseModel):
     status: PlatformStatus = PlatformStatus.PENDING
     error: str | None = None
@@ -273,3 +283,4 @@ class PostResponse(BaseModel):
     approved_at: datetime | None = None
     approved_by: str | None = None
     account_results: dict[str, PlatformResult] = Field(default_factory=dict)
+    comments: list[CommentEntry] = Field(default_factory=list)

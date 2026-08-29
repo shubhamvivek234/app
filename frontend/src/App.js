@@ -49,9 +49,12 @@ import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import MagicLogin from '@/pages/MagicLogin';
 import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
-import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
 import BulkCSVUpload from '@/pages/BulkCSVUpload';
 import RSSFeeds from '@/pages/RSSFeeds';
+import ShortLinks from '@/pages/ShortLinks';
+import PublicReview from '@/pages/PublicReview';
+import LinkInBio from '@/pages/LinkInBio';
+import PublicBioPage from '@/pages/PublicBioPage';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -522,8 +525,27 @@ function App() {
                   </PrivateRoute>
                 }
               />
-              {/* Public route — no auth required */}
+              <Route
+                path="/short-links"
+                element={
+                  <PrivateRoute>
+                    <ShortLinks />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/link-in-bio"
+                element={
+                  <PrivateRoute>
+                    <LinkInBio />
+                  </PrivateRoute>
+                }
+              />
+              {/* Public routes — no auth required */}
               <Route path="/calendar/public/:token" element={<PublicCalendar />} />
+              <Route path="/review/:token" element={<PublicReview />} />
+              <Route path="/bio/:handle" element={<PublicBioPage />} />
+              <Route path="/@:handle" element={<PublicBioPage />} />
               
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

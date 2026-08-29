@@ -13,6 +13,7 @@ import {
 } from 'react-icons/fa';
 
 import DashboardLayout from '@/components/DashboardLayout';
+import BrandVoiceSettings from '@/components/BrandVoiceSettings';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -794,7 +795,11 @@ const Settings = () => {
             </CardContent>
           </Card>
 
-          <Card className="border-rose-200 shadow-sm dark:border-rose-900/60">
+          <Card className="border-slate-200 shadow-sm p-6 lg:col-span-2">
+            <BrandVoiceSettings />
+          </Card>
+
+          <Card className="border-rose-200 shadow-sm dark:border-rose-900/60 lg:col-span-2">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
                 <FaTrashAlt className="text-sm" />

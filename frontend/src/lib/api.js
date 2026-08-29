@@ -1300,3 +1300,125 @@ export const requestMagicLink = async (email, cfTurnstileToken = null) => {
   return response.data;
 };
 
+// ── Short Links & UTM Builder (Feature 1) ──
+export const createShortLink = async (data) => {
+  const response = await axios.post(`${API}/short-links`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getShortLinks = async (params = {}) => {
+  const response = await axios.get(`${API}/short-links`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const getShortLinkStats = async (code) => {
+  const response = await axios.get(`${API}/short-links/${code}/stats`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteShortLink = async (code) => {
+  const response = await axios.delete(`${API}/short-links/${code}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getUTMPresets = async () => {
+  const response = await axios.get(`${API}/utm-presets`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const saveUTMPreset = async (data) => {
+  const response = await axios.post(`${API}/utm-presets`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteUTMPreset = async (id) => {
+  const response = await axios.delete(`${API}/utm-presets/${id}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── Client Review Magic Links (Feature 2) ──
+export const createShareReviewLink = async (data = {}) => {
+  const response = await axios.post(`${API}/approvals/share-link`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getPublicReviewFeed = async (token) => {
+  const response = await axios.get(`${API}/approvals/public/${token}`);
+  return response.data;
+};
+
+export const submitPublicReviewDecision = async (token, data) => {
+  const response = await axios.post(`${API}/approvals/public/${token}/decision`, data);
+  return response.data;
+};
+
+// ── Link-in-Bio / Start Page (Feature 3) ──
+export const getMyBioPage = async () => {
+  const response = await axios.get(`${API}/bio-pages/mine`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const saveMyBioPage = async (data) => {
+  const response = await axios.put(`${API}/bio-pages/mine`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getPublicBioPage = async (handle) => {
+  const response = await axios.get(`${API}/bio-pages/public/${handle}`);
+  return response.data;
+};
+
+export const trackBioLinkClick = async (handle, linkId) => {
+  const response = await axios.post(`${API}/bio-pages/public/${handle}/click/${linkId}`);
+  return response.data;
+};
+
+// ── Branded PDF Reports & Schedules (Feature 4) ──
+export const exportBrandedReport = async (data) => {
+  const response = await axios.post(`${API}/analytics/report/export`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const scheduleReport = async (data) => {
+  const response = await axios.post(`${API}/analytics/report/schedules`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getReportSchedules = async () => {
+  const response = await axios.get(`${API}/analytics/report/schedules`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteReportSchedule = async (scheduleId) => {
+  const response = await axios.delete(`${API}/analytics/report/schedules/${scheduleId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── Post Draft Inline Comments (Feature 5) ──
+export const addPostComment = async (postId, text) => {
+  const response = await axios.post(`${API}/posts/${postId}/comments`, { text }, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const toggleCommentResolve = async (postId, commentId) => {
+  const response = await axios.patch(`${API}/posts/${postId}/comments/${commentId}/resolve`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deletePostComment = async (postId, commentId) => {
+  const response = await axios.delete(`${API}/posts/${postId}/comments/${commentId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── Brand Voice & AI Vault (Feature 6) ──
+export const getBrandVoice = async () => {
+  const response = await axios.get(`${API}/ai/brand-voice`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const saveBrandVoice = async (data) => {
+  const response = await axios.put(`${API}/ai/brand-voice`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+

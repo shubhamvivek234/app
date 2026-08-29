@@ -6,10 +6,11 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
-import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup } from 'react-icons/fa';
+import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup, FaCommentDots } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
+import PostCommentsDrawer from '@/components/PostCommentsDrawer';
 import { formatScheduledCompactDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
 import ScheduledCalendarView from '@/components/scheduled/ScheduledCalendarView';
 
@@ -257,9 +258,10 @@ const ContentLibrary = () => {
   const [selectedPlatform, setSelectedPlatform] = useState('all');
   const [selectedTime, setSelectedTime] = useState(initialStatus === 'published' ? 'past_6_months' : 'all');
   const [selectedAccount, setSelectedAccount] = useState('all');
-  // Internal notes
+  // Internal notes & comments
   const [openNotePostId, setOpenNotePostId] = useState(null);
   const [noteInput, setNoteInput] = useState('');
+  const [selectedCommentPost, setSelectedCommentPost] = useState(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -811,23 +813,38 @@ const ContentLibrary = () => {
                     <PreUploadTimeline post={post} />
                   )}
 
-                  {/* Notes toggle button */}
-                  <button
-                    onClick={() => {
-                      setOpenNotePostId(openNotePostId === post.id ? null : post.id);
-                      setNoteInput('');
-                    }}
-                    className={`w-full flex items-center gap-1.5 px-4 py-2 text-[11px] font-medium border-t border-slate-100 transition-colors
-                      ${openNotePostId === post.id ? 'bg-amber-50 text-amber-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    <FaStickyNote className="text-[10px]" />
-                    Notes
-                    {(post.internal_notes?.length > 0) && (
-                      <span className="ml-auto bg-amber-200 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                        {post.internal_notes.length}
-                      </span>
-                    )}
-                  </button>
+                  {/* Notes & Comments bar */}
+                  <div className="flex items-center border-t border-slate-100 divide-x divide-slate-100">
+                    <button
+                      onClick={() => {
+                        setOpenNotePostId(openNotePostId === post.id ? null : post.id);
+                        setNoteInput('');
+                      }}
+                      className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors
+                        ${openNotePostId === post.id ? 'bg-amber-50 text-amber-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      <FaStickyNote className="text-[10px]" />
+                      Notes
+                      {(post.internal_notes?.length > 0) && (
+                        <span className="ml-1 bg-amber-200 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                          {post.internal_notes.length}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => setSelectedCommentPost(post)}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-medium text-slate-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-colors"
+                    >
+                      <FaCommentDots className="text-[10px]" />
+                      Comments
+                      {(post.comments?.length > 0) && (
+                        <span className="ml-1 bg-indigo-100 text-indigo-700 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                          {post.comments.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
 
                   {/* Notes panel */}
                   {openNotePostId === post.id && (
@@ -877,6 +894,12 @@ const ContentLibrary = () => {
         </div>
         )}
       </div>
+      <PostCommentsDrawer
+        isOpen={Boolean(selectedCommentPost)}
+        post={selectedCommentPost}
+        onClose={() => setSelectedCommentPost(null)}
+        onCommentUpdated={(updated) => handlePostUpdated(updated)}
+      />
     </DashboardLayout>
   );
 };

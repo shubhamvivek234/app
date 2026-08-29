@@ -23,7 +23,9 @@ import {
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight, FaInfoCircle, FaSync,
+  FaFilePdf,
 } from 'react-icons/fa';
+import ExportReportModal from '@/components/ExportReportModal';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import worldGeo from 'world-atlas/countries-110m.json';
 import {
@@ -1936,6 +1938,7 @@ const Analytics = () => {
   const [days, setDays]                     = useState(30);
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [selectedAccount, setSelectedAccount]   = useState(null);
+  const [showReportModal, setShowReportModal]   = useState(false);
 
   const [accounts, setAccounts]       = useState([]);
   const [overview, setOverview]       = useState(null);
@@ -2939,20 +2942,29 @@ const Analytics = () => {
             )}
           </div>
 
-          {/* Right: date range selector */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            {DAYS_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setDays(opt.value)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
-                  ${days === opt.value
-                    ? 'bg-offwhite text-indigo-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          {/* Right: date range selector & Export Report button */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200/60 shadow-2xs transition-all active:scale-95"
+            >
+              <FaFilePdf className="text-xs" /> Export Branded PDF
+            </button>
+
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              {DAYS_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDays(opt.value)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
+                    ${days === opt.value
+                      ? 'bg-offwhite text-indigo-600 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -5272,6 +5284,7 @@ const Analytics = () => {
           </div>{/* closes max-w-5xl */}
         </div>{/* closes flex-1 overflow-y-auto */}
       </div>{/* closes flex h-full */}
+      <ExportReportModal isOpen={showReportModal} onClose={() => setShowReportModal(false)} />
     </DashboardLayout>
   );
 };
