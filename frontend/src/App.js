@@ -49,6 +49,7 @@ import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import MagicLogin from '@/pages/MagicLogin';
 import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
+import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
 import BulkCSVUpload from '@/pages/BulkCSVUpload';
 import RSSFeeds from '@/pages/RSSFeeds';
 import ShortLinks from '@/pages/ShortLinks';
