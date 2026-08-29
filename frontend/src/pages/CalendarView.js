@@ -43,6 +43,8 @@ const CalendarView = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('month');
 
+  const [selectedPlatform, setSelectedPlatform] = useState('all');
+
   const [notes, setNotes] = useState([]);
   const [agendaDay, setAgendaDay] = useState(null);
   const [noteText, setNoteText] = useState('');
@@ -147,7 +149,13 @@ const CalendarView = () => {
   const getPostsForDay = (day) => {
     const dayKey = format(day, 'yyyy-MM-dd');
     return posts
-      .filter((post) => getScheduledDateKey(post.scheduled_time, getPostScheduledTimeZone(post)) === dayKey)
+      .filter((post) => {
+        const matchesDay = getScheduledDateKey(post.scheduled_time, getPostScheduledTimeZone(post)) === dayKey;
+        if (!matchesDay) return false;
+        if (selectedPlatform === 'all') return true;
+        const postPlatforms = (post.platforms || []).map((p) => String(p).toLowerCase());
+        return postPlatforms.includes(selectedPlatform.toLowerCase());
+      })
       .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time));
   };
 
@@ -177,6 +185,10 @@ const CalendarView = () => {
   const goToNext = () => {
     if (viewMode === 'month') setCurrentDate(addMonths(currentDate, 1));
     else setCurrentDate(addWeeks(currentDate, 1));
+  };
+
+  const goToToday = () => {
+    setCurrentDate(new Date());
   };
 
   const isToday = (day) => isSameDay(day, new Date());
@@ -241,6 +253,9 @@ const CalendarView = () => {
           viewMode={viewMode}
           visiblePostCount={visibleScheduledCount}
           visibleNoteCount={visibleNotesCount}
+          selectedPlatform={selectedPlatform}
+          onPlatformChange={setSelectedPlatform}
+          onToday={goToToday}
           onPrev={goToPrevious}
           onNext={goToNext}
           onViewModeChange={setViewMode}
@@ -248,20 +263,19 @@ const CalendarView = () => {
           shareLoading={shareLoading}
         />
 
-
-        <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_60px_-48px_rgba(15,23,42,0.5)]">
-          <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/80">
+        <div className="overflow-hidden rounded-3xl border border-gray-200/90 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
+          <div className="grid grid-cols-7 border-b border-gray-200/90 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/60">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
               <div
                 key={day}
-                className="border-r border-slate-200 px-3 py-3 text-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 last:border-r-0"
+                className="border-r border-gray-200/90 dark:border-gray-800 px-3 py-3 text-center text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 last:border-r-0"
               >
                 {day}
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-7">
+          <div className="grid grid-cols-7 divide-x divide-y divide-gray-100 dark:divide-gray-800">
             {calendarDays.map((day) => (
               <CalendarDayCell
                 key={format(day, 'yyyy-MM-dd')}

@@ -5,7 +5,10 @@ import {
   FaPlus,
   FaCalendarAlt,
   FaList,
+  FaClock,
+  FaCheckCircle,
   FaFileAlt,
+  FaExclamationTriangle,
   FaUsers,
   FaCog,
   FaKey,
@@ -22,6 +25,8 @@ import {
   FaInbox,
   FaChevronLeft,
   FaChevronRight,
+  FaChevronDown,
+  FaChevronUp,
   FaMoon,
   FaSun,
   FaRegClock,
@@ -110,6 +115,9 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
   const { isDarkMode, toggleDarkMode } = useTheme();
   const [collapsed, setCollapsed] = useState(false);
 
+  const isCalendarOrPostRoute = location.pathname.startsWith('/calendar') || location.pathname.startsWith('/content-library');
+  const [calendarExpanded, setCalendarExpanded] = useState(true);
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
@@ -124,10 +132,18 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
+  const calendarSubItems = [
+    { name: 'Calendar Grid', path: '/calendar', icon: FaCalendarAlt },
+    { name: 'All Posts', path: '/content-library', icon: FaList },
+    { name: 'Scheduled', path: '/content-library?status=scheduled', icon: FaClock },
+    { name: 'Posted / Published', path: '/content-library?status=published', icon: FaCheckCircle },
+    { name: 'Drafts', path: '/content-library?status=draft', icon: FaFileAlt },
+    { name: 'Failed Posts', path: '/content-library?status=failed', icon: FaExclamationTriangle },
+  ];
+
   const navigation = {
     overview: [
       { name: 'Dashboard', path: '/dashboard', icon: FaLayerGroup, badge: 'Live', badgeBg: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
-      { name: 'Master Calendar', path: '/calendar', icon: FaCalendarAlt },
     ],
     growth: [
       { name: 'Social Tools', path: '/social-tools', icon: FaThLarge, badge: '6 Tools', badgeBg: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' },
@@ -138,7 +154,6 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       { name: 'Timeslots', path: '/timeslots', icon: FaRegClock },
     ],
     workflow: [
-      { name: 'Content Library', path: '/content-library', icon: FaList },
       { name: 'Client Approvals', path: '/approvals', icon: FaCheckDouble, badge: 'Review', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
       { name: 'Social Inbox', path: '/inbox', icon: FaInbox },
     ],
@@ -170,9 +185,9 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
   const isActive = (path) => {
     if (path.includes('?')) {
-      return location.pathname + location.search === path;
+      return (location.pathname + location.search) === path;
     }
-    return location.pathname === path;
+    return location.pathname === path && !location.search;
   };
 
   const publishActive = isActive('/publish');
@@ -305,61 +320,215 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
         </div>
 
         <div className="flex-1 px-3 py-2 space-y-4 overflow-y-auto">
-          {(() => {
-            const renderNavGroup = (title, items) => {
-              if (!items || items.length === 0) return null;
-              return (
-                <div>
-                  {!collapsed && (
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2.5 mb-1.5">
-                      {title}
-                    </p>
-                  )}
-                  {collapsed && <div className="border-t border-gray-100 dark:border-gray-800 my-2" />}
-                  <nav className="space-y-0.5">
-                    {items.map((item) => {
-                      const Icon = item.icon;
-                      const active = isActive(item.path);
-                      return (
-                        <Link
-                          key={item.path}
-                          to={item.path}
-                          title={collapsed ? item.name : undefined}
-                          data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
-                          className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
-                            collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'
-                          } ${
-                            active
-                              ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-2xs font-bold border border-indigo-100/80 dark:border-indigo-900/40'
-                              : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <Icon className={`flex-shrink-0 text-sm ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}`} />
-                            {!collapsed && <span className="truncate">{item.name}</span>}
-                          </div>
-                          {!collapsed && item.badge && (
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${item.badgeBg || 'bg-gray-100 text-gray-600'}`}>
-                              {item.badge}
-                            </span>
-                          )}
-                        </Link>
-                      );
-                    })}
-                  </nav>
+          <div>
+            {!collapsed && (
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2.5 mb-1.5">
+                Overview & Calendar
+              </p>
+            )}
+            <nav className="space-y-1">
+              <Link
+                to="/dashboard"
+                title={collapsed ? 'Dashboard' : undefined}
+                data-testid="nav-dashboard"
+                className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+                  collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'
+                } ${
+                  isActive('/dashboard')
+                    ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-2xs font-bold border border-indigo-100/80 dark:border-indigo-900/40'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <FaLayerGroup className={`flex-shrink-0 text-sm ${isActive('/dashboard') ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}`} />
+                  {!collapsed && <span className="truncate">Dashboard</span>}
                 </div>
-              );
-            };
+                {!collapsed && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                    Live
+                  </span>
+                )}
+              </Link>
 
-            return (
-              <>
-                {renderNavGroup('Overview', filteredNavigation.overview)}
-                {renderNavGroup('Growth & Tools', filteredNavigation.growth)}
-                {renderNavGroup('Workflow & Inbox', filteredNavigation.workflow)}
-                {renderNavGroup('Configuration', filteredNavigation.configuration)}
-              </>
-            );
-          })()}
+              {collapsed ? (
+                <Link
+                  to="/calendar"
+                  title="Master Calendar"
+                  data-testid="nav-master-calendar"
+                  className={`flex items-center justify-center p-2.5 rounded-xl text-xs font-semibold transition-all ${
+                    isCalendarOrPostRoute
+                      ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  <FaCalendarAlt className="text-sm text-indigo-600 dark:text-indigo-400" />
+                </Link>
+              ) : (
+                <div className={`rounded-xl border transition-all ${
+                  isCalendarOrPostRoute
+                    ? 'border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/30 dark:bg-indigo-950/20'
+                    : 'border-transparent'
+                }`}>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarExpanded((prev) => !prev)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/60 transition-colors"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <FaCalendarAlt className={`text-sm ${isCalendarOrPostRoute ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500'}`} />
+                      Master Calendar
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                      {calendarExpanded ? <FaChevronUp /> : <FaChevronDown />}
+                    </span>
+                  </button>
+
+                  {calendarExpanded && (
+                    <div className="pl-3 pr-1.5 pb-1.5 pt-0.5 space-y-0.5">
+                      {calendarSubItems.map((sub) => {
+                        const Icon = sub.icon;
+                        const active = isActive(sub.path);
+                        return (
+                          <Link
+                            key={sub.path}
+                            to={sub.path}
+                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
+                              active
+                                ? 'bg-white dark:bg-gray-800 text-indigo-700 dark:text-indigo-300 font-bold shadow-2xs border border-indigo-100 dark:border-indigo-900/50'
+                                : 'text-gray-600 dark:text-gray-400 hover:bg-white/60 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 truncate">
+                              <Icon className={`text-xs flex-shrink-0 ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'}`} />
+                              <span className="truncate">{sub.name}</span>
+                            </span>
+                            {sub.path.includes('status=failed') && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                            )}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </nav>
+          </div>
+
+          <div>
+            {!collapsed && (
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2.5 mb-1.5">
+                Growth & Tools
+              </p>
+            )}
+            {collapsed && <div className="border-t border-gray-100 dark:border-gray-800 my-2" />}
+            <nav className="space-y-0.5">
+              {filteredNavigation.growth.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.path);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    title={collapsed ? item.name : undefined}
+                    data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
+                    className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+                      collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'
+                    } ${
+                      active
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-2xs font-bold border border-indigo-100/80 dark:border-indigo-900/40'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Icon className={`flex-shrink-0 text-sm ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}`} />
+                      {!collapsed && <span className="truncate">{item.name}</span>}
+                    </div>
+                    {!collapsed && item.badge && (
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${item.badgeBg || 'bg-gray-100 text-gray-600'}`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div>
+            {!collapsed && (
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2.5 mb-1.5">
+                Workflow & Inbox
+              </p>
+            )}
+            {collapsed && <div className="border-t border-gray-100 dark:border-gray-800 my-2" />}
+            <nav className="space-y-0.5">
+              {filteredNavigation.workflow.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.path);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    title={collapsed ? item.name : undefined}
+                    data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
+                    className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+                      collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'
+                    } ${
+                      active
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-2xs font-bold border border-indigo-100/80 dark:border-indigo-900/40'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Icon className={`flex-shrink-0 text-sm ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}`} />
+                      {!collapsed && <span className="truncate">{item.name}</span>}
+                    </div>
+                    {!collapsed && item.badge && (
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${item.badgeBg || 'bg-gray-100 text-gray-600'}`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div>
+            {!collapsed && (
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 dark:text-gray-500 px-2.5 mb-1.5">
+                Configuration
+              </p>
+            )}
+            {collapsed && <div className="border-t border-gray-100 dark:border-gray-800 my-2" />}
+            <nav className="space-y-0.5">
+              {filteredNavigation.configuration.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.path);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    title={collapsed ? item.name : undefined}
+                    data-testid={`nav-${item.name.toLowerCase().replace(/\s+/g, '-')}`}
+                    className={`flex items-center rounded-xl text-xs font-semibold transition-all ${
+                      collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2'
+                    } ${
+                      active
+                        ? 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-2xs font-bold border border-indigo-100/80 dark:border-indigo-900/40'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/70 dark:hover:bg-gray-800/60 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Icon className={`flex-shrink-0 text-sm ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}`} />
+                      {!collapsed && <span className="truncate">{item.name}</span>}
+                    </div>
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
         </div>
 
         <div className={`mt-auto border-t border-gray-100 dark:border-gray-800 p-3 bg-gray-50/40 dark:bg-gray-900/60 ${collapsed ? 'px-2' : 'px-3'}`}>
