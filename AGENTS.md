@@ -2,17 +2,20 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v2.9 shipped
+Stage: v3.0 shipped
 Branch: main
-Focus: Unravler brand standardization + Master Product Roadmap
+Focus: 6 Key Platform Expansions (Auto-UTM, Magic Review Links, Link-in-Bio, Branded PDF Reports, Draft Comments, AI Brand Voice)
 
 ## Last Session Completed
 Date: 2026-08-29
 Completed:
-- Master Product Roadmap: documented 11 key platform features across 4 tiers in `docs/MASTER_PRODUCT_ROADMAP.md` (Auto-UTM & Link Shortener, Link-in-Bio, Client Magic Links, Inline Draft Comments, PDF Reports, Evergreen Buckets, AI Brand Voice).
-- Unravler Brand Standardization: updated FastAPI API title (`Unravler API`), CSV templates (`unravler_bulk_template.csv`), bot User-Agent (`Unravler-Bot/1.0`), support emails (`support@unravler.com`), and dual webhook signature headers (`X-Unravler-Signature` / `X-SocialEntangler-Signature`).
-- RSS Feeds & Automations Engine: built and deployed RSS/Atom parser, REST API, Celery Beat poller, and frontend UI to production.
-- Production Deploy: verified EC2 container cluster and Vercel production bundle (`unravler.com`).
+- Feature 1 (Auto-UTM & Link Shortener): built `api/routes/short_links.py`, `frontend/src/pages/ShortLinks.js`, collision-resistant slugs, click tracking analytics, and UTM presets.
+- Feature 2 (Client Magic Review Links): built signed expiration tokens, unauthenticated review feed (`/review/:token`), 1-click approve/changes requested, and `ShareReviewModal.js` in `ApprovalQueue.js`.
+- Feature 3 (Link-in-Bio Page Builder): built `api/routes/bio_pages.py`, customizable landing page (`frontend/src/pages/LinkInBio.js`, `PublicBioPage.js` at `/@:handle`), and live mobile phone preview.
+- Feature 4 (Branded PDF Analytics Reports): executive performance report generator (`api/routes/analytics.py`), printable PDF export, and automated weekly/monthly email scheduling (`ExportReportModal.js`).
+- Feature 5 (Post Draft Inline Comments): draft revision threads on post cards (`PostCommentsDrawer.js`), resolve/reopen status, and activity tracking.
+- Feature 6 (Brand Voice & AI Persona Vault): persona guidelines (`api/routes/ai.py`), prohibited words filter, and settings tab (`BrandVoiceSettings.js`).
+- Verified test suite: 255/255 tests passed (100%), frontend bundle compiled (`npm run build`), deployed to EC2 cluster and Vercel.
 
 ## Active Work
 Currently implementing: None
@@ -29,6 +32,6 @@ Next:
 ```bash
 git status --short
 CI=true npm run build --prefix frontend
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/test_settings_notifications.py tests/test_youtube_oauth_and_reconnect.py tests/test_dashboard_overview.py tests/test_post_reschedule_update.py tests/test_accounts_route.py -q
-.venv/bin/python -m compileall api/routes/notifications.py api/routes/dashboard.py api/routes/posts.py celery_workers/tasks/publish.py utils/notifications.py utils/notification_prefs.py
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/ -q
+.venv/bin/python -m compileall api/routes/short_links.py api/routes/bio_pages.py api/routes/ai.py api/routes/analytics.py api/routes/posts.py api/main.py
 ```
