@@ -382,7 +382,7 @@ const BulkCSVUpload = () => {
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url;
-    a.download = 'socialentangler_bulk_template.csv'; a.click();
+    a.download = 'unravler_bulk_template.csv'; a.click();
     URL.revokeObjectURL(url);
   };
 

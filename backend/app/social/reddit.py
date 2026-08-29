@@ -22,7 +22,7 @@ class RedditAuth:
     BASE_URL  = "https://oauth.reddit.com"
 
     SCOPES = "identity submit read history mysubreddits"
-    USER_AGENT = "SocialEntangler/1.0"
+    USER_AGENT = "Unravler/1.0"
 
     def __init__(self):
         self.client_id     = os.environ.get("REDDIT_CLIENT_ID")

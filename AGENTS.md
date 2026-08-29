@@ -1,20 +1,18 @@
-# SocialEntangler — Session Memory
+# Unravler — Session Memory
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
 Stage: v2.9 shipped
 Branch: main
-Focus: important notifications + composer reliability + R2 migration
+Focus: Unravler brand standardization + Master Product Roadmap
 
 ## Last Session Completed
 Date: 2026-08-29
 Completed:
-- RSS Feeds & Automations Engine: built SSRF-protected XML/Atom/YouTube parser (`utils/rss_parser.py`), REST API (`api/routes/rss_feeds.py`), Celery Beat polling task (`celery_workers/tasks/rss_poller.py`), frontend page & API client (`frontend/src/pages/RSSFeeds.js`, `frontend/src/lib/api.js`, `frontend/src/components/DashboardLayout.js`), and comprehensive test suite (`tests/test_rss_feeds.py`).
-- Bulk Upload Engine & API: implemented `POST /bulk/validate-urls` (SSRF-guarded pre-flight media validator), aligned `POST /bulk/csv-schedule` and `/bulk/csv-upload`, fixed full MongoDB document schema (`id`, `post_id`, `version: 1`, `platform_results`, `account_results`, `status_history`, `content_hash`), and flexible account name/username/ID resolution (`api/routes/bulk_upload.py`, `tests/test_bulk_upload.py`).
-- Frontend Bulk CSV & Video: migrated `BulkCSVUpload.js`, `BulkVideoUpload.js`, and `BulkCSVModal.js` from stale `localStorage` tokens to centralized Firebase auth API client (`frontend/src/lib/api.js`, `frontend/src/pages/BulkCSVUpload.js`, `frontend/src/pages/BulkVideoUpload.js`, `frontend/src/components/BulkCSVModal.js`).
-- Backend & Public API: added Timeslots & Webhooks endpoints, updated developer docs & token scopes (`api/routes/public_api.py`, `utils/developer_tokens.py`, `frontend/src/pages/Developers.js`).
-- Backend & Roles: implemented `approval:decide` permission for `Client` role (`utils/roles.py`, `api/routes/posts.py`, `api/routes/auth.py`, `api/routes/team.py`).
-- Master Legal & App Verification Plan documented in `docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`.
+- Master Product Roadmap: documented 11 key platform features across 4 tiers in `docs/MASTER_PRODUCT_ROADMAP.md` (Auto-UTM & Link Shortener, Link-in-Bio, Client Magic Links, Inline Draft Comments, PDF Reports, Evergreen Buckets, AI Brand Voice).
+- Unravler Brand Standardization: updated FastAPI API title (`Unravler API`), CSV templates (`unravler_bulk_template.csv`), bot User-Agent (`Unravler-Bot/1.0`), support emails (`support@unravler.com`), and dual webhook signature headers (`X-Unravler-Signature` / `X-SocialEntangler-Signature`).
+- RSS Feeds & Automations Engine: built and deployed RSS/Atom parser, REST API, Celery Beat poller, and frontend UI to production.
+- Production Deploy: verified EC2 container cluster and Vercel production bundle (`unravler.com`).
 
 ## Active Work
 Currently implementing: None

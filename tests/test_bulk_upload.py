@@ -52,12 +52,16 @@ class _FakeDB:
         self.posts = _FakePostsCollection(posts or [])
 
 
-def test_csv_template_contains_all_required_columns():
+@pytest.mark.asyncio
+async def test_csv_template_contains_all_required_columns():
     expected = [
         "content", "platforms", "accounts", "scheduled_time", "timeslot_category",
         "timezone", "image_urls", "video_url", "title", "tags", "post_type",
     ]
     assert CSV_TEMPLATE_COLUMNS == expected
+
+    resp = await download_csv_template()
+    assert "unravler_bulk_template.csv" in resp.headers["Content-Disposition"]
 
 
 @pytest.mark.asyncio

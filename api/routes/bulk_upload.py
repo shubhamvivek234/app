@@ -100,7 +100,7 @@ async def download_csv_template():
     return StreamingResponse(
         iter([content]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=socialentangler_bulk_template.csv"},
+        headers={"Content-Disposition": "attachment; filename=unravler_bulk_template.csv"},
     )
 
 

@@ -186,7 +186,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="SocialEntangler API",
+        title="Unravler API",
         version="2.9.0",
         docs_url="/api/docs" if os.getenv("ENV") != "production" else None,
         redoc_url=None,

@@ -20,7 +20,7 @@ const SupportPopup = ({ isOpen, onClose }) => {
     setLoading(true);
 
     const formData = new FormData();
-    formData.append('to', 'support@socialentangler.com');
+    formData.append('to', 'support@unravler.com');
     formData.append('cc', cc);
     formData.append('subject', subject);
     formData.append('body', body);
@@ -105,7 +105,7 @@ const SupportPopup = ({ isOpen, onClose }) => {
         <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2">
           <span className="text-gray-500 text-sm w-12 shrink-0">To</span>
           <div className="flex-1">
-            <span className="text-sm text-gray-800">support@socialentangler.com</span>
+            <span className="text-sm text-gray-800">support@unravler.com</span>
           </div>
           <div className="flex gap-2 text-sm text-gray-500">
             <span className="cursor-pointer hover:text-gray-800">Cc</span>

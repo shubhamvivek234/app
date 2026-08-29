@@ -3623,9 +3623,9 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     succeeded_count = sum(1 for pr in platform_results.values() if pr["status"] == "success")
 
     subject_line = (
-        f"Post failed on {failed_count} platform{'s' if failed_count > 1 else ''} - SocialEntangler"
+        f"Post failed on {failed_count} platform{'s' if failed_count > 1 else ''} - Unravler"
         if succeeded_count > 0
-        else "Post failed to publish - SocialEntangler"
+        else "Post failed to publish - Unravler"
     )
 
     html_content = f"""

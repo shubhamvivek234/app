@@ -756,7 +756,7 @@ def _build_email_html(name: str, title: str, message: str, post_url: str | None)
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
       <p style="font-size:12px;color:#94a3b8">
         You can manage your email preferences in
-        <a href="https://app.socialentangler.com/settings">Settings → Notifications</a>.
+        <a href="https://app.unravler.com/settings">Settings → Notifications</a>.
       </p>
     </div>
     """

@@ -203,6 +203,8 @@ async def dispatch_webhook_event(db, workspace_id: str, event: str, payload: dic
                     content=body_bytes,
                     headers={
                         "Content-Type": "application/json",
+                        "X-Unravler-Signature": sig,
+                        "X-Unravler-Event": event,
                         "X-SocialEntangler-Signature": sig,
                         "X-SocialEntangler-Event": event,
                     },

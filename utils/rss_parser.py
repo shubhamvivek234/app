@@ -298,7 +298,7 @@ async def fetch_feed(
     assert_safe_url(feed_url)
 
     headers = {
-        "User-Agent": "SocialEntangler-Bot/1.0 (+https://socialentangler.com; RSS Reader)",
+        "User-Agent": "Unravler-Bot/1.0 (+https://unravler.com; RSS Reader)",
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
     }
     if etag:
