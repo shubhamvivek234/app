@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
+import LinkedInTextFormatter from '@/components/LinkedInTextFormatter';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
@@ -104,11 +105,16 @@ const TOOLS = [
     icon: SiLinkedin,
     iconColor: '#0A66C2',
     iconBg: 'bg-blue-50',
+    borderColor: 'border-blue-200 hover:border-blue-400',
+    tagColor: 'text-blue-600',
+    badge: 'Popular Suite',
+    badgeBg: 'bg-blue-100 text-blue-700',
+    category: 'growth',
     platform: SiLinkedin,
     title: 'LinkedIn Text Formatter',
-    description: 'Format LinkedIn posts with bold, italic, underlined text and more. Stand out with professional text formatting.',
-    tag: 'Coming soon',
-    available: false,
+    description: 'Format LinkedIn posts with bold, italic, lists, and Unicode typography. Preview posts in live desktop & mobile feed views.',
+    tag: 'Launch Studio →',
+    available: true,
   },
   {
     id: 'youtube-title',
@@ -1062,6 +1068,7 @@ const SocialTools = () => {
   const renderTool = () => {
     if (activeTool === 'instagram-grid') return <InstagramGridMaker onBack={() => setActiveTool(null)} />;
     if (activeTool === 'instagram-carousel') return <InstagramCarouselSplitter onBack={() => setActiveTool(null)} />;
+    if (activeTool === 'linkedin-formatter') return <LinkedInTextFormatter onBack={() => setActiveTool(null)} />;
     return null;
   };
 

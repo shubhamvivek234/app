@@ -534,7 +534,7 @@ const ScrollTimePicker = ({ value, onChange }) => {
  *   asModal          – bool   – render as 80%-screen modal overlay
  *   onClose          – fn     – called when back/close is clicked in modal mode
  */
-const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId: editPostIdProp = null }) => {
+const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId: editPostIdProp = null, initialContent = '' }) => {
   const cachedAccountsRef = useRef(getCachedSocialAccounts());
   const cachedAccounts = cachedAccountsRef.current;
   const { type: typeFromParam } = useParams();
@@ -559,7 +559,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
 
   // ── Shared + per-platform content ────────────────────────────────────────
-  const [commonCaption, setCommonCaption] = useState('');
+  const [commonCaption, setCommonCaption] = useState(() => initialContent || '');
   const [accountOverrides, setAccountOverrides] = useState({});
 
   // ── Platform-specific settings ────────────────────────────────────────────

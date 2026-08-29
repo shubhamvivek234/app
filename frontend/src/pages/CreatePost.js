@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import React, { useMemo, useState, useEffect } from 'react';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import CreatePostForm from '@/pages/CreatePostForm';
 import {
@@ -15,11 +15,14 @@ import { SiBluesky, SiThreads } from 'react-icons/si';
 
 const CreatePost = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const editPostId = useMemo(() => searchParams.get('edit') || null, [searchParams]);
 
+  const initialContent = location.state?.initialContent || '';
+
   // null = closed, 'text' | 'image' | 'video' | 'mixed' = composer open for that type
-  const [composerType, setComposerType] = useState(null);
+  const [composerType, setComposerType] = useState(() => (initialContent ? 'text' : null));
 
   const postTypes = [
     {
@@ -190,6 +193,7 @@ const CreatePost = () => {
       {composerType && (
         <CreatePostForm
           postTypeOverride={composerType}
+          initialContent={initialContent}
           asModal={true}
           onClose={() => setComposerType(null)}
         />
