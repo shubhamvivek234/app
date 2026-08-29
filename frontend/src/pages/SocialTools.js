@@ -7,11 +7,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/DashboardLayout';
 import LinkedInTextFormatter from '@/components/LinkedInTextFormatter';
+import QRCodeGenerator from '@/components/QRCodeGenerator';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import {
-  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaSparkles
+  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaSparkles, FaQrcode
 } from 'react-icons/fa';
 import { SiInstagram, SiTiktok, SiYoutube, SiLinkedin } from 'react-icons/si';
 import { MdGridOn, MdViewCarousel } from 'react-icons/md';
@@ -48,6 +49,21 @@ const TOOLS = [
     title: 'Auto-UTM & Link Shortener',
     description: 'Shorten links, generate Google Analytics UTM campaign tags automatically, and monitor click analytics in real-time.',
     tag: 'Manage Links →',
+    available: true,
+  },
+  {
+    id: 'qr-code-generator',
+    icon: FaQrcode,
+    iconColor: '#EF4444',
+    iconBg: 'bg-red-50',
+    borderColor: 'border-red-200 hover:border-red-400',
+    tagColor: 'text-red-600',
+    badge: 'High Conversion',
+    badgeBg: 'bg-red-100 text-red-700',
+    category: 'growth',
+    title: 'QR Code Generator',
+    description: 'Create QR codes for links, media, text, and multi-store app downloads in seconds',
+    tag: 'Try Now →',
     available: true,
   },
   {
@@ -1069,6 +1085,7 @@ const SocialTools = () => {
     if (activeTool === 'instagram-grid') return <InstagramGridMaker onBack={() => setActiveTool(null)} />;
     if (activeTool === 'instagram-carousel') return <InstagramCarouselSplitter onBack={() => setActiveTool(null)} />;
     if (activeTool === 'linkedin-formatter') return <LinkedInTextFormatter onBack={() => setActiveTool(null)} />;
+    if (activeTool === 'qr-code-generator') return <QRCodeGenerator onBack={() => setActiveTool(null)} />;
     return null;
   };
 
