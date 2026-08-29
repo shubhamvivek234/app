@@ -1033,6 +1033,57 @@ export const downloadBulkTemplate = async () => {
   return response.data;
 };
 
+// ── RSS Feeds & Automations ──
+export const validateRssFeed = async (feedUrl) => {
+  const response = await axios.post(`${API}/rss/validate`, { feed_url: feedUrl }, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const getRssFeeds = async () => {
+  const response = await axios.get(`${API}/rss/feeds`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createRssFeed = async (data) => {
+  const response = await axios.post(`${API}/rss/feeds`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getRssFeed = async (feedId) => {
+  const response = await axios.get(`${API}/rss/feeds/${feedId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateRssFeed = async (feedId, data) => {
+  const response = await axios.patch(`${API}/rss/feeds/${feedId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteRssFeed = async (feedId) => {
+  const response = await axios.delete(`${API}/rss/feeds/${feedId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const syncRssFeed = async (feedId) => {
+  const response = await axios.post(`${API}/rss/feeds/${feedId}/sync`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getRssItems = async (params = {}) => {
+  const response = await axios.get(`${API}/rss/items`, {
+    headers: getAuthHeaders(),
+    params,
+  });
+  return response.data;
+};
+
+export const shareRssItem = async (itemId, data = {}) => {
+  const response = await axios.post(`${API}/rss/items/${itemId}/share`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 // ── API Keys ──
 export const getApiKeys = async () => {
   const response = await axios.get(`${API}/api-keys`, { headers: getAuthHeaders() });

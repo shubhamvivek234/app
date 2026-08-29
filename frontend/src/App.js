@@ -51,6 +51,7 @@ import MagicLogin from '@/pages/MagicLogin';
 import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
 import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
 import BulkCSVUpload from '@/pages/BulkCSVUpload';
+import RSSFeeds from '@/pages/RSSFeeds';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -462,6 +463,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <BulkCSVUpload />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/rss-feeds"
+                element={
+                  <PrivateRoute>
+                    <RSSFeeds />
                   </PrivateRoute>
                 }
               />

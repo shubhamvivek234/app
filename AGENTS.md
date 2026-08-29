@@ -9,12 +9,11 @@ Focus: important notifications + composer reliability + R2 migration
 ## Last Session Completed
 Date: 2026-08-29
 Completed:
-- Backend & Public API: added Timeslots (`GET /public/timeslots`, `GET /public/timeslots/next-slot`) and Webhooks (`GET`, `POST`, `DELETE`, `POST /test`) to the Developer Public API; added `webhooks:manage` scope and support for `scheduled_time` and `timeslot_category` (`api/routes/public_api.py`, `utils/developer_tokens.py`, `tests/test_public_api.py`).
-- Frontend & Developers Docs: updated curl snippets and REST reference tables for Approvals, Timeslots, and Webhooks (`frontend/src/pages/Developers.js`).
-- Frontend & Settings: expanded timezone coverage across global IANA regions (`frontend/src/pages/Settings.js`).
-- Backend & Roles: implemented `approval:decide` permission for `Client` role, allowing invited clients to review, approve, and reject posts end-to-end without needing full workspace edit privileges (`utils/roles.py`, `api/routes/posts.py`, `api/routes/auth.py`, `api/routes/team.py`).
-- Backend: enhanced reviewer notification targeting to include client members and assigned reviewers with 7-day magic login tokens (`api/routes/posts.py`).
-- Backend & Frontend: implemented timezone-aware timeslot resolution using Python ZoneInfo (`utils/timeslots.py`, `api/routes/timeslots.py`, `api/routes/posts.py`, `api/routes/bulk_upload.py`), eliminating UTC offset drift.
+- RSS Feeds & Automations Engine: built SSRF-protected XML/Atom/YouTube parser (`utils/rss_parser.py`), REST API (`api/routes/rss_feeds.py`), Celery Beat polling task (`celery_workers/tasks/rss_poller.py`), frontend page & API client (`frontend/src/pages/RSSFeeds.js`, `frontend/src/lib/api.js`, `frontend/src/components/DashboardLayout.js`), and comprehensive test suite (`tests/test_rss_feeds.py`).
+- Bulk Upload Engine & API: implemented `POST /bulk/validate-urls` (SSRF-guarded pre-flight media validator), aligned `POST /bulk/csv-schedule` and `/bulk/csv-upload`, fixed full MongoDB document schema (`id`, `post_id`, `version: 1`, `platform_results`, `account_results`, `status_history`, `content_hash`), and flexible account name/username/ID resolution (`api/routes/bulk_upload.py`, `tests/test_bulk_upload.py`).
+- Frontend Bulk CSV & Video: migrated `BulkCSVUpload.js`, `BulkVideoUpload.js`, and `BulkCSVModal.js` from stale `localStorage` tokens to centralized Firebase auth API client (`frontend/src/lib/api.js`, `frontend/src/pages/BulkCSVUpload.js`, `frontend/src/pages/BulkVideoUpload.js`, `frontend/src/components/BulkCSVModal.js`).
+- Backend & Public API: added Timeslots & Webhooks endpoints, updated developer docs & token scopes (`api/routes/public_api.py`, `utils/developer_tokens.py`, `frontend/src/pages/Developers.js`).
+- Backend & Roles: implemented `approval:decide` permission for `Client` role (`utils/roles.py`, `api/routes/posts.py`, `api/routes/auth.py`, `api/routes/team.py`).
 - Master Legal & App Verification Plan documented in `docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`.
 
 ## Active Work

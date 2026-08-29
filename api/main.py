@@ -54,6 +54,7 @@ from api.routes.audio import router as audio_router
 from api.routes.calendar_notes import router as calendar_notes_router
 from api.routes.inbox import router as inbox_router
 from api.routes.support import router as support_router
+from api.routes.rss_feeds import router as rss_feeds_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -180,6 +181,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(calendar_notes_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(inbox_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(support_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(rss_feeds_router, prefix=prefix, include_in_schema=include_in_schema)
 
 
 def create_app() -> FastAPI:

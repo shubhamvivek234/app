@@ -29,6 +29,7 @@ import {
   FaMoon,
   FaSun,
   FaRegClock,
+  FaRss,
 } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import UnravlerLogo from '@/components/UnravlerLogo';
@@ -113,6 +114,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
     create: [
       { name: 'New post', path: '/create-post', icon: FaFileAlt },
       { name: 'Bulk Upload', path: '/bulk-upload', icon: FaFileUpload },
+      { name: 'RSS Feeds', path: '/rss-feeds', icon: FaRss },
       { name: 'Hashtag Groups', path: '/hashtags', icon: FaHashtag },
       { name: 'Media Library', path: '/media-library', icon: FaImages },
       { name: 'Social Tools', path: '/social-tools', icon: FaThLarge },
