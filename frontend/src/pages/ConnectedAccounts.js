@@ -7,6 +7,8 @@ import {
   disconnectSocialAccount,
   connectBluesky,
   connectDiscord,
+  connectTelegram,
+  testAccountConnection,
   connectMastodon,
   getLinkedInPendingOrgs,
   saveLinkedInOrgs,
@@ -34,8 +36,9 @@ import {
   FaTiktok,
   FaTwitter,
   FaYoutube,
+  FaPaperPlane,
 } from 'react-icons/fa';
-import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads } from 'react-icons/si';
+import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads, SiTelegram } from 'react-icons/si';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +48,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-const MANUAL_PLATFORMS = new Set(['bluesky', 'discord', 'mastodon']);
+const MANUAL_PLATFORMS = new Set(['bluesky', 'discord', 'telegram', 'mastodon']);
 const OAUTH_PLATFORMS = new Set([
   'facebook',
   'instagram',
@@ -79,6 +82,7 @@ const PLATFORMS = [
   { id: 'snapchat', name: 'Snapchat', icon: SiSnapchat, color: 'text-yellow-500', bg: 'bg-yellow-50', border: 'border-yellow-200', btn: 'bg-yellow-400 hover:bg-yellow-500', badge: 'Spotlight only' },
   { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', badge: 'App Password' },
   { id: 'discord', name: 'Discord', icon: FaDiscord, color: 'text-indigo-500', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook' },
+  { id: 'telegram', name: 'Telegram', icon: SiTelegram, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', badge: 'Bot Token' },
   { id: 'mastodon', name: 'Mastodon', icon: SiMastodon, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-600 hover:bg-indigo-700', badge: 'Access token' },
 ];
 
@@ -252,8 +256,10 @@ const ConnectedAccountRow = ({
   platform,
   onReconnect,
   onDisconnect,
+  onTestConnection,
   connecting,
   disconnectingAccountId,
+  testingAccountId,
 }) => {
   const state = getConnectionState(account);
   const tone = getStatusTone(state);
@@ -292,6 +298,20 @@ const ConnectedAccountRow = ({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {['discord', 'telegram', 'bluesky'].includes(platform.id) ? (
+            <button
+              onClick={() => onTestConnection(account)}
+              disabled={testingAccountId === account.id}
+              className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 hover:text-sky-600 disabled:opacity-60 shadow-2xs"
+            >
+              {testingAccountId === account.id ? (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+              ) : (
+                <FaPaperPlane className="text-[10px] text-sky-500" />
+              )}
+              {testingAccountId === account.id ? 'Pinging…' : 'Test Ping'}
+            </button>
+          ) : null}
           {state !== 'healthy' ? (
             <button
               onClick={() => onReconnect(platform.id, { mode: 'reconnect', account })}
@@ -330,8 +350,10 @@ const PlatformCard = ({
   onPrimaryAction,
   onReconnect,
   onDisconnect,
+  onTestConnection,
   connecting,
   disconnectingAccountId,
+  testingAccountId,
 }) => {
   const Icon = platform.icon;
   const sortedAccounts = useMemo(() => sortAccounts(accounts), [accounts]);
@@ -392,8 +414,10 @@ const PlatformCard = ({
                       platform={platform}
                       onReconnect={onReconnect}
                       onDisconnect={onDisconnect}
+                      onTestConnection={onTestConnection}
                       connecting={connecting}
                       disconnectingAccountId={disconnectingAccountId}
+                      testingAccountId={testingAccountId}
                     />
                   ))}
                 </div>
@@ -414,8 +438,10 @@ const PlatformCard = ({
                       platform={platform}
                       onReconnect={onReconnect}
                       onDisconnect={onDisconnect}
+                      onTestConnection={onTestConnection}
                       connecting={connecting}
                       disconnectingAccountId={disconnectingAccountId}
+                      testingAccountId={testingAccountId}
                     />
                   ))}
                 </div>
@@ -558,6 +584,12 @@ const ConnectedAccounts = () => {
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordChannelName, setDiscordChannelName] = useState('');
   const [discordLoading, setDiscordLoading] = useState(false);
+
+  const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
+  const [telegramChannelName, setTelegramChannelName] = useState('');
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [testingAccountId, setTestingAccountId] = useState(null);
 
   const [mastodonInstanceUrl, setMastodonInstanceUrl] = useState('');
   const [mastodonAccessToken, setMastodonAccessToken] = useState('');
@@ -760,6 +792,42 @@ const ConnectedAccounts = () => {
       toast.error(error?.response?.data?.detail || 'Invalid webhook URL. Make sure it is a valid Discord webhook.');
     } finally {
       setDiscordLoading(false);
+    }
+  };
+
+  const handleTelegramConnect = async () => {
+    if (!telegramBotToken.trim() || !telegramChatId.trim()) return;
+
+    setTelegramLoading(true);
+    try {
+      const response = await connectTelegram(
+        telegramBotToken.trim(),
+        telegramChatId.trim(),
+        telegramChannelName.trim() || null,
+      );
+      toast.success(
+        response?.channel
+          ? `Telegram channel ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'}: ${response.channel}`
+          : `Telegram connected successfully!`,
+      );
+      closeManualModal();
+      fetchAccounts();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to connect Telegram. Check Bot Token and Chat ID.');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  const handleTestConnection = async (account) => {
+    setTestingAccountId(account.id);
+    try {
+      const res = await testAccountConnection(account.id);
+      toast.success(res?.message || 'Connection test successful!');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Connection test failed. Please check credentials.');
+    } finally {
+      setTestingAccountId(null);
     }
   };
 
@@ -981,8 +1049,10 @@ const ConnectedAccounts = () => {
                 onPrimaryAction={handleConnect}
                 onReconnect={handleConnect}
                 onDisconnect={handleDisconnect}
+                onTestConnection={handleTestConnection}
                 connecting={connecting}
                 disconnectingAccountId={disconnectingAccountId}
+                testingAccountId={testingAccountId}
               />
             ))}
           </div>
@@ -1093,6 +1163,67 @@ const ConnectedAccounts = () => {
               placeholder="Channel label (optional)"
               className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
               onKeyDown={(event) => { if (event.key === 'Enter') handleDiscordConnect(); }}
+            />
+          </div>
+        </CredentialDialogShell>
+
+        <CredentialDialogShell
+          open={manualModal.platformId === 'telegram'}
+          onOpenChange={(open) => { if (!open) closeManualModal(); }}
+          icon={SiTelegram}
+          iconClassName="text-lg text-sky-500"
+          iconWrapClassName="border-sky-200 bg-sky-50"
+          title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Telegram`}
+          description={manualModal.mode === 'reconnect'
+            ? 'Update the bot token or chat ID for this Telegram channel.'
+            : 'Connect a Telegram channel or group using your Bot Token and Chat ID.'}
+          footer={(
+            <>
+              <button
+                onClick={closeManualModal}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTelegramConnect}
+                disabled={telegramLoading || !telegramBotToken.trim() || !telegramChatId.trim()}
+                className="rounded-full bg-sky-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-600 disabled:opacity-50"
+              >
+                {telegramLoading ? 'Saving…' : manualModal.mode === 'reconnect' ? 'Reconnect Telegram' : 'Connect Telegram'}
+              </button>
+            </>
+          )}
+        >
+          <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Quick 2-step setup</p>
+            <ol className="mt-2 space-y-1 text-sm text-sky-800">
+              <li>1. Message <b>@BotFather</b> on Telegram to create a Bot and copy the token.</li>
+              <li>2. Add your bot as an admin to your channel/group and enter the Chat ID (e.g. <code>@mychannel</code>).</li>
+            </ol>
+          </div>
+          <div className="space-y-3">
+            <input
+              type="password"
+              value={telegramBotToken}
+              onChange={(event) => setTelegramBotToken(event.target.value)}
+              placeholder="Bot Token (e.g. 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11)"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <input
+              type="text"
+              value={telegramChatId}
+              onChange={(event) => setTelegramChatId(event.target.value)}
+              placeholder="Chat ID or username (e.g. @mychannel or -100123456789)"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <input
+              type="text"
+              value={telegramChannelName}
+              onChange={(event) => setTelegramChannelName(event.target.value)}
+              placeholder="Channel custom label (optional)"
+              className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
+              onKeyDown={(event) => { if (event.key === 'Enter') handleTelegramConnect(); }}
             />
           </div>
         </CredentialDialogShell>
