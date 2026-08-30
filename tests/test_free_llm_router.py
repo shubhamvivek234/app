@@ -62,3 +62,24 @@ async def test_free_llm_router_fallback_to_cohere():
         assert text == "Hello from Cohere Command R"
         assert provider == "cohere"
         assert model == "command-r"
+
+
+@pytest.mark.asyncio
+async def test_free_llm_router_proactive_redis_rate_limit():
+    router = FreeLLMRouter()
+    with patch.object(router, "_is_provider_rate_limited", new_callable=AsyncMock) as mock_rate_limit, \
+         patch.object(router, "_call_gemini", new_callable=AsyncMock) as mock_gemini, \
+         patch.object(router, "_call_groq", new_callable=AsyncMock) as mock_groq:
+        # Simulate Gemini being at RPM ceiling in Redis
+        mock_rate_limit.side_effect = lambda provider, limit_rpm: provider == "google"
+        mock_groq.return_value = "Hello from Groq via proactive skip"
+
+        text, provider, model = await router.generate_text(
+            system_message="You are an assistant",
+            user_prompt="Say hi",
+        )
+        assert text == "Hello from Groq via proactive skip"
+        assert provider == "groq"
+        # Gemini was NOT called because Redis rate limit proactively skipped it
+        assert not mock_gemini.called
+        assert mock_groq.called

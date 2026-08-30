@@ -26,7 +26,9 @@ if (isPostHogConfigured) {
   try {
     posthog.init(posthogKey, {
       api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://app.posthog.com',
-      autocapture: false,
+      autocapture: true,
+      capture_pageview: true,
+      capture_pageleave: true,
     });
   } catch (err) {
     console.warn('[PostHog] Init error:', err);

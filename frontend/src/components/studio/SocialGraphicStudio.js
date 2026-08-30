@@ -13,6 +13,7 @@ import {
   FaChevronRight,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
+import { trackEvent } from '@/lib/analytics';
 
 const ASPECT_RATIOS = [
   { id: '1:1', label: 'Square', sub: 'Instagram / LinkedIn', width: 1080, height: 1080, icon: '■' },
@@ -356,6 +357,10 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
     link.href = dataUrl;
     link.click();
     toast.success('High-res PNG graphic exported!');
+    trackEvent('graphic_image_downloaded', {
+      aspect_ratio: aspectRatio.id,
+      gradient: selectedGradient.name,
+    });
   };
 
   const handleDownloadPdf = async () => {
@@ -383,6 +388,11 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
 
       pdf.save('linkedin-carousel-slides.pdf');
       toast.success('🎉 LinkedIn Multi-Page PDF Carousel exported successfully!');
+      trackEvent('carousel_pdf_exported', {
+        slide_count: slides.length,
+        aspect_ratio: aspectRatio.id,
+        gradient: selectedGradient.name,
+      });
     } catch (err) {
       toast.error('Failed to export PDF: ' + err.message);
     } finally {

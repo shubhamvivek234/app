@@ -696,16 +696,28 @@ export const getMediaAssets = async () => {
   return response.data;
 };
 
-export const uploadMediaAsset = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await axios.post(`${API}/media-assets`, formData, {
-    headers: {
-      ...getAuthHeaders(),
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-  return response.data;
+export const uploadMediaAsset = async (file, onProgress) => {
+  try {
+    // Prefer Direct-to-R2 cloud upload with progress support
+    const res = await uploadMedia(file, onProgress);
+    return res;
+  } catch (directErr) {
+    // Fallback to legacy endpoint if direct upload fails
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await axios.post(`${API}/media-assets`, formData, {
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          onProgress(progressEvent);
+        }
+      },
+    });
+    return response.data;
+  }
 };
 
 export const deleteMediaAsset = async (assetId) => {

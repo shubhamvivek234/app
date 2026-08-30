@@ -41,6 +41,7 @@ import AccountSelector from '@/components/composer/AccountSelector';
 import PlatformEditor from '@/components/composer/PlatformEditor';
 import AddAudioDialog from '@/components/composer/AddAudioDialog';
 import PreviewPanel from '@/components/composer/previews/PreviewPanel';
+import { trackEvent } from '@/lib/analytics';
 
 // ── Timezone list (comprehensive IANA) ────────────────────────────────────────
 const TIMEZONES = [
@@ -679,6 +680,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           if (res.linkedin_post) {
             setCommonCaption(res.linkedin_post);
             toast.success('✨ Voice memo converted to post!');
+            trackEvent('voice_to_post_generated', {
+              has_linkedin: Boolean(res.linkedin_post),
+              has_twitter: Boolean(res.twitter_thread?.length),
+            });
             setCreationMode('write');
           }
         } catch (error) {
@@ -701,6 +706,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
       if (res.linkedin_post) {
         setCommonCaption(res.linkedin_post);
         toast.success(`✨ Repurposed "${res.source_title}" into social draft!`);
+        trackEvent('ai_repurpose_generated', {
+          source_title: res.source_title,
+          tone: repurposeTone,
+          has_slides: Boolean(res.carousel_slides?.length),
+        });
         setCreationMode('write');
       }
     } catch (error) {

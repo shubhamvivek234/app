@@ -216,7 +216,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${PUBLISH_LIGHT_WORKER_CONCURRENCY:-6} --max-tasks-per-child=100 --queues=high_priority,default,publish_light,dead_letter
+    command: celery -A celery_workers.celery_app worker --loglevel=info --autoscale=${WORKER_LIGHT_AUTOSCALE:-12,2} --max-tasks-per-child=100 --queues=high_priority,default,publish_light,dead_letter
     environment:
       <<: *common-env
     volumes:
@@ -237,7 +237,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${PUBLISH_VIDEO_WORKER_CONCURRENCY:-2} --max-tasks-per-child=50 --queues=publish_video
+    command: celery -A celery_workers.celery_app worker --loglevel=info --autoscale=${WORKER_VIDEO_AUTOSCALE:-4,1} --max-tasks-per-child=50 --queues=publish_video
     environment:
       <<: *common-env
     volumes:
@@ -258,7 +258,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.media
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --concurrency=${MEDIA_WORKER_CONCURRENCY:-2} --queues=media_processing
+    command: celery -A celery_workers.celery_app worker --loglevel=info --autoscale=${WORKER_MEDIA_AUTOSCALE:-6,1} --max-tasks-per-child=50 --queues=media_processing
     environment:
       <<: *common-env
     volumes:

@@ -10,6 +10,7 @@ import {
 } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
 import { SiThreads, SiBluesky } from 'react-icons/si';
+import { trackEvent } from '@/lib/analytics';
 
 const PLATFORM_ICONS = {
   twitter:   <FaXTwitter   className="text-black" />,
@@ -68,6 +69,10 @@ const Inbox = () => {
       const res = await suggestAIComment(textToAnalyze, selected?.author_name || '', selected?.platform || 'linkedin');
       if (res?.suggestions && Array.isArray(res.suggestions) && res.suggestions.length > 0) {
         setAiSuggestions(res.suggestions);
+        trackEvent('smart_reply_suggested', {
+          platform: selected?.platform || 'linkedin',
+          count: res.suggestions.length,
+        });
       } else {
         toast.error('No suggestions returned. Please try again.');
       }
@@ -386,6 +391,7 @@ const Inbox = () => {
                         onClick={() => {
                           setReplyText(sug);
                           replyRef.current?.focus();
+                          trackEvent('smart_reply_inserted', { platform: selected?.platform || 'linkedin' });
                         }}
                         className="text-left text-xs p-2 bg-white hover:bg-indigo-50/70 border border-gray-200 hover:border-indigo-300 rounded-xl text-gray-700 transition-all font-medium"
                       >

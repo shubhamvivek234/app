@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect, useCallback } fr
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../firebase';
 import { setUserContext } from '../lib/sentry';
+import { identifyUser, resetUser } from '../lib/analytics';
 import { toast } from 'sonner';
 import {
   googleSignIn,
@@ -57,6 +58,7 @@ export const AuthProvider = ({ children }) => {
       const profile = await fetchProfileService(idToken);
       setUser(profile);
       setUserContext(profile);
+      identifyUser(profile);
       setAuthIssue(null);
       if (typeof window !== 'undefined') {
         const currentPath = window.location.pathname;
@@ -334,6 +336,7 @@ export const AuthProvider = ({ children }) => {
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
+      resetUser();
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem('pending_google_auth');
       }

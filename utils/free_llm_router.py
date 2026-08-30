@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -53,6 +54,34 @@ class FreeLLMRouter:
         self.groq_key = os.environ.get("GROQ_API_KEY") or ""
         self.openrouter_key = os.environ.get("OPENROUTER_API_KEY") or ""
         self.cohere_key = os.environ.get("COHERE_API_KEY") or ""
+
+    async def _is_provider_rate_limited(self, provider: str, limit_rpm: int) -> bool:
+        """Check if provider reached its sliding-window RPM limit in Redis."""
+        try:
+            from db.redis_client import get_cache_redis
+            r = get_cache_redis()
+            minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+            key = f"ratelimit:llm:{provider}:{minute_bucket}"
+            current = await r.get(key)
+            if current and int(current) >= limit_rpm:
+                logger.warning("Free LLM %s rate limited (%s/%s RPM) — skipping to next tier", provider, current, limit_rpm)
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def _record_provider_call(self, provider: str) -> None:
+        """Increment sliding-window RPM usage for provider in Redis."""
+        try:
+            from db.redis_client import get_cache_redis
+            r = get_cache_redis()
+            minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+            key = f"ratelimit:llm:{provider}:{minute_bucket}"
+            count = await r.incr(key)
+            if count == 1:
+                await r.expire(key, 70)
+        except Exception:
+            pass
 
     # ── Tier 1: Gemini ────────────────────────────────────────────────────────
     async def _call_gemini(
@@ -206,42 +235,50 @@ class FreeLLMRouter:
         """
         errors = []
 
-        # 1. Tier 1: Gemini 2.5 Flash / Flash Lite
-        for gemini_model in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"):
+        # 1. Tier 1: Gemini 2.5 Flash / Flash Lite (Free Google AI Studio key: 15 RPM)
+        if not await self._is_provider_rate_limited("google", limit_rpm=15):
+            for gemini_model in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"):
+                try:
+                    res = await self._call_gemini(system_message, user_prompt, model_name=gemini_model, response_json=response_json)
+                    await self._record_provider_call("google")
+                    return res, "google", gemini_model
+                except Exception as e:
+                    errors.append(f"Gemini {gemini_model}: {shorten_provider_error(e)}")
+                    if not _is_rate_limit_or_quota(e):
+                        break
+
+        # 2. Tier 2 & 3: Groq (Free Groq Cloud key: 30 RPM)
+        if not await self._is_provider_rate_limited("groq", limit_rpm=30):
+            for groq_model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"):
+                try:
+                    res = await self._call_groq(system_message, user_prompt, model_name=groq_model, response_json=response_json)
+                    await self._record_provider_call("groq")
+                    return res, "groq", groq_model
+                except Exception as e:
+                    errors.append(f"Groq {groq_model}: {shorten_provider_error(e)}")
+                    if not _is_rate_limit_or_quota(e):
+                        break
+
+        # 3. Tier 4: OpenRouter Free Models (20 RPM)
+        if not await self._is_provider_rate_limited("openrouter", limit_rpm=20):
+            for or_model in ("qwen/qwen3.6-27b:free", "google/gemma-4-31b-it:free", "google/gemma-3-12b:free"):
+                try:
+                    res = await self._call_openrouter(system_message, user_prompt, model_name=or_model)
+                    await self._record_provider_call("openrouter")
+                    return res, "openrouter", or_model
+                except Exception as e:
+                    errors.append(f"OpenRouter {or_model}: {shorten_provider_error(e)}")
+
+        # 4. Tier 5: Cohere Command R (10 RPM)
+        if not await self._is_provider_rate_limited("cohere", limit_rpm=10):
             try:
-                res = await self._call_gemini(system_message, user_prompt, model_name=gemini_model, response_json=response_json)
-                return res, "google", gemini_model
+                res = await self._call_cohere(system_message, user_prompt)
+                await self._record_provider_call("cohere")
+                return res, "cohere", "command-r"
             except Exception as e:
-                errors.append(f"Gemini {gemini_model}: {shorten_provider_error(e)}")
-                if not _is_rate_limit_or_quota(e):
-                    break
+                errors.append(f"Cohere: {shorten_provider_error(e)}")
 
-        # 2. Tier 2 & 3: Groq (GPT-OSS 120B -> 20B -> Qwen 3.6 27B)
-        for groq_model in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"):
-            try:
-                res = await self._call_groq(system_message, user_prompt, model_name=groq_model, response_json=response_json)
-                return res, "groq", groq_model
-            except Exception as e:
-                errors.append(f"Groq {groq_model}: {shorten_provider_error(e)}")
-                if not _is_rate_limit_or_quota(e):
-                    break
-
-        # 3. Tier 4: OpenRouter Free Models
-        for or_model in ("qwen/qwen3.6-27b:free", "google/gemma-4-31b-it:free", "google/gemma-3-12b:free"):
-            try:
-                res = await self._call_openrouter(system_message, user_prompt, model_name=or_model)
-                return res, "openrouter", or_model
-            except Exception as e:
-                errors.append(f"OpenRouter {or_model}: {shorten_provider_error(e)}")
-
-        # 4. Tier 5: Cohere Command R
-        try:
-            res = await self._call_cohere(system_message, user_prompt)
-            return res, "cohere", "command-r"
-        except Exception as e:
-            errors.append(f"Cohere: {shorten_provider_error(e)}")
-
-        raise RuntimeError(f"All 6 free AI tiers exhausted. Errors: {'; '.join(errors)}")
+        raise RuntimeError(f"All free AI tiers exhausted or temporarily rate limited. Errors: {'; '.join(errors)}")
 
     # ── Audio Ingestion & Transcription ───────────────────────────────────────
     async def transcribe_and_structure_audio(
