@@ -2,24 +2,20 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.0 shipped
+Stage: v3.2 shipped
 Branch: main
-Focus: 6 Key Platform Expansions (Auto-UTM, Magic Review Links, Link-in-Bio, Branded PDF Reports, Draft Comments, AI Brand Voice)
+Focus: 6-Tier Free LLM Waterfall & Minimalist Inbound Suite (Universal Repurposer, Voice-to-Post PostCast, Content DNA Voice Profiler, Multi-Page PDF Carousel Studio, AI Smart Replies)
 
 ## Last Session Completed
-Date: 2026-08-29
+Date: 2026-08-30
 Completed:
-- Feature 1 (Auto-UTM & Link Shortener): built `api/routes/short_links.py`, `frontend/src/pages/ShortLinks.js`, collision-resistant slugs, click tracking analytics, and UTM presets.
-- Feature 2 (Client Magic Review Links): built signed expiration tokens, unauthenticated review feed (`/review/:token`), 1-click approve/changes requested, and `ShareReviewModal.js` in `ApprovalQueue.js`.
-- Feature 3 (Link-in-Bio Page Builder): built `api/routes/bio_pages.py`, customizable landing page (`frontend/src/pages/LinkInBio.js`, `PublicBioPage.js` at `/@:handle`), and live mobile phone preview.
-- Feature 4 (Branded PDF Analytics Reports): executive performance report generator (`api/routes/analytics.py`), printable PDF export, and automated weekly/monthly email scheduling (`ExportReportModal.js`).
-- Feature 5 (Post Draft Inline Comments): draft revision threads on post cards (`PostCommentsDrawer.js`), resolve/reopen status, and activity tracking.
-- Social Tools Hub Consolidation: integrated Link-in-Bio and Auto-UTM & Link Shortener as flagship growth tools in `frontend/src/pages/SocialTools.js` with category filters and streamlined the primary sidebar navigation.
-- LinkedIn Text Formatter Studio: built Unicode typography suite (`frontend/src/lib/textFormat.js`) and dual-panel studio (`LinkedInTextFormatter.js`) with live feed preview.
-- QR Code Generator Studio: built multi-content QR generator (`QRCodeGenerator.js`) supporting URLs, multi-store app downloads, vCards, Wi-Fi, custom logos, gradient palettes, frame banners, and high-res vector/PNG exports.
-- Modern Sidebar Redesign (Concept 1 - Linear SaaS Minimalist): implemented 4-tier navigation hierarchy, workspace header card, gradient fast compose action with `⌘N` shortcut, and live route status badges.
-- Master Calendar Expandable Sub-Menu & View Redesign: added expandable calendar tree with All Posts, Scheduled, Posted, Drafts, and Failed sub-routes; redesigned `CalendarToolbar.js` and `CalendarView.js` with multi-network filter chips, today navigator, direct schedule action, and dark mode support.
-- Verified test suite: 255/255 tests passed (100%), frontend bundle compiled (`npm run build`), deployed to EC2 cluster and Vercel.
+- 6-Tier Free LLM Waterfall Router (`utils/free_llm_router.py`): Zero-cost cascade across Google Gemini 2.5 Flash, Groq GPT-OSS 120B/20B, OpenRouter Free Pool, and Cohere Command R with automatic rate-limit failover.
+- Universal Repurposer (`utils/content_repurposer.py`, `POST /ai/repurpose`): Extracts YouTube transcripts, article URLs, and notes into multi-network social draft packages.
+- Voice-to-Post "PostCast" (`POST /ai/voice-to-post`): Ingests raw audio recordings, strips disfluencies, and generates structured social posts.
+- Content DNA Profiler (`POST /ai/content-dna/scan`, `BrandVoiceSettings.js`): 1-click writing style extraction analyzing recent posts without manual form filling.
+- LinkedIn PDF Carousel Studio (`SocialGraphicStudio.js`): Multi-slide carousel mode with 1-click multi-page vector PDF export via `jspdf`.
+- AI Smart Reply Suggestions (`Inbox.js`, `POST /ai/suggest-comment`): Contextual value-add reply suggestions.
+- Tests & Deployment: 265/265 tests passed (100%), frontend production build compiled and deployed to Vercel (`https://www.unravler.com/`).
 
 ## Active Work
 Currently implementing: None
@@ -37,5 +33,5 @@ Next:
 git status --short
 CI=true npm run build --prefix frontend
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -p pytest_asyncio.plugin tests/ -q
-.venv/bin/python -m compileall api/routes/short_links.py api/routes/bio_pages.py api/routes/ai.py api/routes/analytics.py api/routes/posts.py api/main.py
+.venv/bin/python -m compileall api/routes/ai.py utils/free_llm_router.py utils/content_repurposer.py
 ```
