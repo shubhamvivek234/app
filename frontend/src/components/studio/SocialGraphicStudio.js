@@ -1,24 +1,23 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { jsPDF } from 'jspdf';
 import {
   FaDownload,
   FaCopy,
-  FaShare,
-  FaUndo,
-  FaRedo,
   FaPlus,
-  FaPalette,
-  FaFont,
-  FaShapes,
-  FaCheck,
+  FaTrash,
   FaMagic,
+  FaFilePdf,
+  FaLayerGroup,
+  FaChevronLeft,
+  FaChevronRight,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
 
 const ASPECT_RATIOS = [
   { id: '1:1', label: 'Square', sub: 'Instagram / LinkedIn', width: 1080, height: 1080, icon: '■' },
+  { id: '4:5', label: 'Portrait', sub: 'LinkedIn PDF / IG Feed', width: 1080, height: 1350, icon: '▮' },
   { id: '16:9', label: 'Landscape', sub: 'X (Twitter) / YouTube', width: 1200, height: 675, icon: '▬' },
-  { id: '4:5', label: 'Portrait', sub: 'IG Feed / Carousel', width: 1080, height: 1350, icon: '▮' },
   { id: '9:16', label: 'Story / Reel', sub: 'TikTok / Shorts / IG Story', width: 1080, height: 1920, icon: '📱' },
 ];
 
@@ -46,6 +45,7 @@ const BADGE_PRESETS = [
   '🎙️ NEW EPISODE',
   '✨ PRO INSIGHT',
   '📈 CASE STUDY',
+  '📌 FRAMEWORK',
 ];
 
 const TEMPLATES = [
@@ -83,6 +83,44 @@ const TEMPLATES = [
   },
 ];
 
+const DEFAULT_CAROUSEL_SLIDES = [
+  {
+    id: 'slide-1',
+    badge: '📌 5-STEP PLAYBOOK',
+    headline: 'The Exact Framework to 10x Your LinkedIn Reach',
+    subtitle: 'Swipe through for the 5-step actionable breakdown 👉',
+    gradientId: 'hyper-indigo',
+  },
+  {
+    id: 'slide-2',
+    badge: 'STEP 1',
+    headline: 'Hook Them in the First 2 Lines',
+    subtitle: 'People browse in a fast feed. Create curiosity or state a counter-intuitive truth.',
+    gradientId: 'hyper-indigo',
+  },
+  {
+    id: 'slide-3',
+    badge: 'STEP 2',
+    headline: 'Keep External Links in the First Comment',
+    subtitle: 'LinkedIn penalizes posts with outbound links. Drop URLs in the first comment automatically.',
+    gradientId: 'hyper-indigo',
+  },
+  {
+    id: 'slide-4',
+    badge: 'STEP 3',
+    headline: 'Use Multi-Page PDF Document Slides',
+    subtitle: 'Carousels generate 3x higher dwell time than single image posts.',
+    gradientId: 'hyper-indigo',
+  },
+  {
+    id: 'slide-5',
+    badge: '🎯 TAKEAWAY',
+    headline: 'Found this helpful? Save & Share with your network!',
+    subtitle: 'Follow for weekly actionable social growth playbooks.',
+    gradientId: 'hyper-indigo',
+  },
+];
+
 const FONTS = [
   { id: 'system-ui', label: 'Modern Sans' },
   { id: 'Georgia', label: 'Editorial Serif' },
@@ -94,10 +132,16 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
   const navigate = useNavigate();
   const canvasRef = useRef(null);
 
-  const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[0]);
-  const [selectedGradient, setSelectedGradient] = useState(GRADIENTS[0]);
-  const [patternOverlay, setPatternOverlay] = useState('dots'); // 'none' | 'dots' | 'grid'
+  // Studio Mode: 'single' (Image) | 'carousel' (Multi-page PDF)
+  const [studioMode, setStudioMode] = useState('single');
+  const [slides, setSlides] = useState(DEFAULT_CAROUSEL_SLIDES);
+  const [activeSlideIdx, setActiveSlideIdx] = useState(0);
 
+  const [aspectRatio, setAspectRatio] = useState(ASPECT_RATIOS[1]); // Default 4:5 for LinkedIn Carousels
+  const [selectedGradient, setSelectedGradient] = useState(GRADIENTS[0]);
+  const [patternOverlay, setPatternOverlay] = useState('dots');
+
+  // Single mode content
   const [badge, setBadge] = useState('💡 QUICK TIP');
   const [headline, setHeadline] = useState(initialHeadline || 'Design high-converting social graphics in seconds.');
   const [subtitle, setSubtitle] = useState('Zero Canva tab switching. Direct 1-click export to your scheduler.');
@@ -105,7 +149,182 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
   const [authorHandle, setAuthorHandle] = useState('@acmegrowth');
   const [fontFamily, setFontFamily] = useState('system-ui');
   const [headlineSize, setHeadlineSize] = useState(54);
-  const [copied, setCopied] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  // Sync active slide fields when in carousel mode
+  const currentBadge = studioMode === 'carousel' ? (slides[activeSlideIdx]?.badge || '') : badge;
+  const currentHeadline = studioMode === 'carousel' ? (slides[activeSlideIdx]?.headline || '') : headline;
+  const currentSubtitle = studioMode === 'carousel' ? (slides[activeSlideIdx]?.subtitle || '') : subtitle;
+
+  const updateActiveSlide = (key, value) => {
+    if (studioMode !== 'carousel') return;
+    setSlides(prev => {
+      const next = [...prev];
+      if (next[activeSlideIdx]) {
+        next[activeSlideIdx] = { ...next[activeSlideIdx], [key]: value };
+      }
+      return next;
+    });
+  };
+
+  const drawSlideToCanvas = useCallback((ctx, width, height, sBadge, sHeadline, sSubtitle, sGradient, slideNum = null, totalSlides = null) => {
+    ctx.clearRect(0, 0, width, height);
+
+    // 1. Background Gradient
+    const gradObj = sGradient || selectedGradient;
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradObj.colors.forEach((col, idx) => {
+      gradient.addColorStop(idx / (gradObj.colors.length - 1), col);
+    });
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    // 2. Pattern Overlay
+    if (patternOverlay === 'dots') {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+      const spacing = 36;
+      for (let x = 0; x < width; x += spacing) {
+        for (let y = 0; y < height; y += spacing) {
+          ctx.beginPath();
+          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else if (patternOverlay === 'grid') {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1.5;
+      const step = 60;
+      for (let x = 0; x < width; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < height; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+    }
+
+    // 3. Inner Frosted Glass Card
+    const cardMargin = width * 0.06;
+    const cardRadius = 36;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(cardMargin, cardMargin, width - cardMargin * 2, height - cardMargin * 2, cardRadius);
+    ctx.fill();
+    ctx.stroke();
+
+    const textX = cardMargin * 2;
+    let cursorY = cardMargin * 2 + 30;
+
+    // 4. Badge Tag
+    if (sBadge && sBadge.trim()) {
+      ctx.font = `bold 22px ${fontFamily}`;
+      const badgeText = sBadge.toUpperCase();
+      const badgeWidth = ctx.measureText(badgeText).width + 36;
+      const badgeHeight = 44;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+      ctx.beginPath();
+      ctx.roundRect(textX, cursorY, badgeWidth, badgeHeight, 22);
+      ctx.fill();
+
+      ctx.fillStyle = gradObj.text;
+      ctx.fillText(badgeText, textX + 18, cursorY + 29);
+      cursorY += badgeHeight + 40;
+    } else {
+      cursorY += 20;
+    }
+
+    // Slide indicator if carousel
+    if (slideNum && totalSlides) {
+      ctx.font = `bold 20px ${fontFamily}`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      const slideTag = `${slideNum} / ${totalSlides}`;
+      const tagW = ctx.measureText(slideTag).width;
+      ctx.fillText(slideTag, width - cardMargin * 2 - tagW, cardMargin * 2 + 30);
+    }
+
+    // 5. Headline
+    ctx.fillStyle = gradObj.text;
+    ctx.font = `bold ${headlineSize}px ${fontFamily}`;
+    const maxTextWidth = width - cardMargin * 4;
+    const words = sHeadline.split(' ');
+    let currentLine = '';
+    const lines = [];
+
+    for (const w of words) {
+      const testLine = currentLine ? `${currentLine} ${w}` : w;
+      if (ctx.measureText(testLine).width > maxTextWidth) {
+        lines.push(currentLine);
+        currentLine = w;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+
+    const lineHeight = headlineSize * 1.25;
+    lines.forEach((line) => {
+      ctx.fillText(line, textX, cursorY + headlineSize * 0.85);
+      cursorY += lineHeight;
+    });
+
+    cursorY += 24;
+
+    // 6. Subtitle
+    if (sSubtitle && sSubtitle.trim()) {
+      ctx.fillStyle = gradObj.text === '#ffffff' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.85)';
+      ctx.font = `normal 30px ${fontFamily}`;
+      const subWords = sSubtitle.split(' ');
+      let subLine = '';
+      const subLines = [];
+
+      for (const w of subWords) {
+        const testSub = subLine ? `${subLine} ${w}` : w;
+        if (ctx.measureText(testSub).width > maxTextWidth) {
+          subLines.push(subLine);
+          subLine = w;
+        } else {
+          subLine = testSub;
+        }
+      }
+      if (subLine) subLines.push(subLine);
+
+      subLines.forEach((line) => {
+        ctx.fillText(line, textX, cursorY + 24);
+        cursorY += 42;
+      });
+    }
+
+    // 7. Author Branding (Bottom)
+    const bottomY = height - cardMargin * 2 - 20;
+    const avatarRadius = 24;
+    const avatarX = textX + avatarRadius;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.beginPath();
+    ctx.arc(avatarX, bottomY, avatarRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = gradObj.text;
+    ctx.font = `bold 22px ${fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(authorName.charAt(0).toUpperCase() || 'U', avatarX, bottomY + 8);
+    ctx.textAlign = 'left';
+
+    ctx.font = `bold 24px ${fontFamily}`;
+    ctx.fillText(authorName, avatarX + avatarRadius + 16, bottomY - 2);
+
+    ctx.font = `normal 20px ${fontFamily}`;
+    ctx.fillStyle = gradObj.text === '#ffffff' ? 'rgba(255, 255, 255, 0.7)' : 'rgba(15, 23, 42, 0.7)';
+    ctx.fillText(authorHandle, avatarX + avatarRadius + 16, bottomY + 22);
+  }, [selectedGradient, patternOverlay, fontFamily, headlineSize, authorName, authorHandle]);
 
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -118,203 +337,57 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
     canvas.width = width;
     canvas.height = height;
 
-    // 1. Draw Gradient Background
-    const grad = ctx.createLinearGradient(0, 0, width, height);
-    const colors = selectedGradient.colors;
-    if (colors.length === 2) {
-      grad.addColorStop(0, colors[0]);
-      grad.addColorStop(1, colors[1]);
-    } else if (colors.length === 3) {
-      grad.addColorStop(0, colors[0]);
-      grad.addColorStop(0.5, colors[1]);
-      grad.addColorStop(1, colors[2]);
-    }
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
+    const slideNum = studioMode === 'carousel' ? activeSlideIdx + 1 : null;
+    const totalSlides = studioMode === 'carousel' ? slides.length : null;
 
-    // 2. Pattern Overlay
-    if (patternOverlay === 'dots') {
-      ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
-      const dotSpacing = 36;
-      for (let x = 20; x < width; x += dotSpacing) {
-        for (let y = 20; y < height; y += dotSpacing) {
-          ctx.beginPath();
-          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    } else if (patternOverlay === 'grid') {
-      ctx.strokeStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
-      ctx.lineWidth = 1;
-      const gridSpacing = 48;
-      for (let x = 0; x < width; x += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < height; y += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-    }
-
-    // 3. Inner Card Glass Effect
-    const paddingX = Math.round(width * 0.08);
-    const paddingY = Math.round(height * 0.08);
-    const cardWidth = width - paddingX * 2;
-    const cardHeight = height - paddingY * 2;
-    const cardRadius = 32;
-
-    ctx.save();
-    ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(255, 255, 255, 0.6)';
-    ctx.strokeStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.08)';
-    ctx.lineWidth = 2;
-
-    // Rounded card path
-    ctx.beginPath();
-    ctx.roundRect(paddingX, paddingY, cardWidth, cardHeight, cardRadius);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-    const textPaddingLeft = paddingX + 56;
-    const maxTextWidth = cardWidth - 112;
-    let currentY = paddingY + 68;
-
-    // 4. Badge / Tag
-    if (badge) {
-      ctx.save();
-      ctx.font = `bold 22px ${fontFamily}`;
-      const badgeMetrics = ctx.measureText(badge);
-      const badgeWidth = badgeMetrics.width + 36;
-      const badgeHeight = 44;
-
-      ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(15, 23, 42, 0.08)';
-      ctx.beginPath();
-      ctx.roundRect(textPaddingLeft, currentY, badgeWidth, badgeHeight, 22);
-      ctx.fill();
-
-      ctx.fillStyle = selectedGradient.text;
-      ctx.fillText(badge, textPaddingLeft + 18, currentY + 30);
-      ctx.restore();
-
-      currentY += badgeHeight + 42;
-    }
-
-    // 5. Headline Text (Wrapped)
-    ctx.save();
-    ctx.fillStyle = selectedGradient.text;
-    ctx.font = `bold ${headlineSize}px ${fontFamily}`;
-    ctx.textBaseline = 'top';
-
-    const words = headline.split(' ');
-    let line = '';
-    const lines = [];
-
-    for (let n = 0; n < words.length; n++) {
-      const testLine = line + words[n] + ' ';
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxTextWidth && n > 0) {
-        lines.push(line.trim());
-        line = words[n] + ' ';
-      } else {
-        line = testLine;
-      }
-    }
-    lines.push(line.trim());
-
-    const lineHeight = headlineSize * 1.25;
-    for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], textPaddingLeft, currentY);
-      currentY += lineHeight;
-    }
-    ctx.restore();
-
-    currentY += 24;
-
-    // 6. Subtitle Text (Wrapped)
-    if (subtitle) {
-      ctx.save();
-      ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.82)' : 'rgba(15, 23, 42, 0.75)';
-      const subSize = Math.max(Math.round(headlineSize * 0.48), 24);
-      ctx.font = `500 ${subSize}px ${fontFamily}`;
-      ctx.textBaseline = 'top';
-
-      const subWords = subtitle.split(' ');
-      let subLine = '';
-      const subLines = [];
-
-      for (let n = 0; n < subWords.length; n++) {
-        const testLine = subLine + subWords[n] + ' ';
-        const metrics = ctx.measureText(testLine);
-        if (metrics.width > maxTextWidth && n > 0) {
-          subLines.push(subLine.trim());
-          subLine = subWords[n] + ' ';
-        } else {
-          subLine = testLine;
-        }
-      }
-      subLines.push(subLine.trim());
-
-      const subLineHeight = subSize * 1.35;
-      for (let i = 0; i < subLines.length; i++) {
-        ctx.fillText(subLines[i], textPaddingLeft, currentY);
-        currentY += subLineHeight;
-      }
-      ctx.restore();
-    }
-
-    // 7. Footer / Author & Brand
-    const footerY = paddingY + cardHeight - 64;
-
-    ctx.save();
-    // Avatar Circle
-    ctx.fillStyle = selectedGradient.text === '#ffffff' ? '#ffffff' : '#0f172a';
-    ctx.beginPath();
-    ctx.arc(textPaddingLeft + 24, footerY + 12, 24, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Initials inside avatar
-    ctx.fillStyle = selectedGradient.text === '#ffffff' ? '#4f46e5' : '#ffffff';
-    ctx.font = `bold 18px ${fontFamily}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText((authorName || 'U').charAt(0).toUpperCase(), textPaddingLeft + 24, footerY + 12);
-
-    // Author metadata
-    ctx.textAlign = 'left';
-    ctx.fillStyle = selectedGradient.text;
-    ctx.font = `bold 22px ${fontFamily}`;
-    ctx.fillText(authorName, textPaddingLeft + 60, footerY + 4);
-
-    ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.65)' : 'rgba(15, 23, 42, 0.55)';
-    ctx.font = `18px ${fontFamily}`;
-    ctx.fillText(authorHandle, textPaddingLeft + 60, footerY + 28);
-
-    // Watermark right
-    ctx.textAlign = 'right';
-    ctx.fillStyle = selectedGradient.text === '#ffffff' ? 'rgba(255, 255, 255, 0.45)' : 'rgba(15, 23, 42, 0.4)';
-    ctx.font = `bold 16px ${fontFamily}`;
-    ctx.fillText('⚡ unravler.com', paddingX + cardWidth - 48, footerY + 16);
-    ctx.restore();
-
-  }, [aspectRatio, selectedGradient, patternOverlay, badge, headline, subtitle, authorName, authorHandle, fontFamily, headlineSize]);
+    drawSlideToCanvas(ctx, width, height, currentBadge, currentHeadline, currentSubtitle, selectedGradient, slideNum, totalSlides);
+  }, [aspectRatio, selectedGradient, currentBadge, currentHeadline, currentSubtitle, studioMode, activeSlideIdx, slides, drawSlideToCanvas]);
 
   useEffect(() => {
     renderCanvas();
   }, [renderCanvas]);
 
-  const handleDownload = () => {
+  const handleDownloadImage = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const dataUrl = canvas.toDataURL('image/png');
     const link = document.createElement('a');
-    link.download = `social-graphic-${aspectRatio.id.replace(':', 'x')}.png`;
-    link.href = canvas.toDataURL('image/png');
+    link.download = `social-graphic-${aspectRatio.id.replace(':', '-')}.png`;
+    link.href = dataUrl;
     link.click();
-    toast.success('High-res graphic downloaded!');
+    toast.success('High-res PNG graphic exported!');
+  };
+
+  const handleDownloadPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      const width = aspectRatio.width;
+      const height = aspectRatio.height;
+      const pdf = new jsPDF({
+        orientation: width > height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [width, height],
+      });
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = width;
+      tempCanvas.height = height;
+      const tempCtx = tempCanvas.getContext('2d');
+
+      slides.forEach((s, idx) => {
+        if (idx > 0) pdf.addPage([width, height]);
+        drawSlideToCanvas(tempCtx, width, height, s.badge, s.headline, s.subtitle, selectedGradient, idx + 1, slides.length);
+        const imgData = tempCanvas.toDataURL('image/jpeg', 0.95);
+        pdf.addImage(imgData, 'JPEG', 0, 0, width, height);
+      });
+
+      pdf.save('linkedin-carousel-slides.pdf');
+      toast.success('🎉 LinkedIn Multi-Page PDF Carousel exported successfully!');
+    } catch (err) {
+      toast.error('Failed to export PDF: ' + err.message);
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleCopyClipboard = async () => {
@@ -324,14 +397,12 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
       canvas.toBlob(async (blob) => {
         if (!blob) return;
         await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob }),
+          new ClipboardItem({ 'image/png': blob })
         ]);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-        toast.success('Image copied to clipboard!');
+        toast.success('Graphic copied to clipboard!');
       });
-    } catch (err) {
-      toast.error('Failed to copy to clipboard (unsupported in some browsers)');
+    } catch {
+      toast.error('Failed to copy to clipboard.');
     }
   };
 
@@ -340,54 +411,193 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
     if (!canvas) return;
     const dataUrl = canvas.toDataURL('image/png');
     if (onAttachToPost) {
-      onAttachToPost(dataUrl);
-      toast.success('Graphic attached to post draft!');
+      onAttachToPost({
+        url: dataUrl,
+        type: 'image',
+        name: 'graphic-studio-export.png',
+      });
+      toast.success('Graphic attached to post composer!');
     } else {
-      navigate('/create-post', { state: { initialMediaDataUrl: dataUrl, initialContent: `${headline}\n\n${subtitle}` } });
+      sessionStorage.setItem('attached_studio_graphic', dataUrl);
+      navigate('/create-post');
+      toast.success('Redirecting to post composer with your graphic attached!');
     }
   };
 
-  const applyTemplate = (tmpl) => {
-    setBadge(tmpl.badge);
-    setHeadline(tmpl.headline);
-    setSubtitle(tmpl.subtitle);
-    const grad = GRADIENTS.find((g) => g.id === tmpl.gradientId) || GRADIENTS[0];
-    setSelectedGradient(grad);
-    setFontFamily(tmpl.font);
-    toast.success(`Applied template: ${tmpl.name}`);
+  const addSlide = () => {
+    if (slides.length >= 10) {
+      toast.error('Maximum 10 slides per carousel');
+      return;
+    }
+    const newSlide = {
+      id: `slide-${Date.now()}`,
+      badge: `STEP ${slides.length}`,
+      headline: 'New Insight Point',
+      subtitle: 'Add clear actionable takeaways for your audience.',
+      gradientId: selectedGradient.id,
+    };
+    setSlides(prev => [...prev, newSlide]);
+    setActiveSlideIdx(slides.length);
+  };
+
+  const removeSlide = (idx) => {
+    if (slides.length <= 2) {
+      toast.error('Carousels require at least 2 slides');
+      return;
+    }
+    setSlides(prev => prev.filter((_, i) => i !== idx));
+    if (activeSlideIdx >= slides.length - 1) {
+      setActiveSlideIdx(Math.max(0, slides.length - 2));
+    }
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-8 items-start">
-      
-      {/* ── Left Preview Canvas ── */}
-      <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-6 shadow-sm flex flex-col items-center justify-center min-h-[580px]">
-        
-        {/* Canvas Display */}
-        <div className="relative max-w-full flex items-center justify-center p-2 bg-gray-100/70 dark:bg-gray-950/60 rounded-2xl border border-gray-200/60 dark:border-gray-800 shadow-inner">
-          <canvas
-            ref={canvasRef}
-            className="max-h-[540px] w-auto max-w-full rounded-xl shadow-2xl object-contain"
-          />
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+
+      {/* ── Left Preview Canvas Column ── */}
+      <div className="xl:col-span-7 flex flex-col items-center">
+
+        {/* Studio Mode Switcher */}
+        <div className="w-full mb-4 flex items-center justify-between bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-2xl p-2 shadow-2xs">
+          <div className="flex items-center gap-1.5 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
+            <button
+              onClick={() => setStudioMode('single')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                studioMode === 'single'
+                  ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-2xs'
+                  : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'
+              }`}
+            >
+              Single Graphic
+            </button>
+            <button
+              onClick={() => setStudioMode('carousel')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                studioMode === 'carousel'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
+                  : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'
+              }`}
+            >
+              <FaLayerGroup className="text-[10px]" />
+              LinkedIn PDF Carousel ({slides.length} Slides)
+            </button>
+          </div>
+
+          <span className="text-[11px] font-semibold text-gray-400 hidden sm:inline-block pr-2">
+            Vector High-Res
+          </span>
         </div>
 
-        {/* Action Controls Bar */}
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-          <button
-            onClick={handleDownload}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gray-900 hover:bg-black text-white dark:bg-white dark:text-gray-900 dark:hover:bg-gray-100 font-bold text-xs shadow-md active:scale-95 transition-all"
-          >
-            <FaDownload className="text-xs" />
-            Download PNG (High-Res)
-          </button>
+        {/* Canvas Display */}
+        <div className="w-full bg-gray-100/80 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-3xl p-6 flex flex-col items-center justify-center shadow-inner relative overflow-hidden">
+          <div className="max-w-full max-h-[540px] flex items-center justify-center">
+            <canvas
+              ref={canvasRef}
+              className="max-w-full max-h-[500px] object-contain rounded-2xl shadow-2xl transition-all duration-300"
+            />
+          </div>
 
-          <button
-            onClick={handleCopyClipboard}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 font-bold text-xs shadow-2xs active:scale-95 transition-all"
-          >
-            {copied ? <FaCheck className="text-emerald-500" /> : <FaCopy className="text-xs" />}
-            {copied ? 'Copied!' : 'Copy to Clipboard'}
-          </button>
+          {/* Carousel Slide Navigation if in carousel mode */}
+          {studioMode === 'carousel' && (
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={() => setActiveSlideIdx(Math.max(0, activeSlideIdx - 1))}
+                disabled={activeSlideIdx === 0}
+                className="p-2 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-30 shadow-xs"
+              >
+                <FaChevronLeft className="text-xs" />
+              </button>
+              <span className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                Slide {activeSlideIdx + 1} of {slides.length}
+              </span>
+              <button
+                onClick={() => setActiveSlideIdx(Math.min(slides.length - 1, activeSlideIdx + 1))}
+                disabled={activeSlideIdx === slides.length - 1}
+                className="p-2 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-30 shadow-xs"
+              >
+                <FaChevronRight className="text-xs" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Carousel Slide Thumbnails */}
+        {studioMode === 'carousel' && (
+          <div className="w-full mt-4 flex items-center gap-2 overflow-x-auto pb-2">
+            {slides.map((s, idx) => (
+              <div
+                key={s.id}
+                onClick={() => setActiveSlideIdx(idx)}
+                className={`relative shrink-0 w-28 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                  activeSlideIdx === idx
+                    ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 ring-2 ring-indigo-500/20'
+                    : 'border-gray-200 bg-white dark:bg-gray-900 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold text-gray-500">#{idx + 1}</span>
+                  {slides.length > 2 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeSlide(idx);
+                      }}
+                      className="text-gray-400 hover:text-red-500 p-0.5"
+                    >
+                      <FaTrash className="text-[9px]" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] font-bold text-gray-900 dark:text-white truncate">
+                  {s.badge || `Slide ${idx + 1}`}
+                </p>
+                <p className="text-[9px] text-gray-400 truncate mt-0.5">
+                  {s.headline || 'No text'}
+                </p>
+              </div>
+            ))}
+
+            {slides.length < 10 && (
+              <button
+                onClick={addSlide}
+                className="shrink-0 flex items-center justify-center gap-1 w-24 h-16 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-indigo-500 text-gray-500 text-xs font-bold transition-colors"
+              >
+                <FaPlus className="text-[10px]" /> Add
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Export & Actions Toolbar */}
+        <div className="w-full mt-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {studioMode === 'carousel' ? (
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isExportingPdf}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 active:scale-95 transition-all"
+              >
+                <FaFilePdf className="text-xs" />
+                {isExportingPdf ? 'Exporting PDF...' : 'Download LinkedIn Carousel (PDF)'}
+              </button>
+            ) : (
+              <button
+                onClick={handleDownloadImage}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-black text-white font-bold text-xs shadow-sm active:scale-95 transition-all"
+              >
+                <FaDownload className="text-xs" />
+                Download PNG
+              </button>
+            )}
+
+            <button
+              onClick={handleCopyClipboard}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 font-bold text-xs text-gray-700 dark:text-gray-200 active:scale-95 transition-all"
+            >
+              <FaCopy className="text-xs" />
+              Copy Slide
+            </button>
+          </div>
 
           <button
             onClick={handleAttachPost}
@@ -400,11 +610,11 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
 
       </div>
 
-      {/* ── Right Controls Panel ── */}
-      <div className="space-y-6">
+      {/* ── Right Controls Panel Column ── */}
+      <div className="xl:col-span-5 space-y-6">
 
         {/* 1. Quick Templates */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-sm">
+        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-2xs">
           <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3 flex items-center gap-1.5">
             <FaMagic className="text-amber-500" /> 1-Click Templates
           </p>
@@ -412,9 +622,21 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
             {TEMPLATES.map((tmpl) => (
               <button
                 key={tmpl.name}
-                type="button"
-                onClick={() => applyTemplate(tmpl)}
-                className="text-left p-2.5 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-indigo-500 bg-gray-50/50 dark:bg-gray-800/50 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/30 transition-all text-xs font-semibold"
+                onClick={() => {
+                  if (studioMode === 'carousel') {
+                    updateActiveSlide('badge', tmpl.badge);
+                    updateActiveSlide('headline', tmpl.headline);
+                    updateActiveSlide('subtitle', tmpl.subtitle);
+                  } else {
+                    setBadge(tmpl.badge);
+                    setHeadline(tmpl.headline);
+                    setSubtitle(tmpl.subtitle);
+                  }
+                  const foundGrad = GRADIENTS.find(g => g.id === tmpl.gradientId);
+                  if (foundGrad) setSelectedGradient(foundGrad);
+                  setFontFamily(tmpl.font);
+                }}
+                className="text-left p-3 rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/40 hover:bg-indigo-50/50 hover:border-indigo-200 transition-all text-xs font-semibold text-gray-800 dark:text-gray-200"
               >
                 {tmpl.name}
               </button>
@@ -422,115 +644,27 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
           </div>
         </div>
 
-        {/* 2. Aspect Ratio Presets */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-sm">
-          <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-            Canvas Format & Aspect Ratio
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {ASPECT_RATIOS.map((ratio) => {
-              const isSelected = aspectRatio.id === ratio.id;
-              return (
-                <button
-                  key={ratio.id}
-                  type="button"
-                  onClick={() => setAspectRatio(ratio)}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
-                    isSelected
-                      ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold shadow-2xs'
-                      : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">{ratio.icon}</span>
-                    <span className="text-[10px] font-mono text-gray-400">{ratio.id}</span>
-                  </div>
-                  <p className="text-xs font-bold mt-1.5">{ratio.label}</p>
-                  <p className="text-[10px] text-gray-500 truncate">{ratio.sub}</p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 3. Gradient Color Palettes */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-sm">
-          <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-            Color Palette & Gradients
-          </p>
-          <div className="grid grid-cols-4 gap-2">
-            {GRADIENTS.map((grad) => {
-              const isSelected = selectedGradient.id === grad.id;
-              return (
-                <button
-                  key={grad.id}
-                  type="button"
-                  onClick={() => setSelectedGradient(grad)}
-                  title={grad.name}
-                  className={`h-12 rounded-xl border-2 transition-all overflow-hidden relative shadow-2xs ${
-                    isSelected ? 'border-indigo-600 scale-105 ring-2 ring-indigo-500/20' : 'border-transparent hover:scale-102'
-                  }`}
-                  style={{
-                    background: `linear-gradient(135deg, ${grad.colors.join(', ')})`,
-                  }}
-                >
-                  {isSelected && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                      <FaCheck className="text-white text-xs drop-shadow" />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Pattern Toggle */}
-          <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">Texture Overlay:</span>
-            <div className="flex items-center gap-1.5">
-              {['none', 'dots', 'grid'].map((pat) => (
-                <button
-                  key={pat}
-                  type="button"
-                  onClick={() => setPatternOverlay(pat)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
-                    patternOverlay === pat
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                  }`}
-                >
-                  {pat}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* 4. Text & Content Layer */}
-        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-sm space-y-3.5">
-          <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-            Typography & Content
+        {/* 2. Text & Content Editor */}
+        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-2xs space-y-4">
+          <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
+            {studioMode === 'carousel' ? `Slide #${activeSlideIdx + 1} Content` : 'Text & Content'}
           </p>
 
-          {/* Badge */}
           <div>
-            <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-              Badge / Category Tag
-            </label>
+            <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">Badge / Tag</label>
             <input
               type="text"
-              value={badge}
-              onChange={(e) => setBadge(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500"
-              placeholder="e.g. 🚀 NEW LAUNCH"
+              value={currentBadge}
+              onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('badge', e.target.value) : setBadge(e.target.value)}
+              placeholder="e.g. 💡 QUICK TIP"
+              className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
             />
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {BADGE_PRESETS.slice(0, 4).map((p) => (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {BADGE_PRESETS.slice(0, 5).map((p) => (
                 <button
                   key={p}
-                  type="button"
-                  onClick={() => setBadge(p)}
-                  className="text-[9px] px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-indigo-50 text-gray-600 dark:text-gray-400 hover:text-indigo-600"
+                  onClick={() => studioMode === 'carousel' ? updateActiveSlide('badge', p) : setBadge(p)}
+                  className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 hover:bg-indigo-50 text-gray-600 dark:text-gray-300"
                 >
                   {p}
                 </button>
@@ -538,88 +672,96 @@ export default function SocialGraphicStudio({ onAttachToPost, initialHeadline = 
             </div>
           </div>
 
-          {/* Main Headline */}
           <div>
-            <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-              Headline
-            </label>
+            <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">Main Headline</label>
             <textarea
               rows={3}
-              value={headline}
-              onChange={(e) => setHeadline(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 resize-none"
-              placeholder="Main text on the card..."
+              value={currentHeadline}
+              onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('headline', e.target.value) : setHeadline(e.target.value)}
+              className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none font-medium"
             />
           </div>
 
-          {/* Subtitle */}
           <div>
-            <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-              Subtitle / Supporting Text
-            </label>
+            <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">Subtitle / Key Takeaway</label>
             <textarea
               rows={2}
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:border-indigo-500 resize-none"
-              placeholder="Supporting description..."
+              value={currentSubtitle}
+              onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('subtitle', e.target.value) : setSubtitle(e.target.value)}
+              className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
             />
           </div>
 
-          {/* Font & Size */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
+          <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
-              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Font Family
-              </label>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Author Name</label>
+              <input
+                type="text"
+                value={authorName}
+                onChange={(e) => setAuthorName(e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Handle</label>
+              <input
+                type="text"
+                value={authorHandle}
+                onChange={(e) => setAuthorHandle(e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Style & Gradients */}
+        <div className="bg-white dark:bg-gray-900 border border-gray-200/80 dark:border-gray-800 rounded-3xl p-5 shadow-2xs space-y-4">
+          <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+            Style & Gradients
+          </p>
+
+          <div className="grid grid-cols-4 gap-2">
+            {GRADIENTS.map((g) => (
+              <button
+                key={g.id}
+                onClick={() => setSelectedGradient(g)}
+                className={`h-12 rounded-xl flex items-center justify-center transition-all ${
+                  selectedGradient.id === g.id ? 'ring-2 ring-indigo-500 ring-offset-2 scale-105 shadow-md' : 'opacity-80 hover:opacity-100'
+                }`}
+                style={{
+                  background: `linear-gradient(135deg, ${g.colors[0]}, ${g.colors[1]})`,
+                }}
+                title={g.name}
+              />
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Typography</label>
               <select
                 value={fontFamily}
                 onChange={(e) => setFontFamily(e.target.value)}
-                className="w-full text-xs px-2.5 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none"
+                className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
               >
                 {FONTS.map((f) => (
                   <option key={f.id} value={f.id}>{f.label}</option>
                 ))}
               </select>
             </div>
-
             <div>
-              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1">
-                Headline Size: {headlineSize}px
-              </label>
-              <input
-                type="range"
-                min={32}
-                max={72}
-                value={headlineSize}
-                onChange={(e) => setHeadlineSize(Number(e.target.value))}
-                className="w-full mt-2 accent-indigo-600"
-              />
+              <label className="block text-[11px] font-bold text-gray-500 mb-1">Texture Overlay</label>
+              <select
+                value={patternOverlay}
+                onChange={(e) => setPatternOverlay(e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+              >
+                <option value="none">Clean Solid</option>
+                <option value="dots">Subtle Dots</option>
+                <option value="grid">Modern Grid</option>
+              </select>
             </div>
           </div>
-
-          {/* Author Metadata */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <div>
-              <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">Author Name</label>
-              <input
-                type="text"
-                value={authorName}
-                onChange={(e) => setAuthorName(e.target.value)}
-                className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">Handle</label>
-              <input
-                type="text"
-                value={authorHandle}
-                onChange={(e) => setAuthorHandle(e.target.value)}
-                className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
-              />
-            </div>
-          </div>
-
         </div>
 
       </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { getBrandVoice, saveBrandVoice } from '@/lib/api';
+import { getBrandVoice, saveBrandVoice, scanContentDNA } from '@/lib/api';
 import { toast } from 'sonner';
-import { FaRobot, FaSave, FaPlus, FaTimes, FaLightbulb } from 'react-icons/fa';
+import { FaRobot, FaSave, FaPlus, FaTimes, FaDna, FaMagic, FaSyncAlt } from 'react-icons/fa';
 
 export default function BrandVoiceSettings() {
   const [brandName, setBrandName] = useState('');
@@ -12,6 +12,8 @@ export default function BrandVoiceSettings() {
   const [customGuidelines, setCustomGuidelines] = useState('');
   const [bannedWords, setBannedWords] = useState([]);
   const [newBannedWord, setNewBannedWord] = useState('');
+  const [contentDna, setContentDna] = useState(null);
+  const [isScanningDna, setIsScanningDna] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -28,6 +30,7 @@ export default function BrandVoiceSettings() {
           setFormattingRules(data.formatting_rules || '');
           setCustomGuidelines(data.custom_guidelines || '');
           setBannedWords(data.banned_words || []);
+          setContentDna(data.content_dna || null);
         }
       } catch (err) {
         toast.error('Failed to load Brand Voice');
@@ -37,6 +40,23 @@ export default function BrandVoiceSettings() {
     };
     fetchVoice();
   }, []);
+
+  const handleScanDNA = async () => {
+    setIsScanningDna(true);
+    try {
+      const res = await scanContentDNA();
+      if (res && res.content_dna) {
+        setContentDna(res.content_dna);
+        if (res.tone && !tone) setTone(res.tone);
+        if (res.sentence_cadence && !formattingRules) setFormattingRules(`Cadence: ${res.sentence_cadence}. Hook: ${res.hook_style}.`);
+        toast.success(`✨ Analyzed ${res.posts_analyzed} recent posts! Content DNA updated.`);
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to analyze profile content');
+    } finally {
+      setIsScanningDna(false);
+    }
+  };
 
   const handleAddBannedWord = (e) => {
     e.preventDefault();
@@ -66,6 +86,7 @@ export default function BrandVoiceSettings() {
         formatting_rules: formattingRules || undefined,
         custom_guidelines: customGuidelines || undefined,
         banned_words: bannedWords,
+        content_dna: contentDna || undefined,
       });
       toast.success('Brand Voice & AI Persona guidelines saved!');
     } catch (err) {
@@ -87,9 +108,66 @@ export default function BrandVoiceSettings() {
             <FaRobot className="text-indigo-600" /> Brand Voice &amp; AI Persona Vault
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Define your company personality, prohibited words, and styling rules. All AI captions and RSS rewrites will automatically match this voice.
+            Define your company personality, prohibited words, and styling rules. All AI captions, Voice memos, and repurposing will automatically match this voice.
           </p>
         </div>
+      </div>
+
+      {/* ── Content DNA Profile Style Scan Card ── */}
+      <div className="p-5 bg-gradient-to-br from-indigo-50/80 via-purple-50/50 to-blue-50/60 border border-indigo-200/80 rounded-2xl shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-indigo-600 text-white text-xs">
+                <FaDna />
+              </span>
+              <h3 className="text-sm font-bold text-gray-900">Content DNA (1-Click Style Scan)</h3>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">
+              Extracts your sentence cadence, hook formulas, and vocabulary tier directly from your published posts.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleScanDNA}
+            disabled={isScanningDna}
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all active:scale-95 disabled:opacity-50 shrink-0"
+          >
+            {isScanningDna ? (
+              <>
+                <FaSyncAlt className="animate-spin text-xs" />
+                Analyzing Writing DNA...
+              </>
+            ) : (
+              <>
+                <FaMagic className="text-xs text-amber-300" />
+                Scan &amp; Sync My Voice DNA
+              </>
+            )}
+          </button>
+        </div>
+
+        {contentDna && (
+          <div className="mt-4 pt-4 border-t border-indigo-200/60 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-2.5 bg-white/80 rounded-xl border border-indigo-100">
+              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tone Profile</span>
+              <span className="text-xs font-bold text-gray-800">{contentDna.tone || 'Authentic'}</span>
+            </div>
+            <div className="p-2.5 bg-white/80 rounded-xl border border-indigo-100">
+              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Hook Formula</span>
+              <span className="text-xs font-bold text-gray-800">{contentDna.hook_style || 'Curiosity Hook'}</span>
+            </div>
+            <div className="p-2.5 bg-white/80 rounded-xl border border-indigo-100">
+              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sentence Cadence</span>
+              <span className="text-xs font-bold text-gray-800">{contentDna.sentence_cadence || 'Short paragraphs'}</span>
+            </div>
+            <div className="p-2.5 bg-white/80 rounded-xl border border-indigo-100">
+              <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Emoji Density</span>
+              <span className="text-xs font-bold text-gray-800">{contentDna.emoji_density || 'Minimal'}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">

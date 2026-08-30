@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { getInbox, updateInboxMessage, deleteInboxMessage, getInboxStats, replyToComment, sendDmReply } from '@/lib/api';
+import { getInbox, updateInboxMessage, deleteInboxMessage, getInboxStats, replyToComment, sendDmReply, suggestAIComment } from '@/lib/api';
 import { toast } from 'sonner';
 import { format, parseISO } from 'date-fns';
 import {
   FaInbox, FaComment, FaEnvelope, FaReply, FaTrash,
-  FaCheck, FaCheckDouble, FaFilter,
+  FaCheck, FaCheckDouble, FaFilter, FaMagic,
   FaInstagram, FaFacebook, FaYoutube, FaTiktok, FaReddit, FaLinkedin,
 } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
@@ -53,7 +53,24 @@ const Inbox = () => {
   const [selectedId, setSelectedId] = useState(null);
   const [replyText, setReplyText]   = useState('');
   const [replying, setReplying]     = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const replyRef = useRef(null);
+
+  const handleGetAISuggestions = async () => {
+    if (!selected?.content) return;
+    setLoadingSuggestions(true);
+    try {
+      const res = await suggestAIComment(selected.content, selected.author_name, selected.platform);
+      if (res?.suggestions) {
+        setAiSuggestions(res.suggestions);
+      }
+    } catch {
+      toast.error('Failed to generate smart replies');
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
 
   useEffect(() => {
     loadAll();
@@ -338,7 +355,35 @@ const Inbox = () => {
               </div>
 
               {/* Reply box */}
-              <div className="px-6 py-4 bg-offwhite border-t border-gray-200">
+              <div className="px-6 py-4 bg-offwhite border-t border-gray-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-gray-500">Quick Smart Replies</span>
+                  <button
+                    type="button"
+                    onClick={handleGetAISuggestions}
+                    disabled={loadingSuggestions}
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    <FaMagic className="text-[10px]" />
+                    {loadingSuggestions ? 'Generating...' : '✨ Suggest Smart Reply'}
+                  </button>
+                </div>
+
+                {aiSuggestions.length > 0 && (
+                  <div className="flex flex-col gap-1.5">
+                    {aiSuggestions.map((sug, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setReplyText(sug)}
+                        className="text-left text-xs p-2 bg-white hover:bg-indigo-50/70 border border-gray-200 hover:border-indigo-300 rounded-xl text-gray-700 transition-all font-medium"
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex gap-2 items-end">
                   <textarea
                     ref={replyRef}

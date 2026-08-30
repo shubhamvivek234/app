@@ -19,6 +19,8 @@ import {
   importRemoteMedia,
   getHashtagGroups,
   generateContent,
+  repurposeContent,
+  voiceToPost,
   createPost,
   cleanupTemporaryAudio,
   getPost,
@@ -31,6 +33,7 @@ import {
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
   FaChevronUp, FaChevronDown, FaDiscord, FaImages,
+  FaMicrophone, FaStop, FaLink, FaMagic, FaPen,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -620,6 +623,92 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [selectedTimezone,      setSelectedTimezone]      = useState(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
   );
+
+  // ── Quick Creation Mode (Write Clean, Voice Memo, Repurpose Link) ─────────
+  const [creationMode, setCreationMode] = useState('write'); // 'write' | 'voice' | 'repurpose'
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [voiceProcessing, setVoiceProcessing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const voiceTimerRef = useRef(null);
+
+  // ── Repurposer state ───────────────────────────────────────────────────────
+  const [repurposeInput, setRepurposeInput] = useState('');
+  const [repurposeLoading, setRepurposeLoading] = useState(false);
+  const [repurposeTone, setRepurposeTone] = useState('engaging');
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.start(250);
+      setIsRecordingVoice(true);
+      setVoiceSeconds(0);
+      voiceTimerRef.current = setInterval(() => {
+        setVoiceSeconds((prev) => prev + 1);
+      }, 1000);
+      toast.info('🎙️ Recording started. Speak your thoughts naturally!');
+    } catch (err) {
+      toast.error('Microphone access denied or not available.');
+    }
+  };
+
+  const stopVoiceRecording = async () => {
+    if (!mediaRecorderRef.current) return;
+    clearInterval(voiceTimerRef.current);
+    setIsRecordingVoice(false);
+
+    mediaRecorderRef.current.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+
+      setVoiceProcessing(true);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Audio = reader.result.split(',')[1];
+        try {
+          const res = await voiceToPost(base64Audio, 'audio/webm');
+          if (res.linkedin_post) {
+            setCommonCaption(res.linkedin_post);
+            toast.success('✨ Voice memo converted to post!');
+            setCreationMode('write');
+          }
+        } catch (error) {
+          toast.error(error?.response?.data?.detail || 'Failed to process voice memo');
+        } finally {
+          setVoiceProcessing(false);
+        }
+      };
+      reader.readAsDataURL(audioBlob);
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
+  const handleRepurposeSubmit = async () => {
+    if (!repurposeInput.trim()) return;
+    setRepurposeLoading(true);
+    try {
+      const res = await repurposeContent(repurposeInput.trim(), { tone: repurposeTone });
+      if (res.linkedin_post) {
+        setCommonCaption(res.linkedin_post);
+        toast.success(`✨ Repurposed "${res.source_title}" into social draft!`);
+        setCreationMode('write');
+      }
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to repurpose link');
+    } finally {
+      setRepurposeLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!showTimeslotPicker || selectedAccounts.length !== 1) {
@@ -1885,6 +1974,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         timezone: selectedTimezone,
         timeslot_category: mode === 'timeslot' ? selectedTimeslotCategory : null,
         video_title: fallbackTitle || null,
+        first_comment: commonFirstComment || firstComment || linkedinFirstComment || null,
+        first_comment_enabled: Boolean((commonFirstComment && commonFirstComment.trim()) || (firstComment && firstComment.trim()) || (linkedinFirstComment && linkedinFirstComment.trim())),
         youtube_privacy: youtubePrivacy,
         tiktok_privacy: tiktokPrivacy,
         tiktok_allow_duet: tiktokAllowDuet,
@@ -1905,6 +1996,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           post_type: postPayload.post_type,
           title: fallbackTitle || null,
           timezone: selectedTimezone,
+          first_comment: commonFirstComment || firstComment || linkedinFirstComment || null,
+          first_comment_enabled: Boolean((commonFirstComment && commonFirstComment.trim()) || (firstComment && firstComment.trim()) || (linkedinFirstComment && linkedinFirstComment.trim())),
           account_overrides: accountOverridesPayload,
           platform_overrides: {},
           ...(mode === 'scheduled' ? { scheduled_time: scheduledDateTime } : {}),
@@ -2062,6 +2155,140 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               </p>
             </div>
           )}
+
+          {/* ── Minimalist Creation Mode Bar (Clean, Voice, Repurpose) ── */}
+          <div className="mb-4 bg-white border border-gray-200/90 rounded-2xl p-2.5 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 p-1 bg-gray-100/90 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setCreationMode('write')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    creationMode === 'write'
+                      ? 'bg-white text-gray-900 shadow-2xs'
+                      : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  <FaPen className="text-[10px]" />
+                  Write Clean
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreationMode('voice')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    creationMode === 'voice'
+                      ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-xs'
+                      : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  <FaMicrophone className="text-[10px]" />
+                  Voice Memo (PostCast)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreationMode('repurpose')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    creationMode === 'repurpose'
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-xs'
+                      : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  <FaLink className="text-[10px]" />
+                  Repurpose Link
+                </button>
+              </div>
+              <span className="text-[11px] font-semibold text-gray-400 hidden sm:inline-block pr-2">
+                100% Free AI Engine
+              </span>
+            </div>
+
+            {/* Voice Memo Drawer */}
+            {creationMode === 'voice' && (
+              <div className="mt-3 p-4 bg-gradient-to-br from-rose-50 to-orange-50/40 border border-rose-200 rounded-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+                      <FaMicrophone className="text-rose-500" /> Speak your thoughts freely (30s – 2min)
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      AI removes filler words, captures your core idea, and turns it into a high-engagement post draft.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isRecordingVoice ? (
+                      <>
+                        <span className="flex items-center gap-1.5 text-xs font-bold text-rose-600 bg-rose-100 px-3 py-1.5 rounded-full animate-pulse">
+                          <span className="h-2 w-2 rounded-full bg-rose-600" />
+                          {Math.floor(voiceSeconds / 60)}:{('0' + (voiceSeconds % 60)).slice(-2)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={stopVoiceRecording}
+                          disabled={voiceProcessing}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gray-900 hover:bg-black text-white text-xs font-bold shadow-sm transition-all"
+                        >
+                          {voiceProcessing ? (
+                            <>
+                              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                              Structuring...
+                            </>
+                          ) : (
+                            <>
+                              <FaStop className="text-[10px]" />
+                              Stop & Generate Draft
+                            </>
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startVoiceRecording}
+                        disabled={voiceProcessing}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-bold shadow-md shadow-rose-500/20 active:scale-95 transition-all"
+                      >
+                        <FaMicrophone className="text-xs" />
+                        {voiceProcessing ? 'Processing...' : 'Start Voice Memo'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Repurpose Link Drawer */}
+            {creationMode === 'repurpose' && (
+              <div className="mt-3 p-4 bg-gradient-to-br from-indigo-50 to-purple-50/40 border border-indigo-200 rounded-xl">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={repurposeInput}
+                    onChange={(e) => setRepurposeInput(e.target.value)}
+                    placeholder="Paste YouTube video link, article URL, or blog post..."
+                    className="flex-1 px-3.5 py-2 text-xs bg-white border border-indigo-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleRepurposeSubmit}
+                    disabled={repurposeLoading || !repurposeInput.trim()}
+                    className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold shadow-md shadow-indigo-500/20 disabled:opacity-50 transition-all shrink-0"
+                  >
+                    {repurposeLoading ? (
+                      <>
+                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        Extracting...
+                      </>
+                    ) : (
+                      <>
+                        <FaMagic className="text-[10px]" />
+                        Extract Social Draft
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <PlatformEditor
             platform="common"

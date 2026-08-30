@@ -260,6 +260,46 @@ export const generateHashtags = async (topic, platform = null, count = 20) => {
   return response.data; // { hashtags: ["#tag1", "#tag2", ...] }
 };
 
+// Universal Content Repurposer
+export const repurposeContent = async (urlOrText, { tone = 'engaging', useBrandVoice = true } = {}) => {
+  const response = await axios.post(
+    `${API}/ai/repurpose`,
+    { url_or_text: urlOrText, tone, use_brand_voice: useBrandVoice },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+// Voice-to-Post (PostCast)
+export const voiceToPost = async (audioBase64, mimeType = 'audio/webm', { tone = null, useBrandVoice = true } = {}) => {
+  const response = await axios.post(
+    `${API}/ai/voice-to-post`,
+    { audio_base64: audioBase64, mime_type: mimeType, tone, use_brand_voice: useBrandVoice },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+// Content DNA Voice Profiler
+export const scanContentDNA = async () => {
+  const response = await axios.post(
+    `${API}/ai/content-dna/scan`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+// Focus Mode AI Comment Suggestions
+export const suggestAIComment = async (postContent, authorName = '', platform = 'linkedin') => {
+  const response = await axios.post(
+    `${API}/ai/suggest-comment`,
+    { post_content: postContent, author_name: authorName, platform },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
 // Social Accounts
 export const connectSocialAccount = async (platform, platformUsername) => {
   const response = await axios.post(
@@ -1197,6 +1237,24 @@ export const connectBluesky = async (data) => {
 
 export const connectDiscord = async (webhookUrl, channelName) => {
   const response = await axios.post(`${API}/social-accounts/discord/connect`, { webhook_url: webhookUrl, channel_name: channelName || null }, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const connectTelegram = async (botToken, chatId, channelName) => {
+  const response = await axios.post(
+    `${API}/social-accounts/telegram/connect`,
+    { bot_token: botToken, chat_id: chatId, channel_name: channelName || null },
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
+export const testAccountConnection = async (accountId) => {
+  const response = await axios.post(
+    `${API}/social-accounts/${accountId}/test-connection`,
+    {},
+    { headers: getAuthHeaders() },
+  );
   return response.data;
 };
 
