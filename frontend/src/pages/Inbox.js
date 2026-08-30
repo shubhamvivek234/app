@@ -58,15 +58,22 @@ const Inbox = () => {
   const replyRef = useRef(null);
 
   const handleGetAISuggestions = async () => {
-    if (!selected?.content) return;
+    const textToAnalyze = selected?.content?.trim() || selected?.message?.trim() || selected?.text?.trim();
+    if (!textToAnalyze) {
+      toast.error('No message content found to generate reply suggestions.');
+      return;
+    }
     setLoadingSuggestions(true);
     try {
-      const res = await suggestAIComment(selected.content, selected.author_name, selected.platform);
-      if (res?.suggestions) {
+      const res = await suggestAIComment(textToAnalyze, selected?.author_name || '', selected?.platform || 'linkedin');
+      if (res?.suggestions && Array.isArray(res.suggestions) && res.suggestions.length > 0) {
         setAiSuggestions(res.suggestions);
+      } else {
+        toast.error('No suggestions returned. Please try again.');
       }
-    } catch {
-      toast.error('Failed to generate smart replies');
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to generate smart replies';
+      toast.error(msg);
     } finally {
       setLoadingSuggestions(false);
     }
@@ -111,6 +118,7 @@ const Inbox = () => {
   const handleSelect = (msg) => {
     setSelectedId(msg.id);
     setReplyText('');
+    setAiSuggestions([]);
     if (msg.status === 'unread') markRead(msg.id);
   };
 
@@ -375,7 +383,10 @@ const Inbox = () => {
                       <button
                         key={i}
                         type="button"
-                        onClick={() => setReplyText(sug)}
+                        onClick={() => {
+                          setReplyText(sug);
+                          replyRef.current?.focus();
+                        }}
                         className="text-left text-xs p-2 bg-white hover:bg-indigo-50/70 border border-gray-200 hover:border-indigo-300 rounded-xl text-gray-700 transition-all font-medium"
                       >
                         {sug}
