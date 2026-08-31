@@ -311,23 +311,23 @@ const CalendarView = () => {
       />
 
       <Dialog open={showShareModal} onOpenChange={setShowShareModal}>
-        <DialogContent className="max-w-md border-slate-200">
+        <DialogContent className="max-w-md border-slate-200 dark:border-slate-800 dark:bg-slate-900">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <DialogTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
               <FaLink className="text-emerald-500" />
               Shareable Calendar Link
             </DialogTitle>
           </DialogHeader>
-          <p className="text-sm leading-6 text-slate-600">
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
             Anyone with this link can view your scheduled content calendar in read-only mode.
           </p>
-          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-            <span className="flex-1 truncate font-mono text-xs text-slate-600">{shareUrl}</span>
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-800">
+            <span className="flex-1 truncate font-mono text-xs text-slate-600 dark:text-slate-300">{shareUrl}</span>
             <Button
               type="button"
               size="sm"
               variant="outline"
-              className="border-slate-300 bg-white text-slate-700"
+              className="border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
               onClick={() => {
                 navigator.clipboard.writeText(shareUrl);
                 toast.success('Link copied');
@@ -336,7 +336,7 @@ const CalendarView = () => {
               Copy
             </Button>
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-400 dark:text-slate-500">
             This link stays active until you revoke it. Share it with clients or teammates when they only need visibility.
           </p>
         </DialogContent>

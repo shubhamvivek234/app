@@ -2074,26 +2074,26 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   /** Top header bar */
   const headerBar = (
-    <div className="h-16 bg-white border-b-2 border-gray-200 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-sm">
+    <div className="h-16 bg-white dark:bg-slate-900 border-b-2 border-gray-200 dark:border-slate-800 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-sm">
       <div className="flex items-center gap-4">
-        <button onClick={handleBack} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900">
+        <button onClick={handleBack} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white">
           <FaArrowLeft className="text-lg" />
         </button>
         <div>
-          <h1 className="text-lg font-bold text-gray-900">{isEditMode ? 'Edit Post' : 'Create Post'}</h1>
+          <h1 className="text-lg font-bold text-gray-900 dark:text-slate-100">{isEditMode ? 'Edit Post' : 'Create Post'}</h1>
           {selectedAccounts.length > 0 && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-gray-500 dark:text-slate-400">
               {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''} selected
             </span>
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+      <div className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
         <Button
           variant={rightPanelMode === 'ai' ? 'default' : 'ghost'}
           size="sm"
           onClick={() => setRightPanelMode(m => m === 'ai' ? 'preview' : 'ai')}
-          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'ai' ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'ai' ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'}`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round"
@@ -2105,14 +2105,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           variant={rightPanelMode === 'preview' && previewVisible ? 'default' : 'ghost'}
           size="sm"
           onClick={() => { setRightPanelMode('preview'); setPreviewVisible(v => !v); }}
-          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'preview' && previewVisible ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+          className={`gap-2 text-xs font-bold rounded-md transition-all ${rightPanelMode === 'preview' && previewVisible ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-100'}`}
         >
           {previewVisible && rightPanelMode === 'preview' ? <FaEye className="text-xs" /> : <FaEyeSlash className="text-xs" />}
           Preview
         </Button>
         {/* Close button in modal mode */}
         {asModal && (
-          <button onClick={onClose} className="ml-2 p-2 rounded-lg hover:bg-gray-200 transition-colors text-gray-600 hover:text-gray-900">
+          <button onClick={onClose} className="ml-2 p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white">
             <FaTimes className="text-lg" />
           </button>
         )}
@@ -2122,7 +2122,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   /** Account selector strip */
   const accountStrip = (
-    <div className="bg-white border-b-2 border-gray-200 px-5 py-4 flex-shrink-0">
+    <div className="bg-white dark:bg-slate-900 border-b-2 border-gray-200 dark:border-slate-800 px-5 py-4 flex-shrink-0">
       <AccountSelector
         accounts={availableAccounts}
         loading={accountsLoading}
@@ -2144,7 +2144,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   /** Left panel: stacked PlatformEditors */
   const leftPanel = (
-    <div className="flex-1 overflow-y-auto p-6 min-w-0 bg-offwhite">
+    <div className="flex-1 overflow-y-auto p-6 min-w-0 bg-offwhite dark:bg-slate-950">
       {orderedPlatforms.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-28 text-center">
           <div className="w-20 h-20 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center mb-5 shadow-sm">
@@ -2167,16 +2167,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           )}
 
           {/* ── Minimalist Creation Mode Bar (Clean, Voice, Repurpose) ── */}
-          <div className="mb-4 bg-white border border-gray-200/90 rounded-2xl p-2.5 shadow-2xs">
+          <div className="mb-4 bg-white dark:bg-slate-900 border border-gray-200/90 dark:border-slate-800 rounded-2xl p-2.5 shadow-2xs">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 p-1 bg-gray-100/90 rounded-xl">
+              <div className="flex items-center gap-1.5 p-1 bg-gray-100/90 dark:bg-slate-800 rounded-xl">
                 <button
                   type="button"
                   onClick={() => setCreationMode('write')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     creationMode === 'write'
-                      ? 'bg-white text-gray-900 shadow-2xs'
-                      : 'text-gray-500 hover:text-gray-900'
+                      ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-slate-100 shadow-2xs'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
                   }`}
                 >
                   <FaPen className="text-[10px]" />
@@ -2188,7 +2188,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     creationMode === 'voice'
                       ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-xs'
-                      : 'text-gray-500 hover:text-gray-900'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
                   }`}
                 >
                   <FaMicrophone className="text-[10px]" />
@@ -2200,14 +2200,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     creationMode === 'repurpose'
                       ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-xs'
-                      : 'text-gray-500 hover:text-gray-900'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
                   }`}
                 >
                   <FaLink className="text-[10px]" />
                   Repurpose Link
                 </button>
               </div>
-              <span className="text-[11px] font-semibold text-gray-400 hidden sm:inline-block pr-2">
+              <span className="text-[11px] font-semibold text-gray-400 dark:text-slate-500 hidden sm:inline-block pr-2">
                 100% Free AI Engine
               </span>
             </div>
@@ -2732,16 +2732,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   /** Fixed bottom action bar */
   const bottomBar = (
-    <div className="bg-white border-t-2 border-gray-200 px-5 py-3 flex-shrink-0 z-10 shadow-lg">
+    <div className="bg-white dark:bg-slate-900 border-t-2 border-gray-200 dark:border-slate-800 px-5 py-3 flex-shrink-0 z-10 shadow-lg">
       {blockingSelectedTikTokRestriction && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-xs font-semibold text-amber-800">
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/40">
+          <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
             TikTok public posting warning
           </p>
-          <p className="text-[11px] text-amber-700 mt-1">
+          <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
             {getPublishFailureMessage(blockingSelectedTikTokRestriction.result)}
           </p>
-          <p className="text-[11px] text-amber-800 mt-1">
+          <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-1">
             {getPublishFailureAction(blockingSelectedTikTokRestriction.result)}
           </p>
         </div>
@@ -2749,7 +2749,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
       <div className="flex items-center justify-between gap-4">
         {isEditMode ? (
-          <div className="text-sm font-medium text-gray-500">
+          <div className="text-sm font-medium text-gray-500 dark:text-slate-400">
             Editing existing post
           </div>
         ) : (
@@ -2759,7 +2759,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               onCheckedChange={(v) => setCreateAnother(!!v)}
               className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
             />
-            <span className="text-sm font-medium text-gray-700">Create Another</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Create Another</span>
           </label>
         )}
 
@@ -2768,7 +2768,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             variant="outline" size="sm"
             onClick={() => handleSubmit('draft')}
             disabled={loading}
-            className="text-gray-700 border-2 border-gray-300 h-9 font-semibold hover:border-gray-400 hover:bg-gray-50 transition-colors"
+            className="text-gray-700 dark:text-slate-200 border-2 border-gray-300 dark:border-slate-700 dark:bg-slate-800 h-9 font-semibold hover:border-gray-400 dark:hover:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
           >
             {isEditMode ? 'Save changes' : 'Save Drafts'}
           </Button>
@@ -2788,7 +2788,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 variant="outline" size="sm"
                 onClick={() => setShowTimeslotPicker(true)}
                 disabled={loading || hasBlockingErrors || selectedAccounts.length !== 1}
-                className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 transition-colors disabled:opacity-50"
+                className="h-9 gap-2 text-gray-700 dark:text-slate-200 border-2 border-gray-300 dark:border-slate-700 dark:bg-slate-800 font-semibold hover:border-green-400 hover:text-green-600 hover:bg-green-50/50 dark:hover:bg-green-950/30 transition-colors disabled:opacity-50"
                 title={selectedAccounts.length !== 1 ? 'Timeslots work with one selected account at a time' : 'Add this post to the next unfilled timeslot'}
               >
                 <FaClock className="text-xs" />
@@ -2801,7 +2801,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             variant="outline" size="sm"
             onClick={() => setShowSchedulePicker(true)}
             disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
-            className="h-9 gap-2 text-gray-700 border-2 border-gray-300 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
+            className="h-9 gap-2 text-gray-700 dark:text-slate-200 border-2 border-gray-300 dark:border-slate-700 dark:bg-slate-800 font-semibold hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition-colors"
           >
             <FaClock className="text-xs" />
             {isEditMode ? 'Update schedule' : 'Schedule'}

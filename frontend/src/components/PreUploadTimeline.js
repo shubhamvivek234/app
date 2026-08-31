@@ -190,16 +190,16 @@ const PreUploadTimeline = ({ post, compact = false }) => {
   };
 
   const stateText = {
-    done: 'text-emerald-700',
-    active: 'text-blue-700',
-    pending: 'text-gray-400',
-    error: 'text-red-600',
+    done: 'text-emerald-700 dark:text-emerald-400',
+    active: 'text-blue-700 dark:text-blue-400',
+    pending: 'text-gray-400 dark:text-slate-500',
+    error: 'text-red-600 dark:text-red-400',
   };
 
   return (
-    <div className={`${compact ? '' : 'px-4 pb-3 pt-2'} border-t border-gray-100 bg-gray-50/60`}>
+    <div className={`${compact ? '' : 'px-4 pb-3 pt-2'} border-t border-gray-100 dark:border-slate-800 bg-gray-50/60 dark:bg-slate-900/60`}>
       {!compact && (
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 mb-2">
           Upload timeline
         </p>
       )}
@@ -207,7 +207,7 @@ const PreUploadTimeline = ({ post, compact = false }) => {
         {steps.map((step, i) => (
           <li key={i} className="flex items-center gap-2">
             {stateIcon[step.state] || <ClockIcon />}
-            <span className={`text-[11px] leading-tight ${stateText[step.state] || 'text-gray-500'}`}>
+            <span className={`text-[11px] leading-tight ${stateText[step.state] || 'text-gray-500 dark:text-slate-400'}`}>
               {step.time && (
                 <span className="font-semibold mr-1">{step.time}</span>
               )}

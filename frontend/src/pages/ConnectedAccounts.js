@@ -363,16 +363,16 @@ const PlatformCard = ({
   const count = accounts.length;
 
   return (
-    <section className="flex h-[44rem] flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
-      <div className={`border-b px-5 py-5 ${platform.bg} ${platform.border}`}>
+    <section className="flex h-[44rem] flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className={`border-b px-5 py-5 ${platform.bg} ${platform.border} dark:bg-slate-900/60 dark:border-slate-800`}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
-            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border bg-white/80 shadow-sm ${platform.border}`}>
+            <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border bg-white/80 dark:bg-slate-800 shadow-sm ${platform.border} dark:border-slate-700`}>
               <Icon className={`text-xl ${platform.color}`} />
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-semibold text-gray-900">{platform.name}</h2>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-slate-100">{platform.name}</h2>
                 {platform.badge ? (
                   <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] font-medium text-gray-600">
                     {platform.badge}
@@ -923,25 +923,25 @@ const ConnectedAccounts = () => {
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-6xl space-y-8 pb-12">
-        <section className="rounded-[32px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
+        <section className="rounded-[32px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">Connections</p>
-              <h1 className="mt-3 text-3xl font-semibold text-gray-900">Connected Accounts</h1>
-              <p className="mt-2 max-w-2xl text-sm text-gray-600">
+              <p className="text-sm font-semibold uppercase tracking-[0.22em] text-gray-400 dark:text-slate-500">Connections</p>
+              <h1 className="mt-3 text-3xl font-semibold text-gray-900 dark:text-slate-100">Connected Accounts</h1>
+              <p className="mt-2 max-w-2xl text-sm text-gray-600 dark:text-slate-400">
                 Keep every channel healthy, reconnect accounts before they interrupt scheduling, and manage provider-specific setup from one place.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <a
                 href="/support"
-                className="inline-flex items-center justify-center rounded-full border border-gray-300 px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                className="inline-flex items-center justify-center rounded-full border border-gray-300 dark:border-slate-700 px-4 py-2 font-medium text-gray-700 dark:text-slate-200 transition-colors hover:bg-gray-50 dark:hover:bg-slate-800"
               >
                 Need help?
               </a>
               <button
                 onClick={fetchAccounts}
-                className="inline-flex items-center justify-center rounded-full bg-gray-900 px-4 py-2 font-semibold text-white transition-colors hover:bg-black"
+                className="inline-flex items-center justify-center rounded-full bg-gray-900 dark:bg-slate-100 px-4 py-2 font-semibold text-white dark:text-slate-900 transition-colors hover:bg-black dark:hover:bg-white"
               >
                 Refresh status
               </button>

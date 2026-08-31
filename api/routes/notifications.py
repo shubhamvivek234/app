@@ -127,6 +127,13 @@ async def mark_all_read(current_user: CurrentUser, db: DB):
     return {"updated": result.modified_count}
 
 
+@router.delete("/notifications/clear-all", status_code=status.HTTP_200_OK)
+async def clear_all_notifications(current_user: CurrentUser, db: DB):
+    user_id = current_user["user_id"]
+    result = await db.notifications.delete_many(_in_app_notification_query(user_id))
+    return {"deleted": result.deleted_count}
+
+
 @router.delete("/notifications/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_notification(
     notification_id: str,

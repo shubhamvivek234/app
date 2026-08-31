@@ -1116,15 +1116,15 @@ const PlatformEditor = ({
   return (
   <>
     <div
-      className="bg-offwhite rounded-xl border border-gray-200 shadow-sm mb-3 overflow-hidden"
+      className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm mb-3 overflow-hidden"
       onDragEnter={onDragEnter}
       onDragOver={(e) => { e.preventDefault(); onDragOver?.(e); }}
     >
       {/* ── Platform header (always visible, clickable to expand/collapse) ── */}
       <div
         className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none transition-colors ${
-          isExpanded ? 'border-b border-gray-100' : ''
-        } hover:bg-gray-50/70`}
+          isExpanded ? 'border-b border-gray-100 dark:border-slate-800' : ''
+        } hover:bg-gray-50/70 dark:hover:bg-slate-800/50`}
         onClick={onToggleExpand}
         draggable
         onDragStart={(e) => { e.stopPropagation(); onDragStart?.(e); }}
@@ -1132,7 +1132,7 @@ const PlatformEditor = ({
       >
         {/* Drag handle */}
         <FaGripVertical
-          className="text-gray-300 hover:text-gray-400 flex-shrink-0 text-sm cursor-grab active:cursor-grabbing"
+          className="text-gray-300 dark:text-slate-600 hover:text-gray-400 dark:hover:text-slate-400 flex-shrink-0 text-sm cursor-grab active:cursor-grabbing"
           onClick={(e) => e.stopPropagation()}
         />
 
@@ -1157,12 +1157,12 @@ const PlatformEditor = ({
                   onChange={() => onPostFormatChange(fmt)}
                   className="w-3.5 h-3.5 accent-pink-500"
                 />
-                <span className="text-sm font-medium text-gray-700">{fmt}</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{fmt}</span>
               </label>
             ))}
           </div>
         ) : (
-          <span className="text-sm font-semibold text-gray-700 capitalize">{label}</span>
+          <span className="text-sm font-semibold text-gray-700 dark:text-slate-200 capitalize">{label}</span>
         )}
 
         <div className="flex-1" />
@@ -1286,7 +1286,7 @@ const PlatformEditor = ({
               value={content}
               onChange={(e) => onContentChange(e.target.value)}
               placeholder="What would you like to share?"
-              className="min-h-[90px] resize-none border-none focus-visible:ring-0 px-0 text-[14px] text-gray-800 placeholder:text-gray-300 bg-transparent"
+              className="min-h-[90px] resize-none border-none focus-visible:ring-0 px-0 text-[14px] text-gray-800 dark:text-slate-100 placeholder:text-gray-300 dark:placeholder:text-slate-600 bg-transparent"
             />
           </div>
 

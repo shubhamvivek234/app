@@ -212,12 +212,12 @@ const Inbox = () => {
       <div className="flex h-[calc(100vh-64px)] overflow-hidden">
 
         {/* ── Left panel — message list ── */}
-        <div className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col bg-offwhite">
+        <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-slate-800 flex flex-col bg-offwhite dark:bg-slate-900">
           {/* Header */}
-          <div className="px-4 pt-5 pb-3 border-b border-gray-100">
+          <div className="px-4 pt-5 pb-3 border-b border-gray-100 dark:border-slate-800">
             <div className="flex items-center gap-2 mb-3">
-              <FaInbox className="text-gray-600" />
-              <h1 className="text-base font-semibold text-gray-900">Inbox</h1>
+              <FaInbox className="text-gray-600 dark:text-slate-400" />
+              <h1 className="text-base font-semibold text-gray-900 dark:text-slate-100">Inbox</h1>
               {stats.unread > 0 && (
                 <span className="ml-auto text-xs font-bold bg-blue-500 text-white px-2 py-0.5 rounded-full">
                   {stats.unread}
@@ -232,8 +232,8 @@ const Inbox = () => {
                   onClick={() => { setActiveTab(tab.key); setSelectedId(null); }}
                   className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors
                     ${activeTab === tab.key
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-offwhite border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                      ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                      : 'bg-offwhite dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
                 >
                   {tab.label}
                 </button>
@@ -245,22 +245,22 @@ const Inbox = () => {
           <div className="flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center h-32">
-                <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 dark:border-slate-700 dark:border-t-indigo-400 rounded-full animate-spin" />
               </div>
             ) : messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 text-center px-4">
-                <FaInbox className="text-4xl text-gray-200 mb-2" />
-                <p className="text-sm text-gray-400">No messages here yet.</p>
-                <p className="text-xs text-gray-300 mt-1">Comments and DMs will appear here once synced.</p>
+                <FaInbox className="text-4xl text-gray-200 dark:text-slate-700 mb-2" />
+                <p className="text-sm text-gray-400 dark:text-slate-500">No messages here yet.</p>
+                <p className="text-xs text-gray-300 dark:text-slate-600 mt-1">Comments and DMs will appear here once synced.</p>
               </div>
             ) : (
               messages.map((msg) => (
                 <button
                   key={msg.id}
                   onClick={() => handleSelect(msg)}
-                  className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors
-                    ${selectedId === msg.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}
-                    ${msg.status === 'unread' ? 'bg-blue-50/40' : ''}`}
+                  className={`w-full text-left px-4 py-3 border-b border-gray-50 dark:border-slate-800/80 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors
+                    ${selectedId === msg.id ? 'bg-blue-50 dark:bg-indigo-950/40 border-l-2 border-l-blue-500' : ''}
+                    ${msg.status === 'unread' ? 'bg-blue-50/40 dark:bg-indigo-950/20' : ''}`}
                 >
                   <div className="flex items-start gap-2.5">
                     {msg.author_avatar
@@ -269,18 +269,18 @@ const Inbox = () => {
                     }
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5">
-                        <span className="text-xs font-semibold text-gray-800 truncate">{msg.author_name}</span>
+                        <span className="text-xs font-semibold text-gray-800 dark:text-slate-200 truncate">{msg.author_name}</span>
                         <span className="flex-shrink-0">{PLATFORM_ICONS[msg.platform] || null}</span>
-                        <span className="ml-auto text-[10px] text-gray-400 flex-shrink-0">
+                        <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500 flex-shrink-0">
                           {msg.received_at ? format(parseISO(msg.received_at), 'MMM d') : ''}
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         {msg.type === 'dm'
-                          ? <FaEnvelope className="text-[10px] text-gray-400 flex-shrink-0" />
-                          : <FaComment  className="text-[10px] text-gray-400 flex-shrink-0" />
+                          ? <FaEnvelope className="text-[10px] text-gray-400 dark:text-slate-500 flex-shrink-0" />
+                          : <FaComment  className="text-[10px] text-gray-400 dark:text-slate-500 flex-shrink-0" />
                         }
-                        <p className="text-xs text-gray-500 truncate">{msg.content}</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{msg.content}</p>
                         <span className="ml-auto">{statusBadge(msg.status)}</span>
                       </div>
                     </div>
@@ -292,23 +292,23 @@ const Inbox = () => {
         </div>
 
         {/* ── Right panel — message detail ── */}
-        <div className="flex-1 flex flex-col bg-offwhite overflow-hidden">
+        <div className="flex-1 flex flex-col bg-offwhite dark:bg-slate-950 overflow-hidden">
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
-              <FaInbox className="text-5xl text-gray-200 mb-3" />
-              <p className="text-gray-400 font-medium">Select a message to read</p>
+              <FaInbox className="text-5xl text-gray-200 dark:text-slate-800 mb-3" />
+              <p className="text-gray-400 dark:text-slate-500 font-medium">Select a message to read</p>
             </div>
           ) : (
             <>
               {/* Message header */}
-              <div className="px-6 py-4 bg-offwhite border-b border-gray-200 flex items-center gap-3">
+              <div className="px-6 py-4 bg-offwhite dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center gap-3">
                 {selected.author_avatar
                   ? <img src={selected.author_avatar} alt="" className="w-10 h-10 rounded-full object-cover" />
                   : <AvatarPlaceholder name={selected.author_name} className="w-10 h-10" />
                 }
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900">{selected.author_name}</p>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <p className="font-semibold text-gray-900 dark:text-slate-100">{selected.author_name}</p>
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
                     <span className="capitalize">{selected.platform}</span>
                     <span>·</span>
                     <span className="capitalize">{selected.type}</span>
@@ -322,7 +322,7 @@ const Inbox = () => {
                 </div>
                 <button
                   onClick={() => handleDelete(selected.id)}
-                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors"
                   title="Delete"
                 >
                   <FaTrash className="text-xs" />
@@ -337,8 +337,8 @@ const Inbox = () => {
                     ? <img src={selected.author_avatar} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                     : <AvatarPlaceholder name={selected.author_name} className="w-8 h-8" />
                   }
-                  <div className="bg-offwhite rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 max-w-lg">
-                    <p className="text-sm text-gray-800 leading-relaxed">{selected.content}</p>
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100 dark:border-slate-800 max-w-lg">
+                    <p className="text-sm text-gray-800 dark:text-slate-200 leading-relaxed">{selected.content}</p>
                   </div>
                 </div>
 
@@ -360,22 +360,22 @@ const Inbox = () => {
                 )}
 
                 {selected.platform_reply_error && (
-                  <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-red-600 mb-1">Reply failed</p>
-                    <p className="text-sm text-red-700">{selected.platform_reply_error}</p>
+                  <div className="rounded-xl border border-red-100 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-red-600 dark:text-red-400 mb-1">Reply failed</p>
+                    <p className="text-sm text-red-700 dark:text-red-300">{selected.platform_reply_error}</p>
                   </div>
                 )}
               </div>
 
               {/* Reply box */}
-              <div className="px-6 py-4 bg-offwhite border-t border-gray-200 space-y-2.5">
+              <div className="px-6 py-4 bg-offwhite dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-gray-500">Quick Smart Replies</span>
+                  <span className="text-[11px] font-bold text-gray-500 dark:text-slate-400">Quick Smart Replies</span>
                   <button
                     type="button"
                     onClick={handleGetAISuggestions}
                     disabled={loadingSuggestions}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
+                    className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 px-2.5 py-1 rounded-lg transition-colors"
                   >
                     <FaMagic className="text-[10px]" />
                     {loadingSuggestions ? 'Generating...' : '✨ Suggest Smart Reply'}
@@ -393,7 +393,7 @@ const Inbox = () => {
                           replyRef.current?.focus();
                           trackEvent('smart_reply_inserted', { platform: selected?.platform || 'linkedin' });
                         }}
-                        className="text-left text-xs p-2 bg-white hover:bg-indigo-50/70 border border-gray-200 hover:border-indigo-300 rounded-xl text-gray-700 transition-all font-medium"
+                        className="text-left text-xs p-2 bg-white dark:bg-slate-800 hover:bg-indigo-50/70 dark:hover:bg-indigo-950/50 border border-gray-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 rounded-xl text-gray-700 dark:text-slate-200 transition-all font-medium"
                       >
                         {sug}
                       </button>
@@ -411,7 +411,7 @@ const Inbox = () => {
                     }}
                     placeholder={`Reply to ${selected.author_name}…`}
                     rows={2}
-                    className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder:text-gray-300"
+                    className="flex-1 resize-none border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 rounded-xl px-3 py-2.5 text-sm text-gray-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder:text-gray-300 dark:placeholder:text-slate-600"
                   />
                   <button
                     onClick={handleReply}
@@ -422,7 +422,7 @@ const Inbox = () => {
                     <FaReply />
                   </button>
                 </div>
-                <p className="text-[10px] text-gray-300 mt-1.5">
+                <p className="text-[10px] text-gray-300 dark:text-slate-500 mt-1.5">
                   {selectedSupportsReply
                     ? `Reply will be posted directly to ${selected.platform}.`
                     : 'Replies are not supported for this platform in Inbox right now.'}

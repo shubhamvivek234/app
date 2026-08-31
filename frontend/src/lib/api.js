@@ -955,6 +955,13 @@ export const deleteNotification = async (notificationId) => {
   return true;
 };
 
+export const clearAllNotifications = async () => {
+  const response = await axios.delete(`${API}/notifications/clear-all`, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
 // ── Internal Notes (Stub - to be implemented) ──
 export const addInternalNote = async (postId, data) => {
   const response = await axios.post(`${API}/posts/${postId}/internal-notes`, data, {

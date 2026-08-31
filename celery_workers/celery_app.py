@@ -126,6 +126,7 @@ _TASK_MODULES = (
     "celery_workers.tasks.grace_period_reminders",
     "celery_workers.tasks.approval_reminders",
     "celery_workers.tasks.rss_poller",
+    "celery_workers.tasks.notifications",
 )
 
 _SCHEDULE_MODULES = (

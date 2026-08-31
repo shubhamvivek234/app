@@ -211,9 +211,9 @@ const Dashboard = () => {
   if (!dashboard) {
     return (
       <DashboardLayout>
-        <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-10 shadow-sm">
-          <h1 className="text-2xl font-semibold text-slate-950">Dashboard unavailable</h1>
-          <p className="mt-3 text-slate-600">The control center could not be loaded right now. Retry the request and keep the rest of the workspace untouched.</p>
+        <div className="mx-auto max-w-3xl rounded-3xl border border-slate-200 bg-white p-10 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h1 className="text-2xl font-semibold text-slate-950 dark:text-slate-100">Dashboard unavailable</h1>
+          <p className="mt-3 text-slate-600 dark:text-slate-400">The control center could not be loaded right now. Retry the request and keep the rest of the workspace untouched.</p>
           <Button className="mt-6" onClick={handleRefresh}>
             <FaRedo className="mr-2" />
             Retry

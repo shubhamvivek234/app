@@ -2903,7 +2903,7 @@ const Analytics = () => {
       <div className="flex h-full overflow-hidden">
 
         {/* ── Left Platform Sidebar ──────────────────────────────────── */}
-        <aside className="w-52 shrink-0 border-r border-gray-200 bg-offwhite overflow-y-auto hidden md:block">
+        <aside className="w-52 shrink-0 border-r border-gray-200 bg-offwhite overflow-y-auto hidden md:block dark:border-slate-800 dark:bg-slate-900">
           <PlatformSidebar
             accounts={accounts}
             selectedPlatform={selectedPlatform}
@@ -2917,7 +2917,7 @@ const Analytics = () => {
         </aside>
 
         {/* ── Right Content Area ─────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 overflow-y-auto">
+        <div className="flex-1 min-w-0 overflow-y-auto dark:bg-slate-950">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
 
         {/* ── Content header: account selector + date range ────────── */}
@@ -2938,7 +2938,7 @@ const Analytics = () => {
               />
             ) : (
               /* No platform selected → show Analytics title */
-              <h1 className="text-xl font-bold text-gray-900">Analytics</h1>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-slate-100">Analytics</h1>
             )}
           </div>
 
@@ -2946,20 +2946,20 @@ const Analytics = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowReportModal(true)}
-              className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200/60 shadow-2xs transition-all active:scale-95"
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800/60 text-xs font-bold rounded-xl border border-indigo-200/60 shadow-2xs transition-all active:scale-95"
             >
               <FaFilePdf className="text-xs" /> Export Branded PDF
             </button>
 
-            <div className="flex bg-gray-100 rounded-lg p-1">
+            <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
               {DAYS_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setDays(opt.value)}
                   className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
                     ${days === opt.value
-                      ? 'bg-offwhite text-indigo-600 shadow-sm'
-                      : 'text-gray-500 hover:text-gray-700'}`}
+                      ? 'bg-offwhite dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'}`}
                 >
                   {opt.label}
                 </button>

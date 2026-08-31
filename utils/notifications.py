@@ -135,6 +135,8 @@ async def emit_notification(
         if extra_fields:
             payload.update(extra_fields)
 
+        should_send_email = False
+
         if dedup_key:
             query = {
                 "user_id": user_id,
@@ -158,17 +160,38 @@ async def emit_notification(
                     },
                     upsert=True,
                 )
+                if getattr(result, "matched_count", 0) or getattr(result, "upserted_id", None):
+                    written.append(channel)
+                    should_send_email = True
             else:
                 result = await db.notifications.update_one(
                     query,
                     {"$setOnInsert": payload},
                     upsert=True,
                 )
-            if getattr(result, "matched_count", 0) or getattr(result, "upserted_id", None):
-                written.append(channel)
-            continue
+                if getattr(result, "upserted_id", None):
+                    written.append(channel)
+                    should_send_email = True
+                elif getattr(result, "matched_count", 0):
+                    written.append(channel)
+        else:
+            await db.notifications.insert_one(payload)
+            written.append(channel)
+            should_send_email = True
 
-        await db.notifications.insert_one(payload)
-        written.append(channel)
+        if channel == "email" and should_send_email:
+            try:
+                from celery_workers.tasks.notifications import send_notification_email_task
+                send_notification_email_task.delay(
+                    user_id=user_id,
+                    event=event,
+                    title=title,
+                    message=message,
+                    target_path=payload["target_path"],
+                    metadata=metadata,
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Failed to enqueue email notification task: %s", exc)
 
     return written

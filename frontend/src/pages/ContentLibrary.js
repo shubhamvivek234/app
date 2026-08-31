@@ -517,19 +517,19 @@ const ContentLibrary = () => {
     <DashboardLayout>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
             {pageTitle} <span className="text-slate-400 text-lg font-normal cursor-help" title="These are all your created posts">ⓘ</span>
           </h1>
           <div className="flex flex-wrap items-center gap-2">
             {initialStatus === 'scheduled' && (
-              <div className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-1">
+              <div className="inline-flex rounded-full border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-900 p-1">
                 <button
                   type="button"
                   onClick={() => handleScheduledViewChange('list')}
                   className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                     scheduledView === 'list'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   List
@@ -539,8 +539,8 @@ const ContentLibrary = () => {
                   onClick={() => handleScheduledViewChange('calendar')}
                   className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                     scheduledView === 'calendar'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                   }`}
                 >
                   Calendar
@@ -555,7 +555,7 @@ const ContentLibrary = () => {
         </div>
 
         {/* Filters Row */}
-        <div className="flex flex-wrap items-center gap-4 bg-offwhite p-3 rounded-lg border border-slate-200 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4 bg-offwhite dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
           {/* Search */}
           <div className="relative">
             <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none" />
@@ -564,16 +564,16 @@ const ContentLibrary = () => {
               placeholder="Search posts…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 w-44 placeholder:text-gray-300 text-gray-700"
+              className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-950 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 w-44 placeholder:text-gray-300 dark:placeholder:text-slate-600 text-gray-700 dark:text-slate-200"
             />
           </div>
 
-          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+          <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block"></div>
 
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-slate-600">Sort by:</label>
+            <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Sort by:</label>
             <select 
-              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              className="text-sm border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
               value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}
             >
               <option value="newest">Newest First</option>
@@ -581,12 +581,12 @@ const ContentLibrary = () => {
             </select>
           </div>
 
-          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+          <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block"></div>
 
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-slate-600">Platform:</label>
+            <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Platform:</label>
             <select 
-              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              className="text-sm border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
               value={selectedPlatform} onChange={(e) => setSelectedPlatform(e.target.value)}
             >
               <option value="all">All Platforms</option>
@@ -596,12 +596,12 @@ const ContentLibrary = () => {
             </select>
           </div>
 
-          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+          <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block"></div>
 
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-slate-600">Time:</label>
+            <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Time:</label>
             <select 
-              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              className="text-sm border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
               value={selectedTime} onChange={(e) => setSelectedTime(e.target.value)}
             >
               {initialStatus === 'published' ? (
@@ -616,12 +616,12 @@ const ContentLibrary = () => {
             </select>
           </div>
 
-          <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+          <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block"></div>
 
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-slate-600">Accounts:</label>
+            <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Accounts:</label>
             <select 
-              className="text-sm border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
+              className="text-sm border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 py-1.5"
               value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)}
             >
               <option value="all">All Accounts</option>
@@ -646,7 +646,7 @@ const ContentLibrary = () => {
         /* Posts Grid Layout */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredPosts.length === 0 ? (
-            <div className="col-span-full border-2 border-dashed border-slate-200 rounded-xl p-12 text-center text-slate-500">
+            <div className="col-span-full border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-12 text-center text-slate-500 dark:text-slate-400">
               {emptyStateMessage}
             </div>
           ) : (
@@ -674,10 +674,10 @@ const ContentLibrary = () => {
               return (
                 <div
                   key={post.id}
-                  className="bg-offwhite rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
+                  className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
                 >
                   {/* Action Dropdown Hover (Top Right) */}
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 rounded border border-slate-100 px-1 py-1 backdrop-blur-sm shadow-sm">
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 dark:bg-slate-800/90 rounded border border-slate-100 dark:border-slate-700 px-1 py-1 backdrop-blur-sm shadow-sm">
                     {canEditPost ? (
                       <button onClick={() => navigate(`/create-post?edit=${encodeURIComponent(post.id)}`)} className="p-1 px-2 text-slate-500 hover:text-indigo-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
                         Edit

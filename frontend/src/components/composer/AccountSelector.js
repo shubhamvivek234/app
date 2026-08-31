@@ -48,7 +48,7 @@ const AccountSelector = ({
 
   return (
     <div className="flex flex-wrap gap-3 items-center">
-      <span className="text-xs font-semibold text-gray-500 mr-1">Post to</span>
+      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 mr-1">Post to</span>
 
       {accounts.map((account) => {
         const platformInfo = platformIcons[account.platform] || {};
@@ -60,9 +60,9 @@ const AccountSelector = ({
           : null;
         const hex = RING_HEX[account.platform] || '#3B82F6';
 
-        // Use box-shadow to draw the ring: 2px white gap + 2px colored ring
+        // Use box-shadow to draw the ring: 2px gap + 2px colored ring
         const ringStyle = isSelected
-          ? { boxShadow: `0 0 0 2px white, 0 0 0 4px ${hex}` }
+          ? { boxShadow: `0 0 0 2px var(--bg-card, #ffffff), 0 0 0 4px ${hex}` }
           : {};
 
         return (
@@ -91,17 +91,17 @@ const AccountSelector = ({
 
               {/* Platform icon badge */}
               {Icon && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-offwhite border border-gray-200 flex items-center justify-center shadow-sm">
+                <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-offwhite dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center shadow-sm">
                   <Icon className={`text-[10px] ${platformInfo.color}`} />
                 </div>
               )}
             </button>
 
             {/* Hover tooltip */}
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 shadow-lg">
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-slate-800 border dark:border-slate-700 text-white text-xs rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 shadow-lg">
               <span className="capitalize">{account.platform}</span>: {displayName}
               {accountTypeLabel ? <span> · {accountTypeLabel}</span> : null}
-              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-slate-800" />
             </div>
           </div>
         );
