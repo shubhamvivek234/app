@@ -1476,6 +1476,37 @@ export const trackBioLinkClick = async (handle, linkId) => {
   return response.data;
 };
 
+export const trackBioInteraction = async (handle, data) => {
+  const response = await axios.post(`${API}/bio-pages/public/${handle}/track`, data);
+  return response.data;
+};
+
+export const subscribeBioNewsletter = async (handle, email, sourceBlockId = null) => {
+  const response = await axios.post(`${API}/bio-pages/public/${handle}/subscribe`, {
+    email,
+    source_block_id: sourceBlockId,
+  });
+  return response.data;
+};
+
+export const getBioAnalytics = async () => {
+  const response = await axios.get(`${API}/bio-pages/analytics`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getBioLeads = async () => {
+  const response = await axios.get(`${API}/bio-pages/leads`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const exportBioLeadsCsv = async () => {
+  const response = await axios.get(`${API}/bio-pages/leads/export`, {
+    headers: getAuthHeaders(),
+    responseType: "blob",
+  });
+  return response.data;
+};
+
 // ── Branded PDF Reports & Schedules (Feature 4) ──
 export const exportBrandedReport = async (data) => {
   const response = await axios.post(`${API}/analytics/report/export`, data, { headers: getAuthHeaders() });

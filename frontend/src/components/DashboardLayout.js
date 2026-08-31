@@ -32,6 +32,8 @@ import {
   FaRegClock,
   FaRss,
   FaPalette,
+  FaMobileAlt,
+  FaLink,
 } from 'react-icons/fa';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -147,6 +149,8 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       { name: 'Dashboard', path: '/dashboard', icon: FaLayerGroup, badge: 'Live', badgeBg: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
     ],
     growth: [
+      { name: 'Smart Bio', path: '/link-in-bio', icon: FaMobileAlt, badge: 'Bio Hub', badgeBg: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
+      { name: 'Short Links', path: '/short-links', icon: FaLink },
       { name: 'Social Tools', path: '/social-tools', icon: FaThLarge, badge: 'Hub', badgeBg: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' },
       { name: 'Graphic Studio', path: '/social-graphic-studio', icon: FaPalette, badge: 'PDF & Visuals', badgeBg: 'bg-pink-50 text-pink-700 dark:bg-pink-950/50 dark:text-pink-300' },
       { name: 'Media Library', path: '/media-library', icon: FaImages },

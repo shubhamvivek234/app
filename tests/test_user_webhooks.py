@@ -2,23 +2,61 @@ import hashlib
 import hmac
 import json
 import pytest
-from httpx import AsyncClient, ASGITransport
 from datetime import datetime, timezone
 from bson import ObjectId
+from unittest.mock import AsyncMock, patch
 
-from api.main import create_app
 from api.routes.user_webhooks import (
     _format_slack_payload,
     _format_discord_payload,
     _is_slack_webhook,
     _is_discord_webhook,
     dispatch_webhook_event,
+    register_webhook,
+    WebhookEndpointCreate,
 )
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+class _FakeCollection:
+    def __init__(self, items=None):
+        self.items = items or []
+        self.inserted = []
+
+    async def find_one(self, query):
+        for item in self.items:
+            if all(item.get(k) == v for k, v in query.items() if not isinstance(v, dict)):
+                return item
+        return None
+
+    def find(self, query, projection=None):
+        return self
+
+    def sort(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    async def to_list(self, length=20):
+        return self.items
+
+    async def count_documents(self, query):
+        return len(self.items)
+
+    async def insert_one(self, doc):
+        self.inserted.append(doc)
+        self.items.append(doc)
+        return type("Result", (), {"inserted_id": doc.get("_id", ObjectId())})()
+
+    async def update_one(self, query, update, upsert=False):
+        return type("Result", (), {"matched_count": 1, "modified_count": 1})()
+
+
+class _FakeDB:
+    def __init__(self):
+        self.webhook_endpoints = _FakeCollection()
+        self.webhook_deliveries = _FakeCollection()
+        self.users = _FakeCollection()
 
 
 def test_slack_discord_formatters():
@@ -43,45 +81,31 @@ def test_slack_discord_formatters():
 
 
 @pytest.mark.asyncio
-async def test_webhook_crud_and_dispatch(test_db):
-    user_id = "test_user_wh"
-    workspace_id = "ws_test_wh"
+async def test_webhook_register_and_dispatch():
+    db = _FakeDB()
+    user = {"user_id": "usr_123", "default_workspace_id": "ws_123"}
 
-    # Seed user & workspace
-    await test_db.users.insert_one({
-        "user_id": user_id,
-        "email": "wh_tester@example.com",
-        "default_workspace_id": workspace_id,
-        "email_verified": True,
-        "is_active": True,
-    })
+    # Mock ssrf_guard.is_safe_url to return True for test URLs
+    with patch("api.routes.user_webhooks.is_safe_url", return_value=True):
+        body = WebhookEndpointCreate(
+            url="https://example.com/social-webhook",
+            events=["post.published", "post.failed"],
+            description="Production CRM Webhook",
+        )
+        resp = await register_webhook(body, current_user=user, db=db)
 
-    # Register endpoint directly in collection
-    secret = "whsec_1234567890abcdef"
-    secret_hash = hashlib.sha256(secret.encode()).hexdigest()
-    endpoint_id = ObjectId()
+        assert resp.url == "https://example.com/social-webhook"
+        assert resp.signing_secret is not None
+        assert resp.signing_secret.startswith("whsec_")
+        assert len(db.webhook_endpoints.items) == 1
 
-    await test_db.webhook_endpoints.insert_one({
-        "_id": endpoint_id,
-        "workspace_id": workspace_id,
-        "user_id": user_id,
-        "url": "https://httpbin.org/post",
-        "events": ["post.published", "post.failed"],
-        "description": "Test endpoint",
-        "signing_secret_hash": secret_hash,
-        "active": True,
-        "created_at": datetime.now(timezone.utc),
-    })
-
-    # Verify listing finds it
-    endpoints = await test_db.webhook_endpoints.find({"workspace_id": workspace_id, "active": True}).to_list(length=10)
-    assert len(endpoints) == 1
-    assert endpoints[0]["url"] == "https://httpbin.org/post"
-
-    # Test dispatching with no exception
-    await dispatch_webhook_event(
-        test_db,
-        workspace_id=workspace_id,
-        event="post.published",
-        payload={"post_id": "p_test", "title": "Test dispatch", "status": "published"}
-    )
+        # Test dispatching event
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = type("Resp", (), {"status_code": 200, "text": "ok"})()
+            await dispatch_webhook_event(
+                db,
+                workspace_id="ws_123",
+                event="post.published",
+                payload={"post_id": "p_test", "title": "Published post", "status": "published"}
+            )
+            assert mock_post.called
