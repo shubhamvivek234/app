@@ -2,37 +2,64 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
+  FaBolt,
   FaBook,
   FaCloud,
   FaCode,
   FaCopy,
   FaGlobe,
+  FaHistory,
   FaKey,
   FaLaptopCode,
   FaPlug,
+  FaPlus,
   FaServer,
+  FaShieldAlt,
+  FaSpinner,
   FaTrash,
 } from 'react-icons/fa';
 
 import DashboardLayout from '@/components/DashboardLayout';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/context/AuthContext';
 import {
   createApiKey,
   createPersonalToken,
+  createWebhookEndpoint,
   deleteApiKey,
   deletePersonalToken,
+  deleteWebhookEndpoint,
   getApiKeys,
   getDeveloperScopes,
   getPersonalTokens,
+  getWebhookDeliveries,
+  getWebhookEndpoints,
+  testWebhookEndpoint,
 } from '@/lib/api';
 import { hasWorkspacePermission } from '@/lib/workspacePermissions';
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || 'https://api.unravler.com').replace(/\/$/, '');
 const PUBLIC_API_BASE = `${BACKEND_URL}/api/public`;
 const MCP_HTTP_ENDPOINT = `${BACKEND_URL}/mcp`;
+
+const SUPPORTED_WEBHOOK_EVENTS = [
+  { key: 'post.published', label: 'post.published', desc: 'Fires when a post successfully goes live on connected channels' },
+  { key: 'post.failed', label: 'post.failed', desc: 'Fires when publishing fails with platform error details' },
+  { key: 'post.scheduled', label: 'post.scheduled', desc: 'Fires when a new draft is scheduled into the queue' },
+  { key: 'post.cancelled', label: 'post.cancelled', desc: 'Fires when a scheduled post is removed or cancelled' },
+  { key: 'account.disconnected', label: 'account.disconnected', desc: 'Fires when an OAuth token expires or permissions are lost' },
+  { key: 'post.approval_requested', label: 'post.approval_requested', desc: 'Fires when a draft is submitted for team approval' },
+];
 
 const REST_GROUPS = [
   {
@@ -73,11 +100,11 @@ const REST_GROUPS = [
   {
     title: 'Webhooks & Automation Suite',
     items: [
-      { method: 'POST', path: '/webhooks/inbound/post', scope: 'posts:write', description: 'Inbound automation webhook for n8n, Make.com, and Zapier to create or schedule posts.' },
-      { method: 'GET', path: '/webhooks', scope: 'webhooks:manage', description: 'List registered outbound HTTPS webhooks.' },
-      { method: 'POST', path: '/webhooks', scope: 'webhooks:manage', description: 'Register an HTTPS endpoint with HMAC SHA-256 signature verification.' },
-      { method: 'DELETE', path: '/webhooks/{webhook_id}', scope: 'webhooks:manage', description: 'Revoke and delete a registered outbound webhook.' },
-      { method: 'POST', path: '/webhooks/{webhook_id}/test', scope: 'webhooks:manage', description: 'Send a test event payload to verify delivery to your server.' },
+      { method: 'POST', path: '/api/v1/webhooks/inbound/post', scope: 'posts:write', description: 'Inbound automation webhook for n8n, Make.com, and Zapier to create or schedule posts.' },
+      { method: 'GET', path: '/api/v1/webhooks/endpoints', scope: 'webhooks:manage', description: 'List registered outbound HTTPS webhooks.' },
+      { method: 'POST', path: '/api/v1/webhooks/endpoints', scope: 'webhooks:manage', description: 'Register an HTTPS endpoint with HMAC SHA-256 signature verification.' },
+      { method: 'DELETE', path: '/api/v1/webhooks/endpoints/{id}', scope: 'webhooks:manage', description: 'Revoke and delete a registered outbound webhook.' },
+      { method: 'POST', path: '/api/v1/webhooks/endpoints/{id}/test', scope: 'webhooks:manage', description: 'Send a test event payload to verify delivery to your server.' },
     ],
   },
   {
@@ -91,10 +118,10 @@ const REST_GROUPS = [
 ];
 
 const METHOD_STYLES = {
-  GET: 'bg-blue-50 text-blue-700 border-blue-200',
-  POST: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  PATCH: 'bg-amber-50 text-amber-700 border-amber-200',
-  DELETE: 'bg-rose-50 text-rose-700 border-rose-200',
+  GET: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800',
+  POST: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+  PATCH: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+  DELETE: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
 };
 
 function CopyButton({ text, label = 'Copy' }) {
@@ -110,7 +137,7 @@ function CopyButton({ text, label = 'Copy' }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-50"
+      className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
     >
       <FaCopy className="text-[10px]" />
       {copied ? 'Copied' : label}
@@ -120,7 +147,7 @@ function CopyButton({ text, label = 'Copy' }) {
 
 function CodeBlock({ label, children }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-slate-950">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-slate-950 dark:border-slate-800">
       <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{label}</span>
         <CopyButton text={children} />
@@ -134,8 +161,8 @@ function ScopePicker({ scopes, selectedScopes, onToggle, title }) {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-sm font-medium text-gray-900">{title}</p>
-        <p className="text-xs text-gray-500">Choose the exact capabilities this credential should be allowed to use.</p>
+        <p className="text-sm font-medium text-gray-900 dark:text-slate-100">{title}</p>
+        <p className="text-xs text-gray-500 dark:text-slate-400">Choose the exact capabilities this credential should be allowed to use.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {scopes.map((scope) => {
@@ -145,17 +172,22 @@ function ScopePicker({ scopes, selectedScopes, onToggle, title }) {
               key={scope}
               className={`flex cursor-pointer items-center justify-between rounded-2xl border px-3 py-2 text-sm transition ${
                 checked
-                  ? 'border-green-300 bg-green-50 text-green-900'
-                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  ? 'border-green-300 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/60 dark:text-green-200'
+                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
               }`}
             >
-              <span className="font-medium">{scope}</span>
+              <span className="font-mono text-xs">{scope}</span>
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-300"
+                className="sr-only"
                 checked={checked}
                 onChange={() => onToggle(scope)}
               />
+              <span className={`h-4 w-4 rounded-full border flex items-center justify-center text-[10px] ${
+                checked ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300 dark:border-slate-600'
+              }`}>
+                {checked ? '✓' : ''}
+              </span>
             </label>
           );
         })}
@@ -165,9 +197,9 @@ function ScopePicker({ scopes, selectedScopes, onToggle, title }) {
 }
 
 function CredentialList({ items, onDelete, emptyLabel }) {
-  if (!items.length) {
+  if (items.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+      <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
         {emptyLabel}
       </div>
     );
@@ -178,45 +210,43 @@ function CredentialList({ items, onDelete, emptyLabel }) {
       {items.map((item) => (
         <div
           key={item.id}
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm"
+          className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center lg:justify-between"
         >
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h4 className="text-sm font-semibold text-gray-900">{item.name}</h4>
-                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-600">
-                  {item.token_type}
-                </span>
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-mono text-slate-600">
-                  {item.key_prefix}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {(item.scopes || []).map((scope) => (
-                  <span key={scope} className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600">
-                    {scope}
-                  </span>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-4 text-xs text-gray-500">
-                <span>Created {new Date(item.created_at).toLocaleString()}</span>
-                <span>
-                  {item.last_used_at
-                    ? `Last used ${new Date(item.last_used_at).toLocaleString()}`
-                    : 'Not used yet'}
-                </span>
-              </div>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-gray-900 dark:text-slate-100">{item.name}</span>
+              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600 dark:bg-slate-800 dark:text-slate-300">
+                {item.masked_key || 'Personal token'}
+              </span>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-              onClick={() => onDelete(item.id)}
-            >
-              <FaTrash className="mr-2 text-xs" />
-              Revoke
-            </Button>
+            <div className="flex flex-wrap gap-1.5">
+              {(item.scopes || []).map((scope) => (
+                <span
+                  key={scope}
+                  className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 font-mono text-[11px] text-gray-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  {scope}
+                </span>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-slate-400">
+              <span>Created {new Date(item.created_at).toLocaleString()}</span>
+              <span>
+                {item.last_used_at
+                  ? `Last used ${new Date(item.last_used_at).toLocaleString()}`
+                  : 'Not used yet'}
+              </span>
+            </div>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/60"
+            onClick={() => onDelete(item.id)}
+          >
+            <FaTrash className="mr-2 text-xs" />
+            Revoke
+          </Button>
         </div>
       ))}
     </div>
@@ -240,39 +270,39 @@ function CredentialSection({
   generatedToken,
 }) {
   return (
-    <section className="space-y-5 rounded-[28px] border border-gray-200 bg-offwhite px-5 py-6 shadow-sm lg:px-7">
+    <section className="space-y-5 rounded-[28px] border border-gray-200 bg-offwhite px-5 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/80 lg:px-7">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 shadow-sm dark:bg-slate-800 dark:text-slate-300">
             <Icon className="text-[11px]" />
             {title}
           </div>
-          <p className="max-w-2xl text-sm text-gray-600">{copy}</p>
+          <p className="max-w-2xl text-sm text-gray-600 dark:text-slate-400">{copy}</p>
         </div>
       </div>
 
       {generatedToken ? (
-        <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
-          <p className="text-sm font-semibold text-green-900">Copy this token now</p>
-          <p className="mt-1 text-xs text-green-700">
+        <div className="rounded-2xl border border-green-200 bg-green-50 p-4 dark:border-green-900/60 dark:bg-green-950/40">
+          <p className="text-sm font-semibold text-green-900 dark:text-green-200">Copy this token now</p>
+          <p className="mt-1 text-xs text-green-700 dark:text-green-300">
             Raw tokens are only shown once. Save it in your client config or secret manager immediately.
           </p>
-          <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-green-200 bg-white p-3 lg:flex-row lg:items-center lg:justify-between">
-            <code className="break-all text-xs text-slate-800">{generatedToken}</code>
+          <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-green-200 bg-white p-3 dark:border-green-800 dark:bg-slate-900 lg:flex-row lg:items-center lg:justify-between">
+            <code className="break-all text-xs text-slate-800 dark:text-slate-100">{generatedToken}</code>
             <CopyButton text={generatedToken} label="Copy token" />
           </div>
         </div>
       ) : null}
 
       <form
-        className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4"
+        className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
         onSubmit={(event) => {
           event.preventDefault();
           onCreate();
         }}
       >
         <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-900" htmlFor={`${title}-name`}>
+          <label className="text-sm font-medium text-gray-900 dark:text-slate-100" htmlFor={`${title}-name`}>
             Credential name
           </label>
           <Input
@@ -280,6 +310,7 @@ function CredentialSection({
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder={title === 'Personal Tokens' ? 'Claude personal token' : 'Zapier workspace key'}
+            className="dark:border-slate-700 dark:bg-slate-800 dark:text-white"
           />
         </div>
         <ScopePicker
@@ -307,10 +338,335 @@ function CredentialSection({
   );
 }
 
+function WebhookSection({
+  endpoints,
+  onRegister,
+  onDelete,
+  onTest,
+  onViewDeliveries,
+  testingEndpointId,
+  busyRegister,
+  generatedSecret,
+  setGeneratedSecret,
+}) {
+  const [url, setUrl] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedEvents, setSelectedEvents] = useState(['post.published', 'post.failed']);
+
+  const handleToggleEvent = (evtKey) => {
+    setSelectedEvents((prev) =>
+      prev.includes(evtKey) ? prev.filter((e) => e !== evtKey) : [...prev, evtKey]
+    );
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!url.startsWith('https://')) {
+      toast.error('Webhook URL must use HTTPS');
+      return;
+    }
+    if (selectedEvents.length === 0) {
+      toast.error('Select at least one event');
+      return;
+    }
+    onRegister({ url, events: selectedEvents, description }, () => {
+      setUrl('');
+      setDescription('');
+      setSelectedEvents(['post.published', 'post.failed']);
+    });
+  };
+
+  const isSlackUrl = url.includes('hooks.slack.com');
+  const isDiscordUrl = url.includes('discord.com/api/webhooks');
+
+  return (
+    <section className="space-y-6 rounded-[28px] border border-gray-200 bg-offwhite px-5 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/80 lg:px-7">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-indigo-600 shadow-sm dark:bg-slate-800 dark:text-indigo-400">
+            <FaPlug className="text-[11px]" />
+            Outbound Webhooks & Integrations
+          </div>
+          <p className="max-w-3xl text-sm text-gray-600 dark:text-slate-400">
+            Receive real-time signed HMAC HTTP POST requests when posts publish, fail, or need approval. Slack and Discord URLs are automatically detected and delivered as rich interactive message cards.
+          </p>
+        </div>
+      </div>
+
+      {generatedSecret && (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50/80 p-4 dark:border-indigo-900/60 dark:bg-indigo-950/50">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-indigo-950 dark:text-indigo-200 flex items-center gap-2">
+              <FaShieldAlt className="text-indigo-600" />
+              Save your Webhook Signing Secret
+            </p>
+            <button
+              type="button"
+              onClick={() => setGeneratedSecret('')}
+              className="text-xs text-indigo-700 hover:text-indigo-900 dark:text-indigo-300"
+            >
+              Dismiss
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-indigo-800 dark:text-indigo-300/90">
+            Verify <code className="font-mono text-indigo-900 dark:text-indigo-200">X-Unravler-Signature</code> headers on incoming payloads with this secret. This secret is shown only once.
+          </p>
+          <div className="mt-3 flex flex-col gap-3 rounded-xl border border-indigo-200 bg-white p-3 dark:border-indigo-800 dark:bg-slate-900 lg:flex-row lg:items-center lg:justify-between">
+            <code className="break-all font-mono text-xs font-bold text-slate-900 dark:text-white">{generatedSecret}</code>
+            <CopyButton text={generatedSecret} label="Copy secret" />
+          </div>
+        </div>
+      )}
+
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              Target HTTPS Endpoint URL
+            </label>
+            <Input
+              type="url"
+              required
+              placeholder="https://api.yourdomain.com/webhooks or https://hooks.slack.com/services/..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+            {isSlackUrl && (
+              <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                ✨ Slack webhook detected: Payloads will be formatted as rich Slack Blocks with headers and buttons.
+              </p>
+            )}
+            {isDiscordUrl && (
+              <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                ✨ Discord webhook detected: Payloads will be formatted as color-coded Discord Embeds.
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1.5 sm:col-span-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              Description / Label (Optional)
+            </label>
+            <Input
+              placeholder="e.g. Slack #social-alerts channel, Production CRM Sync"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2 pt-1">
+          <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+            Subscribed Events
+          </label>
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {SUPPORTED_WEBHOOK_EVENTS.map((evt) => {
+              const checked = selectedEvents.includes(evt.key);
+              return (
+                <div
+                  key={evt.key}
+                  onClick={() => handleToggleEvent(evt.key)}
+                  className={`cursor-pointer rounded-xl border p-3 transition-all ${
+                    checked
+                      ? 'border-indigo-500 bg-indigo-50/70 text-indigo-950 dark:border-indigo-500 dark:bg-indigo-950/40 dark:text-indigo-200'
+                      : 'border-slate-200 bg-slate-50/60 text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-bold">{evt.label}</span>
+                    <span className={`h-4 w-4 rounded-full border flex items-center justify-center text-[10px] ${
+                      checked ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300 dark:border-slate-600'
+                    }`}>
+                      {checked ? '✓' : ''}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-tight text-slate-500 dark:text-slate-400">{evt.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="pt-2">
+          <Button type="submit" disabled={busyRegister || !url.trim() || selectedEvents.length === 0} className="bg-indigo-600 text-white hover:bg-indigo-700 font-bold">
+            {busyRegister ? <FaSpinner className="animate-spin mr-2" /> : <FaPlus className="mr-2 text-xs" />}
+            Register Webhook Endpoint
+          </Button>
+        </div>
+      </form>
+
+      {endpoints.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center text-sm text-gray-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+          No webhook endpoints registered yet. Add your first HTTPS URL above to start streaming real-time events.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {endpoints.map((ep) => (
+            <div
+              key={ep.id}
+              className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center lg:justify-between"
+            >
+              <div className="space-y-2 min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100 truncate max-w-md">
+                    {ep.url}
+                  </span>
+                  {ep.description ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      {ep.description}
+                    </span>
+                  ) : null}
+                  {ep.last_delivery_status ? (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                      ep.last_delivery_status < 400
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                    }`}>
+                      {ep.last_delivery_status < 400 ? `HTTP ${ep.last_delivery_status} OK` : `HTTP ${ep.last_delivery_status} Err`}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {(ep.events || []).map((evt) => (
+                    <span
+                      key={evt}
+                      className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 font-mono text-[10px] font-medium text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/60 dark:text-indigo-300"
+                    >
+                      {evt}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-slate-400">
+                  <span>Registered {new Date(ep.created_at).toLocaleDateString()}</span>
+                  {ep.last_delivery_at && (
+                    <span>Last fired {new Date(ep.last_delivery_at).toLocaleTimeString()}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={testingEndpointId === ep.id}
+                  onClick={() => onTest(ep.id)}
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  {testingEndpointId === ep.id ? (
+                    <FaSpinner className="animate-spin text-xs" />
+                  ) : (
+                    <>
+                      <FaBolt className="mr-1.5 text-xs text-amber-500" />
+                      Test Ping
+                    </>
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onViewDeliveries(ep)}
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  <FaHistory className="mr-1.5 text-xs text-slate-400" />
+                  Logs
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onDelete(ep.id)}
+                  className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/60"
+                >
+                  <FaTrash className="text-xs" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DeliveriesModal({ endpoint, deliveries, open, onClose, loading }) {
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
+      <DialogContent className="max-w-2xl rounded-3xl border-slate-200 dark:border-slate-800 dark:bg-slate-900">
+        <DialogHeader className="text-left">
+          <DialogTitle className="flex items-center gap-2 text-slate-900 dark:text-white text-lg">
+            <FaHistory className="text-sky-500" />
+            Webhook Delivery History
+          </DialogTitle>
+          <DialogDescription className="dark:text-slate-400 truncate">
+            Target: <code className="font-mono text-xs">{endpoint?.url}</code>
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+            <FaSpinner className="animate-spin inline mr-2" /> Loading delivery logs...
+          </div>
+        ) : deliveries.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+            No delivery events recorded yet for this endpoint.
+          </div>
+        ) : (
+          <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+            {deliveries.map((deliv) => (
+              <div
+                key={deliv.id}
+                className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 p-3 text-xs dark:border-slate-800 dark:bg-slate-800/60"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{deliv.event}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                      deliv.success
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                    }`}>
+                      {deliv.status_code ? `HTTP ${deliv.status_code}` : 'Failed'}
+                    </span>
+                  </div>
+                  <p className="text-slate-500 dark:text-slate-400">
+                    {new Date(deliv.timestamp).toLocaleString()}
+                    {deliv.error && <span className="text-rose-500 ml-2">({deliv.error})</span>}
+                  </p>
+                </div>
+                <span className="font-mono font-semibold text-slate-600 dark:text-slate-300">
+                  {deliv.latency_ms}ms
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DevelopersContent({ user, navigate }) {
   const [scopeMeta, setScopeMeta] = useState(null);
   const [personalTokens, setPersonalTokens] = useState([]);
   const [workspaceKeys, setWorkspaceKeys] = useState([]);
+  const [webhookEndpoints, setWebhookEndpoints] = useState([]);
   const [loading, setLoading] = useState(Boolean(user));
   const [personalName, setPersonalName] = useState('Claude personal token');
   const [workspaceName, setWorkspaceName] = useState('Workspace integration key');
@@ -318,10 +674,17 @@ function DevelopersContent({ user, navigate }) {
   const [workspaceScopes, setWorkspaceScopes] = useState([]);
   const [generatedPersonalToken, setGeneratedPersonalToken] = useState('');
   const [generatedWorkspaceKey, setGeneratedWorkspaceKey] = useState('');
+  const [generatedWebhookSecret, setGeneratedWebhookSecret] = useState('');
   const [creatingPersonal, setCreatingPersonal] = useState(false);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [creatingWebhook, setCreatingWebhook] = useState(false);
+  const [testingEndpointId, setTestingEndpointId] = useState(null);
+  const [selectedLogsEndpoint, setSelectedLogsEndpoint] = useState(null);
+  const [deliveryLogs, setDeliveryLogs] = useState([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
   const canManageWorkspaceKeys = hasWorkspacePermission(user, 'api_key:manage');
+  const canManageWebhooks = hasWorkspacePermission(user, 'webhook:manage');
 
   useEffect(() => {
     if (!user) {
@@ -332,19 +695,19 @@ function DevelopersContent({ user, navigate }) {
     let active = true;
     const load = async () => {
       try {
-        const [scopesResponse, personalResponse, workspaceResponse] = await Promise.all([
+        const [scopesResponse, personalResponse, workspaceResponse, webhooksResponse] = await Promise.all([
           getDeveloperScopes(),
           getPersonalTokens(),
           canManageWorkspaceKeys ? getApiKeys() : Promise.resolve([]),
+          canManageWebhooks ? getWebhookEndpoints().catch(() => []) : Promise.resolve([]),
         ]);
 
-        if (!active) {
-          return;
-        }
+        if (!active) return;
 
         setScopeMeta(scopesResponse);
         setPersonalTokens(Array.isArray(personalResponse) ? personalResponse : []);
         setWorkspaceKeys(Array.isArray(workspaceResponse) ? workspaceResponse : []);
+        setWebhookEndpoints(Array.isArray(webhooksResponse) ? webhooksResponse : []);
         setPersonalScopes(scopesResponse.default_personal_scopes || []);
         setWorkspaceScopes(scopesResponse.default_workspace_scopes || []);
       } catch (error) {
@@ -362,7 +725,7 @@ function DevelopersContent({ user, navigate }) {
     return () => {
       active = false;
     };
-  }, [canManageWorkspaceKeys, user]);
+  }, [canManageWorkspaceKeys, canManageWebhooks, user]);
 
   const createPersonal = async () => {
     setCreatingPersonal(true);
@@ -398,6 +761,23 @@ function DevelopersContent({ user, navigate }) {
     }
   };
 
+  const registerWebhook = async (data, onSuccess) => {
+    setCreatingWebhook(true);
+    try {
+      const result = await createWebhookEndpoint(data);
+      if (result.signing_secret) {
+        setGeneratedWebhookSecret(result.signing_secret);
+      }
+      setWebhookEndpoints((prev) => [result, ...prev]);
+      toast.success('Webhook endpoint registered successfully');
+      onSuccess?.();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to register webhook endpoint');
+    } finally {
+      setCreatingWebhook(false);
+    }
+  };
+
   const revokePersonal = async (tokenId) => {
     try {
       await deletePersonalToken(tokenId);
@@ -417,6 +797,58 @@ function DevelopersContent({ user, navigate }) {
       toast.error(error?.response?.data?.detail || 'Failed to revoke workspace API key');
     }
   };
+
+  const revokeWebhook = async (endpointId) => {
+    try {
+      await deleteWebhookEndpoint(endpointId);
+      setWebhookEndpoints((prev) => prev.filter((item) => item.id !== endpointId));
+      toast.success('Webhook endpoint deleted');
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to delete webhook endpoint');
+    }
+  };
+
+  const handleTestWebhook = async (endpointId) => {
+    setTestingEndpointId(endpointId);
+    try {
+      const res = await testWebhookEndpoint(endpointId);
+      if (res.success) {
+        toast.success(`Test ping succeeded (${res.status_code} OK in ${res.latency_ms}ms)`);
+      } else {
+        toast.error(`Test ping failed: ${res.error || `HTTP ${res.status_code}`}`);
+      }
+      const updated = await getWebhookEndpoints();
+      setWebhookEndpoints(updated);
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to send test payload');
+    } finally {
+      setTestingEndpointId(null);
+    }
+  };
+
+  const handleOpenDeliveries = async (endpoint) => {
+    setSelectedLogsEndpoint(endpoint);
+    setLoadingLogs(true);
+    try {
+      const logs = await getWebhookDeliveries(endpoint.id);
+      setDeliveryLogs(logs);
+    } catch {
+      setDeliveryLogs([]);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  const inboundPostSnippet = `curl -X POST "${BACKEND_URL}/api/v1/webhooks/inbound/post" \\
+  -H "Authorization: Bearer YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "content": "Exciting product update from our CMS! 🚀",
+    "platforms": ["twitter", "linkedin", "instagram"],
+    "media_urls": ["https://assets.mybrand.com/update.png"],
+    "scheduled_time": "2026-09-05T14:30:00Z",
+    "publish_now": false
+  }'`;
 
   const localConfigSnippet = `{
   "mcpServers": {
@@ -450,32 +882,32 @@ function DevelopersContent({ user, navigate }) {
 
   return (
     <div className="space-y-8">
-      <section className="rounded-[32px] border border-gray-200 bg-white px-6 py-7 shadow-sm lg:px-8">
+      <section className="rounded-[32px] border border-gray-200 bg-white px-6 py-7 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:px-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-green-700">
+            <div className="inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-green-700 dark:bg-green-950/60 dark:text-green-300">
               <FaPlug className="text-[11px]" />
-              Developers
+              Developers & Integrations
             </div>
             <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-tight text-gray-900">Build against Unravler without bypassing the product rules</h1>
-              <p className="max-w-3xl text-sm leading-6 text-gray-600">
-                Personal tokens are the recommended path for Claude, Cursor, and local agent workflows. Workspace API keys remain available for admin-owned service integrations. Both route into the same approval, scheduling, and media validation logic as the app.
+              <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">Build & automate with Unravler</h1>
+              <p className="max-w-3xl text-sm leading-6 text-gray-600 dark:text-slate-400">
+                Personal tokens for agents & IDEs, Workspace API keys for backend servers, Outbound webhooks for real-time Slack/Discord alerts, and Inbound webhooks for low-code Zapier & Make workflows.
               </p>
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">REST Base</p>
-              <p className="mt-2 break-all text-sm font-medium text-gray-900">{PUBLIC_API_BASE}</p>
+            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4 dark:border-slate-800 dark:bg-slate-800/60">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-slate-400">REST Base</p>
+              <p className="mt-2 break-all text-sm font-medium text-gray-900 dark:text-white">{PUBLIC_API_BASE}</p>
             </div>
-            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">Hosted MCP</p>
-              <p className="mt-2 break-all text-sm font-medium text-gray-900">{MCP_HTTP_ENDPOINT}</p>
+            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4 dark:border-slate-800 dark:bg-slate-800/60">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-slate-400">Hosted MCP</p>
+              <p className="mt-2 break-all text-sm font-medium text-gray-900 dark:text-white">{MCP_HTTP_ENDPOINT}</p>
             </div>
-            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">Recommended Token</p>
-              <p className="mt-2 text-sm font-medium text-gray-900">Personal, workspace-bound</p>
+            <div className="rounded-2xl border border-gray-200 bg-offwhite px-4 py-4 dark:border-slate-800 dark:bg-slate-800/60">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-slate-400">Webhooks</p>
+              <p className="mt-2 text-sm font-medium text-gray-900 dark:text-white">HMAC SHA-256 + Slack/Discord</p>
             </div>
           </div>
         </div>
@@ -483,21 +915,21 @@ function DevelopersContent({ user, navigate }) {
 
       {user ? (
         <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[28px] border border-gray-200 bg-white px-5 py-6 shadow-sm lg:px-7">
+          <div className="rounded-[28px] border border-gray-200 bg-white px-5 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:px-7">
             <div className="flex items-start gap-3">
               <FaBook className="mt-1 text-gray-400" />
               <div className="space-y-2">
-                <h2 className="text-lg font-semibold text-gray-900">Active workspace context</h2>
-                <p className="text-sm text-gray-600">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Active workspace context</h2>
+                <p className="text-sm text-gray-600 dark:text-slate-400">
                   Tokens are bound to your current workspace and capped by your role there. Switch workspace before generating a credential if you need a different target.
                 </p>
               </div>
             </div>
           </div>
-          <div className="rounded-[28px] border border-gray-200 bg-white px-5 py-6 shadow-sm lg:px-7">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">Current role</p>
-            <p className="mt-2 text-2xl font-semibold text-gray-900">{scopeMeta?.workspace_role || user.workspace_role || 'member'}</p>
-            <p className="mt-2 text-sm text-gray-600">
+          <div className="rounded-[28px] border border-gray-200 bg-white px-5 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:px-7">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500 dark:text-slate-400">Current role</p>
+            <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{scopeMeta?.workspace_role || user.workspace_role || 'member'}</p>
+            <p className="mt-2 text-sm text-gray-600 dark:text-slate-400">
               Allowed scopes: {(scopeMeta?.allowed_scopes || []).join(', ') || 'Loading...'}
             </p>
           </div>
@@ -506,11 +938,38 @@ function DevelopersContent({ user, navigate }) {
 
       {user ? (
         loading ? (
-          <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-sm text-gray-500 shadow-sm">
+          <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-sm text-gray-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             Loading developer credentials...
           </section>
         ) : (
           <div className="space-y-8">
+            {canManageWebhooks ? (
+              <WebhookSection
+                endpoints={webhookEndpoints}
+                onRegister={registerWebhook}
+                onDelete={revokeWebhook}
+                onTest={handleTestWebhook}
+                onViewDeliveries={handleOpenDeliveries}
+                testingEndpointId={testingEndpointId}
+                busyRegister={creatingWebhook}
+                generatedSecret={generatedWebhookSecret}
+                setGeneratedSecret={setGeneratedWebhookSecret}
+              />
+            ) : null}
+
+            <section className="space-y-4 rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-start gap-3">
+                <FaBolt className="mt-1 text-amber-500" />
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Inbound Automation Webhook (Zapier, Make, n8n, Airtable)</h2>
+                  <p className="text-sm text-gray-600 dark:text-slate-400">
+                    Trigger automatic social scheduling from external tools without writing SDK code. Point your Notion, Airtable, or WordPress automation to this endpoint:
+                  </p>
+                </div>
+              </div>
+              <CodeBlock label="Inbound Webhook Payload Example">{inboundPostSnippet}</CodeBlock>
+            </section>
+
             <CredentialSection
               title="Personal Tokens"
               icon={FaLaptopCode}
@@ -546,9 +1005,9 @@ function DevelopersContent({ user, navigate }) {
                 generatedToken={generatedWorkspaceKey}
               />
             ) : (
-              <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-gray-900">Workspace API Keys</h2>
-                <p className="mt-2 text-sm text-gray-600">
+              <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Workspace API Keys</h2>
+                <p className="mt-2 text-sm text-gray-600 dark:text-slate-400">
                   Admin or owner access is required to create shared workspace API keys. Personal tokens are still available above for your own agent and REST workflows.
                 </p>
               </section>
@@ -558,25 +1017,25 @@ function DevelopersContent({ user, navigate }) {
       ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
+        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-start gap-3">
             <FaCloud className="mt-1 text-gray-400" />
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-gray-900">Hosted MCP setup</h2>
-              <p className="text-sm text-gray-600">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Hosted MCP setup</h2>
+              <p className="text-sm text-gray-600 dark:text-slate-400">
                 Use the hosted HTTP MCP endpoint when your client supports remote MCP calls over HTTPS. Authenticate with a personal token in the bearer header.
               </p>
             </div>
           </div>
           <CodeBlock label="HTTP MCP probe">{hostedCurlSnippet}</CodeBlock>
         </div>
-        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
+        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-start gap-3">
             <FaCode className="mt-1 text-gray-400" />
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-gray-900">Local stdio MCP setup</h2>
-              <p className="text-sm text-gray-600">
-                Use the bundled local package when your client prefers stdio transport. Legacy <code className="rounded bg-gray-100 px-1">SOCIALENTANGLER_API_KEY</code> still works, but <code className="rounded bg-gray-100 px-1">UNRAVLER_TOKEN</code> is the preferred env var now.
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Local stdio MCP setup</h2>
+              <p className="text-sm text-gray-600 dark:text-slate-400">
+                Use the bundled local package when your client prefers stdio transport. Legacy <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">SOCIALENTANGLER_API_KEY</code> still works, but <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">UNRAVLER_TOKEN</code> is the preferred env var now.
               </p>
             </div>
           </div>
@@ -584,32 +1043,32 @@ function DevelopersContent({ user, navigate }) {
         </div>
       </section>
 
-      <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm">
+      <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-start gap-3">
           <FaGlobe className="mt-1 text-gray-400" />
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold text-gray-900">REST reference</h2>
-            <p className="text-sm text-gray-600">
-              All write routes support <code className="rounded bg-gray-100 px-1">Idempotency-Key</code>. Public media URLs are validated with the same SSRF and content rules as the main composer flow.
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">REST reference</h2>
+            <p className="text-sm text-gray-600 dark:text-slate-400">
+              All write routes support <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">Idempotency-Key</code>. Public media URLs are validated with the same SSRF and content rules as the main composer flow.
             </p>
           </div>
         </div>
         <CodeBlock label="Create a scheduled post">{postCreateSnippet}</CodeBlock>
         <div className="grid gap-4 xl:grid-cols-2">
           {REST_GROUPS.map((group) => (
-            <div key={group.title} className="rounded-2xl border border-gray-200 bg-offwhite p-4">
-              <h3 className="text-sm font-semibold text-gray-900">{group.title}</h3>
+            <div key={group.title} className="rounded-2xl border border-gray-200 bg-offwhite p-4 dark:border-slate-800 dark:bg-slate-800/60">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{group.title}</h3>
               <div className="mt-4 space-y-3">
                 {group.items.map((item) => (
-                  <div key={`${group.title}-${item.method}-${item.path}`} className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <div key={`${group.title}-${item.method}-${item.path}`} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${METHOD_STYLES[item.method]}`}>
                         {item.method}
                       </span>
-                      <code className="text-xs text-gray-700">{item.path}</code>
+                      <code className="text-xs text-gray-700 dark:text-slate-300">{item.path}</code>
                     </div>
-                    <p className="mt-2 text-sm text-gray-700">{item.description}</p>
-                    <p className="mt-2 text-xs text-gray-500">Required scope: {item.scope}</p>
+                    <p className="mt-2 text-sm text-gray-700 dark:text-slate-300">{item.description}</p>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">Required scope: {item.scope}</p>
                   </div>
                 ))}
               </div>
@@ -617,6 +1076,14 @@ function DevelopersContent({ user, navigate }) {
           ))}
         </div>
       </section>
+
+      <DeliveriesModal
+        endpoint={selectedLogsEndpoint}
+        deliveries={deliveryLogs}
+        open={Boolean(selectedLogsEndpoint)}
+        onClose={() => setSelectedLogsEndpoint(null)}
+        loading={loadingLogs}
+      />
 
       {!user ? (
         <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-7 shadow-sm">

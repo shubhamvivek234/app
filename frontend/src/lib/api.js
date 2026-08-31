@@ -1179,6 +1179,32 @@ export const deletePersonalToken = async (tokenId) => {
   return response.data;
 };
 
+// ── Webhooks & Automation ──
+export const getWebhookEndpoints = async () => {
+  const response = await axios.get(`${API}/webhooks/endpoints`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createWebhookEndpoint = async (data) => {
+  const response = await axios.post(`${API}/webhooks/endpoints`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteWebhookEndpoint = async (endpointId) => {
+  const response = await axios.delete(`${API}/webhooks/endpoints/${endpointId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const testWebhookEndpoint = async (endpointId) => {
+  const response = await axios.post(`${API}/webhooks/endpoints/${endpointId}/test`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getWebhookDeliveries = async (endpointId) => {
+  const response = await axios.get(`${API}/webhooks/endpoints/${endpointId}/deliveries`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 // ── Calendar Notes ──
 const CALENDAR_NOTE_COLOR_ALIASES = {
   '#4caf50': 'green',

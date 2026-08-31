@@ -130,6 +130,26 @@ async def _emit_scheduled_post_notification(db, post: dict, *, now: datetime | N
         update_existing=True,
     )
 
+    try:
+        from api.routes.user_webhooks import dispatch_webhook_event
+        workspace_id = post.get("workspace_id") or user_id
+        await dispatch_webhook_event(
+            db,
+            workspace_id,
+            "post.scheduled",
+            {
+                "post_id": post_id,
+                "title": post.get("title") or _post_notification_preview(post),
+                "content": post.get("content", ""),
+                "status": "scheduled",
+                "platforms": platforms,
+                "scheduled_time": schedule_iso,
+                "timezone": timezone_label,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Failed to dispatch post.scheduled webhook: %s", exc)
+
 
 def _ensure_verified_email_for_publish_action(current_user: dict) -> None:
     if not current_user.get("email_verified", False):

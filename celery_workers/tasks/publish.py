@@ -566,6 +566,29 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
             outcome="degraded",
         )
 
+    # Dispatch outbound user webhooks if status is terminal
+    if agg_status in ("published", "partially_published", "failed", "dlq"):
+        try:
+            from api.routes.user_webhooks import dispatch_webhook_event
+            workspace_id = updated_post.get("workspace_id") or updated_post.get("user_id")
+            event_name = (
+                "post.published"
+                if agg_status in ("published", "partially_published")
+                else ("post.dlq" if agg_status == "dlq" else "post.failed")
+            )
+            webhook_payload = {
+                "post_id": post_id,
+                "title": updated_post.get("title") or (updated_post.get("content") or "")[:60],
+                "content": updated_post.get("content", ""),
+                "status": agg_status,
+                "platforms": updated_post.get("platforms", []),
+                "platform_results": aggregated_platform_results,
+                "published_at": now.isoformat() if agg_status in ("published", "partially_published") else None,
+            }
+            await dispatch_webhook_event(db, workspace_id, event_name, webhook_payload)
+        except Exception as exc:
+            logger.warning("User webhook dispatch failed for post %s: %s", post_id, exc)
+
     if should_cleanup_media(result_entries):
         schedule_media_cleanup.apply_async(
             kwargs={"post_id": post_id},
