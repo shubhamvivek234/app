@@ -31,6 +31,7 @@ export default function ViralStudio() {
   const [selectedNiche, setSelectedNiche] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingHooks, setLoadingHooks] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(24);
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set());
   const [copiedId, setCopiedId] = useState(null);
 
@@ -57,6 +58,7 @@ export default function ViralStudio() {
         search: searchQuery,
       });
       setHooks(data.hooks || []);
+      setVisibleCount(24);
       if (data.categories) setCategories(data.categories);
       if (data.niches) setNiches(data.niches);
     } catch (err) {
@@ -295,81 +297,97 @@ export default function ViralStudio() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                {hooks.map((hook) => (
-                  <div
-                    key={hook.id}
-                    className="group relative bg-white dark:bg-zinc-900/90 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 shadow-sm hover:shadow-md hover:border-amber-400/40 transition-all flex flex-col justify-between"
-                  >
-                    <div>
-                      {/* Top Badges */}
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[10px] font-bold uppercase tracking-wider border border-amber-200/50 dark:border-amber-800/30">
-                            {hook.category}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold">
-                            🔥 {hook.virality_score}% Virality
-                          </span>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                  {hooks.slice(0, visibleCount).map((hook) => (
+                    <div
+                      key={hook.id}
+                      className="group relative bg-white dark:bg-zinc-900/90 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 p-5 shadow-sm hover:shadow-md hover:border-amber-400/40 transition-all flex flex-col justify-between"
+                    >
+                      <div>
+                        {/* Top Badges */}
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[10px] font-bold uppercase tracking-wider border border-amber-200/50 dark:border-amber-800/30">
+                              {hook.category}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold">
+                              🔥 {hook.virality_score}% Virality
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => handleToggleBookmark(hook.id)}
+                            className="text-zinc-400 hover:text-rose-500 transition-colors p-1 cursor-pointer"
+                            title="Save to bookmarks"
+                          >
+                            {bookmarkedIds.has(hook.id) ? (
+                              <FaBookmark className="text-rose-500 text-sm" />
+                            ) : (
+                              <FaRegBookmark className="text-sm" />
+                            )}
+                          </button>
                         </div>
 
-                        <button
-                          onClick={() => handleToggleBookmark(hook.id)}
-                          className="text-zinc-400 hover:text-rose-500 transition-colors p-1 cursor-pointer"
-                          title="Save to bookmarks"
-                        >
-                          {bookmarkedIds.has(hook.id) ? (
-                            <FaBookmark className="text-rose-500 text-sm" />
-                          ) : (
-                            <FaRegBookmark className="text-sm" />
-                          )}
-                        </button>
+                        {/* Hook Title & Template */}
+                        <h3 className="text-sm font-bold text-zinc-900 dark:text-white mb-2">{hook.title}</h3>
+                        <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800 text-xs font-mono text-zinc-800 dark:text-zinc-200 leading-relaxed mb-3">
+                          "{hook.template}"
+                        </div>
+
+                        {/* Real Example */}
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">Live Example:</span> "{hook.example}"
+                        </div>
                       </div>
 
-                      {/* Hook Title & Template */}
-                      <h3 className="text-sm font-bold text-zinc-900 dark:text-white mb-2">{hook.title}</h3>
-                      <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-100 dark:border-zinc-800 text-xs font-mono text-zinc-800 dark:text-zinc-200 leading-relaxed mb-3">
-                        "{hook.template}"
-                      </div>
+                      {/* Footer Actions */}
+                      <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-zinc-400 text-xs">
+                          <FaClock className="text-[10px]" />
+                          <span>{hook.recommended_duration || '30s'}</span>
+                        </div>
 
-                      {/* Real Example */}
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-                        <span className="font-semibold text-zinc-700 dark:text-zinc-300">Live Example:</span> "{hook.example}"
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleOpenAutoFill(hook)}
+                            className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 text-xs font-semibold rounded-lg border border-amber-200/60 dark:border-amber-800/40 flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <FaMagic className="text-[10px]" />
+                            Personalize
+                          </button>
+                          <button
+                            onClick={() => handleCopyText(hook.template, hook.id)}
+                            className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            {copiedId === hook.id ? <FaCheck className="text-emerald-500" /> : <FaCopy className="text-xs" />}
+                            {copiedId === hook.id ? 'Copied' : 'Copy'}
+                          </button>
+                          <button
+                            onClick={() => handleUseInComposer(hook.example)}
+                            className="px-3 py-1.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                          >
+                            Use <FaArrowRight className="text-[10px]" />
+                          </button>
+                        </div>
                       </div>
                     </div>
+                  ))}
+                </div>
 
-                    {/* Footer Actions */}
-                    <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 text-zinc-400 text-xs">
-                        <FaClock className="text-[10px]" />
-                        <span>{hook.recommended_duration || '30s'}</span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleOpenAutoFill(hook)}
-                          className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 text-xs font-semibold rounded-lg border border-amber-200/60 dark:border-amber-800/40 flex items-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <FaMagic className="text-[10px]" />
-                          Personalize
-                        </button>
-                        <button
-                          onClick={() => handleCopyText(hook.template, hook.id)}
-                          className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          {copiedId === hook.id ? <FaCheck className="text-emerald-500" /> : <FaCopy className="text-xs" />}
-                          {copiedId === hook.id ? 'Copied' : 'Copy'}
-                        </button>
-                        <button
-                          onClick={() => handleUseInComposer(hook.example)}
-                          className="px-3 py-1.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-                        >
-                          Use <FaArrowRight className="text-[10px]" />
-                        </button>
-                      </div>
-                    </div>
+                {hooks.length > visibleCount && (
+                  <div className="text-center pt-6 pb-4">
+                    <button
+                      onClick={() => setVisibleCount((prev) => prev + 24)}
+                      className="px-6 py-3 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 font-semibold text-xs rounded-xl shadow-sm transition-all cursor-pointer inline-flex items-center gap-2"
+                    >
+                      <span>Load More Viral Hooks</span>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[10px] font-bold">
+                        Showing {Math.min(visibleCount, hooks.length)} of {hooks.length}
+                      </span>
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
