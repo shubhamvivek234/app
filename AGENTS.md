@@ -2,17 +2,17 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.7 shipped
+Stage: v3.8 shipped
 Branch: main
-Focus: Unravler Smart Bio (Liinks.co-inspired Link-in-Bio Studio, 8 Luxury Themes, Dynamic Social Feed Mirroring, Scheduled Links, Lead Capture, and Click Analytics)
+Focus: Viral Hook Vault (120+ Battle-Tested Short-Form Hooks across 8 Archetypes), AI Short-Form Video Storyboard Studio (TikTok, Reels, Shorts), and Post Composer 1-Click Hook Injector
 
 ## Last Session Completed
 Date: 2026-09-01
 Completed:
-- Smart Bio Studio & Live Device Simulator (`pages/LinkInBio.js`, `pages/PublicBioPage.js`, `api/routes/bio_pages.py`): Complete block-based editor supporting custom links, badges, visual post feed grids, media embeds, lead capture forms, and markdown quotes with real-time iPhone simulator.
-- 8 Curated Agency Themes: Editorial Cream, OLED Vantablack, Electric Indigo, Emerald Forest, Sunset Rose, Obsidian Gold, Nordic Slate, Cyberpunk Neon with customizable typography and button radiuses.
-- Analytics & Leads Pipeline: Click & impression tracking (`/track`), top traffic referrers, per-link CTRs, and 1-click CSV audience export (`/leads/export`).
-- Tests & Deployment: 279/279 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`{"status":"ok"}`).
+- Viral Hook Vault (`api/data/viral_hooks_catalog.py`, `pages/ViralStudio.js`, `api/routes/ai.py`): 120+ structured short-form viral hooks categorized across 8 psychological triggers and 8 creator niches with instant search, 1-click personalizer, and bookmarks.
+- AI Video Storyboard Studio: Generates 3 hook variations, 30-45s timed visual storyboards (camera cues, on-screen text, spoken dialogue), teleprompter transcripts, and 1-click "Schedule in Composer" handoff.
+- Post Composer Integration (`pages/CreatePostForm.js`): Added "⚡ Viral Hooks" dialog inside post creation interface for instant hook injection into drafts.
+- Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`{"status":"ok"}`).
 
 ## Active Work
 Currently implementing: None
