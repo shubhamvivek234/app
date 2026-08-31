@@ -12,13 +12,29 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import {
-  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaMagic, FaQrcode, FaPalette
+  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaMagic, FaQrcode, FaPalette, FaBolt
 } from 'react-icons/fa';
 import { SiInstagram, SiTiktok, SiYoutube, SiLinkedin } from 'react-icons/si';
 import { MdGridOn, MdViewCarousel } from 'react-icons/md';
 
 // ── Tools catalogue ───────────────────────────────────────────────────────────
 const TOOLS = [
+  {
+    id: 'viral-studio',
+    route: '/viral-studio',
+    icon: FaBolt,
+    iconColor: '#F59E0B',
+    iconBg: 'bg-amber-50',
+    borderColor: 'border-amber-200 hover:border-amber-400',
+    tagColor: 'text-amber-600',
+    badge: 'Short-Form Intelligence',
+    badgeBg: 'bg-amber-100 text-amber-800',
+    category: 'growth',
+    title: 'Viral Hook Vault & Script Studio',
+    description: '120+ proven viral hooks across 8 psychological triggers and automated 9:16 short-form video storyboards for TikTok, Reels & Shorts.',
+    tag: 'Open Studio →',
+    available: true,
+  },
   {
     id: 'link-in-bio',
     route: '/link-in-bio',

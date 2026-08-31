@@ -57,6 +57,7 @@ import PublicReview from '@/pages/PublicReview';
 import LinkInBio from '@/pages/LinkInBio';
 import PublicBioPage from '@/pages/PublicBioPage';
 import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
+import ViralStudio from '@/pages/ViralStudio';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -548,6 +549,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <SocialGraphicStudio />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/viral-studio"
+                element={
+                  <PrivateRoute>
+                    <ViralStudio />
                   </PrivateRoute>
                 }
               />

@@ -1507,6 +1507,37 @@ export const exportBioLeadsCsv = async () => {
   return response.data;
 };
 
+// ── Viral Hooks & Short-Form Video Studio (Virlo-inspired) ──
+export const getViralHooks = async (params = {}) => {
+  const response = await axios.get(`${API}/ai/viral-hooks`, {
+    headers: getAuthHeaders(),
+    params,
+  });
+  return response.data;
+};
+
+export const generateShortFormScript = async (payload) => {
+  const response = await axios.post(`${API}/ai/generate-script`, payload, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const autoFillViralHook = async (payload) => {
+  const response = await axios.post(`${API}/ai/auto-fill-hook`, payload, {
+    headers: getAuthHeaders(),
+  });
+  return response.data;
+};
+
+export const toggleHookBookmark = async (hookId) => {
+  const response = await axios.post(`${API}/ai/viral-hooks/bookmark`, null, {
+    headers: getAuthHeaders(),
+    params: { hook_id: hookId },
+  });
+  return response.data;
+};
+
 // ── Branded PDF Reports & Schedules (Feature 4) ──
 export const exportBrandedReport = async (data) => {
   const response = await axios.post(`${API}/analytics/report/export`, data, { headers: getAuthHeaders() });

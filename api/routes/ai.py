@@ -28,6 +28,7 @@ from api.limiter import limiter
 from utils.content_repurposer import extract_content_from_source, repurpose_content_to_social
 from utils.free_llm_router import free_llm
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
+from api.data.viral_hooks_catalog import VIRAL_HOOKS, CATEGORIES, NICHES
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ai"])
@@ -146,6 +147,47 @@ class SuggestCommentRequest(BaseModel):
 class SuggestCommentResponse(BaseModel):
     suggestions: list[str]
     provider: str | None = None
+
+
+class StoryboardBeat(BaseModel):
+    timestamp: str
+    stage: str
+    visual_cue: str
+    on_screen_text: str
+    spoken_dialogue: str
+
+
+class GenerateScriptRequest(BaseModel):
+    topic: str
+    niche: str | None = "saas_tech"
+    platform: str | None = "tiktok"
+    target_duration: str | None = "30s"
+    hook_style: str | None = "contrarian"
+    use_brand_voice: bool = True
+
+
+class GenerateScriptResponse(BaseModel):
+    title: str
+    hooks: list[str]
+    selected_hook: str
+    storyboard: list[StoryboardBeat]
+    full_script: str
+    call_to_action: str
+    recommended_hashtags: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+
+
+class AutoFillHookRequest(BaseModel):
+    hook_template: str
+    topic_or_brand: str
+    niche: str | None = "saas_tech"
+
+
+class AutoFillHookResponse(BaseModel):
+    variations: list[str]
+    provider: str | None = None
+
 
 
 def _build_system_message(
@@ -735,4 +777,233 @@ async def save_brand_voice(
         upsert=True,
     )
     return body
+
+
+# ── VIRAL HOOKS & SHORT-FORM VIDEO STUDIO (VIRLO-INSPIRED) ─────────────────────
+
+@router.get("/ai/viral-hooks")
+async def get_viral_hooks(
+    category: str | None = None,
+    niche: str | None = None,
+    search: str | None = None,
+):
+    """Retrieve catalog of viral hooks with category and niche filters."""
+    results = VIRAL_HOOKS
+    if category and category != "all":
+        results = [h for h in results if h.get("category") == category]
+    if niche and niche != "all":
+        results = [h for h in results if niche in h.get("niche", [])]
+    if search and search.strip():
+        q = search.lower().strip()
+        results = [
+            h for h in results
+            if q in h.get("title", "").lower()
+            or q in h.get("template", "").lower()
+            or q in h.get("example", "").lower()
+        ]
+    return {
+        "categories": CATEGORIES,
+        "niches": NICHES,
+        "total": len(results),
+        "hooks": results,
+    }
+
+
+@router.post("/ai/generate-script", response_model=GenerateScriptResponse)
+async def generate_short_form_script(
+    body: GenerateScriptRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """
+    Generates a timed 9:16 short-form video storyboard and teleprompter script
+    optimized for TikTok, Instagram Reels, and YouTube Shorts.
+    """
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    # Check brand voice if enabled
+    brand_voice_hint = ""
+    if body.use_brand_voice:
+        bv_doc = await db.brand_voices.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+        if bv_doc:
+            brand_voice_hint = f"Brand: {bv_doc.get('brand_name')}. Tone: {bv_doc.get('tone')}."
+
+    system_prompt = (
+        "You are an elite viral short-form video creator and scriptwriter for TikTok, Instagram Reels, and YouTube Shorts. "
+        "Create high-retention, fast-paced video scripts that hook viewers in the first 2-3 seconds and keep them watching until the end. "
+        "Return ONLY a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "title": "Working Video Title",\n'
+        '  "hooks": ["Hook variation 1 (Contrarian)", "Hook variation 2 (Curiosity)", "Hook variation 3 (Pain/Urgency)"],\n'
+        '  "selected_hook": "Hook variation 1",\n'
+        '  "storyboard": [\n'
+        '    {"timestamp": "0:00 - 0:03", "stage": "Hook", "visual_cue": "Fast motion or close-up action", "on_screen_text": "STOP DOING THIS", "spoken_dialogue": "..."},\n'
+        '    {"timestamp": "0:03 - 0:15", "stage": "Problem Agitation", "visual_cue": "...", "on_screen_text": "...", "spoken_dialogue": "..."},\n'
+        '    {"timestamp": "0:15 - 0:25", "stage": "Value / Secret", "visual_cue": "...", "on_screen_text": "...", "spoken_dialogue": "..."},\n'
+        '    {"timestamp": "0:25 - 0:30", "stage": "Call To Action", "visual_cue": "Point down / smile", "on_screen_text": "LINK IN BIO", "spoken_dialogue": "..."}\n'
+        "  ],\n"
+        '  "full_script": "Clean word-for-word teleprompter transcript...",\n'
+        '  "call_to_action": "Follow for more / Link in bio",\n'
+        '  "recommended_hashtags": ["#shorts", "#tiktoktips", "#growth"]\n'
+        "}"
+    )
+
+    user_prompt = (
+        f"Topic: {body.topic}\n"
+        f"Niche: {body.niche or 'general'}\n"
+        f"Platform: {body.platform or 'TikTok'}\n"
+        f"Target Duration: {body.target_duration or '30s'}\n"
+        f"Hook Style: {body.hook_style or 'contrarian'}\n"
+        f"{brand_voice_hint}\n"
+        "Generate a viral storyboard and teleprompter script now."
+    )
+
+    raw_text = ""
+    provider = "system"
+    model = "default"
+    try:
+        raw_text, provider, model = await _ai_waterfall(system_prompt, user_prompt)
+        
+        # Clean JSON code fences if present
+        clean_json = raw_text.strip()
+        if clean_json.startswith("```"):
+            clean_json = re.sub(r"^```[a-zA-Z]*\n?", "", clean_json)
+            clean_json = re.sub(r"\n?```$", "", clean_json).strip()
+            
+        data = json.loads(clean_json)
+        return GenerateScriptResponse(
+            title=data.get("title", f"Viral Script: {body.topic[:30]}"),
+            hooks=data.get("hooks", [f"Stop doing this with {body.topic}!"]),
+            selected_hook=data.get("selected_hook", data.get("hooks", [""])[0] if data.get("hooks") else ""),
+            storyboard=[
+                StoryboardBeat(
+                    timestamp=b.get("timestamp", "0:00 - 0:05"),
+                    stage=b.get("stage", "Content"),
+                    visual_cue=b.get("visual_cue", "Talking to camera"),
+                    on_screen_text=b.get("on_screen_text", ""),
+                    spoken_dialogue=b.get("spoken_dialogue", ""),
+                )
+                for b in data.get("storyboard", [])
+            ],
+            full_script=data.get("full_script", raw_text),
+            call_to_action=data.get("call_to_action", "Tap the link in my bio!"),
+            recommended_hashtags=data.get("recommended_hashtags", ["#viral", "#socialmedia"]),
+            provider=provider,
+            model=model,
+        )
+    except Exception as exc:
+        logger.warning(f"Script generation fallback triggered: {exc}")
+        # Deterministic fallback
+        return GenerateScriptResponse(
+            title=f"Viral Video: {body.topic}",
+            hooks=[
+                f"Everything you were told about {body.topic} is a lie.",
+                f"Stop making this 1 mistake with {body.topic}!",
+                f"This 30-second secret about {body.topic} will save you hours.",
+            ],
+            selected_hook=f"Everything you were told about {body.topic} is a lie.",
+            storyboard=[
+                StoryboardBeat(
+                    timestamp="0:00 - 0:03",
+                    stage="Hook",
+                    visual_cue="Direct eye contact, holding phone or pointing at screen",
+                    on_screen_text=f"STOP DOING THIS 🚨",
+                    spoken_dialogue=f"If you are still struggling with {body.topic}, stop right now. Here is what actually works in 2026.",
+                ),
+                StoryboardBeat(
+                    timestamp="0:03 - 0:15",
+                    stage="Problem Agitation",
+                    visual_cue="Screen recording or B-roll demonstrating the frustration",
+                    on_screen_text="THE HIDDEN MISTAKE",
+                    spoken_dialogue=f"Most people spend hours trying outdated methods, only to get zero results and burn out.",
+                ),
+                StoryboardBeat(
+                    timestamp="0:15 - 0:25",
+                    stage="The Secret Framework",
+                    visual_cue="Showing the simplified 1-click solution",
+                    on_screen_text="THE 2026 PLAYBOOK",
+                    spoken_dialogue=f"Instead, use this 3-step automation blueprint to cut your effort in half while doubling your reach.",
+                ),
+                StoryboardBeat(
+                    timestamp="0:25 - 0:30",
+                    stage="Call To Action",
+                    visual_cue="Smiling, pointing to bio link or tapping screen",
+                    on_screen_text="LINK IN BIO ✨",
+                    spoken_dialogue="Grab the free workflow template from the link in my bio!",
+                ),
+            ],
+            full_script=(
+                f"If you are still struggling with {body.topic}, stop right now. Here is what actually works in 2026. "
+                f"Most people spend hours trying outdated methods with zero results. "
+                f"Instead, use this 3-step automation blueprint to cut your effort in half. "
+                f"Grab the free workflow template from the link in my bio!"
+            ),
+            call_to_action="Grab the free guide from the link in my bio!",
+            recommended_hashtags=["#contentcreator", "#viralvideos", "#growthtips"],
+            provider="local_fallback",
+            model="deterministic",
+        )
+
+
+@router.post("/ai/auto-fill-hook", response_model=AutoFillHookResponse)
+async def auto_fill_viral_hook(
+    body: AutoFillHookRequest,
+    current_user: CurrentUser,
+):
+    """Customizes a raw viral hook template for a specific user topic."""
+    system_prompt = (
+        "You are an expert copywriter. Given a viral hook template and a specific topic/niche, "
+        "generate 3 high-impact, ready-to-use hook variations with the placeholders filled in. "
+        "Return ONLY a JSON object: {\"variations\": [\"Hook 1\", \"Hook 2\", \"Hook 3\"]}"
+    )
+    user_prompt = f"Template: {body.hook_template}\nTopic: {body.topic_or_brand}\nNiche: {body.niche}"
+
+    try:
+        raw_text, provider, _ = await _ai_waterfall(system_prompt, user_prompt)
+        clean = raw_text.strip()
+        if clean.startswith("```"):
+            clean = re.sub(r"^```[a-zA-Z]*\n?", "", clean)
+            clean = re.sub(r"\n?```$", "", clean).strip()
+        data = json.loads(clean)
+        return AutoFillHookResponse(variations=data.get("variations", []), provider=provider)
+    except Exception:
+        # Fallback replacing simple bracketed tokens
+        base = body.hook_template.replace("[Topic]", body.topic_or_brand)
+        base = base.replace("[Industry]", body.niche or "your field")
+        base = base.replace("[Activity]", body.topic_or_brand)
+        return AutoFillHookResponse(
+            variations=[
+                base,
+                f"Why everyone is getting {body.topic_or_brand} wrong in 2026:",
+                f"The 1 secret about {body.topic_or_brand} that nobody talks about:",
+            ],
+            provider="fallback",
+        )
+
+
+@router.post("/ai/viral-hooks/bookmark")
+async def toggle_hook_bookmark(
+    hook_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Toggle bookmark for a viral hook in user workspace."""
+    workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+    now = datetime.now(timezone.utc)
+
+    doc = await db.workspace_bookmarks.find_one({"workspace_id": workspace_id, "type": "viral_hook", "item_id": hook_id})
+    if doc:
+        await db.workspace_bookmarks.delete_one({"_id": doc["_id"]})
+        return {"bookmarked": False}
+    else:
+        await db.workspace_bookmarks.insert_one({
+            "workspace_id": workspace_id,
+            "user_id": current_user["user_id"],
+            "type": "viral_hook",
+            "item_id": hook_id,
+            "created_at": now,
+        })
+        return {"bookmarked": True}
+
 

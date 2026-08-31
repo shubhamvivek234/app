@@ -21,6 +21,7 @@ import {
   generateContent,
   repurposeContent,
   voiceToPost,
+  getViralHooks,
   createPost,
   cleanupTemporaryAudio,
   getPost,
@@ -33,7 +34,7 @@ import {
   FaTiktok, FaYoutube, FaPinterest, FaArrowLeft,
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
   FaChevronUp, FaChevronDown, FaDiscord, FaImages,
-  FaMicrophone, FaStop, FaLink, FaMagic, FaPen,
+  FaMicrophone, FaStop, FaLink, FaMagic, FaPen, FaBolt,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -638,6 +639,31 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [repurposeInput, setRepurposeInput] = useState('');
   const [repurposeLoading, setRepurposeLoading] = useState(false);
   const [repurposeTone, setRepurposeTone] = useState('engaging');
+
+  // ── Viral Hooks state ───────────────────────────────────────────────────────
+  const [showViralHooksModal, setShowViralHooksModal] = useState(false);
+  const [quickHooks, setQuickHooks] = useState([]);
+  const [quickHooksLoading, setQuickHooksLoading] = useState(false);
+  const [quickHooksSearch, setQuickHooksSearch] = useState('');
+  const [quickHooksCategory, setQuickHooksCategory] = useState('all');
+
+  const loadQuickHooks = async (category = 'all', search = '') => {
+    setQuickHooksLoading(true);
+    try {
+      const data = await getViralHooks({ category, search });
+      setQuickHooks(data.hooks || []);
+    } catch {
+      // ignore
+    } finally {
+      setQuickHooksLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showViralHooksModal) {
+      loadQuickHooks(quickHooksCategory, quickHooksSearch);
+    }
+  }, [showViralHooksModal, quickHooksCategory, quickHooksSearch]);
 
   const startVoiceRecording = async () => {
     try {
@@ -2587,9 +2613,19 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
       <div className="p-5 space-y-5 overflow-y-auto flex-1">
         {/* Prompt textarea */}
         <div className="space-y-2">
-          <label className="block text-xs font-bold uppercase tracking-widest text-gray-700">
-            What do you want to write about?
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-bold uppercase tracking-widest text-gray-700">
+              What do you want to write about?
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowViralHooksModal(true)}
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200/70 transition-colors"
+            >
+              <FaBolt className="text-[10px] text-amber-500" />
+              Viral Hooks
+            </button>
+          </div>
           <textarea
             value={aiCaptionPrompt}
             onChange={e => setAiCaptionPrompt(e.target.value)}
@@ -3133,6 +3169,92 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               <Button variant="outline" size="sm" onClick={resetCropState}>Cancel</Button>
               <Button size="sm" onClick={handleApplyCrop} className="bg-green-500 hover:bg-green-600">Crop & Upload</Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Viral Hooks Selector Dialog */}
+      <Dialog open={showViralHooksModal} onOpenChange={setShowViralHooksModal}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-6 rounded-2xl bg-white dark:bg-zinc-900">
+          <DialogHeader className="pb-3 border-b border-gray-100 dark:border-zinc-800 flex-shrink-0">
+            <DialogTitle className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <FaBolt className="text-amber-500 text-sm" />
+              Viral Hook Vault (Select a hook to insert)
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="py-2 space-y-3 flex-shrink-0">
+            <div className="relative">
+              <input
+                type="text"
+                value={quickHooksSearch}
+                onChange={(e) => setQuickHooksSearch(e.target.value)}
+                placeholder="Search hooks (e.g. 'Stop doing', 'mistake', 'secret', '3-step')..."
+                className="w-full pl-3 pr-4 py-2 bg-gray-50 dark:bg-zinc-800/60 border border-gray-200 dark:border-zinc-700 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-gray-900 dark:text-white"
+              />
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'contrarian', label: 'Contrarian' },
+                { id: 'mistake', label: 'Mistakes' },
+                { id: 'curiosity', label: 'Curiosity' },
+                { id: 'how_to', label: 'Blueprints' },
+                { id: 'comparison', label: 'Comparison' },
+                { id: 'roi_numbers', label: 'ROI / Numbers' },
+              ].map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setQuickHooksCategory(c.id)}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-full whitespace-nowrap transition-colors ${
+                    quickHooksCategory === c.id
+                      ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
+                      : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 py-1">
+            {quickHooksLoading ? (
+              <div className="py-12 text-center text-gray-400 text-xs">Loading hooks...</div>
+            ) : quickHooks.length === 0 ? (
+              <div className="py-12 text-center text-gray-400 text-xs">No matching hooks found.</div>
+            ) : (
+              quickHooks.map((h) => (
+                <div
+                  key={h.id}
+                  className="p-3 bg-gray-50 dark:bg-zinc-800/50 rounded-xl border border-gray-200/80 dark:border-zinc-700/80 hover:border-amber-400 transition-all flex flex-col gap-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">
+                      {h.category} • {h.virality_score}% Virality
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCommonCaption((prev) => (prev ? `${h.template}\n\n${prev}` : h.template));
+                        setShowViralHooksModal(false);
+                        toast.success('✨ Inserted hook into caption!');
+                      }}
+                      className="px-2.5 py-1 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-[11px] font-bold rounded-lg hover:bg-gray-800 transition-all cursor-pointer"
+                    >
+                      Insert Hook →
+                    </button>
+                  </div>
+                  <p className="text-xs font-mono text-gray-800 dark:text-gray-200">
+                    "{h.template}"
+                  </p>
+                  <p className="text-[11px] text-gray-500">
+                    <strong className="text-gray-700 dark:text-gray-300">Example:</strong> "{h.example}"
+                  </p>
+                </div>
+              ))
+            )}
           </div>
         </DialogContent>
       </Dialog>
