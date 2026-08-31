@@ -2,17 +2,17 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.6 shipped
+Stage: v3.7 shipped
 Branch: main
-Focus: Full Outbound & Inbound Webhooks Engine, HMAC Signatures, Native Slack/Discord Embed Formatting, Delivery History & Test Ping Suite, and Interactive Developer Portal
+Focus: Unravler Smart Bio (Liinks.co-inspired Link-in-Bio Studio, 8 Luxury Themes, Dynamic Social Feed Mirroring, Scheduled Links, Lead Capture, and Click Analytics)
 
 ## Last Session Completed
 Date: 2026-09-01
 Completed:
-- Outbound Webhooks Pipeline (`api/routes/user_webhooks.py`, `celery_workers/tasks/publish.py`, `api/routes/posts.py`): Connected event streaming for `post.published`, `post.failed`, `post.scheduled`, `post.cancelled`, `account.disconnected`, and `post.approval_requested` with HMAC-SHA256 signing and SSRF protection.
-- Slack & Discord Native Adapters: Auto-detects Slack/Discord webhooks and formats payloads into rich BlockKit sections / color-coded Discord Embeds.
-- Interactive Webhook Management Portal (`pages/Developers.js`, `lib/api.js`): Subscribed event checkboxes, one-time signing secret modal, instant test-ping runner (`POST /test`), delivery logs drawer, and Inbound Webhook generator for Zapier, Make, n8n, Airtable.
-- Tests & Deployment: 278/278 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`{"status":"ok"}`).
+- Smart Bio Studio & Live Device Simulator (`pages/LinkInBio.js`, `pages/PublicBioPage.js`, `api/routes/bio_pages.py`): Complete block-based editor supporting custom links, badges, visual post feed grids, media embeds, lead capture forms, and markdown quotes with real-time iPhone simulator.
+- 8 Curated Agency Themes: Editorial Cream, OLED Vantablack, Electric Indigo, Emerald Forest, Sunset Rose, Obsidian Gold, Nordic Slate, Cyberpunk Neon with customizable typography and button radiuses.
+- Analytics & Leads Pipeline: Click & impression tracking (`/track`), top traffic referrers, per-link CTRs, and 1-click CSV audience export (`/leads/export`).
+- Tests & Deployment: 279/279 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`{"status":"ok"}`).
 
 ## Active Work
 Currently implementing: None
