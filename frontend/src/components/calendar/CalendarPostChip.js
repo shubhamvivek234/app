@@ -114,19 +114,19 @@ const CalendarPostChip = ({
   const thumbnail = compact ? null : getPostPrimaryThumbnail(post);
 
   const containerClass = compact
-    ? 'rounded-2xl border border-slate-200/90 bg-white p-2 shadow-[0_10px_20px_-16px_rgba(15,23,42,0.35)]'
+    ? 'rounded-2xl border border-slate-200/90 bg-white p-2 shadow-[0_10px_20px_-16px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none'
     : isAgenda
-      ? 'rounded-[24px] border border-slate-200 bg-white px-4 py-3.5 shadow-[0_22px_36px_-30px_rgba(15,23,42,0.34)]'
-      : 'rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_20px_35px_-28px_rgba(15,23,42,0.35)]';
+      ? 'rounded-[24px] border border-slate-200 bg-white px-4 py-3.5 shadow-[0_22px_36px_-30px_rgba(15,23,42,0.34)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none'
+      : 'rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_20px_35px_-28px_rgba(15,23,42,0.35)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none';
 
-  const todayAccent = today ? 'ring-1 ring-emerald-300/80' : '';
+  const todayAccent = today ? 'ring-1 ring-emerald-300/80 dark:ring-emerald-700/80' : '';
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'w-full text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-300 active:translate-y-0 active:scale-[0.995]',
+        'w-full text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-300 dark:hover:border-slate-700 active:translate-y-0 active:scale-[0.995]',
         containerClass,
         todayAccent,
       )}
@@ -136,7 +136,7 @@ const CalendarPostChip = ({
       <div className={cn('flex items-start gap-3', compact ? 'flex-col' : 'flex-row')}>
         {!compact && thumbnail ? (
           <div className={cn(
-            'shrink-0 overflow-hidden border border-slate-200 bg-slate-100',
+            'shrink-0 overflow-hidden border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-800',
             isAgenda ? 'h-14 w-14 rounded-2xl' : 'h-16 w-16 rounded-xl',
           )}>
             <img src={thumbnail} alt="" className="h-full w-full object-cover" />
@@ -145,8 +145,8 @@ const CalendarPostChip = ({
 
         <div className={cn('min-w-0 flex-1', isAgenda ? 'space-y-2.5' : 'space-y-2')}>
           <div className={cn('flex justify-between gap-2', isAgenda ? 'items-center' : 'items-start')}>
-            <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              <FaRegClock className="shrink-0 text-slate-400" />
+            <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <FaRegClock className="shrink-0 text-slate-400 dark:text-slate-500" />
               <span className="truncate">{timeValue}</span>
             </div>
             <span className={cn('inline-flex shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide', statusClass)}>
@@ -163,7 +163,7 @@ const CalendarPostChip = ({
                 ))}
               </div>
               {extraAccounts > 0 ? (
-                <div className="flex h-5 min-w-[20px] items-center justify-center rounded-full border border-white bg-slate-100 px-1 text-[9px] font-bold text-slate-600 shadow-sm">
+                <div className="flex h-5 min-w-[20px] items-center justify-center rounded-full border border-white dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-1 text-[9px] font-bold text-slate-600 dark:text-slate-300 shadow-sm">
                   +{extraAccounts}
                 </div>
               ) : null}
@@ -171,28 +171,28 @@ const CalendarPostChip = ({
           </div>
 
           <div className={cn('space-y-1', isAgenda ? 'text-left' : '')}>
-            <span className={cn('block min-w-0 font-semibold text-slate-900', isAgenda ? 'text-[13px] leading-5' : 'text-[12px] leading-4')}>
+            <span className={cn('block min-w-0 font-semibold text-slate-900 dark:text-slate-100', isAgenda ? 'text-[13px] leading-5' : 'text-[12px] leading-4')}>
               {compact ? label : isAgenda ? label : preview}
             </span>
             {isAgenda && preview !== label ? (
-              <span className="block min-w-0 text-[12px] leading-5 text-slate-600">
+              <span className="block min-w-0 text-[12px] leading-5 text-slate-600 dark:text-slate-400">
                 {preview}
               </span>
             ) : null}
             {!compact ? (
-              <span className={cn('block min-w-0 leading-5 text-slate-500', isAgenda ? 'text-[11px]' : 'text-[11px]')}>
+              <span className={cn('block min-w-0 leading-5 text-slate-500 dark:text-slate-400', isAgenda ? 'text-[11px]' : 'text-[11px]')}>
                 {primaryAccountLabel}
                 {extraAccounts > 0 ? ` +${extraAccounts} account${extraAccounts > 1 ? 's' : ''}` : ''}
               </span>
             ) : null}
           </div>
 
-          <div className={cn('flex flex-wrap items-center text-[10px] font-medium text-slate-500', isAgenda ? 'gap-2.5' : 'gap-2')}>
-            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5">
+          <div className={cn('flex flex-wrap items-center text-[10px] font-medium text-slate-500 dark:text-slate-400', isAgenda ? 'gap-2.5' : 'gap-2')}>
+            <span className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5">
               {media.label}
             </span>
             {noteCount > 0 ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 text-emerald-700 dark:text-emerald-300">
                 <FaRegStickyNote className="text-[9px]" />
                 {noteCount} note{noteCount > 1 ? 's' : ''}
               </span>

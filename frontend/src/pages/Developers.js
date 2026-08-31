@@ -71,8 +71,9 @@ const REST_GROUPS = [
     ],
   },
   {
-    title: 'Webhooks',
+    title: 'Webhooks & Automation Suite',
     items: [
+      { method: 'POST', path: '/webhooks/inbound/post', scope: 'posts:write', description: 'Inbound automation webhook for n8n, Make.com, and Zapier to create or schedule posts.' },
       { method: 'GET', path: '/webhooks', scope: 'webhooks:manage', description: 'List registered outbound HTTPS webhooks.' },
       { method: 'POST', path: '/webhooks', scope: 'webhooks:manage', description: 'Register an HTTPS endpoint with HMAC SHA-256 signature verification.' },
       { method: 'DELETE', path: '/webhooks/{webhook_id}', scope: 'webhooks:manage', description: 'Revoke and delete a registered outbound webhook.' },

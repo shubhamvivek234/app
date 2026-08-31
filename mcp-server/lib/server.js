@@ -119,6 +119,7 @@ export function createUnravlerMcpServer({ getApi }) {
         platforms: z.array(z.string().min(1)).optional().describe('Optional explicit platform list. If omitted, Unravler resolves platforms from account_ids.'),
         scheduled_at: z.string().optional().describe('Optional ISO 8601 schedule timestamp. Omit to save as draft unless publish_now is true.'),
         publish_now: z.boolean().optional().describe('Set true to publish immediately.'),
+        first_comment: z.string().optional().describe('Optional first comment / link in first comment to post automatically.'),
         media_urls: z.array(z.string().url()).optional().describe('Optional list of safe public media URLs.'),
         thumbnail_urls: z.array(z.string().url()).optional().describe('Optional thumbnails, usually omitted because Unravler derives them when possible.'),
         post_type: z.string().optional().describe('Optional content type such as text, image, video, or mixed.'),
@@ -135,6 +136,7 @@ export function createUnravlerMcpServer({ getApi }) {
       inputSchema: {
         post_id: z.string().min(1).describe('The post ID to update.'),
         content: z.string().optional().describe('Updated caption or text body.'),
+        first_comment: z.string().optional().describe('Optional updated first comment.'),
         scheduled_at: z.union([z.string(), z.null()]).optional().describe('ISO 8601 scheduled time, or null to clear the schedule.'),
         platforms: z.array(z.string().min(1)).optional().describe('Optional replacement platform list.'),
         account_ids: z.array(z.string().min(1)).optional().describe('Optional replacement account list.'),
@@ -300,6 +302,18 @@ export function createUnravlerMcpServer({ getApi }) {
           { topic, platform, tone, count, additional_context },
           idempotencyConfig(extra, 'ai.generate'),
         );
+        return data;
+      }),
+    },
+    {
+      name: 'analytics.summary',
+      aliases: ['get_analytics_summary'],
+      description: 'Get executive performance and growth analytics summary for social platforms.',
+      inputSchema: {
+        days: z.number().int().min(1).max(90).optional().describe('Number of trailing days, default 30.'),
+      },
+      handler: async ({ days = 30 }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.get('/analytics/dashboard', { params: { days } });
         return data;
       }),
     },

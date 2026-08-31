@@ -25,26 +25,26 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
   });
 
   return (
-    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[560px]">
-      <CardHeader className="border-b border-slate-100 pb-5">
+    <Card className="flex h-full flex-col border-slate-200 bg-white shadow-sm lg:h-[560px] dark:border-slate-800 dark:bg-slate-900">
+      <CardHeader className="border-b border-slate-100 pb-5 dark:border-slate-800">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Upcoming Queue</p>
-            <CardTitle className="mt-2 text-xl text-slate-950">What is going out next</CardTitle>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Upcoming Queue</p>
+            <CardTitle className="mt-2 text-xl text-slate-950 dark:text-slate-100">What is going out next</CardTitle>
           </div>
-          <Button variant="outline" size="sm" className="border-slate-300 bg-white" onClick={() => onNavigate?.('/calendar')}>
+          <Button variant="outline" size="sm" className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700" onClick={() => onNavigate?.('/calendar')}>
             Open Calendar
           </Button>
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col pt-6">
         {sortedPosts.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm">
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center dark:border-slate-700 dark:bg-slate-800/40">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm dark:bg-slate-800 dark:text-slate-400">
               <FaCalendarAlt />
             </div>
-            <h3 className="mt-4 text-lg font-semibold text-slate-900">No scheduled posts yet</h3>
-            <p className="mt-2 text-sm text-slate-600">The queue is empty. Add a scheduled post to start filling the upcoming calendar.</p>
+            <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">No scheduled posts yet</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">The queue is empty. Add a scheduled post to start filling the upcoming calendar.</p>
             <Button className="mt-4" onClick={() => onNavigate?.('/create-post')}>
               Schedule a Post
             </Button>
@@ -59,13 +59,13 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
                   key={post.id}
                   type="button"
                   onClick={() => onNavigate?.('/calendar')}
-                  className="flex w-full items-start gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-white"
+                  className="flex w-full items-start gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-left transition-colors hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-800/60 dark:hover:border-slate-700 dark:hover:bg-slate-800"
                 >
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-200">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-slate-200 dark:bg-slate-700">
                     {thumbnail ? (
                       <img src={thumbnail} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <FaCalendarAlt className="text-slate-500" />
+                      <FaCalendarAlt className="text-slate-500 dark:text-slate-400" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -76,15 +76,15 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
                         </span>
                       ))}
                       {post.post_type ? (
-                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                           {post.post_type}
                         </span>
                       ) : null}
                     </div>
-                    <h3 className="mt-3 text-base font-semibold text-slate-900">{primaryPostTitle(post)}</h3>
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
+                    <h3 className="mt-3 text-base font-semibold text-slate-900 dark:text-slate-100">{primaryPostTitle(post)}</h3>
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
                       <span className="inline-flex items-center gap-2">
-                        <FaClock className="text-slate-400" />
+                        <FaClock className="text-slate-400 dark:text-slate-500" />
                         {countdownLabel(post.scheduled_time, now)}
                       </span>
                       <span>{formatAbsoluteDate(post.scheduled_time, scheduledTimeZone)}</span>
@@ -93,7 +93,7 @@ const UpcomingQueue = ({ posts = [], onNavigate, now = Date.now() }) => {
                       ) : null}
                     </div>
                   </div>
-                  <FaArrowRight className="mt-1 shrink-0 text-slate-400" />
+                  <FaArrowRight className="mt-1 shrink-0 text-slate-400 dark:text-slate-500" />
                 </button>
               );
             })}

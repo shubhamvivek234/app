@@ -12,7 +12,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import {
-  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaSparkles, FaQrcode
+  FaThLarge, FaFilm, FaArrowLeft, FaDownload, FaUpload, FaRedo, FaMobileAlt, FaLink, FaChartLine, FaRocket, FaMagic, FaQrcode, FaPalette
 } from 'react-icons/fa';
 import { SiInstagram, SiTiktok, SiYoutube, SiLinkedin } from 'react-icons/si';
 import { MdGridOn, MdViewCarousel } from 'react-icons/md';
@@ -80,6 +80,22 @@ const TOOLS = [
     title: 'LinkedIn Text Formatter',
     description: 'Format LinkedIn posts with bold, italic, numbered lists, and Unicode typography. Preview posts in live desktop & mobile feed views.',
     tag: 'Launch Studio →',
+    available: true,
+  },
+  {
+    id: 'social-graphic-studio',
+    route: '/social-graphic-studio',
+    icon: FaPalette,
+    iconColor: '#EC4899',
+    iconBg: 'bg-pink-50',
+    borderColor: 'border-pink-200 hover:border-pink-400',
+    tagColor: 'text-pink-600',
+    badge: 'Design Studio',
+    badgeBg: 'bg-pink-100 text-pink-700',
+    category: 'image',
+    title: 'Social Graphic Studio',
+    description: 'Design branded quote cards, feature announcement graphics, and carousel slides with custom gradients and typography.',
+    tag: 'Open Studio →',
     available: true,
   },
   {

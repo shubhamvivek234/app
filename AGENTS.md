@@ -2,19 +2,18 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.3 shipped
+Stage: v3.4 shipped
 Branch: main
-Focus: Architectural Hardening & Scaling Engine (Direct-to-R2 Presigned Uploads, Distributed Redis LLM Rate Limiter, Celery Dynamic Concurrency, PostHog Product Telemetry, System Diagnostics & Scaling Alerts)
+Focus: Transactional Email Notification Engine (Resend Integration & Celery Worker), User Preference Enforcement, Notification Center Modernization, and Full Application Dark Theme Overhaul
 
 ## Last Session Completed
 Date: 2026-08-31
 Completed:
-- Direct-to-R2 Presigned Uploads: Refactored `uploadMediaAsset` in `frontend/src/lib/api.js` to route all media through direct S3 multipart presigned uploads, bypassing API server memory and CPU.
-- Distributed Redis LLM Token-Bucket (`utils/free_llm_router.py`): Shared 1-minute sliding window counters across worker and API nodes to proactively prevent 429 errors.
-- Celery Dynamic Worker Autoscaling (`docker-compose.yml`): Configured `--autoscale=12,2`, `4,1`, and `6,1` across worker pools for peak scheduling spikes.
-- PostHog Product Telemetry (`frontend/src/lib/analytics.js`): Instrumented user identity tracking and funnel events across composer, repurposer, voice notes, inbox, and graphics studio.
-- System Diagnostics & Scaling Alerts (`api/routes/system_health.py`, `GET /api/v1/system/scaling-alerts`): Real-time queue depths, memory utilization, publishing lag, and auto-recommendations.
-- Tests & Deployment: 272/272 tests passed (100%), committed, pushed to `main`, and deployed to Vercel & EC2 (`Up (healthy)`).
+- Outbound Email Dispatcher (`utils/notification_emails.py`): Responsive HTML email templates with severity color accents, deep-link CTAs, and Resend delivery via `resend.Emails.send`.
+- Async Celery Worker Task (`celery_workers/tasks/notifications.py`): `send_notification_email_task` with strict user settings preference gating (`should_notify(db, user_id, event, "email")`).
+- In-App Notification Center (`components/NotificationCenter.js`, `api/routes/notifications.py`): Added category filtering tabs (`all`, `unread`, `publishing`, `system`), bulk clear-all endpoint (`DELETE /api/v1/notifications/clear-all`), and in-item quick actions.
+- Dark Theme Overhaul across all primary application views: NotificationCenter, Dashboard, Calendar, CreatePostForm (Composer, PlatformEditor, AccountSelector, Voice Memo drawer, bottom bar), Social Inbox, Connected Accounts, and Analytics.
+- Tests & Deployment: 276/276 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`Up (healthy)`).
 
 ## Active Work
 Currently implementing: None

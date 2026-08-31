@@ -131,13 +131,18 @@ class CreatePostRequest(BaseModel):
     disable_stitch: bool = False
     workspace_id: str | None = Field(None, max_length=100)
     timezone: str = Field(default="UTC", max_length=100)
+    first_comment: str | None = Field(None, max_length=3000)
+    first_comment_enabled: bool = False
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
     account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
 
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, v: list[str]) -> list[str]:
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
+        allowed = {
+            "instagram", "facebook", "youtube", "twitter", "linkedin",
+            "tiktok", "threads", "bluesky", "pinterest", "discord", "telegram"
+        }
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")
@@ -180,7 +185,10 @@ class BulkCreateRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def validate_platforms(cls, v: list[str]) -> list[str]:
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
+        allowed = {
+            "instagram", "facebook", "youtube", "twitter", "linkedin",
+            "tiktok", "threads", "bluesky", "pinterest", "discord", "telegram"
+        }
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")
@@ -205,6 +213,8 @@ class UpdatePostRequest(BaseModel):
     post_type: str | None = Field(None, max_length=50)
     title: str | None = Field(None, max_length=500)
     timezone: str | None = Field(None, max_length=100)
+    first_comment: str | None = Field(None, max_length=3000)
+    first_comment_enabled: bool | None = None
     platform_overrides: dict[str, PlatformOverride] | None = None
     account_overrides: dict[str, PlatformOverride] | None = None
     version: int = Field(..., description="Optimistic lock version — must match current DB version")
@@ -214,7 +224,10 @@ class UpdatePostRequest(BaseModel):
     def validate_platforms(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
-        allowed = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
+        allowed = {
+            "instagram", "facebook", "youtube", "twitter", "linkedin",
+            "tiktok", "threads", "bluesky", "pinterest", "discord", "telegram"
+        }
         invalid = set(v) - allowed
         if invalid:
             raise ValueError(f"Unsupported platforms: {invalid}")
@@ -256,6 +269,9 @@ class PostResponse(BaseModel):
     scheduled_time: datetime | None = None
     timezone: str | None = Field(default=None, max_length=100)
     scheduled_timezone_explicit: bool = False
+    first_comment: str | None = None
+    first_comment_enabled: bool = False
+    first_comment_status: dict | None = None
     published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

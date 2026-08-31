@@ -14,9 +14,9 @@ const NoteComposer = ({
   savingNote,
   compact = false,
 }) => (
-  <div className={cn('space-y-3', compact ? 'rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-3' : 'rounded-3xl border border-slate-200 bg-white p-4')}>
+  <div className={cn('space-y-3', compact ? 'rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40' : 'rounded-3xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-800/60')}>
     <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Add note</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Add note</p>
       <textarea
         rows={compact ? 2 : 3}
         placeholder="Add a reminder, approval note, or client context for this day…"
@@ -25,7 +25,7 @@ const NoteComposer = ({
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onAddNote?.();
         }}
-        className="mt-3 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-200"
+        className="mt-3 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
       />
     </div>
 
@@ -39,7 +39,7 @@ const NoteComposer = ({
             className={cn(
               'h-5 w-5 rounded-full transition-transform',
               noteColorClasses[color].dot,
-              noteColor === color ? 'scale-125 ring-2 ring-slate-400 ring-offset-2' : 'opacity-70',
+              noteColor === color ? 'scale-125 ring-2 ring-slate-400 ring-offset-2 dark:ring-slate-300' : 'opacity-70',
             )}
             title={color}
           />
@@ -103,12 +103,12 @@ const CalendarNotesSection = ({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
           <FaRegStickyNote className="text-sm" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">Notes for this day</p>
-          <p className="text-xs text-slate-500">Keep reminders and context close to the queue.</p>
+          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Notes for this day</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Keep reminders and context close to the queue.</p>
         </div>
       </div>
 
@@ -128,7 +128,7 @@ const CalendarNotesSection = ({
                 <button
                   type="button"
                   onClick={(e) => onDeleteNote(note.id, e)}
-                  className="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"
+                  className="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100 dark:hover:text-white"
                   title="Delete note"
                 >
                   <FaTimes className="text-xs" />
@@ -138,7 +138,7 @@ const CalendarNotesSection = ({
           ))}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-400">
           No notes for this day yet.
         </div>
       )}

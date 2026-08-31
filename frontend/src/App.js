@@ -56,6 +56,7 @@ import ShortLinks from '@/pages/ShortLinks';
 import PublicReview from '@/pages/PublicReview';
 import LinkInBio from '@/pages/LinkInBio';
 import PublicBioPage from '@/pages/PublicBioPage';
+import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -539,6 +540,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <LinkInBio />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/social-graphic-studio"
+                element={
+                  <PrivateRoute>
+                    <SocialGraphicStudio />
                   </PrivateRoute>
                 }
               />

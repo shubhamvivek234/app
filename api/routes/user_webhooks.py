@@ -215,3 +215,100 @@ async def dispatch_webhook_event(db, workspace_id: str, event: str, payload: dic
                     )
         except Exception as exc:
             logger.warning("Webhook delivery exception: url=%s error=%s", url[:80], exc)
+
+
+# ── Inbound Webhooks (n8n, Make.com, Zapier, Custom Automation) ──────────────
+
+class InboundPostRequest(BaseModel):
+    content: str
+    title: str | None = None
+    platforms: list[str] | None = None
+    media_urls: list[str] | None = None
+    scheduled_time: str | None = None
+    first_comment: str | None = None
+    publish_now: bool = False
+    timezone: str = "UTC"
+
+
+@router.post("/webhooks/inbound/post", status_code=status.HTTP_201_CREATED)
+async def inbound_create_post(
+    body: InboundPostRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """
+    Inbound webhook trigger for low-code automation (n8n, Make.com, Zapier).
+    Instantly drafts or schedules a post across connected platforms.
+    """
+    from bson import ObjectId
+    from api.task_queue import enqueue_task
+
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    now = datetime.now(timezone.utc)
+
+    # Resolve platforms (fallback to all connected accounts if not specified)
+    platforms = body.platforms
+    if not platforms:
+        accounts = await db.social_accounts.find(
+            {"user_id": user_id, "is_active": True},
+            {"platform": 1, "account_id": 1}
+        ).to_list(length=50)
+        platforms = list(set([acc["platform"] for acc in accounts if acc.get("platform")]))
+
+    if not platforms:
+        platforms = ["twitter"]
+
+    post_status = "scheduled" if (body.scheduled_time and not body.publish_now) else "draft"
+    if body.publish_now:
+        post_status = "queued"
+
+    scheduled_dt = None
+    if body.scheduled_time:
+        try:
+            scheduled_dt = datetime.fromisoformat(body.scheduled_time.replace("Z", "+00:00"))
+        except Exception:
+            scheduled_dt = None
+
+    post_id = str(ObjectId())
+    doc = {
+        "id": post_id,
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "content": body.content,
+        "title": body.title,
+        "platforms": platforms,
+        "media_urls": body.media_urls or [],
+        "scheduled_time": scheduled_dt,
+        "timezone": body.timezone,
+        "status": post_status,
+        "first_comment": body.first_comment,
+        "first_comment_enabled": bool(body.first_comment),
+        "first_comment_status": None,
+        "platform_results": {p: {"status": "pending"} for p in platforms},
+        "status_history": [{"status": post_status, "timestamp": now, "actor": "inbound_webhook"}],
+        "created_at": now,
+        "updated_at": now,
+        "version": 1,
+    }
+
+    await db.posts.insert_one(doc)
+
+    if body.publish_now:
+        try:
+            enqueue_task(
+                "celery_workers.tasks.publish.publish_post",
+                kwargs={"post_id": post_id, "version": 1},
+                queue="high_priority",
+            )
+        except Exception as exc:
+            logger.warning("Failed to enqueue publish for inbound webhook: %s", exc)
+
+    return {
+        "success": True,
+        "post_id": post_id,
+        "status": post_status,
+        "platforms": platforms,
+        "created_at": now.isoformat(),
+    }
+

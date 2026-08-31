@@ -29,10 +29,10 @@ const CalendarDayCell = ({
   return (
     <div
       className={cn(
-        'border-b border-r border-slate-200/90 last:border-r-0 transition-colors',
+        'border-b border-r border-slate-200/90 dark:border-slate-800 last:border-r-0 transition-colors',
         isWeek ? 'min-h-[272px]' : 'min-h-[148px]',
-        isCurrentMonth ? 'bg-white' : 'bg-slate-50/80',
-        today ? 'bg-emerald-50/80 ring-1 ring-inset ring-emerald-200/80' : 'hover:bg-slate-50/90',
+        isCurrentMonth ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/80 dark:bg-slate-950/50',
+        today ? 'bg-emerald-50/80 dark:bg-emerald-950/20 ring-1 ring-inset ring-emerald-200/80 dark:ring-emerald-800/60' : 'hover:bg-slate-50/90 dark:hover:bg-slate-800/60',
       )}
       data-testid={`calendar-day-${format(day, 'yyyy-MM-dd')}`}
     >
@@ -48,17 +48,17 @@ const CalendarDayCell = ({
               today
                 ? 'bg-emerald-500 text-white shadow-sm'
                 : isCurrentMonth
-                  ? 'bg-slate-100 text-slate-800'
-                  : 'bg-slate-100 text-slate-500',
+                  ? 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200'
+                  : 'bg-slate-100 text-slate-500 dark:bg-slate-800/60 dark:text-slate-500',
             )}
           >
             {dayNumberLabel}
           </span>
           {summaryLabel ? (
-            <p className="mt-2 text-[11px] font-medium text-slate-500">{summaryLabel}</p>
+            <p className="mt-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">{summaryLabel}</p>
           ) : null}
         </div>
-        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-600">
+        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-200">
           <FaArrowRight className="text-[11px]" />
         </span>
       </button>
@@ -79,7 +79,7 @@ const CalendarDayCell = ({
         {hiddenPostsCount > 0 ? (
           <button
             type="button"
-            className="rounded-xl px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-xl px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors"
             onClick={() => onOpenAgenda?.(day)}
           >
             +{hiddenPostsCount} more scheduled
@@ -93,8 +93,8 @@ const CalendarDayCell = ({
             className={cn(
               'w-full rounded-2xl border border-dashed px-3 py-3 text-left text-xs transition-colors',
               isWeek
-                ? 'border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white'
-                : 'border-slate-200/80 bg-slate-50/80 text-slate-400 hover:border-slate-300 hover:text-slate-500',
+                ? 'border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:bg-slate-800'
+                : 'border-slate-200/80 bg-slate-50/80 text-slate-400 hover:border-slate-300 hover:text-slate-500 dark:border-slate-800 dark:bg-slate-800/20 dark:text-slate-500 dark:hover:border-slate-700 dark:hover:text-slate-400',
             )}
           >
             {isWeek ? 'No scheduled posts. Open the day agenda to add notes.' : 'No posts'}
@@ -120,7 +120,7 @@ const CalendarDayCell = ({
             {notes.length > 2 ? (
               <button
                 type="button"
-                className="text-[11px] font-semibold text-slate-500 transition-colors hover:text-slate-700"
+                className="text-[11px] font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
                 onClick={() => onOpenAgenda?.(day)}
               >
                 +{notes.length - 2} more notes

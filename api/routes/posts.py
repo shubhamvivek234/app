@@ -1181,6 +1181,9 @@ async def create_post(
         "dlq_reason": None,
         "content_hash": hashlib.sha256((body.content or "").encode()).hexdigest(),
         "schedule_warnings": all_warnings,
+        "first_comment": body.first_comment,
+        "first_comment_enabled": bool(body.first_comment and body.first_comment_enabled),
+        "first_comment_status": None,
         "platform_overrides": normalized_platform_overrides,
         "account_overrides": normalized_account_overrides,
         "created_at": now,
@@ -1755,6 +1758,10 @@ async def update_post(
         updates["title"] = body.title
     if "timezone" in body.model_fields_set:
         updates["timezone"] = body.timezone
+    if "first_comment" in body.model_fields_set:
+        updates["first_comment"] = body.first_comment
+    if "first_comment_enabled" in body.model_fields_set:
+        updates["first_comment_enabled"] = bool(body.first_comment_enabled)
     if "scheduled_time" in body.model_fields_set:
         updates["scheduled_timezone_explicit"] = bool(body.scheduled_time)
 

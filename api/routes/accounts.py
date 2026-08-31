@@ -273,6 +273,12 @@ class DiscordWebhookRequest(BaseModel):
     channel_name: str | None = None  # optional user-supplied label
 
 
+class TelegramConnectRequest(BaseModel):
+    bot_token: str
+    chat_id: str
+    channel_name: str | None = None
+
+
 class MastodonConnectRequest(BaseModel):
     instance_url: str
     access_token: str
@@ -1390,6 +1396,125 @@ async def connect_discord(
         outcome="connected",
     )
     return {"connected": True, "platform": "discord", "channel": channel_label}
+
+
+# ── Telegram (Bot Token & Chat ID, no OAuth) ──────────────────────────────────
+
+@router.post("/social-accounts/telegram/connect")
+async def connect_telegram(
+    body: TelegramConnectRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Connect a Telegram channel or group via Bot Token and Chat ID."""
+    from backend.app.social.telegram import TelegramBot
+
+    user_id = current_user["user_id"]
+    bot_token = body.bot_token.strip()
+    chat_id = body.chat_id.strip()
+
+    try:
+        meta = await TelegramBot.validate(bot_token, chat_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        event_log(
+            logger,
+            "error",
+            "accounts.telegram.connect_failed",
+            exc_info=exc,
+            route="/social-accounts/telegram/connect",
+            user_id=user_id,
+            platform="telegram",
+            failure_type="token_validation_failed",
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Failed to reach Telegram API. Please check your Bot Token and Chat ID.")
+
+    now = datetime.now(timezone.utc)
+    bot_id = meta["bot_id"]
+    account_id = f"telegram_{user_id}_{secrets.token_hex(8)}"
+    channel_label = body.channel_name or meta.get("chat_title") or f"Telegram ({chat_id})"
+
+    await db.social_accounts.update_one(
+        {"user_id": user_id, "platform": "telegram", "platform_user_id": f"{bot_id}_{chat_id}"},
+        {"$set": {
+            "account_id": account_id,
+            "user_id": user_id,
+            "platform": "telegram",
+            "platform_user_id": f"{bot_id}_{chat_id}",
+            "platform_username": channel_label,
+            "display_name": channel_label,
+            "access_token": encrypt(json.dumps({"bot_token": bot_token, "chat_id": chat_id})),
+            "refresh_token": None,
+            "scopes": ["bot"],
+            "is_active": True,
+            "connected_at": now,
+            "expires_at": None,
+            "metadata": {
+                "bot_id": bot_id,
+                "bot_username": meta.get("bot_username"),
+                "chat_id": chat_id,
+                "chat_title": meta.get("chat_title"),
+            },
+        }},
+        upsert=True,
+    )
+    event_log(
+        logger,
+        "info",
+        "accounts.telegram.connected",
+        route="/social-accounts/telegram/connect",
+        user_id=user_id,
+        platform="telegram",
+        account_id=account_id,
+        outcome="connected",
+    )
+    return {"connected": True, "platform": "telegram", "channel": channel_label}
+
+
+@router.post("/social-accounts/{account_id}/test-connection")
+async def test_account_connection(
+    account_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Send a lightweight test message / validation ping to verify account connectivity."""
+    user_id = current_user["user_id"]
+    account = await db.social_accounts.find_one({"account_id": account_id, "user_id": user_id})
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    platform = account.get("platform")
+    raw_token = decrypt(account.get("access_token") or "")
+
+    if platform == "discord":
+        from backend.app.social.discord import DiscordWebhook
+        try:
+            await DiscordWebhook.post_message(
+                webhook_url=raw_token,
+                content="🔔 **Unravler Test Message**: Your Discord channel is successfully connected!",
+            )
+            return {"ok": True, "message": "Test ping sent to Discord channel successfully!"}
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Discord ping failed: {str(exc)}")
+
+    elif platform == "telegram":
+        from backend.app.social.telegram import TelegramBot
+        try:
+            creds = json.loads(raw_token)
+            await TelegramBot.post_message(
+                bot_token=creds["bot_token"],
+                chat_id=creds["chat_id"],
+                content="🔔 <b>Unravler Test Message</b>: Your Telegram channel is successfully connected!",
+            )
+            return {"ok": True, "message": "Test ping sent to Telegram channel successfully!"}
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Telegram ping failed: {str(exc)}")
+
+    return {"ok": True, "message": f"Account '{account.get('platform_username')}' connection is active."}
 
 
 # ── Mastodon (instance token-based, no OAuth redirect) ───────────────────────
