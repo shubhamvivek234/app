@@ -2,18 +2,19 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.4 shipped
+Stage: v3.5 shipped
 Branch: main
-Focus: Transactional Email Notification Engine (Resend Integration & Celery Worker), User Preference Enforcement, Notification Center Modernization, and Full Application Dark Theme Overhaul
+Focus: Scheduled Calendar Drag-and-Drop Confirmation Flow, Timezone Selector, AI Best-Time Snapping, Same-Account Overlap Warnings, and Mobile Quick Reschedule Actions
 
 ## Last Session Completed
-Date: 2026-08-31
+Date: 2026-09-01
 Completed:
-- Outbound Email Dispatcher (`utils/notification_emails.py`): Responsive HTML email templates with severity color accents, deep-link CTAs, and Resend delivery via `resend.Emails.send`.
-- Async Celery Worker Task (`celery_workers/tasks/notifications.py`): `send_notification_email_task` with strict user settings preference gating (`should_notify(db, user_id, event, "email")`).
-- In-App Notification Center (`components/NotificationCenter.js`, `api/routes/notifications.py`): Added category filtering tabs (`all`, `unread`, `publishing`, `system`), bulk clear-all endpoint (`DELETE /api/v1/notifications/clear-all`), and in-item quick actions.
-- Dark Theme Overhaul across all primary application views: NotificationCenter, Dashboard, Calendar, CreatePostForm (Composer, PlatformEditor, AccountSelector, Voice Memo drawer, bottom bar), Social Inbox, Connected Accounts, and Analytics.
-- Tests & Deployment: 276/276 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2 (`Up (healthy)`).
+- Unified Reschedule Confirmation Dialog (`components/scheduled/ScheduledCalendarView.js`): Interactive drop confirmation dialog displaying local wall-clock target time in the user's active browser timezone with full custom timezone selector.
+- Timezone Awareness & Context: Displays original creation timezone banner with 1-click toggles between original and local browser timezone.
+- AI Best-Time Recommendations: Platform-specific peak engagement suggestions (Instagram, LinkedIn, X, YouTube, TikTok, Facebook) with 1-click snapping.
+- Collision & Overlap Protection: Real-time $\pm 30$m conflict detection on shared accounts with 1-click auto-space buffer (`+30m`).
+- Mobile & Touch Quick Actions: 1-tap reschedule buttons (`+1 Hour`, `Tomorrow`, `Next Week`) and touch optimization.
+- Tests & Deployment: 276/276 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2.
 
 ## Active Work
 Currently implementing: None
