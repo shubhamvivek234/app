@@ -2,17 +2,20 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v4.9 shipped
+Stage: v5.0 shipped
 Branch: main
-Focus: Ethereal Pastel Gemini Aurora Living Color Glow on Sidebar Create Post Button
+Focus: Ultra-Light Ethereal Gemini Aurora Button & Smart Bio Card Real-Time Reactivity
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Ethereal Pastel Gemini Palette (`frontend/src/index.css`, `frontend/src/components/DashboardLayout.js`):
-  - Calibrated gradient to soft, luminous pastel Gemini shades: Ethereal Indigo (#6366F1), Radiant Orchid (#A855F7), Pastel Rose (#FB7185), Warm Amber Pearl (#FBBF24), Crystal Sky (#38BDF8), and Lavender (#818CF8).
-  - Enhanced ambient Gaussian blur projection (`filter: blur(14px)`) and reinforced high-contrast typography and subtle glass specular reflection.
-- Tests & Deployment: Frontend build compiled cleanly with 0 errors, pushed to origin/main and deployed to EC2.
+- Ultra-Light Gemini Aurora Button (`frontend/src/index.css`, `frontend/src/components/DashboardLayout.js`):
+  - Calibrated gradient to dreamy ultra-light pastel shades: Moonlight Lavender (#E0E7FF), Lilac Bloom (#DDD6FE), Petal Rose (#FBCFE8), Warm Pearl (#FEF08A), Crystal Aqua (#BAE6FD), and Soft Periwinkle (#C7D2FE).
+  - Paired with crisp obsidian typography (`text-slate-900`), indigo icon accent, and diffused ambient bloom (`filter: blur(16px)`).
+- Smart Bio Card Background Color Fix (`frontend/src/lib/bioThemeUtils.js`, `frontend/src/pages/LinkInBio.js`, `frontend/src/pages/PublicBioPage.js`):
+  - Updated `getTactileCardStyles` to respect `theme.card_bg` globally across all cards unless an explicit per-block custom background is toggled.
+  - Card background, border, and text color changes now instantly reflect in live studio preview and on the published bio page.
+- Tests & Deployment: Frontend build and 282 backend tests passed cleanly. Pushed to origin/main and synced on EC2.
 
 ## Active Work
 Currently implementing: None
