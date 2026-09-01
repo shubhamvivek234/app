@@ -11,14 +11,12 @@ const CreatePost = () => {
   const initialContent = location.state?.initialContent || location.state?.initialCaption || location.state?.caption || '';
 
   return (
-    <DashboardLayout>
-      <div className="h-[calc(100vh-3.5rem)] flex flex-col overflow-hidden">
-        <CreatePostForm
-          editPostId={editPostId}
-          initialContent={initialContent}
-          asModal={false}
-        />
-      </div>
+    <DashboardLayout noPadding={true}>
+      <CreatePostForm
+        editPostId={editPostId}
+        initialContent={initialContent}
+        asModal={false}
+      />
     </DashboardLayout>
   );
 };

@@ -112,7 +112,7 @@ const UserMenu = ({ user, onLogout }) => {
   );
 };
 
-const DashboardLayout = ({ children, hideSidebar = false }) => {
+const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -564,7 +564,7 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
       </div>
 
       <div className={`pt-14 transition-all duration-200 ${hideSidebar ? 'ml-0' : collapsed ? 'ml-16' : 'ml-64'}`}>
-        <main className={hideSidebar ? 'h-[calc(100vh-3.5rem)] overflow-hidden' : 'p-6'}>{children}</main>
+        <main className={hideSidebar || noPadding ? 'h-[calc(100vh-3.5rem)] overflow-hidden' : 'p-6'}>{children}</main>
       </div>
 
     </div>

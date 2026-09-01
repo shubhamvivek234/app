@@ -47,8 +47,8 @@ const AccountSelector = ({
   }
 
   return (
-    <div className="flex flex-wrap gap-3 items-center">
-      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 mr-1">Post to</span>
+    <div className="flex flex-wrap gap-2 sm:gap-2.5 items-center">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mr-0.5">Post to</span>
 
       {accounts.map((account) => {
         const platformInfo = platformIcons[account.platform] || {};
@@ -62,15 +62,15 @@ const AccountSelector = ({
 
         // Use box-shadow to draw the ring: 2px gap + 2px colored ring
         const ringStyle = isSelected
-          ? { boxShadow: `0 0 0 2px var(--bg-card, #ffffff), 0 0 0 4px ${hex}` }
+          ? { boxShadow: `0 0 0 2px var(--bg-card, #ffffff), 0 0 0 3px ${hex}` }
           : {};
 
         return (
           <div key={account.id} className="relative group">
             <button
               onClick={() => handleClick(account)}
-              className={`relative w-11 h-11 rounded-full transition-all duration-150 focus:outline-none ${
-                isSelected ? 'opacity-100' : 'opacity-50 hover:opacity-80'
+              className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-full transition-all duration-150 focus:outline-none ${
+                isSelected ? 'opacity-100 scale-100' : 'opacity-40 hover:opacity-75 scale-95'
               }`}
               style={ringStyle}
               title={`${account.platform}: ${displayName}${accountTypeLabel ? ` (${accountTypeLabel})` : ''}`}
@@ -79,11 +79,11 @@ const AccountSelector = ({
                 <img
                   src={account.picture_url}
                   alt={displayName}
-                  className="w-11 h-11 rounded-full object-cover"
+                  className="w-full h-full rounded-full object-cover"
                 />
               ) : (
                 <div
-                  className={`w-11 h-11 rounded-full ${getAvatarColor(displayName)} flex items-center justify-center text-white text-sm font-bold`}
+                  className={`w-full h-full rounded-full ${getAvatarColor(displayName)} flex items-center justify-center text-white text-xs font-bold`}
                 >
                   {displayName.charAt(0).toUpperCase()}
                 </div>
@@ -91,8 +91,8 @@ const AccountSelector = ({
 
               {/* Platform icon badge */}
               {Icon && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full bg-offwhite dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center shadow-sm">
-                  <Icon className={`text-[10px] ${platformInfo.color}`} />
+                <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center shadow-xs">
+                  <Icon className={`text-[9px] ${platformInfo.color}`} />
                 </div>
               )}
             </button>
