@@ -236,28 +236,40 @@ export default function LinkInBio() {
       const updatedPages = pages.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
       const homePage = updatedPages.find((p) => p.id === 'home');
 
+      const safeHandle = (handle || '').trim() || 'user';
+      const safeTitle = (title || '').trim() || safeHandle;
+
       const payload = {
-        handle: handle.trim(),
-        title: title.trim(),
-        bio,
-        avatar_url: avatarUrl,
-        banner_url: bannerUrl,
-        verified_badge: verifiedBadge,
+        handle: safeHandle,
+        title: safeTitle,
+        bio: bio || '',
+        avatar_url: avatarUrl || null,
+        banner_url: bannerUrl || null,
+        verified_badge: Boolean(verifiedBadge),
         theme: overrideState?.theme || theme,
         blocks: homePage?.blocks || blocks,
         pages: updatedPages,
-        active_page_id: activePageId,
+        active_page_id: activePageId || 'home',
         navigation_style: theme.navigation_style || 'pills',
-        social_links: overrideState?.socialLinks || socialLinks,
-        custom_domain: customDomain,
-        seo,
+        social_links: overrideState?.socialLinks || socialLinks || {},
+        custom_domain: customDomain || '',
+        seo: {
+          meta_title: seo?.meta_title || seo?.title || `${safeTitle} | Smart Bio`,
+          meta_description: seo?.meta_description || seo?.description || bio || '',
+          meta_image_url: seo?.meta_image_url || seo?.og_image || avatarUrl || '',
+        },
         auto_sync_instagram_grid: autoSyncGrid,
         is_published: true,
       };
-      await saveMyBioPage(payload);
-      toast.success('Smart Bio & Multi-Page site published live!');
+      const res = await saveMyBioPage(payload);
+      if (res && res.handle) {
+        setHandle(res.handle);
+      }
+      toast.success('✨ Smart Bio published live!');
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to save Smart Bio');
+      console.error('Save bio error:', err);
+      const errMsg = err?.response?.data?.detail || err?.message || 'Failed to save Smart Bio';
+      toast.error(errMsg);
     } finally {
       setSaving(false);
     }
@@ -791,6 +803,9 @@ export default function LinkInBio() {
                         activeBlocks.map((block) => {
                           const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
                             animation: block.animation,
+                            card_bg: block.card_bg,
+                            card_border: block.card_border,
+                            card_text_color: block.card_text_color,
                           });
 
                           const isFolder = block.type === 'folder' || block.type === 'tab_group';
@@ -813,9 +828,11 @@ export default function LinkInBio() {
                                       <FaFolder className="text-sm" />
                                     </div>
                                     <div>
-                                      <p className="text-xs font-bold leading-tight">{block.title || 'Folder / Group'}</p>
+                                      <p className="text-xs font-bold leading-tight" style={{ color: cardObj.style.color }}>
+                                        {block.title || 'Folder / Group'}
+                                      </p>
                                       {block.folder_items?.length > 0 && (
-                                        <p className="text-[10px] opacity-60 font-normal mt-0.5">
+                                        <p className="text-[10px] opacity-60 font-normal mt-0.5" style={{ color: cardObj.style.color }}>
                                           {block.folder_items.length} sub-links
                                         </p>
                                       )}
@@ -830,7 +847,7 @@ export default function LinkInBio() {
                                 {isFolderOpen && (
                                   <div className="p-3 pt-0 space-y-2 border-t border-black/5 dark:border-white/5 mt-1 animate-fade-in">
                                     {(block.folder_items || []).length === 0 ? (
-                                      <p className="text-[10px] opacity-60 text-center py-2">
+                                      <p className="text-[10px] opacity-60 text-center py-2" style={{ color: cardObj.style.color }}>
                                         Folder is empty. Click edit on left tree to add sub-links.
                                       </p>
                                     ) : (
@@ -838,6 +855,7 @@ export default function LinkInBio() {
                                         <div
                                           key={subItem.id || sIdx}
                                           className="py-2.5 px-3 rounded-xl bg-black/5 dark:bg-white/5 flex items-center justify-between text-xs font-semibold hover:bg-black/10 transition-colors"
+                                          style={{ color: cardObj.style.color }}
                                         >
                                           <div className="flex items-center gap-2 truncate">
                                             <FaExternalLinkAlt className="text-[9px] opacity-50 flex-shrink-0" />
@@ -876,7 +894,9 @@ export default function LinkInBio() {
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-pulse" />}
-                                    <span className="truncate font-black">{block.title || block.headline || 'View Link'}</span>
+                                    <span className="truncate font-black" style={{ color: cardObj.style.color }}>
+                                      {block.title || block.headline || 'View Link'}
+                                    </span>
                                     {block.badge && (
                                       <span className="px-2 py-0.5 text-[8px] font-black uppercase tracking-wider rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-xs">
                                         {block.badge}
@@ -884,11 +904,16 @@ export default function LinkInBio() {
                                     )}
                                   </div>
                                   {block.subtitle && (
-                                    <p className="text-[10px] opacity-75 font-normal truncate mt-0.5">{block.subtitle}</p>
+                                    <p className="text-[10px] opacity-75 font-normal truncate mt-0.5" style={{ color: cardObj.style.color }}>
+                                      {block.subtitle}
+                                    </p>
                                   )}
                                 </div>
 
-                                <div className="w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-current opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all shrink-0">
+                                <div
+                                  className="w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all shrink-0"
+                                  style={{ color: cardObj.style.color }}
+                                >
                                   <FaExternalLinkAlt className="text-[9px]" />
                                 </div>
                               </div>

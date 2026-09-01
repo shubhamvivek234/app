@@ -396,6 +396,9 @@ export default function PublicBioPage() {
           {blocks.map((block) => {
             const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
               animation: block.animation,
+              card_bg: block.card_bg,
+              card_border: block.card_border,
+              card_text_color: block.card_text_color,
             });
 
             const isFolder = block.type === 'folder' || block.type === 'tab_group';
@@ -415,9 +418,9 @@ export default function PublicBioPage() {
                   >
                     <div className="flex items-center gap-2.5">
                       <FaFolder className="text-amber-500 text-base" />
-                      <span>{block.title || 'Folder / Group'}</span>
+                      <span style={{ color: cardObj.style.color }}>{block.title || 'Folder / Group'}</span>
                       {block.folder_items?.length > 0 && (
-                        <span className="px-2 py-0.5 rounded-md bg-black/10 dark:bg-white/10 text-[10px] font-mono">
+                        <span className="px-2 py-0.5 rounded-md bg-black/10 dark:bg-white/10 text-[10px] font-mono" style={{ color: cardObj.style.color }}>
                           {block.folder_items.length}
                         </span>
                       )}
@@ -432,6 +435,7 @@ export default function PublicBioPage() {
                           key={subItem.id || sIdx}
                           onClick={() => subItem.url && window.open(subItem.url, '_blank')}
                           className="w-full py-2.5 px-3.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 flex items-center justify-between text-xs font-bold transition-all text-left"
+                          style={{ color: cardObj.style.color }}
                         >
                           <span className="truncate">{subItem.title || subItem.url}</span>
                           <FaExternalLinkAlt className="text-[10px] opacity-50" />
@@ -467,7 +471,9 @@ export default function PublicBioPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-bounce" />}
-                        <span className="truncate">{block.title || block.headline || 'View Details'}</span>
+                        <span className="truncate" style={{ color: cardObj.style.color }}>
+                          {block.title || block.headline || 'View Details'}
+                        </span>
                         {block.badge && (
                           <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white rounded-full">
                             {block.badge}
@@ -475,11 +481,13 @@ export default function PublicBioPage() {
                         )}
                       </div>
                       {block.subtitle && (
-                        <p className="text-[11px] opacity-70 font-normal mt-0.5 truncate">{block.subtitle}</p>
+                        <p className="text-[11px] opacity-70 font-normal mt-0.5 truncate" style={{ color: cardObj.style.color }}>
+                          {block.subtitle}
+                        </p>
                       )}
                     </div>
 
-                    <FaExternalLinkAlt className="text-xs opacity-40 shrink-0 ml-2" />
+                    <FaExternalLinkAlt className="text-xs opacity-40 shrink-0 ml-2" style={{ color: cardObj.style.color }} />
                   </div>
                 </button>
               );

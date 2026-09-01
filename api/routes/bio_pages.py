@@ -30,13 +30,15 @@ _RESERVED_HANDLES = {
 # ── Pydantic Models ──────────────────────────────────────────────────────────
 
 class BlockSchedule(BaseModel):
+    model_config = {"extra": "allow"}
     start_at: datetime | None = None
     end_at: datetime | None = None
 
 
 class BioBlockItem(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
-    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group"] = "link"
+    type: str = "link"
     title: str = ""
     subtitle: str = ""
     url: str = ""
@@ -67,6 +69,7 @@ class BioBlockItem(BaseModel):
 
 
 class BioTheme(BaseModel):
+    model_config = {"extra": "allow"}
     preset: str = "editorial_cream"
     background_type: str = "gradient"
     background_color: str = "#FDFBF7"
@@ -92,7 +95,9 @@ class BioTheme(BaseModel):
     profile_picture_shadow: int = 0
     profile_picture_border: int = 0
     collapse_long_bio: bool = False
+    social_position: str = "top"
     social_icon_size: int = 0
+    tactile_blocks: bool = True
     announcement_banner: str = ""
     announcement_url: str = ""
     announcement_active: bool = False
@@ -100,12 +105,17 @@ class BioTheme(BaseModel):
 
 
 class SeoConfig(BaseModel):
+    model_config = {"extra": "allow"}
     meta_title: str = ""
     meta_description: str = ""
     meta_image_url: str = ""
+    title: str = ""
+    description: str = ""
+    og_image: str = ""
 
 
 class BioSubPage(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
     slug: str
     title: str
@@ -115,10 +125,12 @@ class BioSubPage(BaseModel):
 
 
 class BioPageConfig(BaseModel):
-    handle: str = Field(..., min_length=2, max_length=40)
-    title: str = Field(..., min_length=1, max_length=100)
+    model_config = {"extra": "allow"}
+    handle: str = Field(default="mybio", max_length=40)
+    title: str = Field(default="My Bio", max_length=100)
     bio: str = Field(default="", max_length=500)
     avatar_url: str | None = None
+    banner_url: str | None = None
     verified_badge: bool = False
     theme: BioTheme = Field(default_factory=BioTheme)
     blocks: list[BioBlockItem] = Field(default_factory=list)
@@ -317,10 +329,11 @@ async def save_my_bio_page(
     user_id = current_user["user_id"]
     workspace_id = current_user.get("default_workspace_id") or user_id
 
-    # Clean handle
-    clean_handle = re.sub(r"[^a-zA-Z0-9_-]", "", payload.handle.lower().strip())
+    # Clean and fallback handle
+    raw_handle = payload.handle or f"user_{user_id[:6]}"
+    clean_handle = re.sub(r"[^a-zA-Z0-9_-]", "", raw_handle.lower().strip())
     if len(clean_handle) < 2:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Handle must be at least 2 characters")
+        clean_handle = f"user_{user_id[:6]}"
     if clean_handle in _RESERVED_HANDLES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"The handle '{clean_handle}' is reserved")
 
@@ -329,32 +342,47 @@ async def save_my_bio_page(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Handle '@{clean_handle}' is already taken by another creator")
 
-    # Validate links in blocks
-    for b in payload.blocks:
-        if b.type == "link" and b.url:
-            raw_url = b.url.strip()
-            if not (raw_url.startswith("http://") or raw_url.startswith("https://") or raw_url.startswith("mailto:") or raw_url.startswith("tel:")):
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid URL format: {raw_url}")
-            if "127.0.0.1" in raw_url or "localhost" in raw_url or "169.254.169.254" in raw_url:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Internal URLs are not allowed")
+    def _sanitize_block_urls(block_item: BioBlockItem) -> dict:
+        b_dict = block_item.model_dump()
+        if b_dict.get("url"):
+            u = b_dict["url"].strip()
+            if u and not (u.startswith("http://") or u.startswith("https://") or u.startswith("mailto:") or u.startswith("tel:")):
+                b_dict["url"] = f"https://{u}"
+        if b_dict.get("folder_items"):
+            for sub in b_dict["folder_items"]:
+                if isinstance(sub, dict) and sub.get("url"):
+                    su = sub["url"].strip()
+                    if su and not (su.startswith("http://") or su.startswith("https://") or su.startswith("mailto:") or su.startswith("tel:")):
+                        sub["url"] = f"https://{su}"
+        return b_dict
+
+    sanitized_blocks = [_sanitize_block_urls(b) for b in payload.blocks]
+    sanitized_pages = []
+    for p in payload.pages:
+        p_dict = p.model_dump()
+        p_dict["blocks"] = [_sanitize_block_urls(b) for b in p.blocks]
+        sanitized_pages.append(p_dict)
 
     now = datetime.now(timezone.utc)
+    clean_title = (payload.title or clean_handle).strip()
+
     doc_data = {
         "workspace_id": workspace_id,
         "user_id": user_id,
         "handle": clean_handle,
-        "title": payload.title.strip(),
-        "bio": payload.bio.strip(),
+        "title": clean_title,
+        "bio": payload.bio.strip() if payload.bio else "",
         "avatar_url": payload.avatar_url,
+        "banner_url": payload.banner_url,
         "verified_badge": payload.verified_badge,
         "theme": payload.theme.model_dump(),
-        "blocks": [b.model_dump() for b in payload.blocks],
-        "pages": [p.model_dump() for p in payload.pages],
-        "active_page_id": payload.active_page_id,
-        "navigation_style": payload.navigation_style,
-        "social_links": payload.social_links,
-        "custom_domain": payload.custom_domain.strip().lower(),
-        "seo": payload.seo.model_dump(),
+        "blocks": sanitized_blocks,
+        "pages": sanitized_pages,
+        "active_page_id": payload.active_page_id or "home",
+        "navigation_style": payload.navigation_style or "pills",
+        "social_links": payload.social_links or {},
+        "custom_domain": (payload.custom_domain or "").strip().lower(),
+        "seo": payload.seo.model_dump() if payload.seo else {},
         "auto_sync_instagram_grid": payload.auto_sync_instagram_grid,
         "is_published": payload.is_published,
         "updated_at": now,
