@@ -328,3 +328,58 @@ code {
     animation: floatOrb 8s ease-in-out infinite alternate;
 }
 
+/* ── Gemini Aurora Living Mesh / Flowing Gradient ── */
+@keyframes geminiAurora {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+@keyframes geminiAuroraGlow {
+    0%, 100% {
+        background-position: 0% 50%;
+        transform: scale(0.96) translate3d(0, 0, 0);
+        opacity: 0.55;
+    }
+    50% {
+        background-position: 100% 50%;
+        transform: scale(1.04) translate3d(0, 0, 0);
+        opacity: 0.85;
+    }
+}
+
+.gemini-aurora-btn {
+    background: linear-gradient(
+        135deg,
+        #4F46E5 0%,
+        #7C3AED 20%,
+        #E11D48 42%,
+        #D97706 60%,
+        #0284C7 80%,
+        #4F46E5 100%
+    );
+    background-size: 350% 350%;
+    animation: geminiAurora 12s ease infinite;
+}
+
+.gemini-aurora-glow {
+    background: linear-gradient(
+        135deg,
+        #4F46E5 0%,
+        #7C3AED 20%,
+        #E11D48 42%,
+        #D97706 60%,
+        #0284C7 80%,
+        #4F46E5 100%
+    );
+    background-size: 350% 350%;
+    animation: geminiAuroraGlow 12s ease-in-out infinite;
+    filter: blur(12px);
+}
+

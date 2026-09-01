@@ -306,23 +306,37 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
           )}
         </div>
 
-        <div className={`py-1.5 ${collapsed ? 'px-2' : 'px-3.5'}`}>
-          <button
-            onClick={() => navigate('/create-post')}
-            data-testid="create-post-button"
-            title="Create new post (⌘N)"
-            className={`w-full group flex items-center rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold shadow-sm shadow-indigo-500/20 hover:shadow-indigo-500/30 active:scale-[0.98] transition-all ${
-              collapsed ? 'justify-center py-2.5' : 'justify-between px-3.5 py-2.5 text-xs'
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              <FaPlus className="text-xs flex-shrink-0" />
-              {!collapsed && 'Create New Post'}
-            </span>
-            {!collapsed && (
-              <kbd className="text-[9px] font-mono bg-white/20 px-1.5 py-0.5 rounded text-white/90">⌘N</kbd>
-            )}
-          </button>
+        <div className={`py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
+          <div className="relative group">
+            {/* Ambient Gemini Aurora Living Glow */}
+            <div className="absolute -inset-0.5 rounded-xl gemini-aurora-glow opacity-60 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+
+            <button
+              onClick={() => navigate('/create-post')}
+              data-testid="create-post-button"
+              title="Create new post (⌘N)"
+              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-white font-bold ring-1 ring-white/25 inset shadow-md shadow-indigo-500/20 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
+                collapsed ? 'justify-center py-2.5' : 'justify-between px-3.5 py-2.5 text-xs'
+              }`}
+            >
+              {/* Subtle top specular glass reflection */}
+              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent pointer-events-none" />
+
+              <span className="flex items-center gap-2 relative z-10">
+                <FaPlus className="text-xs flex-shrink-0 transition-transform group-hover/btn:rotate-90 duration-300" />
+                {!collapsed && (
+                  <span className="tracking-tight text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.3)]">
+                    Create New Post
+                  </span>
+                )}
+              </span>
+              {!collapsed && (
+                <kbd className="relative z-10 text-[9px] font-mono bg-white/20 px-1.5 py-0.5 rounded-md text-white/95 border border-white/20 backdrop-blur-xs shadow-xs">
+                  ⌘N
+                </kbd>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 px-3 py-2 space-y-4 overflow-y-auto">
