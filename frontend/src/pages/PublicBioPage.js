@@ -396,8 +396,11 @@ export default function PublicBioPage() {
           {blocks.map((block) => {
             const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
               animation: block.animation,
+              has_custom_bg: Boolean(block.has_custom_bg),
               card_bg: block.card_bg,
+              has_custom_border: Boolean(block.has_custom_border),
               card_border: block.card_border,
+              has_custom_text_color: Boolean(block.has_custom_text_color),
               card_text_color: block.card_text_color,
             });
 

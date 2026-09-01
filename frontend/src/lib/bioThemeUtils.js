@@ -360,9 +360,15 @@ export const HEADER_LAYOUTS = [
  * Respects fine-tuned slider percentages (corner radius, border width, shadow depth, soft/solid shadow)
  */
 export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, blockOverrides = {}) => {
-  const bg = blockOverrides.card_bg || theme.card_bg || 'rgba(255, 255, 255, 0.85)';
-  const border = blockOverrides.card_border || theme.card_border || 'rgba(0, 0, 0, 0.08)';
-  const textColor = blockOverrides.card_text_color || theme.card_text_color || theme.text_color || '#18181B';
+  const bg = blockOverrides.has_custom_bg
+    ? blockOverrides.card_bg
+    : (theme.card_bg || blockOverrides.card_bg || 'rgba(255, 255, 255, 0.85)');
+  const border = blockOverrides.has_custom_border
+    ? blockOverrides.card_border
+    : (theme.card_border || blockOverrides.card_border || 'rgba(0, 0, 0, 0.08)');
+  const textColor = blockOverrides.has_custom_text_color
+    ? blockOverrides.card_text_color
+    : (theme.card_text_color || blockOverrides.card_text_color || theme.text_color || '#18181B');
   const accent = theme.accent_color || '#6366F1';
 
   // Dynamic slider values

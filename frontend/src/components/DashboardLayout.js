@@ -308,30 +308,30 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
 
         <div className={`py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
           <div className="relative group">
-            {/* Ambient Gemini Aurora Living Glow (Ethereal Pastel Projection) */}
-            <div className="absolute -inset-0.5 rounded-xl gemini-aurora-glow opacity-70 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            {/* Ambient Gemini Aurora Living Glow (Ultra-Light Ethereal Pastel Projection) */}
+            <div className="absolute -inset-1 rounded-2xl gemini-aurora-glow opacity-75 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
             <button
               onClick={() => navigate('/create-post')}
               data-testid="create-post-button"
               title="Create new post (⌘N)"
-              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-white font-extrabold ring-1 ring-white/30 inset shadow-md shadow-indigo-500/15 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
+              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-slate-900 font-extrabold ring-1 ring-slate-900/10 dark:ring-white/40 shadow-sm shadow-indigo-500/10 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
                 collapsed ? 'justify-center py-2.5' : 'justify-between px-3.5 py-2.5 text-xs'
               }`}
             >
               {/* Subtle top specular glass reflection */}
-              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/50 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/80 to-transparent pointer-events-none" />
 
               <span className="flex items-center gap-2 relative z-10">
-                <FaPlus className="text-xs flex-shrink-0 transition-transform group-hover/btn:rotate-90 duration-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)]" />
+                <FaPlus className="text-xs flex-shrink-0 text-indigo-700 dark:text-indigo-900 transition-transform group-hover/btn:rotate-90 duration-300" />
                 {!collapsed && (
-                  <span className="tracking-tight text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
+                  <span className="tracking-tight text-slate-900 dark:text-slate-950 font-black">
                     Create New Post
                   </span>
                 )}
               </span>
               {!collapsed && (
-                <kbd className="relative z-10 text-[9px] font-mono bg-black/15 px-1.5 py-0.5 rounded-md text-white border border-white/25 backdrop-blur-xs shadow-2xs">
+                <kbd className="relative z-10 text-[9px] font-mono bg-white/70 dark:bg-white/80 px-1.5 py-0.5 rounded-md text-slate-800 font-bold border border-slate-300/60 shadow-2xs">
                   ⌘N
                 </kbd>
               )}

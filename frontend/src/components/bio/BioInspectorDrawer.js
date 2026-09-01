@@ -324,7 +324,7 @@ export default function BioInspectorDrawer({
                 return (
                   <button
                     key={cs.id}
-                    onClick={() => setTheme({ ...theme, card_style: cs.id })}
+                    onClick={() => setTheme((prev) => ({ ...prev, card_style: cs.id }))}
                     className={`w-full p-2.5 rounded-xl border text-left transition-all flex items-center justify-between ${
                       isSelected
                         ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs'
@@ -351,7 +351,7 @@ export default function BioInspectorDrawer({
             <input
               type="checkbox"
               checked={theme.tactile_blocks ?? true}
-              onChange={(e) => setTheme({ ...theme, tactile_blocks: e.target.checked })}
+              onChange={(e) => setTheme((prev) => ({ ...prev, tactile_blocks: e.target.checked }))}
               className="w-4 h-4 text-indigo-600 rounded-sm focus:ring-indigo-500 cursor-pointer"
             />
           </div>

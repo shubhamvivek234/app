@@ -328,7 +328,7 @@ code {
     animation: floatOrb 8s ease-in-out infinite alternate;
 }
 
-/* ── Gemini Aurora Living Mesh / Flowing Gradient (Lighter Ethereal Gemini Palette) ── */
+/* ── Gemini Aurora Living Mesh / Flowing Gradient (Ultra-Light Ethereal Gemini Palette) ── */
 @keyframes geminiAurora {
     0% {
         background-position: 0% 50%;
@@ -345,43 +345,43 @@ code {
     0%, 100% {
         background-position: 0% 50%;
         transform: scale(0.96) translate3d(0, 0, 0);
-        opacity: 0.60;
+        opacity: 0.50;
     }
     50% {
         background-position: 100% 50%;
-        transform: scale(1.05) translate3d(0, 0, 0);
-        opacity: 0.90;
+        transform: scale(1.06) translate3d(0, 0, 0);
+        opacity: 0.85;
     }
 }
 
 .gemini-aurora-btn {
     background: linear-gradient(
         135deg,
-        #6366F1 0%,
-        #A855F7 18%,
-        #FB7185 36%,
-        #FBBF24 54%,
-        #38BDF8 74%,
-        #818CF8 90%,
-        #6366F1 100%
+        #E0E7FF 0%,
+        #DDD6FE 18%,
+        #FBCFE8 36%,
+        #FEF08A 54%,
+        #BAE6FD 74%,
+        #C7D2FE 90%,
+        #E0E7FF 100%
     );
     background-size: 300% 300%;
-    animation: geminiAurora 11s ease infinite;
+    animation: geminiAurora 12s ease infinite;
 }
 
 .gemini-aurora-glow {
     background: linear-gradient(
         135deg,
-        #6366F1 0%,
-        #A855F7 18%,
-        #FB7185 36%,
-        #FBBF24 54%,
-        #38BDF8 74%,
-        #818CF8 90%,
-        #6366F1 100%
+        #C7D2FE 0%,
+        #DDD6FE 18%,
+        #FBCFE8 36%,
+        #FEF08A 54%,
+        #BAE6FD 74%,
+        #C7D2FE 90%,
+        #C7D2FE 100%
     );
     background-size: 300% 300%;
-    animation: geminiAuroraGlow 11s ease-in-out infinite;
-    filter: blur(14px);
+    animation: geminiAuroraGlow 12s ease-in-out infinite;
+    filter: blur(16px);
 }
 
