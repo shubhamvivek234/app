@@ -829,6 +829,25 @@ async def generate_short_form_script(
         if bv_doc:
             brand_voice_hint = f"Brand: {bv_doc.get('brand_name')}. Tone: {bv_doc.get('tone')}."
 
+    niche_visuals = {
+        "beauty_fashion": "Include close-up product texture swatches, macro lighting angles, and before/after split frames.",
+        "food_cooking": "Include sizzling audio cues, overhead pan angles, knife cuts, and cross-section ingredient reveals.",
+        "career_jobs": "Include resume keyword highlight overlays, interview roleplay split screens, and counter-offer email templates.",
+        "coaching_consulting": "Include whiteboard framework diagrams, client revenue dashboard proof, and proposal teardowns.",
+        "travel_lifestyle": "Include POV packing shots, Google Flights screen overlays, and location geotags.",
+        "legal_tax": "Include contract clause callouts, IRS tax flowcharts, and document redaction visuals.",
+        "gaming_gear": "Include 240Hz screen capture, FPS meter overlay, and mechanical keyboard sound cues.",
+        "parenting_home": "Include daily routine countdown timers, split-screen chaos vs calm, and visual chore charts.",
+        "saas_tech": "Include code editor snippets, Terminal commands, API speed graphs, and dashboard analytics.",
+        "ecommerce": "Include unboxing POV, product close-ups, packaging reveals, and customer review overlays.",
+        "marketing": "Include ROAS dashboards, campaign breakdown slides, and LinkedIn viral post screenshots.",
+        "fitness": "Include form check slow-mo, workout rep tracker, and nutrition meal prep cross-sections.",
+        "real_estate": "Include architectural walkthroughs, listing price overlays, and neighborhood drone b-roll.",
+        "finance": "Include compound interest charts, tax return highlights, and portfolio pie graphs.",
+        "creator": "Include timeline editing zooms, thumbnail A/B comparisons, and analytics view graphs.",
+        "productivity": "Include Notion workspace tours, keyboard shortcut overlays, and time-block calendar zooms.",
+    }.get(body.niche, "Include engaging B-roll and fast visual transitions.")
+
     system_prompt = (
         "You are an elite viral short-form video creator and scriptwriter for TikTok, Instagram Reels, and YouTube Shorts. "
         "Create high-retention, fast-paced video scripts that hook viewers in the first 2-3 seconds and keep them watching until the end. "
@@ -852,6 +871,7 @@ async def generate_short_form_script(
     user_prompt = (
         f"Topic: {body.topic}\n"
         f"Niche: {body.niche or 'general'}\n"
+        f"Visual Direction: {niche_visuals}\n"
         f"Platform: {body.platform or 'TikTok'}\n"
         f"Target Duration: {body.target_duration or '30s'}\n"
         f"Hook Style: {body.hook_style or 'contrarian'}\n"

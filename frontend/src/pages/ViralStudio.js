@@ -249,7 +249,7 @@ export default function ViralStudio() {
                   >
                     {niches.map((n) => (
                       <option key={n.id} value={n.id}>
-                        {n.label}
+                        {n.icon ? `${n.icon} ${n.label}` : n.label}
                       </option>
                     ))}
                   </select>
@@ -451,6 +451,26 @@ export default function ViralStudio() {
                       );
                     })}
                   </div>
+                </div>
+
+                {/* Niche Target */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                    Content Niche & Visual Cues
+                  </label>
+                  <select
+                    value={scriptNiche}
+                    onChange={(e) => setScriptNiche(e.target.value)}
+                    className="w-full py-2 px-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-medium text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    {niches
+                      .filter((n) => n.id !== 'all')
+                      .map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.icon ? `${n.icon} ${n.label}` : n.label}
+                        </option>
+                      ))}
+                  </select>
                 </div>
 
                 {/* Duration & Hook Style */}
