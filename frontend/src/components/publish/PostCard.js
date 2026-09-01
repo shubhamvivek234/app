@@ -31,9 +31,9 @@ const avatarColor = (name = '') =>
   AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length];
 
 const Metric = ({ icon: Icon, value, label }) => (
-  <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-600">
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-700/80 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300">
     <Icon className="text-[11px]" />
-    <span className="font-semibold text-gray-800">{Number(value).toLocaleString()}</span>
+    <span className="font-semibold text-gray-800 dark:text-gray-100">{Number(value).toLocaleString()}</span>
     <span>{label}</span>
   </span>
 );
@@ -169,25 +169,25 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
   };
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-offwhite shadow-sm transition-shadow hover:shadow-md">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex flex-col gap-4 p-4 md:flex-row md:items-start">
         <div className="order-1 flex items-start justify-between gap-3 md:w-44 md:flex-shrink-0 md:flex-col md:justify-start">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{formatTime(published_at) || 'Unknown time'}</p>
-            <p className="mt-1 text-sm font-medium text-gray-700">{formatRelativeDate(published_at) || 'Unknown date'}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{formatTime(published_at) || 'Unknown time'}</p>
+            <p className="mt-1 text-sm font-medium text-gray-700 dark:text-gray-200">{formatRelativeDate(published_at) || 'Unknown date'}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:mt-2">
-            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-700">
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2.5 py-1 text-[11px] font-semibold text-gray-700 dark:text-gray-300">
               {PlatformIcon && <PlatformIcon className={meta.color} />}
               {meta.label || platform}
             </span>
-            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-600">
+            <span className="rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2.5 py-1 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
               {prettyPostType(post_type || media_type)}
             </span>
             <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
               source_mode === 'db_fallback'
-                ? 'border border-amber-200 bg-amber-50 text-amber-700'
-                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                ? 'border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                : 'border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
             }`}>
               {sourceBadge}
             </span>
@@ -214,8 +214,8 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
               )}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-gray-900">{primaryName}</p>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{primaryName}</p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 {secondaryHandle && <span className="truncate">@{secondaryHandle}</span>}
                 {publishedLabel && <span title={publishedLabel}>{publishedLabel}</span>}
               </div>
@@ -223,19 +223,19 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
           </div>
 
           {content ? (
-            <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-gray-700">
+            <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-gray-700 dark:text-gray-200">
               {displayContent}
               {isLong && (
                 <button
                   onClick={() => setExpanded(!expanded)}
-                  className="ml-1 text-xs font-medium text-green-600 hover:text-green-700"
+                  className="ml-1 text-xs font-medium text-green-600 dark:text-green-400 hover:text-green-700"
                 >
                   {expanded ? 'less' : 'more'}
                 </button>
               )}
             </p>
           ) : (
-            <p className="mb-3 text-sm italic text-gray-400">No caption provided</p>
+            <p className="mb-3 text-sm italic text-gray-400 dark:text-gray-500">No caption provided</p>
           )}
 
           {visibleMetrics.length > 0 && (
@@ -247,13 +247,13 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
           )}
 
           {engagementUnavailable && (
-            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="mb-3 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
               Live engagement is unavailable for this post, so this card is showing publish history without platform metrics.
             </div>
           )}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
-            <div className="text-[11px] text-gray-400">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
+            <div className="text-[11px] text-gray-400 dark:text-gray-500">
               {platform_post_id ? `Platform post ID: ${platform_post_id}` : 'Platform post ID unavailable for this record'}
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -262,8 +262,8 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
                   onClick={handleFetchComments}
                   className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
                     commentsOpen
-                      ? 'border-blue-300 bg-blue-50 text-blue-600'
-                      : 'border-gray-200 bg-offwhite text-gray-500 hover:border-blue-200 hover:bg-blue-50/50 hover:text-blue-600'
+                      ? 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-300'
+                      : 'border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:border-blue-200 hover:bg-blue-50/50 hover:text-blue-600'
                   }`}
                 >
                   <FaComment className="text-[10px]" />
@@ -276,7 +276,7 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
                   href={post_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-green-600 hover:text-green-700"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400 hover:text-green-700"
                 >
                   <FaExternalLinkAlt className="text-[10px]" />
                   View Post
@@ -288,7 +288,7 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
 
         {media_url && (
           <div className="order-3 md:w-32 md:flex-shrink-0">
-            <div className="relative h-40 overflow-hidden rounded-xl bg-gray-100 md:h-32 md:w-32">
+            <div className="relative h-40 overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 md:h-32 md:w-32">
               <img
                 src={media_url}
                 alt="Post media"
@@ -306,23 +306,23 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
       </div>
 
       {commentsOpen && (
-        <div className="border-t border-gray-100 bg-gray-50/40">
+        <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-950/50">
           {commentsLoading ? (
             <div className="space-y-3 p-4">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="flex animate-pulse gap-3">
-                  <div className="h-7 w-7 flex-shrink-0 rounded-full bg-gray-200" />
+                  <div className="h-7 w-7 flex-shrink-0 rounded-full bg-gray-200 dark:bg-gray-800" />
                   <div className="flex-1 space-y-1.5">
-                    <div className="h-3 w-24 rounded bg-gray-200" />
-                    <div className="h-3 w-full rounded bg-gray-200" />
+                    <div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-800" />
+                    <div className="h-3 w-full rounded bg-gray-200 dark:bg-gray-800" />
                   </div>
                 </div>
               ))}
             </div>
           ) : comments.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-gray-400">No comments yet</div>
+            <div className="px-4 py-6 text-center text-sm text-gray-400 dark:text-gray-500">No comments yet</div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
               {comments.map((comment) => (
                 <div key={comment.id} className="px-4 py-3">
                   <div className="flex items-start gap-2.5">
@@ -335,15 +335,15 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="mb-0.5 flex items-center gap-2">
-                        <span className="text-xs font-semibold text-gray-800">{comment.author_name}</span>
-                        <span className="text-[10px] text-gray-400">{formatRelativeDate(comment.timestamp)}</span>
+                        <span className="text-xs font-semibold text-gray-800 dark:text-gray-100">{comment.author_name}</span>
+                        <span className="text-[10px] text-gray-400 dark:text-gray-500">{formatRelativeDate(comment.timestamp)}</span>
                         {comment.likes > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-gray-400">
+                          <span className="flex items-center gap-0.5 text-[10px] text-gray-400 dark:text-gray-500">
                             <FaHeart className="text-rose-400" /> {comment.likes}
                           </span>
                         )}
                       </div>
-                      <p className="whitespace-pre-wrap text-sm text-gray-700">{comment.content}</p>
+                      <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">{comment.content}</p>
 
                       {canReply && comment.can_reply && (
                         <button
@@ -368,12 +368,12 @@ const PostCard = ({ post, onFetchComments, onReplyToComment }) => {
                             }}
                             placeholder={`Reply to ${comment.author_name}… (⌘↵)`}
                             rows={2}
-                            className="w-full resize-none rounded-lg border border-gray-200 bg-offwhite px-3 py-1.5 text-sm placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            className="w-full resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 text-gray-800 dark:text-gray-100 px-3 py-1.5 text-sm placeholder-gray-400 dark:placeholder-gray-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
                           />
                           <div className="mt-1.5 flex justify-end gap-2">
                             <button
                               onClick={() => { setReplyingTo(null); setReplyText(''); }}
-                              className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                              className="rounded px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700"
                             >
                               Cancel
                             </button>

@@ -89,8 +89,8 @@ const AccountPill = ({ account, selected, onClick }) => {
       onClick={onClick}
       className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-all text-sm font-medium ${
         selected
-          ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
-          : 'border-gray-200 bg-offwhite text-gray-700 hover:border-green-200 hover:bg-green-50/50'
+          ? 'border-green-400 bg-green-50 text-green-800 dark:bg-green-950/40 dark:border-green-800 dark:text-green-300 shadow-sm'
+          : 'border-gray-200 bg-offwhite text-gray-700 hover:border-green-200 hover:bg-green-50/50 dark:border-gray-700/80 dark:bg-gray-800/80 dark:text-gray-200 dark:hover:bg-gray-700/70'
       }`}
     >
       {/* Avatar */}
@@ -111,7 +111,7 @@ const AccountPill = ({ account, selected, onClick }) => {
           </div>
         )}
         {Icon && (
-          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-offwhite border border-gray-100 flex items-center justify-center shadow-sm">
+          <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 flex items-center justify-center shadow-sm">
             <Icon className={`text-[9px] ${meta.color}`} />
           </div>
         )}
@@ -123,29 +123,29 @@ const AccountPill = ({ account, selected, onClick }) => {
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
 const SkeletonPostCard = () => (
-  <div className="bg-offwhite rounded-xl border border-gray-100 p-4 animate-pulse flex gap-4">
+  <div className="bg-offwhite dark:bg-gray-900/90 rounded-xl border border-gray-100 dark:border-gray-800 p-4 animate-pulse flex gap-4">
     <div className="w-16 flex-shrink-0">
-      <div className="h-3 bg-gray-50 rounded w-10 ml-auto" />
+      <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-10 ml-auto" />
     </div>
     <div className="flex-1 space-y-3">
       <div className="flex items-center gap-2">
-        <div className="w-9 h-9 rounded-full bg-gray-50 flex-shrink-0" />
+        <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 flex-shrink-0" />
         <div className="space-y-1">
-          <div className="h-3 bg-gray-50 rounded w-24" />
-          <div className="h-2.5 bg-gray-50 rounded w-16" />
+          <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-24" />
+          <div className="h-2.5 bg-gray-100 dark:bg-gray-800 rounded w-16" />
         </div>
       </div>
       <div className="space-y-1.5">
-        <div className="h-3 bg-gray-50 rounded w-full" />
-        <div className="h-3 bg-gray-50 rounded w-3/4" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-full" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-3/4" />
       </div>
       <div className="flex gap-4">
-        <div className="h-3 bg-gray-50 rounded w-12" />
-        <div className="h-3 bg-gray-50 rounded w-12" />
-        <div className="h-3 bg-gray-50 rounded w-12" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-12" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-12" />
+        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-12" />
       </div>
     </div>
-    <div className="w-20 h-20 rounded-lg bg-gray-50 flex-shrink-0" />
+    <div className="w-20 h-20 rounded-lg bg-gray-100 dark:bg-gray-800 flex-shrink-0" />
   </div>
 );
 
@@ -505,12 +505,12 @@ const Publish = () => {
         {/* ── Page header ── */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Publish</h1>
-            <p className="text-sm text-gray-500 mt-1">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Publish</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               View your published posts and manage messages across connected accounts.
             </p>
             {activeTab === 'feed' && lastRefreshedAt && (
-              <p className="mt-1 text-xs text-gray-400">
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                 Last refreshed {new Date(lastRefreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
             )}
@@ -519,7 +519,7 @@ const Publish = () => {
             <button
               onClick={() => fetchFeed({ refresh: true })}
               disabled={feedLoading}
-              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+              className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-offwhite dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
               <FaSync className={`text-xs ${feedLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -529,7 +529,7 @@ const Publish = () => {
             <button
               onClick={fetchInbox}
               disabled={inboxLoading}
-              className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 bg-offwhite border border-gray-200 hover:border-gray-300 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
+              className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-offwhite dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
               <FaSync className={`text-xs ${inboxLoading ? 'animate-spin' : ''}`} />
               Refresh
@@ -538,20 +538,20 @@ const Publish = () => {
         </div>
 
         {/* ── Platform + Account selector ── */}
-        <div className="bg-offwhite rounded-2xl border border-gray-200 p-4 mb-4 space-y-3">
+        <div className="bg-offwhite dark:bg-gray-900/90 rounded-2xl border border-gray-200 dark:border-gray-800 p-4 mb-4 space-y-3">
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-gray-800">Select Platform &amp; Account</h2>
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Select Platform &amp; Account</h2>
               {!accountsLoading && (
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                   {accounts.length} account{accounts.length !== 1 ? 's' : ''} connected
                 </p>
               )}
             </div>
             <a
               href="/accounts"
-              className="flex items-center gap-1.5 text-xs font-medium text-green-600 hover:text-green-700 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 text-xs font-medium text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 bg-green-50 dark:bg-green-950/40 hover:bg-green-100 dark:hover:bg-green-900/40 px-3 py-1.5 rounded-lg transition-colors border border-green-200/40 dark:border-green-800/40"
             >
               <FaPlus className="text-[10px]" />
               Add account
@@ -561,13 +561,13 @@ const Publish = () => {
           {accountsLoading ? (
             <div className="flex flex-wrap gap-2">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-9 w-28 rounded-xl bg-gray-50 animate-pulse" />
+                <div key={i} className="h-9 w-28 rounded-xl bg-gray-100 dark:bg-gray-800 animate-pulse" />
               ))}
             </div>
           ) : accounts.length === 0 ? (
             <div className="py-4 text-center">
-              <p className="text-sm text-gray-500">No accounts connected yet.</p>
-              <a href="/accounts" className="text-sm text-green-600 hover:text-green-700 font-medium underline mt-1 inline-block">
+              <p className="text-sm text-gray-500 dark:text-gray-400">No accounts connected yet.</p>
+              <a href="/accounts" className="text-sm text-green-600 dark:text-green-400 hover:text-green-700 font-medium underline mt-1 inline-block">
                 Connect an account →
               </a>
             </div>
@@ -586,14 +586,14 @@ const Publish = () => {
                       onClick={() => handlePlatformSelect(plat)}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-medium transition-all ${
                         isActive
-                          ? 'border-green-400 bg-green-50 text-green-800 shadow-sm'
-                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-green-200 hover:bg-green-50/50'
+                          ? 'border-green-400 bg-green-50 text-green-800 dark:bg-green-950/40 dark:border-green-800 dark:text-green-300 shadow-sm'
+                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-green-200 hover:bg-green-50/50 dark:border-gray-700/80 dark:bg-gray-800/80 dark:text-gray-300 dark:hover:bg-gray-700/70'
                       }`}
                     >
-                      {Icon && <Icon className={`text-sm ${isActive ? 'text-green-600' : meta.color}`} />}
+                      {Icon && <Icon className={`text-sm ${isActive ? 'text-green-600 dark:text-green-400' : meta.color}`} />}
                       <span>{meta.label || plat}</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                        isActive ? 'bg-green-200 text-green-700' : 'bg-gray-100 text-gray-500'
+                        isActive ? 'bg-green-200 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
                       }`}>
                         {accountCount}
                       </span>
@@ -604,8 +604,8 @@ const Publish = () => {
 
               {/* Row 2: Account pills for selected platform */}
               {activePlatform && (
-                <div className="pt-1 border-t border-gray-100">
-                  <p className="text-[11px] text-gray-400 mb-2 font-medium uppercase tracking-wide">
+                <div className="pt-1 border-t border-gray-100 dark:border-gray-800">
+                  <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-2 font-medium uppercase tracking-wide">
                     {PLATFORM_META[activePlatform]?.label || activePlatform} accounts — select to filter feed
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -627,13 +627,13 @@ const Publish = () => {
         </div>
 
         {/* ── Tab bar: Feed / Inbox ── */}
-        <div className="flex gap-1 border-b border-gray-200 mb-4">
+        <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800 mb-4">
           <button
             onClick={() => setActiveTab('feed')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === 'feed'
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 font-bold'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-700'
             }`}
           >
             <FaRss className="text-xs" />
@@ -643,8 +643,8 @@ const Publish = () => {
             onClick={() => setActiveTab('inbox')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === 'inbox'
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 font-bold'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-700'
             }`}
           >
             <FaInbox className="text-xs" />
@@ -664,33 +664,33 @@ const Publish = () => {
           <>
             {!feedLoading && feedMeta && (
               <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Posts in view</p>
-                  <p className="mt-1 text-2xl font-bold text-gray-900">{sortedPosts.length}</p>
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Posts in view</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{sortedPosts.length}</p>
                 </div>
-                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Filtered accounts</p>
-                  <p className="mt-1 text-2xl font-bold text-gray-900">{feedMeta.filtered_accounts || 0}</p>
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Filtered accounts</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{feedMeta.filtered_accounts || 0}</p>
                 </div>
-                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Live feed accounts</p>
-                  <p className="mt-1 text-2xl font-bold text-gray-900">{feedMeta.live_accounts || 0}</p>
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Live feed accounts</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{feedMeta.live_accounts || 0}</p>
                 </div>
-                <div className="rounded-2xl border border-gray-200 bg-offwhite p-4">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Fallback / degraded</p>
-                  <p className="mt-1 text-2xl font-bold text-gray-900">{(feedMeta.fallback_accounts || 0) + (feedMeta.error_accounts || 0)}</p>
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 p-4">
+                  <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Fallback / degraded</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{(feedMeta.fallback_accounts || 0) + (feedMeta.error_accounts || 0)}</p>
                 </div>
               </div>
             )}
 
             {!feedLoading && feedWarnings.length > 0 && (
-              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Feed notices</p>
+              <div className="mb-4 rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 p-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Feed notices</p>
                 {feedWarnings.map((warning, index) => {
                   const meta = PLATFORM_META[warning.platform] || {};
                   const Icon = meta.icon;
                   return (
-                    <div key={`${warning.account}-${index}`} className="flex items-start gap-2 text-sm text-amber-900">
+                    <div key={`${warning.account}-${index}`} className="flex items-start gap-2 text-sm text-amber-900 dark:text-amber-200">
                       {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
                       <span><strong>{warning.account || 'Account'}</strong>: {warning.reason}</span>
                     </div>
@@ -700,20 +700,20 @@ const Publish = () => {
             )}
 
             {!feedLoading && feedErrors.length > 0 && (
-              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Feed errors</p>
+              <div className="mb-4 rounded-2xl border border-red-200 dark:border-red-800/60 bg-red-50 dark:bg-red-950/40 p-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Feed errors</p>
                 {feedErrors.map((item, index) => {
                   const meta = PLATFORM_META[item.platform] || {};
                   const Icon = meta.icon;
                   return (
-                    <div key={`${item.account}-${index}`} className="flex items-start gap-2 text-sm text-red-900">
+                    <div key={`${item.account}-${index}`} className="flex items-start gap-2 text-sm text-red-900 dark:text-red-200">
                       {Icon && <Icon className={`mt-0.5 flex-shrink-0 ${meta.color}`} />}
                       <span><strong>{item.account || 'Account'}</strong>: {item.error}</span>
                     </div>
                   );
                 })}
                 {shouldShowReconnectCta && (
-                  <p className="text-xs text-red-700">
+                  <p className="text-xs text-red-700 dark:text-red-400">
                     Go to <a href="/accounts" className="font-medium underline">Accounts</a> to reconnect the affected profiles.
                   </p>
                 )}
@@ -721,18 +721,18 @@ const Publish = () => {
             )}
 
             {!feedLoading && (
-              <div className="mb-4 rounded-2xl border border-gray-200 bg-offwhite p-4 space-y-3">
+              <div className="mb-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-offwhite dark:bg-gray-900/90 p-4 space-y-3">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_180px]">
                   <input
                     value={feedSearch}
                     onChange={(e) => setFeedSearch(e.target.value)}
                     placeholder="Search captions, accounts, or platforms"
-                    className="w-full rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   />
                   <select
                     value={feedSourceFilter}
                     onChange={(e) => setFeedSourceFilter(e.target.value)}
-                    className="rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="rounded-xl border border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   >
                     <option value="all">All sources</option>
                     <option value="live">Platform Feed</option>
@@ -741,7 +741,7 @@ const Publish = () => {
                   <select
                     value={feedPostTypeFilter}
                     onChange={(e) => setFeedPostTypeFilter(e.target.value)}
-                    className="rounded-xl border border-gray-200 bg-offwhite px-3 py-2 text-sm text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="rounded-xl border border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   >
                     <option value="all">All post types</option>
                     {availablePostTypes.map((type) => (
@@ -752,7 +752,7 @@ const Publish = () => {
                   </select>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-gray-500">Sort by:</span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Sort by:</span>
                   {[
                     ['newest', 'Newest'],
                     ['oldest', 'Oldest'],
@@ -767,13 +767,13 @@ const Publish = () => {
                       className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
                         feedSort === value
                           ? 'border-indigo-600 bg-indigo-600 text-white'
-                          : 'border-gray-200 bg-offwhite text-gray-600 hover:border-gray-300'
+                          : 'border-gray-200 dark:border-gray-700 bg-offwhite dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
                       }`}
                     >
                       {label}
                     </button>
                   ))}
-                  <span className="ml-auto text-xs text-gray-400">{sortedPosts.length} visible posts</span>
+                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{sortedPosts.length} visible posts</span>
                 </div>
               </div>
             )}
@@ -783,25 +783,25 @@ const Publish = () => {
                 {[1, 2, 3, 4].map((i) => <SkeletonPostCard key={i} />)}
               </div>
             ) : feedError ? (
-              <div className="bg-offwhite rounded-2xl border border-red-100 p-8 text-center">
-                <p className="text-sm text-red-600 font-medium">{feedError}</p>
+              <div className="bg-offwhite dark:bg-gray-900/90 rounded-2xl border border-red-100 dark:border-red-900/40 p-8 text-center">
+                <p className="text-sm text-red-600 dark:text-red-400 font-medium">{feedError}</p>
                 <button
                   onClick={() => fetchFeed({ refresh: true })}
-                  className="mt-3 text-sm text-green-600 hover:text-green-700 underline"
+                  className="mt-3 text-sm text-green-600 dark:text-green-400 hover:text-green-700 underline"
                 >
                   Try again
                 </button>
               </div>
             ) : sortedPosts.length === 0 ? (
-              <div className="bg-offwhite rounded-2xl border border-gray-200 p-12 flex flex-col items-center justify-center text-center">
-                <div className="w-14 h-14 rounded-full bg-offwhite border border-gray-200 flex items-center justify-center mb-4">
-                  <svg className="w-6 h-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="bg-offwhite dark:bg-gray-900/90 rounded-2xl border border-gray-200 dark:border-gray-800 p-12 flex flex-col items-center justify-center text-center">
+                <div className="w-14 h-14 rounded-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center mb-4">
+                  <svg className="w-6 h-6 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                       d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                   </svg>
                 </div>
-                <p className="text-sm font-semibold text-gray-700">No posts found</p>
-                <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">No posts found</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-xs">
                   {effectiveFeedMessage}
                 </p>
               </div>
@@ -824,14 +824,14 @@ const Publish = () => {
             INBOX / DMs TAB
         ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === 'inbox' && (
-          <div className="bg-offwhite rounded-2xl border border-gray-200 overflow-hidden" style={{ minHeight: '500px' }}>
+          <div className="bg-offwhite dark:bg-gray-900/90 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden" style={{ minHeight: '500px' }}>
 
             {/* ── Filter bar ── */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/60 flex-wrap">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/50 flex-wrap">
               <select
                 value={inboxPlatform}
                 onChange={(e) => { setInboxPlatform(e.target.value); setInboxSelected(null); }}
-                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 bg-offwhite dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 <option value="">All platforms</option>
                 {inboxPlatformOptions.map((entry) => (
@@ -841,7 +841,7 @@ const Publish = () => {
               <select
                 value={inboxType}
                 onChange={(e) => { setInboxType(e.target.value); setInboxSelected(null); }}
-                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 bg-offwhite dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 <option value="">All types</option>
                 <option value="comment">Comments</option>
@@ -850,12 +850,12 @@ const Publish = () => {
               <button
                 onClick={handleSyncDMs}
                 disabled={syncing}
-                className="flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ml-auto"
+                className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 border border-indigo-200/50 dark:border-indigo-800/50 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ml-auto"
               >
                 <FaSync className={`text-[10px] ${syncing ? 'animate-spin' : ''}`} />
                 {syncing ? 'Syncing…' : 'Sync Inbox'}
               </button>
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-gray-400 dark:text-gray-500">
                 {inboxMessages.length} message{inboxMessages.length !== 1 ? 's' : ''}
                 {unreadCount > 0 && ` · ${unreadCount} unread`}
               </span>
@@ -865,22 +865,22 @@ const Publish = () => {
             <div className="flex" style={{ minHeight: '460px' }}>
 
               {/* Left: message list */}
-              <div className="w-72 shrink-0 border-r border-gray-100 overflow-y-auto">
+              <div className="w-72 shrink-0 border-r border-gray-100 dark:border-gray-800 overflow-y-auto">
                 {inboxLoading ? (
                   <div className="p-4 space-y-3">
                     {[1, 2, 3].map((i) => (
                       <div key={i} className="animate-pulse">
-                        <div className="h-4 bg-gray-100 rounded w-3/4 mb-1" />
-                        <div className="h-3 bg-gray-100 rounded w-full mb-1" />
-                        <div className="h-2.5 bg-gray-100 rounded w-1/2" />
+                        <div className="h-4 bg-gray-100 dark:bg-gray-800 rounded w-3/4 mb-1" />
+                        <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-full mb-1" />
+                        <div className="h-2.5 bg-gray-100 dark:bg-gray-800 rounded w-1/2" />
                       </div>
                     ))}
                   </div>
                 ) : inboxMessages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-                    <FaInbox className="text-3xl text-gray-200 mb-3" />
-                    <p className="text-sm text-gray-400 font-medium">No messages found</p>
-                    <p className="text-xs text-gray-300 mt-1">
+                    <FaInbox className="text-3xl text-gray-200 dark:text-gray-700 mb-3" />
+                    <p className="text-sm text-gray-400 dark:text-gray-500 font-medium">No messages found</p>
+                    <p className="text-xs text-gray-300 dark:text-gray-600 mt-1">
                       {inboxPlatform || inboxType
                         ? 'Try removing filters'
                         : 'Comments and DMs will appear here'}
@@ -894,25 +894,25 @@ const Publish = () => {
                       <button
                         key={msg.id}
                         onClick={() => { setInboxSelected(msg); setInboxReply(''); }}
-                        className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${
-                          inboxSelected?.id === msg.id ? 'bg-indigo-50 border-l-2 border-l-indigo-500' : ''
+                        className={`w-full text-left px-4 py-3 border-b border-gray-50 dark:border-gray-800/80 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${
+                          inboxSelected?.id === msg.id ? 'bg-indigo-50 dark:bg-indigo-950/40 border-l-2 border-l-indigo-500' : ''
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2 mb-0.5">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-sm font-semibold text-gray-800 truncate">
+                            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">
                               {msg.author_name}
                             </span>
                             {msg.status === 'unread' && (
                               <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0" />
                             )}
                           </div>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">
+                          <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
                             {formatRelative(msg.received_at)}
                           </span>
                         </div>
-                        <p className="text-xs text-gray-500 truncate mb-1">{msg.content}</p>
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate mb-1">{msg.content}</p>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
                           {PIcon && <PIcon className={meta.color} style={{ fontSize: 10 }} />}
                           <span className="capitalize">{msg.platform}</span>
                           <span>·</span>
@@ -931,7 +931,7 @@ const Publish = () => {
               </div>
 
               {/* Right: message detail + reply */}
-              <div className="flex-1 flex flex-col">
+              <div className="flex-1 flex flex-col bg-white dark:bg-gray-900">
                 {inboxSelected ? (
                   <>
                     {/* Message detail */}
@@ -946,7 +946,7 @@ const Publish = () => {
                               <PIcon className={`${meta.color} text-base`} />
                             ) : null;
                           })()}
-                          <span className="text-xs text-gray-400 uppercase tracking-wide font-medium">
+                          <span className="text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wide font-medium">
                             {PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform}
                             {' · '}
                             {inboxSelected.type === 'dm' ? 'Direct Message' : 'Comment'}
@@ -959,33 +959,33 @@ const Publish = () => {
                             {(inboxSelected.author_name || '?').charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <p className="text-sm font-semibold text-gray-800">{inboxSelected.author_name}</p>
-                            <p className="text-[11px] text-gray-400">
+                            <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{inboxSelected.author_name}</p>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">
                               {formatRelative(inboxSelected.received_at)}
                             </p>
                           </div>
                         </div>
 
                         {/* Message content */}
-                        <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        <div className="bg-gray-50 dark:bg-gray-800/70 rounded-xl px-4 py-3 text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap">
                           {inboxSelected.content}
                         </div>
                       </div>
 
                       {/* Existing reply */}
                       {inboxSelected.reply && (
-                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4">
+                        <div className="bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 rounded-xl px-4 py-3 mb-4">
                           <div className="flex items-center gap-1.5 mb-1">
                             <FaReply className="text-indigo-400 text-xs" />
-                            <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Your reply</p>
+                            <p className="text-xs font-semibold text-indigo-500 dark:text-indigo-400 uppercase tracking-wide">Your reply</p>
                           </div>
-                          <p className="text-sm text-indigo-800 whitespace-pre-wrap">{inboxSelected.reply}</p>
+                          <p className="text-sm text-indigo-800 dark:text-indigo-200 whitespace-pre-wrap">{inboxSelected.reply}</p>
                         </div>
                       )}
                     </div>
 
                     {/* Reply composer */}
-                    <div className="border-t border-gray-100 p-4 bg-gray-50/40">
+                    <div className="border-t border-gray-100 dark:border-gray-800 p-4 bg-gray-50/40 dark:bg-gray-800/40">
                       <textarea
                         value={inboxReply}
                         onChange={(e) => setInboxReply(e.target.value)}
@@ -994,10 +994,10 @@ const Publish = () => {
                         }}
                         placeholder="Write a reply… (⌘↵ to send)"
                         rows={3}
-                        className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 resize-none bg-offwhite focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400"
+                        className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 resize-none bg-offwhite dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder-gray-400 dark:placeholder-gray-500"
                       />
                       <div className="flex items-center justify-between mt-2">
-                        <p className="text-[11px] text-gray-400">
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500">
                           {selectedInboxSupportsReply
                             ? `Reply will be posted directly to ${PLATFORM_META[inboxSelected.platform]?.label || inboxSelected.platform}`
                             : 'Replies are not supported for this platform in Publish right now.'
@@ -1006,7 +1006,7 @@ const Publish = () => {
                         <button
                           onClick={handleInboxReply}
                           disabled={!inboxReply.trim() || inboxSending || !selectedInboxSupportsReply}
-                          className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
                         >
                           {inboxSending ? (
                             <>
@@ -1025,11 +1025,11 @@ const Publish = () => {
                   </>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full py-20 text-center px-6">
-                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                      <FaInbox className="text-gray-300 text-lg" />
+                    <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-3">
+                      <FaInbox className="text-gray-300 dark:text-gray-600 text-lg" />
                     </div>
-                    <p className="text-sm font-medium text-gray-500">Select a message</p>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Select a message</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                       Click a message on the left to view and reply
                     </p>
                   </div>

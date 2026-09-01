@@ -229,13 +229,13 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
           )}
         </div>
 
-        <div className="flex items-center gap-1 ml-2">
+        <div className="flex items-center gap-1.5 ml-2">
           <Link
             to="/publish"
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
               publishActive
-                ? 'text-indigo-700 bg-indigo-50 dark:bg-indigo-950/50 dark:text-indigo-300 shadow-2xs'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
+                ? 'text-indigo-700 bg-indigo-50 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border dark:border-indigo-800/50 shadow-2xs'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800/80'
             }`}
           >
             <FaBullhorn className="text-xs" />
@@ -244,11 +244,10 @@ const DashboardLayout = ({ children, hideSidebar = false }) => {
 
           <Link
             to="/analytics"
-            reloadDocument
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
               analyticsActive
-                ? 'text-indigo-700 bg-indigo-50 dark:bg-indigo-950/50 dark:text-indigo-300 shadow-2xs'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
+                ? 'text-indigo-700 bg-indigo-50 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border dark:border-indigo-800/50 shadow-2xs'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800/80'
             }`}
           >
             <FaChartBar className="text-xs" />
