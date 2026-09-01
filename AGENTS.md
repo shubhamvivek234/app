@@ -2,21 +2,23 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v4.5 shipped
+Stage: v4.6 shipped
 Branch: main
-Focus: Smart Bio Live Preview Color/Style Binding & Robust Backend Publishing Verification
+Focus: Studio Spacing, Device Frame Containment, Reactive Swatches, & Email Verification Isolation
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Smart Bio Real-Time Color & Style Binding (`frontend/src/components/bio/BioInspectorDrawer.js`, `frontend/src/pages/LinkInBio.js`, `frontend/src/pages/PublicBioPage.js`):
-  - Added full color customizer: card background color with opacity presets, card border color, card text color, background gradient presets, brand accent swatches.
-  - Added tactile card style archetype picker (Double-Bezel Glass, Convex 3D, Concave Inset, Neobrutalist, Cyber Glow, Soft Pill, Minimal Hairline, Solid Flat).
-  - Wired live preview and public page to immediately reflect card background, border, text color, corner radius %, and shadow depth.
-- Smart Bio Backend & Publishing Resilience (`api/routes/bio_pages.py`, `frontend/src/pages/LinkInBio.js`):
-  - Relaxed Pydantic validation (`extra="allow"`) across all models, preventing 422 errors on custom styling properties.
-  - Auto-sanitized URLs with `https://` prefix fallback and robust fallback for handle/title.
-- Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled cleanly with 0 errors, pushed to origin/main for Vercel and EC2 deployment.
+- Studio Spacing & Device Viewport Containment (`frontend/src/pages/LinkInBio.js`):
+  - Passed `noPadding={true}` to `DashboardLayout`, removing 24px gap above the studio header.
+  - Integrated device switcher pills directly into the top studio header bar.
+  - Added responsive max-width bounds and overflow containment for tablet/desktop preview devices.
+- Reactive Card Background Swatches & Publishing (`frontend/src/components/bio/BioInspectorDrawer.js`, `frontend/src/pages/LinkInBio.js`):
+  - Added `rgbaToHex` conversion and 10 instant palette swatches.
+  - Publishing automatically opens the live published bio in a new browser tab.
+- Email Verification Banner Isolation (`frontend/src/App.js`):
+  - Removed top-level `EmailVerificationBanner` so email verification notices only appear in Dashboard Action Center and Settings.
+- Tests & Deployment: Frontend build compiled cleanly with 0 errors, pushed to origin/main and deployed to EC2.
 
 ## Active Work
 Currently implementing: None
