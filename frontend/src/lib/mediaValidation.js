@@ -160,32 +160,37 @@ const ASPECT_RATIO_TOLERANCE = 0.1;
 const COMMON_POST_RULES = {
   facebook: {
     allowTextOnly: true,
-    maxImages: 1,
+    maxImages: 10,
     maxVideos: 1,
-    allowMixed: false,
+    allowMixed: true,
   },
   instagram: {
     allowTextOnly: false,
-    maxImages: 1,
+    maxImages: 10,
     maxVideos: 1,
-    allowMixed: false,
+    allowMixed: true,
   },
   twitter: {
     allowTextOnly: true,
-    maxImages: 0,
-    maxVideos: 0,
+    maxImages: 4,
+    maxVideos: 1,
     allowMixed: false,
-    unsupportedMediaMessage: 'Twitter/X media publishing is not wired in this workspace yet. Use text-only or platform-specific composition.',
   },
   linkedin: {
     allowTextOnly: true,
-    maxImages: 1,
+    maxImages: 9,
     maxVideos: 1,
     allowMixed: false,
   },
   threads: {
     allowTextOnly: true,
-    maxImages: 1,
+    maxImages: 10,
+    maxVideos: 1,
+    allowMixed: true,
+  },
+  bluesky: {
+    allowTextOnly: true,
+    maxImages: 4,
     maxVideos: 1,
     allowMixed: false,
   },
@@ -198,9 +203,14 @@ const COMMON_POST_RULES = {
   },
   tiktok: {
     allowTextOnly: false,
-    maxImages: 0,
+    maxImages: 35,
     maxVideos: 1,
-    exactVideoCount: 1,
+    allowMixed: false,
+  },
+  pinterest: {
+    allowTextOnly: false,
+    maxImages: 1,
+    maxVideos: 1,
     allowMixed: false,
   },
 };

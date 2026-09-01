@@ -357,63 +357,137 @@ export const HEADER_LAYOUTS = [
 
 /**
  * Computes exact inline styles and Tailwind classes for a card or button.
+ * Respects fine-tuned slider percentages (corner radius, border width, shadow depth, soft/solid shadow)
  */
-export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false) => {
-  const bg = theme.card_bg || 'rgba(255, 255, 255, 0.85)';
-  const border = theme.card_border || 'rgba(0, 0, 0, 0.08)';
-  const textColor = theme.card_text_color || theme.text_color || '#18181B';
-  const radius = theme.button_radius || 'rounded-2xl';
+export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, blockOverrides = {}) => {
+  const bg = blockOverrides.card_bg || theme.card_bg || 'rgba(255, 255, 255, 0.85)';
+  const border = blockOverrides.card_border || theme.card_border || 'rgba(0, 0, 0, 0.08)';
+  const textColor = blockOverrides.card_text_color || theme.card_text_color || theme.text_color || '#18181B';
   const accent = theme.accent_color || '#6366F1';
 
+  // Dynamic slider values
+  const cornerPct = theme.card_corner_radius !== undefined ? Number(theme.card_corner_radius) : 20;
+  const borderPct = theme.card_border_width !== undefined ? Number(theme.card_border_width) : 0;
+  const shadowPct = theme.card_shadow_depth !== undefined ? Number(theme.card_shadow_depth) : 100;
+  const shadowType = theme.card_shadow_type || 'soft'; // 'soft' | 'solid'
+  const isTactile = theme.tactile_blocks ?? true;
+
+  // Calculate dynamic border-radius (0% = 0px, 50% = 18px, 100% = 9999px)
+  let borderRadiusStyle = `${Math.round((cornerPct / 100) * 36)}px`;
+  if (cornerPct >= 95) borderRadiusStyle = '9999px';
+
+  // Calculate dynamic border width (0% = 0px, 100% = 3px)
+  let borderWidthStyle = `${((borderPct / 100) * 3).toFixed(1)}px`;
+  if (borderPct === 0 && !cardStyle?.includes('outline') && !cardStyle?.includes('hard')) {
+    borderWidthStyle = '1px';
+  }
+
+  // Calculate dynamic box shadow
   let customShadow = '0 4px 12px -2px rgba(0, 0, 0, 0.05)';
   let backdropBlur = 'backdrop-blur-md';
   let extraClasses = '';
-  let borderCustom = border;
 
-  switch (cardStyle) {
-    case 'tactile_convex':
-      customShadow = 'inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 10px 25px -4px rgba(0, 0, 0, 0.14)';
-      break;
-    case 'tactile_concave':
-      customShadow = 'inset 0 2px 6px rgba(0, 0, 0, 0.14), inset 0 -1px 2px rgba(255, 255, 255, 0.3)';
-      break;
-    case 'hard_shadow':
-      customShadow = '4px 4px 0px rgba(0, 0, 0, 0.85)';
-      borderCustom = '2px solid rgba(0, 0, 0, 0.85)';
-      break;
-    case 'neon_glow':
-      customShadow = `0 0 18px ${accent}45, inset 0 0 10px ${accent}25`;
-      borderCustom = `1.5px solid ${accent}`;
-      break;
-    case 'glass_double_bezel':
-      customShadow = 'inset 0 1px 0 0 rgba(255, 255, 255, 0.35), 0 12px 28px -6px rgba(0, 0, 0, 0.12)';
-      backdropBlur = 'backdrop-blur-xl';
-      break;
-    case 'minimal_outline':
-      customShadow = 'none';
-      borderCustom = `1px solid ${border}`;
-      break;
-    case 'soft_pill':
-      customShadow = '0 12px 28px -6px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.04)';
-      break;
-    case 'solid_flat':
-    default:
-      customShadow = '0 2px 8px rgba(0, 0, 0, 0.04)';
-      break;
+  if (shadowPct === 0) {
+    customShadow = 'none';
+  } else if (shadowType === 'solid') {
+    const depth = Math.max(1, Math.round((shadowPct / 100) * 8));
+    customShadow = `${depth}px ${depth}px 0px rgba(0, 0, 0, 0.85)`;
+  } else {
+    // Soft shadow depth scale
+    const blurDepth = Math.round((shadowPct / 100) * 28);
+    const yOffset = Math.round((shadowPct / 100) * 14);
+    const opacity = (0.05 + (shadowPct / 100) * 0.15).toFixed(2);
+
+    if (isTactile) {
+      switch (cardStyle) {
+        case 'tactile_convex':
+          customShadow = `inset 0 1px 1px rgba(255, 255, 255, 0.6), 0 ${yOffset}px ${blurDepth}px -4px rgba(0, 0, 0, ${opacity})`;
+          break;
+        case 'tactile_concave':
+          customShadow = `inset 0 2px 6px rgba(0, 0, 0, ${opacity}), inset 0 -1px 2px rgba(255, 255, 255, 0.3)`;
+          break;
+        case 'neon_glow':
+          customShadow = `0 0 ${Math.round((shadowPct / 100) * 24)}px ${accent}45, inset 0 0 10px ${accent}25`;
+          break;
+        case 'glass_double_bezel':
+          customShadow = `inset 0 1px 0 0 rgba(255, 255, 255, 0.4), 0 ${yOffset}px ${blurDepth}px -4px rgba(0, 0, 0, ${opacity})`;
+          backdropBlur = 'backdrop-blur-xl';
+          break;
+        case 'soft_pill':
+          customShadow = `0 ${yOffset}px ${blurDepth}px -6px rgba(0, 0, 0, ${opacity})`;
+          break;
+        default:
+          customShadow = `0 ${yOffset}px ${blurDepth}px rgba(0, 0, 0, ${opacity})`;
+          break;
+      }
+    } else {
+      customShadow = `0 ${yOffset}px ${blurDepth}px rgba(0, 0, 0, ${opacity})`;
+    }
   }
 
-  if (isFeatured) {
+  // Animation handling
+  if (isFeatured || blockOverrides.animation === 'pulse') {
     extraClasses += ' ring-2 ring-amber-400/90 shadow-amber-400/20 animate-pulse-subtle';
+  } else if (blockOverrides.animation === 'bounce') {
+    extraClasses += ' animate-bounce';
+  } else if (blockOverrides.animation === 'wiggle') {
+    extraClasses += ' hover:animate-wiggle';
+  } else if (blockOverrides.animation === 'glow') {
+    extraClasses += ' ring-2 ring-indigo-500/80 shadow-indigo-500/30';
   }
 
   return {
     style: {
       backgroundColor: bg,
-      borderColor: borderCustom.includes('solid') ? undefined : borderCustom,
-      border: borderCustom.includes('solid') ? borderCustom : undefined,
+      borderColor: border,
+      borderWidth: borderWidthStyle,
+      borderStyle: 'solid',
       color: textColor,
+      borderRadius: borderRadiusStyle,
       boxShadow: customShadow,
     },
-    className: `${radius} ${backdropBlur} ${extraClasses}`,
+    className: `${backdropBlur} ${extraClasses}`,
   };
+};
+
+/**
+ * Computes profile avatar styles based on General Styles sliders
+ */
+export const getProfileAvatarStyles = (theme = {}) => {
+  const sizePct = theme.profile_picture_size !== undefined ? Number(theme.profile_picture_size) : 50;
+  const shadowPct = theme.profile_picture_shadow !== undefined ? Number(theme.profile_picture_shadow) : 0;
+  const borderPct = theme.profile_picture_border !== undefined ? Number(theme.profile_picture_border) : 0;
+
+  // Size in px: 0% = 52px, 50% = 84px, 100% = 124px
+  const sizePx = Math.round(52 + (sizePct / 100) * 72);
+  const borderWidthPx = Math.round((borderPct / 100) * 6);
+  const shadowBlur = Math.round((shadowPct / 100) * 24);
+  const shadowOpacity = (0.1 + (shadowPct / 100) * 0.25).toFixed(2);
+
+  return {
+    width: `${sizePx}px`,
+    height: `${sizePx}px`,
+    borderWidth: borderWidthPx > 0 ? `${borderWidthPx}px` : undefined,
+    borderColor: borderWidthPx > 0 ? (theme.card_border || 'rgba(255,255,255,0.8)') : undefined,
+    borderStyle: borderWidthPx > 0 ? 'solid' : undefined,
+    boxShadow: shadowPct > 0 ? `0 8px ${shadowBlur}px rgba(0,0,0,${shadowOpacity})` : undefined,
+  };
+};
+
+/**
+ * Computes spacing gap between blocks from Spacing slider %
+ */
+export const getBlockSpacingPx = (theme = {}) => {
+  const spacingPct = theme.card_spacing !== undefined ? Number(theme.card_spacing) : 33;
+  // 0% = 6px, 50% = 14px, 100% = 26px
+  return Math.round(6 + (spacingPct / 100) * 20);
+};
+
+/**
+ * Computes social icon size from slider %
+ */
+export const getSocialIconSizePx = (theme = {}) => {
+  const sizePct = theme.social_icon_size !== undefined ? Number(theme.social_icon_size) : 0;
+  // 0% = 18px, 50% = 24px, 100% = 32px
+  return Math.round(18 + (sizePct / 100) * 14);
 };

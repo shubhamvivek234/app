@@ -16,6 +16,12 @@ import {
   FaPlay,
   FaEnvelope,
   FaThLarge,
+  FaFolder,
+  FaFolderOpen,
+  FaPlus,
+  FaTimes,
+  FaCheck,
+  FaSitemap,
 } from 'react-icons/fa';
 
 export default function BioOutlineTree({
@@ -30,6 +36,12 @@ export default function BioOutlineTree({
   theme,
   setTheme,
   blocks,
+  setBlocks,
+  pages = [],
+  activePageId = 'home',
+  onSelectPage,
+  onAddPage,
+  onDeletePage,
   onOpenBlockEditor,
   onOpenAddModal,
   onQuickAddLink,
@@ -41,6 +53,11 @@ export default function BioOutlineTree({
   onClearDeletedBlocks,
   onReorderBlocks,
 }) {
+  const [pageDropdownOpen, setPageDropdownOpen] = useState(false);
+  const [addPageModalOpen, setAddPageModalOpen] = useState(false);
+  const [newPageTitle, setNewPageTitle] = useState('');
+  const [newPageSlug, setNewPageSlug] = useState('');
+
   const [headerOpen, setHeaderOpen] = useState(false);
   const [socialsOpen, setSocialsOpen] = useState(false);
   const [announceOpen, setAnnounceOpen] = useState(false);
@@ -49,11 +66,23 @@ export default function BioOutlineTree({
   const [draggedIdx, setDraggedIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
 
+  const activePage = pages.find((p) => p.id === activePageId) || { title: 'Home', slug: 'home' };
+
   const handleQuickAddSubmit = (e) => {
     e.preventDefault();
     if (!quickLinkInput.trim()) return;
     onQuickAddLink(quickLinkInput.trim());
     setQuickLinkInput('');
+  };
+
+  const handleCreatePageSubmit = (e) => {
+    e.preventDefault();
+    if (!newPageTitle.trim()) return;
+    const cleanSlug = (newPageSlug.trim() || newPageTitle.trim().toLowerCase().replace(/[^a-z0-9]/g, '-'));
+    onAddPage?.(newPageTitle.trim(), cleanSlug);
+    setNewPageTitle('');
+    setNewPageSlug('');
+    setAddPageModalOpen(false);
   };
 
   // Drag and drop handlers
@@ -79,22 +108,91 @@ export default function BioOutlineTree({
     setDragOverIdx(null);
   };
 
+  const toggleFolderExpanded = (blockId) => {
+    setBlocks((prev) =>
+      prev.map((b) => (b.id === blockId ? { ...b, is_expanded: !b.is_expanded } : b))
+    );
+  };
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-zinc-900 border-r border-zinc-200/80 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 select-none overflow-y-auto custom-scrollbar">
       
-      {/* ── 1. Page Header Dropdown ── */}
-      <div className="p-3.5 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200/70 dark:border-zinc-700/60 rounded-xl px-3 py-1.5 cursor-pointer flex-1">
+      {/* ── 1. Page Switcher Dropdown (Multi-Page Mini Sites) ── */}
+      <div className="p-3.5 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-2 relative">
+        <div
+          onClick={() => setPageDropdownOpen(!pageDropdownOpen)}
+          className="flex items-center gap-2 bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200/70 dark:border-zinc-700/60 rounded-xl px-3 py-1.5 cursor-pointer flex-1"
+        >
           <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Page:</span>
-          <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">Home</span>
+          <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
+            {activePage.title}
+          </span>
           <FaChevronDown className="text-[10px] text-zinc-400 ml-auto" />
         </div>
+
         <button
-          onClick={() => {}}
-          className="px-3 py-1.5 text-xs font-bold text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200/70 dark:border-zinc-700/60 rounded-xl transition-colors whitespace-nowrap"
+          onClick={() => setAddPageModalOpen(true)}
+          className="px-3 py-1.5 text-xs font-bold text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200/70 dark:border-zinc-700/60 rounded-xl transition-colors whitespace-nowrap flex items-center gap-1"
         >
-          Add page +
+          <FaPlus className="text-[9px]" /> Add page
         </button>
+
+        {/* Page Switcher Popover Menu */}
+        {pageDropdownOpen && (
+          <div className="absolute top-14 left-3.5 right-3.5 z-40 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xl p-2 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+            <div className="p-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              Your Site Pages ({pages.length || 1})
+            </div>
+            
+            {/* Default Home Page */}
+            <div
+              onClick={() => { onSelectPage?.('home'); setPageDropdownOpen(false); }}
+              className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                activePageId === 'home'
+                  ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400'
+                  : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <FaSitemap className="text-xs text-indigo-500" />
+                <span>Home</span>
+                <span className="text-[10px] font-mono opacity-50">(/)</span>
+              </div>
+              {activePageId === 'home' && <FaCheck className="text-xs" />}
+            </div>
+
+            {/* Custom Sub-Pages */}
+            {pages.filter((p) => p.id !== 'home').map((pg) => (
+              <div
+                key={pg.id}
+                onClick={() => { onSelectPage?.(pg.id); setPageDropdownOpen(false); }}
+                className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold cursor-pointer transition-colors group ${
+                  activePageId === pg.id
+                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400'
+                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <FaFolder className="text-xs text-amber-500 flex-shrink-0" />
+                  <span className="truncate">{pg.title}</span>
+                  <span className="text-[10px] font-mono opacity-50 truncate">
+                    (/{pg.slug})
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {activePageId === pg.id && <FaCheck className="text-xs" />}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeletePage?.(pg.id); }}
+                    className="text-zinc-400 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Delete Page"
+                  >
+                    <FaTrash className="text-[10px]" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="p-3.5 space-y-2.5 flex-1">
@@ -289,6 +387,8 @@ export default function BioOutlineTree({
             {blocks.map((block, idx) => {
               const isDragging = draggedIdx === idx;
               const isOver = dragOverIdx === idx;
+              const isFolder = block.type === 'folder' || block.type === 'tab_group';
+
               return (
                 <div
                   key={block.id}
@@ -301,6 +401,8 @@ export default function BioOutlineTree({
                       ? 'opacity-30 border-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/30'
                       : isOver
                       ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/40 translate-y-1'
+                      : isFolder
+                      ? 'border-amber-400/40 dark:border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10'
                       : block.active !== false
                       ? 'border-zinc-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-300 dark:hover:border-zinc-700 shadow-2xs'
                       : 'border-zinc-200/50 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/40 opacity-60'
@@ -312,25 +414,40 @@ export default function BioOutlineTree({
                       <FaGripVertical className="text-xs" />
                     </div>
 
-                    {/* Block Content Info (Click to edit) */}
+                    {/* Block Content Info */}
                     <div
                       onClick={() => onOpenBlockEditor(block)}
                       className="flex-1 min-w-0 cursor-pointer"
                     >
                       <div className="flex items-center gap-1.5">
-                        {block.type === 'link' && <FaLink className="text-indigo-500 text-[10px] flex-shrink-0" />}
-                        {block.type === 'embed' && <FaPlay className="text-rose-500 text-[10px] flex-shrink-0" />}
-                        {block.type === 'feed_grid' && <FaThLarge className="text-purple-500 text-[10px] flex-shrink-0" />}
-                        {block.type === 'lead_capture' && <FaEnvelope className="text-emerald-500 text-[10px] flex-shrink-0" />}
+                        {isFolder ? (
+                          <FaFolder className="text-amber-500 text-xs flex-shrink-0" />
+                        ) : block.type === 'link' ? (
+                          <FaLink className="text-indigo-500 text-[10px] flex-shrink-0" />
+                        ) : block.type === 'embed' ? (
+                          <FaPlay className="text-rose-500 text-[10px] flex-shrink-0" />
+                        ) : block.type === 'feed_grid' ? (
+                          <FaThLarge className="text-purple-500 text-[10px] flex-shrink-0" />
+                        ) : (
+                          <FaEnvelope className="text-emerald-500 text-[10px] flex-shrink-0" />
+                        )}
+
                         <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
-                          {block.title || block.headline || block.url || 'Untitled Link'}
+                          {block.title || block.headline || block.url || (isFolder ? 'New Folder' : 'Untitled Link')}
                         </span>
+
+                        {isFolder && (
+                          <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded-md">
+                            Folder
+                          </span>
+                        )}
                       </div>
+
                       {block.subtitle && (
                         <p className="text-[11px] text-zinc-400 truncate mt-0.5">{block.subtitle}</p>
                       )}
                       
-                      {/* Sub-actions & click badges */}
+                      {/* Sub-actions */}
                       <div className="flex items-center gap-2 mt-1.5 text-[10px] text-zinc-400">
                         <button
                           onClick={(e) => { e.stopPropagation(); onDeleteBlock(block.id); }}
@@ -361,8 +478,16 @@ export default function BioOutlineTree({
                       </div>
                     </div>
 
-                    {/* Thumbnail / Image Preview on Right */}
-                    {block.media_url ? (
+                    {/* Thumbnail or Folder Toggle */}
+                    {isFolder ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleFolderExpanded(block.id); }}
+                        className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs transition-colors flex-shrink-0"
+                        title={block.is_expanded ? 'Collapse Folder' : 'Expand Folder'}
+                      >
+                        {block.is_expanded ? <FaChevronUp /> : <FaChevronDown />}
+                      </button>
+                    ) : block.media_url ? (
                       <div
                         onClick={() => onOpenBlockEditor(block)}
                         className="w-10 h-10 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex-shrink-0 cursor-pointer"
@@ -424,6 +549,75 @@ export default function BioOutlineTree({
         )}
 
       </div>
+
+      {/* ── 7. Add Sub-Page Modal ── */}
+      {addPageModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                <FaSitemap className="text-indigo-500 text-xs" /> Add New Sub-Page
+              </h3>
+              <button onClick={() => setAddPageModalOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+                <FaTimes className="text-xs" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreatePageSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                  Page Title
+                </label>
+                <input
+                  type="text"
+                  value={newPageTitle}
+                  onChange={(e) => {
+                    setNewPageTitle(e.target.value);
+                    if (!newPageSlug) setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-'));
+                  }}
+                  placeholder="e.g. Music & Tour, Merch Shop"
+                  className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500 font-bold text-zinc-900 dark:text-white"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                  URL Path Slug
+                </label>
+                <div className="flex items-center gap-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2 text-xs font-mono">
+                  <span className="text-zinc-400">/</span>
+                  <input
+                    type="text"
+                    value={newPageSlug}
+                    onChange={(e) => setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                    placeholder="music"
+                    className="bg-transparent outline-hidden flex-1 text-zinc-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAddPageModalOpen(false)}
+                  className="px-3 py-1.5 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newPageTitle.trim()}
+                  className="px-4 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-xs transition-colors disabled:opacity-50"
+                >
+                  Create Page
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -10,7 +10,7 @@ class BlockSchedule(BaseModel):
 
 class BioBlockItem(BaseModel):
     id: str
-    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card"]
+    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group"]
     title: str = ""
     subtitle: str = ""
     url: str = ""
@@ -20,6 +20,13 @@ class BioBlockItem(BaseModel):
     provider: str = ""
     embed_url: str = ""
     media_url: str = ""
+    media_type: str = "image"
+    layout: str = "card_left_image"
+    animation: str = "none"
+    tag: str = ""
+    text_align: str = "left"
+    size: str = "large"
+    custom_styles: dict = Field(default_factory=dict)
     headline: str = ""
     subheadline: str = ""
     button_label: str = "Subscribe"
@@ -28,6 +35,8 @@ class BioBlockItem(BaseModel):
     active: bool = True
     schedule: BlockSchedule | None = None
     click_count: int = 0
+    folder_items: list[dict] = Field(default_factory=list)
+    is_expanded: bool = False
 
 
 class SocialLinkItem(BaseModel):
@@ -52,12 +61,35 @@ class ThemeConfig(BaseModel):
     button_radius: str = "rounded-2xl"
     font_family: str = "Plus Jakarta Sans"
     accent_color: str = "#4F46E5"
+    card_corner_radius: int = 20
+    card_border_width: int = 0
+    card_shadow_depth: int = 100
+    card_shadow_type: str = "soft"
+    card_spacing: int = 33
+    profile_picture_size: int = 50
+    profile_picture_shadow: int = 0
+    profile_picture_border: int = 0
+    collapse_long_bio: bool = False
+    social_icon_size: int = 0
+    announcement_banner: str = ""
+    announcement_url: str = ""
+    announcement_active: bool = False
+    navigation_style: str = "pills"
 
 
 class SeoConfig(BaseModel):
     meta_title: str = ""
     meta_description: str = ""
     meta_image_url: str = ""
+
+
+class BioSubPage(BaseModel):
+    id: str
+    slug: str
+    title: str
+    description: str = ""
+    blocks: list[BioBlockItem] = Field(default_factory=list)
+    seo: SeoConfig | None = None
 
 
 class BioPageUpdate(BaseModel):
@@ -69,6 +101,9 @@ class BioPageUpdate(BaseModel):
     theme: ThemeConfig
     social_links: list[SocialLinkItem] = Field(default_factory=list)
     blocks: list[BioBlockItem] = Field(default_factory=list)
+    pages: list[BioSubPage] = Field(default_factory=list)
+    active_page_id: str = "home"
+    navigation_style: str = "pills"
     custom_domain: str = ""
     seo: SeoConfig | None = None
     published: bool = True

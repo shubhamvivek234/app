@@ -1029,12 +1029,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     ? activePreviewPlatform
     : selectedPlatforms[0] || null;
   const commonEditorPostType = useMemo(() => {
-    if (type) return type;
-    if (selectedPlatforms.some((platform) => platform === 'youtube' || platform === 'tiktok')) {
-      return 'video';
-    }
-    return undefined;
-  }, [selectedPlatforms, type]);
+    if (uploadedMedia.length === 0) return 'universal';
+    const hasVideo = uploadedMedia.some((m) => m.type === 'video');
+    const hasImage = uploadedMedia.some((m) => m.type === 'image');
+    const hasDoc = uploadedMedia.some((m) => m.type === 'pdf' || m.type === 'document');
+    if (hasDoc) return 'document';
+    if (hasVideo && hasImage) return 'mixed';
+    if (hasVideo) return 'video';
+    if (hasImage) return 'image';
+    return 'universal';
+  }, [uploadedMedia]);
 
   const selectedAccountsByPlatform = useCallback(
     (platform) => availableAccounts.filter(
@@ -2082,7 +2086,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         if (onClose) {
           onClose();
         } else {
-          navigate('/create-post');
+          navigate('/dashboard');
         }
       });
   };
@@ -3265,7 +3269,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   // ── Render (modal vs full-page) ───────────────────────────────────────────
 
   const formContent = (isModalMode) => (
-    <div className={`flex flex-col bg-offwhite overflow-hidden ${isModalMode ? 'w-full h-full rounded-2xl' : 'h-screen'}`}>
+    <div className={`flex flex-col bg-offwhite dark:bg-slate-950 overflow-hidden ${isModalMode ? 'w-full h-full rounded-2xl' : 'h-full flex-1'}`}>
       {headerBar}
       {accountStrip}
       <div className="flex flex-1 min-h-0 overflow-hidden">

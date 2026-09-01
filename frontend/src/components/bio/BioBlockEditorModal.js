@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FaTimes,
   FaTrash,
@@ -38,6 +38,21 @@ export default function BioBlockEditorModal({
   const [activeMediaTab, setActiveMediaTab] = useState(() => block?.media_type || 'image'); // 'image' | 'icon' | 'emoji' | '3d'
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+
+  useEffect(() => {
+    if (block) {
+      setFormData({
+        ...block,
+        layout: block?.layout || 'card_left_image',
+        media_type: block?.media_type || 'image',
+        animation: block?.animation || (block?.is_featured ? 'pulse' : 'none'),
+        text_align: block?.text_align || 'left',
+        size: block?.size || 'large',
+        tag: block?.tag || '',
+      });
+      setActiveMediaTab(block?.media_type || 'image');
+    }
+  }, [block]);
 
   if (!isOpen || !block) return null;
 
@@ -117,6 +132,7 @@ export default function BioBlockEditorModal({
                 className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-700 rounded-xl font-semibold text-zinc-900 dark:text-white"
               >
                 <option value="link">Destination URL</option>
+                <option value="folder">📁 Folder / Tappable Drawer</option>
                 <option value="media_card">Media Showcase Card</option>
                 <option value="embed">Video / Spotify Embed</option>
                 <option value="feed_grid">Live Instagram Feed Grid</option>
@@ -124,8 +140,81 @@ export default function BioBlockEditorModal({
               </select>
             </div>
 
+            {/* Folder Sub-Links Manager */}
+            {formData.type === 'folder' && (
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                    Folder Links ({(formData.folder_items || []).length})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newSub = {
+                        id: `sub_${Date.now()}`,
+                        title: 'New Sub Link',
+                        url: 'https://',
+                      };
+                      setFormData((prev) => ({
+                        ...prev,
+                        folder_items: [...(prev.folder_items || []), newSub],
+                      }));
+                    }}
+                    className="px-2.5 py-1 text-xs font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 rounded-lg flex items-center gap-1 cursor-pointer"
+                  >
+                    + Add Link Inside
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {(formData.folder_items || []).length === 0 ? (
+                    <p className="text-xs text-zinc-400 italic p-3 text-center border border-dashed border-zinc-200 dark:border-zinc-700 rounded-xl">
+                      No links inside this folder yet. Click &ldquo;Add Link Inside&rdquo; above.
+                    </p>
+                  ) : (
+                    formData.folder_items.map((sub, sIdx) => (
+                      <div key={sub.id || sIdx} className="flex items-center gap-2 p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                        <input
+                          type="text"
+                          value={sub.title}
+                          onChange={(e) => {
+                            const updated = [...(formData.folder_items || [])];
+                            updated[sIdx].title = e.target.value;
+                            setFormData({ ...formData, folder_items: updated });
+                          }}
+                          placeholder="Link Title"
+                          className="w-1/3 px-2 py-1 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg font-semibold text-zinc-900 dark:text-white"
+                        />
+                        <input
+                          type="url"
+                          value={sub.url}
+                          onChange={(e) => {
+                            const updated = [...(formData.folder_items || [])];
+                            updated[sIdx].url = e.target.value;
+                            setFormData({ ...formData, folder_items: updated });
+                          }}
+                          placeholder="https://..."
+                          className="flex-1 px-2 py-1 text-xs bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg font-mono text-zinc-900 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = (formData.folder_items || []).filter((_, idx) => idx !== sIdx);
+                            setFormData({ ...formData, folder_items: updated });
+                          }}
+                          className="p-1.5 text-zinc-400 hover:text-rose-600 rounded-lg"
+                        >
+                          <FaTrash className="text-xs" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Destination URL */}
-            {formData.type !== 'feed_grid' && formData.type !== 'lead_capture' && (
+            {formData.type !== 'feed_grid' && formData.type !== 'lead_capture' && formData.type !== 'folder' && (
               <div>
                 <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
                   Destination URL

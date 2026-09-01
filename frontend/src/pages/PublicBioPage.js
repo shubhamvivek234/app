@@ -25,7 +25,12 @@ import {
   FaImage,
   FaBolt,
 } from 'react-icons/fa';
-import { getTactileCardStyles } from '@/lib/bioThemeUtils';
+import {
+  getTactileCardStyles,
+  getProfileAvatarStyles,
+  getBlockSpacingPx,
+  getSocialIconSizePx,
+} from '@/lib/bioThemeUtils';
 
 const SOCIAL_ICON_MAP = {
   instagram: FaInstagram,
@@ -45,6 +50,10 @@ export default function PublicBioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Multi-Page & Folders state
+  const [activePageId, setActivePageId] = useState('home');
+  const [expandedFolders, setExpandedFolders] = useState({});
+
   // Newsletter lead state
   const [emailInput, setEmailInput] = useState('');
   const [subscribing, setSubscribing] = useState(false);
@@ -58,6 +67,9 @@ export default function PublicBioPage() {
         setLoading(true);
         const res = await getPublicBioPage(cleanHandle);
         setData(res);
+        if (res.active_page_id) {
+          setActivePageId(res.active_page_id);
+        }
 
         // Update document title & metadata
         if (res.seo?.meta_title || res.title) {
@@ -128,10 +140,22 @@ export default function PublicBioPage() {
   }
 
   const theme = data.theme || {};
-  const blocks = data.blocks || [];
+  const pages = (data.pages && data.pages.length > 0) ? data.pages : [];
+
+  const currentPage = pages.find((p) => p.id === activePageId);
+  const rawPageBlocks = currentPage ? currentPage.blocks : (data.blocks || []);
+  const blocks = (rawPageBlocks || []).filter((b) => b.active !== false);
+
   const gridPosts = data.grid_posts || [];
   const headerLayout = theme.header_layout || 'classic';
   const bannerUrl = theme.banner_url || data.banner_url;
+  const avatarStyles = getProfileAvatarStyles(theme);
+  const blockGapPx = getBlockSpacingPx(theme);
+  const socialIconPx = getSocialIconSizePx(theme);
+
+  const toggleFolder = (blockId) => {
+    setExpandedFolders((prev) => ({ ...prev, [blockId]: !prev[blockId] }));
+  };
 
   return (
     <div
@@ -170,6 +194,17 @@ export default function PublicBioPage() {
         </div>
       )}
 
+      {/* Top Announcement Banner */}
+      {theme.announcement_active && theme.announcement_banner && (
+        <div
+          onClick={() => theme.announcement_url && window.open(theme.announcement_url, '_blank')}
+          className="w-full py-2.5 px-4 text-center text-xs font-bold bg-indigo-600 text-white flex items-center justify-center gap-2 cursor-pointer shadow-sm relative z-20 hover:opacity-95 transition-opacity"
+        >
+          <span>{theme.announcement_banner}</span>
+          {theme.announcement_url && <FaExternalLinkAlt className="text-[10px]" />}
+        </div>
+      )}
+
       {/* Banner Layout Cover Image */}
       {headerLayout === 'banner' && (
         <div className="w-full h-44 sm:h-52 relative z-10 overflow-hidden bg-zinc-900/10 dark:bg-white/10">
@@ -187,16 +222,19 @@ export default function PublicBioPage() {
       )}
 
       {/* Main Content Container */}
-      <div className={`max-w-md w-full relative z-10 flex flex-col items-center px-4 space-y-6 ${headerLayout === 'banner' ? '-mt-14' : 'pt-12'}`}>
+      <div className={`max-w-md w-full relative z-10 flex flex-col items-center px-4 space-y-5 ${headerLayout === 'banner' ? '-mt-14' : 'pt-12'}`}>
         
         {/* HEADER ARCHITECTURE 1: Classic Centered */}
         {headerLayout === 'classic' && (
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-24 h-24 rounded-full border-3 border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-xl shrink-0 bg-black/5">
+          <div className="flex flex-col items-center text-center space-y-3.5">
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5"
+            >
               {data.avatar_url ? (
                 <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
               ) : (
-                <span className="text-3xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {data.title ? data.title[0] : 'U'}
                 </span>
               )}
@@ -221,11 +259,14 @@ export default function PublicBioPage() {
         {/* HEADER ARCHITECTURE 2: Banner Overlap */}
         {headerLayout === 'banner' && (
           <div className="flex flex-col items-center text-center space-y-3">
-            <div className="w-24 h-24 rounded-full border-4 border-white dark:border-zinc-900 overflow-hidden flex items-center justify-center shadow-2xl shrink-0 bg-black/10">
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
+            >
               {data.avatar_url ? (
                 <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
               ) : (
-                <span className="text-3xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {data.title ? data.title[0] : 'U'}
                 </span>
               )}
@@ -250,7 +291,10 @@ export default function PublicBioPage() {
         {/* HEADER ARCHITECTURE 3: Editorial Horizontal Split */}
         {headerLayout === 'editorial_split' && (
           <div className="w-full flex items-center gap-4 text-left p-4 rounded-3xl bg-black/5 dark:bg-white/5 border border-black/5 backdrop-blur-md">
-            <div className="w-20 h-20 rounded-2xl border-2 border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-md shrink-0 bg-black/10">
+            <div
+              style={avatarStyles}
+              className="rounded-2xl overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
+            >
               {data.avatar_url ? (
                 <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
               ) : (
@@ -315,77 +359,129 @@ export default function PublicBioPage() {
                   href={url}
                   target="_blank"
                   rel="noreferrer"
-                  style={{ color: theme.text_color }}
-                  className="w-10 h-10 rounded-full bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 flex items-center justify-center text-sm shadow-xs transition-transform active:scale-95 hover:scale-105"
+                  style={{ color: theme.text_color, width: `${socialIconPx + 16}px`, height: `${socialIconPx + 16}px` }}
+                  className="rounded-full bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 flex items-center justify-center shadow-xs transition-transform active:scale-95 hover:scale-105"
                 >
-                  <Icon />
+                  <Icon style={{ fontSize: `${socialIconPx}px` }} />
                 </a>
               );
             })}
           </div>
         )}
 
-        {/* Dynamic Blocks Stack */}
-        <div className="w-full space-y-3 pt-2">
-          {blocks.map((block) => {
-            const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured);
+        {/* Multi-Page Sub-Navigation Pill Dock (as in screenshot) */}
+        {pages.length > 1 && (theme.navigation_style || 'pills') === 'pills' && (
+          <div className="flex items-center justify-center gap-1.5 p-1 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md">
+            {pages.map((pg) => {
+              const isActive = pg.id === activePageId;
+              return (
+                <button
+                  key={pg.id}
+                  onClick={() => setActivePageId(pg.id)}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-sm'
+                      : 'opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  {pg.title}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-            if (block.type === 'link') {
+        {/* Dynamic Blocks Stack */}
+        <div className="w-full pt-2" style={{ display: 'flex', flexDirection: 'column', gap: `${blockGapPx}px` }}>
+          {blocks.map((block) => {
+            const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
+              animation: block.animation,
+            });
+
+            const isFolder = block.type === 'folder' || block.type === 'tab_group';
+            const isBannerTop = block.layout === 'card_banner_top';
+
+            if (isFolder) {
+              const isExpanded = expandedFolders[block.id] ?? block.is_expanded;
+              return (
+                <div
+                  key={block.id}
+                  style={cardObj.style}
+                  className={`w-full font-bold text-sm overflow-hidden transition-all ${cardObj.className}`}
+                >
+                  <div
+                    onClick={() => toggleFolder(block.id)}
+                    className="p-4 flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <FaFolder className="text-amber-500 text-base" />
+                      <span>{block.title || 'Folder / Group'}</span>
+                      {block.folder_items?.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-black/10 dark:bg-white/10 text-[10px] font-mono">
+                          {block.folder_items.length}
+                        </span>
+                      )}
+                    </div>
+                    {isExpanded ? <FaChevronUp className="text-xs" /> : <FaChevronDown className="text-xs" />}
+                  </div>
+
+                  {isExpanded && (
+                    <div className="p-3 pt-0 space-y-2 border-t border-black/5 dark:border-white/5 mt-1">
+                      {(block.folder_items || []).map((subItem, sIdx) => (
+                        <button
+                          key={subItem.id || sIdx}
+                          onClick={() => subItem.url && window.open(subItem.url, '_blank')}
+                          className="w-full py-2.5 px-3.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 flex items-center justify-between text-xs font-bold transition-all text-left"
+                        >
+                          <span className="truncate">{subItem.title || subItem.url}</span>
+                          <FaExternalLinkAlt className="text-[10px] opacity-50" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (block.type === 'link' || block.type === 'media_card') {
               return (
                 <button
                   key={block.id}
                   onClick={() => handleLinkClick(block)}
                   style={cardObj.style}
-                  className={`w-full py-4 px-5 font-bold text-sm flex items-center justify-between transition-all hover:scale-[1.015] active:scale-[0.98] cursor-pointer ${cardObj.className}`}
+                  className={`w-full font-bold text-sm transition-all hover:scale-[1.015] active:scale-[0.98] cursor-pointer overflow-hidden ${cardObj.className} ${
+                    isBannerTop ? 'flex flex-col text-left' : 'py-3.5 px-4 flex items-center justify-between text-left'
+                  }`}
                 >
-                  <div className="text-left">
-                    <div className="flex items-center gap-2">
-                      {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-bounce" />}
-                      <span>{block.title}</span>
-                      {block.badge && (
-                        <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white rounded-full">
-                          {block.badge}
-                        </span>
+                  {isBannerTop && block.media_url && (
+                    <div className="w-full h-40 overflow-hidden bg-black/5">
+                      <img src={block.media_url} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+
+                  <div className={`flex items-center gap-3 w-full ${isBannerTop ? 'p-4' : ''}`}>
+                    {!isBannerTop && block.media_url && (
+                      <img src={block.media_url} alt="" className="w-12 h-12 rounded-xl object-cover flex-shrink-0" />
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-bounce" />}
+                        <span className="truncate">{block.title || block.headline || 'View Details'}</span>
+                        {block.badge && (
+                          <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white rounded-full">
+                            {block.badge}
+                          </span>
+                        )}
+                      </div>
+                      {block.subtitle && (
+                        <p className="text-[11px] opacity-70 font-normal mt-0.5 truncate">{block.subtitle}</p>
                       )}
                     </div>
-                    {block.subtitle && (
-                      <p className="text-[11px] opacity-70 font-normal mt-0.5">{block.subtitle}</p>
-                    )}
-                  </div>
-                  <FaExternalLinkAlt className="text-xs opacity-40 shrink-0 ml-2" />
-                </button>
-              );
-            }
 
-            if (block.type === 'feed_grid') {
-              if (gridPosts.length === 0) return null;
-              return (
-                <div key={block.id} className="w-full pt-4 space-y-2 text-left">
-                  <span
-                    style={{ color: theme.text_color }}
-                    className="text-xs font-black uppercase tracking-wider opacity-60 block px-1"
-                  >
-                    {block.title || 'Recent Highlights'}
-                  </span>
-                  <div className="grid grid-cols-3 gap-2">
-                    {gridPosts.slice(0, block.limit || 6).map((post) => (
-                      <div
-                        key={post.id}
-                        onClick={() => post.post_url && window.open(post.post_url, '_blank')}
-                        className="aspect-square bg-black/10 dark:bg-white/10 rounded-2xl overflow-hidden group relative cursor-pointer border border-black/5"
-                      >
-                        <img
-                          src={post.media_url}
-                          alt={post.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs p-2 text-center font-bold">
-                          <span className="line-clamp-2">{post.title}</span>
-                        </div>
-                      </div>
-                    ))}
+                    <FaExternalLinkAlt className="text-xs opacity-40 shrink-0 ml-2" />
                   </div>
-                </div>
+                </button>
               );
             }
 

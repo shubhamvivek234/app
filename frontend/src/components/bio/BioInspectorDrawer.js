@@ -108,6 +108,13 @@ export default function BioInspectorDrawer({
       icon: FaShareAlt,
       desc: 'Social dock position, icon sizes, and share sheet',
     },
+    {
+      id: 'navigation',
+      title: 'Pages & Navigation',
+      badge: '4',
+      icon: FaSlidersH,
+      desc: 'Pill tabs dock, sticky top bar, or mobile bottom bar',
+    },
   ];
 
   const filteredCategories = categories.filter((c) =>
@@ -605,6 +612,41 @@ export default function BioInspectorDrawer({
               >
                 Bottom Footer
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sub-panel: 7. Pages & Navigation Dock ── */}
+      {activeCategory === 'navigation' && (
+        <div className="p-3.5 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-zinc-900 dark:text-white mb-1">
+              Site Navigation Style
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'pills', label: 'Pill Tabs', desc: 'Sub-tabs under header' },
+                { id: 'top_bar', label: 'Top Bar', desc: 'Sticky header navigation' },
+                { id: 'bottom_bar', label: 'Bottom Dock', desc: 'Mobile app floating dock' },
+                { id: 'none', label: 'Hidden', desc: 'Single-page only' },
+              ].map((nav) => {
+                const isSelected = (theme.navigation_style || 'pills') === nav.id;
+                return (
+                  <button
+                    key={nav.id}
+                    onClick={() => setTheme({ ...theme, navigation_style: nav.id })}
+                    className={`p-2 rounded-xl border text-center transition-all ${
+                      isSelected
+                        ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold shadow-2xs'
+                        : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 text-zinc-600 dark:text-zinc-400'
+                    }`}
+                  >
+                    <p className="text-xs font-bold">{nav.label}</p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">{nav.desc}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

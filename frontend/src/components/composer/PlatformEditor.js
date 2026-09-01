@@ -1290,33 +1290,32 @@ const PlatformEditor = ({
             />
           </div>
 
-          {/* Media area (image / video posts only) */}
-          {postType !== 'text' && (
-            <div className="px-4 pb-3">
-              {/* Hidden file input — multiple for images, single for video */}
-              <input
-                id={fileInputId}
-                ref={inputRef}
-                type="file"
-                accept={isVideo ? 'video/*' : 'image/*, image/gif'}
-                multiple={!isVideo}
-                onChange={handleFileChange}
-                className="sr-only absolute -left-[9999px] h-px w-px opacity-0"
-              />
-              {/* Hidden GIF file input */}
-              <input
-                ref={gifFileRef}
-                type="file"
-                accept="image/gif"
-                className="hidden"
-                onChange={(e) => {
-                  const files = e.target.files;
-                  if (files?.length && onFilesSelect) {
-                    onFilesSelect(Array.from(files));
-                    e.target.value = null;
-                  }
-                }}
-              />
+          {/* ── Universal Smart Media Upload Area ── */}
+          <div className="px-4 pb-3">
+            {/* Hidden universal file input — accepts all images, videos, PDFs and audio */}
+            <input
+              id={fileInputId}
+              ref={inputRef}
+              type="file"
+              accept="image/*,video/*,application/pdf,audio/*"
+              multiple={true}
+              onChange={handleFileChange}
+              className="sr-only absolute -left-[9999px] h-px w-px opacity-0"
+            />
+            {/* Hidden GIF file input */}
+            <input
+              ref={gifFileRef}
+              type="file"
+              accept="image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const files = e.target.files;
+                if (files?.length && onFilesSelect) {
+                  onFilesSelect(Array.from(files));
+                  e.target.value = null;
+                }
+              }}
+            />
 
               {/* ── Primary platform: full upload UI ─────────────────────── */}
               {onFilesSelect && (
@@ -1343,12 +1342,19 @@ const PlatformEditor = ({
                           mediaOverIdx.current = null;
                         }}
                         onDragOver={(e) => e.preventDefault()}
-                        className="relative group rounded-md overflow-hidden border border-gray-200 bg-black cursor-grab active:cursor-grabbing"
+                        className="relative group rounded-md overflow-hidden border border-gray-200 dark:border-slate-700 bg-zinc-900 cursor-grab active:cursor-grabbing"
                         style={{ width: '80px', height: '80px', flexShrink: 0 }}
                         title={item.name}
                       >
                         {item.type === 'video' ? (
                           <video src={item.url} className="w-full h-full object-cover" />
+                        ) : item.type === 'pdf' || item.type === 'document' || (item.url && item.url.toLowerCase().endsWith('.pdf')) ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center p-1 bg-rose-950/40 text-center">
+                            <FaFilePdf className="text-xl text-rose-400 mb-1" />
+                            <span className="text-[9px] font-bold text-rose-200 truncate max-w-full px-1">
+                              {item.name || 'PDF'}
+                            </span>
+                          </div>
                         ) : (
                           <img src={item.url} alt="" className="w-full h-full object-cover" />
                         )}

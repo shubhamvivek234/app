@@ -2,24 +2,21 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v3.9 shipped
+Stage: v4.2 shipped
 Branch: main
-Focus: Smart Bio Studio Tactile Physical UI & Procedural Backdrop Engine (18 Curated Designer Themes, 8 Tactile 3D Card Physics, Procedural SVG Film Grain & Ambient Defocused Orbs, 4 Header Architectures, Priority CTA Attention Pulse)
+Focus: Direct Full-Page Create Post Composer + Universal Smart Media Engine & Real-Time Multi-Platform Rules
 
 ## Last Session Completed
-Date: 2026-09-01
+Date: 2026-09-02
 Completed:
-- Smart Bio Studio Theme & Tactile Engine (`frontend/src/lib/bioThemeUtils.js`, `pages/LinkInBio.js`, `pages/PublicBioPage.js`, `api/models/bio.py`, `api/routes/bio_pages.py`):
-  - 18 Curated Designer Themes across dark OLED, luxury editorial washi, warm terracotta, emerald glass, neon cyberpunk, and liquid aura.
-  - 8 Tactile 3D Card Styles (Double-Bezel Glass, Tactile Convex 3D, Tactile Concave Inset, Hard Brutalist, Cyber Glow Halo, Soft Marshmallow Pill, Minimal Hairline, Solid Flat).
-  - Procedural Background Effects (SVG Film Grain Noise overlay, Ambient Defocused Light Orbs, Liquid Multi-stop Mesh Glow).
-  - 4 Header Architectures (Classic Centered, Banner Cover Photo, Editorial Horizontal Split, Minimalist Monograph).
-- Sidebar Menu & Navigation Refactor (`DashboardLayout.js`): Removed redundant Short Links item from main sidebar (centralized inside Social Tools hub).
-- Dark Theme Overhaul for Publish & Analytics (`DashboardLayout.js`, `Publish.js`, `PostCard.js`, `ExportReportModal.js`, `index.css`):
-  - Top header navigation Publish & Analytics links upgraded with high-contrast dark pills and smooth React Router client-side routing.
-  - Full dark theme styling across Publish feed, account pills, post cards, comments drawer, DM inbox, Analytics cards, and PDF export modal.
-- Viral Studio & Composer Routing Fix (`ViralStudio.js`, `CreatePost.js`, `CreatePostForm.js`, `App.js`, `ContentLibrary.js`, `InstagramGridPlanner.js`): Fixed "Use" button routing in Hook Vault and Script Generator to navigate to `/create-post` with pre-filled content and automatic composer activation. Added `/create` alias redirect.
-- Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2.
+- Direct Full-Page Create Post Composer (`frontend/src/pages/CreatePost.js`, `frontend/src/pages/CreatePostForm.js`):
+  - Removed intermediate 4-card landing screen (`Text Post`, `Image Post`, `Video Post`, `Mixed Media`).
+  - Replaced 88vw×88vh popup modal with direct full-page composer in `DashboardLayout`.
+- Universal Smart Media Engine (`frontend/src/components/composer/PlatformEditor.js`, `frontend/src/lib/mediaValidation.js`):
+  - Universal smart dropzone accepting all media types (`image/*`, `video/*`, `.gif`, `.pdf`, `.mp3`, `.wav`) simultaneously.
+  - Multi-file drag-and-drop, PDF document preview tiles, video audio indicators, and real-time classification (`single_image`, `carousel_images`, `single_video`, `vertical_reel`, `pdf_document`, `mixed_media`).
+  - Verified platform limits for Instagram (10 carousel items), Facebook (10+ photos), Twitter/X (4 images / 1 video), LinkedIn (9 images / PDF documents), YouTube (1 video / Shorts), TikTok (1 video / 35 photos).
+- Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled with 0 errors, EC2 healthy.
 
 ## Active Work
 Currently implementing: None
