@@ -353,6 +353,14 @@ function App() {
                 }
               />
               <Route
+                path="/create"
+                element={
+                  <PrivateRoute>
+                    <Navigate to="/create-post" replace />
+                  </PrivateRoute>
+                }
+              />
+              <Route
                 path="/create-post/new"
                 element={
                   <PrivateRoute>

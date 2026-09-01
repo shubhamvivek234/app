@@ -100,7 +100,7 @@ export default function ViralStudio() {
   };
 
   const handleUseInComposer = (text) => {
-    navigate('/create', { state: { initialCaption: text } });
+    navigate('/create-post', { state: { initialContent: text, initialCaption: text } });
   };
 
   const handleToggleBookmark = async (hookId) => {
@@ -178,7 +178,7 @@ export default function ViralStudio() {
   const handleSendScriptToComposer = () => {
     if (!scriptResult) return;
     const finalPost = `${scriptResult.selected_hook}\n\n${scriptResult.full_script}\n\n${scriptResult.call_to_action}\n\n${scriptResult.recommended_hashtags?.join(' ')}`;
-    navigate('/create', { state: { initialCaption: finalPost } });
+    navigate('/create-post', { state: { initialContent: finalPost, initialCaption: finalPost } });
   };
 
   return (

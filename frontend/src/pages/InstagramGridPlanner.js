@@ -272,7 +272,7 @@ const InstagramGridPlanner = () => {
               Create posts targeting Instagram to see your grid here.
             </p>
             <button
-              onClick={() => navigate('/create')}
+              onClick={() => navigate('/create-post')}
               className="mt-4 px-4 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
             >
               Create a post

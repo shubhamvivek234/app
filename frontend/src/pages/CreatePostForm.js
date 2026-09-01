@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
 import { validateCommonPostPlatform } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -563,8 +563,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
 
+  const routerLocation = useLocation();
   // ── Shared + per-platform content ────────────────────────────────────────
-  const [commonCaption, setCommonCaption] = useState(() => initialContent || '');
+  const [commonCaption, setCommonCaption] = useState(() => initialContent || routerLocation?.state?.initialContent || routerLocation?.state?.initialCaption || routerLocation?.state?.caption || '');
   const [accountOverrides, setAccountOverrides] = useState({});
 
   // ── Platform-specific settings ────────────────────────────────────────────

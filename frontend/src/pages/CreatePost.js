@@ -19,7 +19,7 @@ const CreatePost = () => {
   const [searchParams] = useSearchParams();
   const editPostId = useMemo(() => searchParams.get('edit') || null, [searchParams]);
 
-  const initialContent = location.state?.initialContent || '';
+  const initialContent = location.state?.initialContent || location.state?.initialCaption || location.state?.caption || '';
 
   // null = closed, 'text' | 'image' | 'video' | 'mixed' = composer open for that type
   const [composerType, setComposerType] = useState(() => (initialContent ? 'text' : null));

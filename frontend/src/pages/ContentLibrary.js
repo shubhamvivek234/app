@@ -547,7 +547,7 @@ const ContentLibrary = () => {
                 </button>
               </div>
             )}
-            <Button onClick={() => navigate('/create')} size="sm">
+            <Button onClick={() => navigate('/create-post')} size="sm">
               <FaPlus className="mr-2" />
               Create
             </Button>
