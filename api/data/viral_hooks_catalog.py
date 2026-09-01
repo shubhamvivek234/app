@@ -1,5 +1,5 @@
 """
-Curated Catalog of 1,600+ Battle-Tested Viral Hooks across 16 High-Converting Niches.
+Curated Catalog of 1,760+ Battle-Tested Viral Hooks across 16 High-Converting Niches.
 """
 
 CATEGORIES = [
@@ -68,88 +68,71 @@ CATEGORIES = [
 NICHES = [
     {
         "id": "all",
-        "label": "All Niches",
-        "icon": "\ud83c\udf10"
+        "label": "All Niches"
     },
     {
         "id": "saas_tech",
-        "label": "SaaS & Tech",
-        "icon": "\ud83d\udcbb"
+        "label": "SaaS & Tech"
     },
     {
         "id": "ecommerce",
-        "label": "E-Commerce & D2C",
-        "icon": "\ud83d\udecd\ufe0f"
+        "label": "E-Commerce & D2C"
     },
     {
         "id": "marketing",
-        "label": "Marketing & Agency",
-        "icon": "\ud83d\udcc8"
+        "label": "Marketing & Agency"
     },
     {
         "id": "fitness",
-        "label": "Fitness & Health",
-        "icon": "\ud83d\udcaa"
+        "label": "Fitness & Health"
     },
     {
         "id": "real_estate",
-        "label": "Real Estate",
-        "icon": "\ud83c\udfe1"
+        "label": "Real Estate"
     },
     {
         "id": "finance",
-        "label": "Finance & Wealth",
-        "icon": "\ud83d\udcb0"
+        "label": "Finance & Wealth"
     },
     {
         "id": "creator",
-        "label": "Creator & Personal Brand",
-        "icon": "\ud83c\udfac"
+        "label": "Creator & Personal Brand"
     },
     {
         "id": "productivity",
-        "label": "AI & Productivity",
-        "icon": "\u26a1"
+        "label": "AI & Productivity"
     },
     {
         "id": "beauty_fashion",
-        "label": "Beauty, Skincare & Fashion",
-        "icon": "\ud83d\udc84"
+        "label": "Beauty, Skincare & Fashion"
     },
     {
         "id": "food_cooking",
-        "label": "Food, Cooking & Hospitality",
-        "icon": "\ud83c\udf73"
+        "label": "Food, Cooking & Hospitality"
     },
     {
         "id": "career_jobs",
-        "label": "Career, HR & Tech Jobs",
-        "icon": "\ud83d\udcbc"
+        "label": "Career, HR & Tech Jobs"
     },
     {
         "id": "coaching_consulting",
-        "label": "Coaching & High-Ticket B2B",
-        "icon": "\ud83e\udde0"
+        "label": "Coaching & High-Ticket B2B"
     },
     {
         "id": "travel_lifestyle",
-        "label": "Travel, Nomad & Hospitality",
-        "icon": "\u2708\ufe0f"
+        "label": "Travel, Nomad & Hospitality"
     },
     {
         "id": "legal_tax",
-        "label": "Legal, Tax & Compliance",
-        "icon": "\u2696\ufe0f"
+        "label": "Legal, Tax & Compliance"
     },
     {
         "id": "gaming_gear",
-        "label": "Gaming, Streaming & Tech Gear",
-        "icon": "\ud83c\udfae"
+        "label": "Gaming, Streaming & Tech Gear"
     },
     {
         "id": "parenting_home",
-        "label": "Parenting, Family & Home",
-        "icon": "\ud83d\udc76"
+        "label": "Parenting, Family & Home"
     }
 ]
 
@@ -4156,9 +4139,9 @@ VIRAL_HOOKS = [
         "niche": [
             "gaming_gear"
         ],
-        "title": "This red flag is silently killing your GPU temperature (\u00b0C)",
+        "title": "This red flag is silently killing your GPU temperature (°C)",
         "template": "Check your {asset} right now. If you see {red_flag}, it is silently destroying your {metric}:",
-        "example": "Check your in-game graphic settings file right now. If you see a drop-off after 2 seconds, it is silently destroying your GPU temperature (\u00b0C):",
+        "example": "Check your in-game graphic settings file right now. If you see a drop-off after 2 seconds, it is silently destroying your GPU temperature (°C):",
         "virality_score": 99,
         "recommended_duration": "60s",
         "best_for": [
@@ -9917,9 +9900,9 @@ VIRAL_HOOKS = [
         "niche": [
             "gaming_gear"
         ],
-        "title": "How to get your first 1,000 GPU temperature (\u00b0C) in 14 days",
+        "title": "How to get your first 1,000 GPU temperature (°C) in 14 days",
         "template": "How to get your first 1,000 {metric} with zero existing audience or ad budget:",
-        "example": "How to get your first 1,000 GPU temperature (\u00b0C) with zero existing audience or ad budget:",
+        "example": "How to get your first 1,000 GPU temperature (°C) with zero existing audience or ad budget:",
         "virality_score": 99,
         "recommended_duration": "60s",
         "best_for": [
@@ -11358,7 +11341,7 @@ VIRAL_HOOKS = [
         ],
         "title": "How to build a in-game graphic settings file that runs on autopilot",
         "template": "How to construct a {asset} that generates {metric} 24/7 on complete autopilot:",
-        "example": "How to construct a in-game graphic settings file that generates GPU temperature (\u00b0C) 24/7 on complete autopilot:",
+        "example": "How to construct a in-game graphic settings file that generates GPU temperature (°C) 24/7 on complete autopilot:",
         "virality_score": 99,
         "recommended_duration": "60s",
         "best_for": [
@@ -11680,7 +11663,7 @@ VIRAL_HOOKS = [
         "niche": [
             "saas_tech"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different AWS CloudWatch over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 93,
@@ -11699,7 +11682,7 @@ VIRAL_HOOKS = [
         "niche": [
             "ecommerce"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Klaviyo over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 94,
@@ -11716,7 +11699,7 @@ VIRAL_HOOKS = [
         "niche": [
             "marketing"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different HubSpot over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 95,
@@ -11734,7 +11717,7 @@ VIRAL_HOOKS = [
         "niche": [
             "fitness"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different MyFitnessPal over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 96,
@@ -11753,7 +11736,7 @@ VIRAL_HOOKS = [
         "niche": [
             "real_estate"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Zillow Premier Agent over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 97,
@@ -11770,7 +11753,7 @@ VIRAL_HOOKS = [
         "niche": [
             "finance"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Vanguard over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 98,
@@ -11788,7 +11771,7 @@ VIRAL_HOOKS = [
         "niche": [
             "creator"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Unravler over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 99,
@@ -11807,7 +11790,7 @@ VIRAL_HOOKS = [
         "niche": [
             "productivity"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Notion over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 92,
@@ -11824,7 +11807,7 @@ VIRAL_HOOKS = [
         "niche": [
             "beauty_fashion"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Sephora app over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 93,
@@ -11842,7 +11825,7 @@ VIRAL_HOOKS = [
         "niche": [
             "food_cooking"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Paprika recipe manager over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 94,
@@ -11861,7 +11844,7 @@ VIRAL_HOOKS = [
         "niche": [
             "career_jobs"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Levels.fyi over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 95,
@@ -11878,7 +11861,7 @@ VIRAL_HOOKS = [
         "niche": [
             "coaching_consulting"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Kajabi over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 96,
@@ -11896,7 +11879,7 @@ VIRAL_HOOKS = [
         "niche": [
             "travel_lifestyle"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Google Flights over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 97,
@@ -11915,7 +11898,7 @@ VIRAL_HOOKS = [
         "niche": [
             "legal_tax"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different QuickBooks over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 98,
@@ -11932,7 +11915,7 @@ VIRAL_HOOKS = [
         "niche": [
             "gaming_gear"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different OBS Studio over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 99,
@@ -11950,7 +11933,7 @@ VIRAL_HOOKS = [
         "niche": [
             "parenting_home"
         ],
-        "title": "I tested 50+ [tool_type] \u2014 only these 3 matter",
+        "title": "I tested 50+ [tool_type] — only these 3 matter",
         "template": "I tested over 50 different {tool_type} over the last 6 months. Delete the rest, only keep these 3:",
         "example": "I tested over 50 different Huckleberry Baby tracker over the last 6 months. Delete the rest, only keep these 3:",
         "virality_score": 92,
@@ -15676,9 +15659,9 @@ VIRAL_HOOKS = [
         "niche": [
             "gaming_gear"
         ],
-        "title": "This 30-second fix increased our GPU temperature (\u00b0C) by [percentage]%",
+        "title": "This 30-second fix increased our GPU temperature (°C) by [percentage]%",
         "template": "A simple 30-second optimization that boosted our {metric} by {percentage}% overnight:",
-        "example": "A simple 30-second optimization that boosted our GPU temperature (\u00b0C) by 84% overnight:",
+        "example": "A simple 30-second optimization that boosted our GPU temperature (°C) by 84% overnight:",
         "virality_score": 99,
         "recommended_duration": "60s",
         "best_for": [
@@ -21436,7 +21419,7 @@ VIRAL_HOOKS = [
         "niche": [
             "gaming_gear"
         ],
-        "title": "The 30-second makeover that doubled our GPU temperature (\u00b0C)",
+        "title": "The 30-second makeover that doubled our GPU temperature (°C)",
         "template": "Before and after applying the high-end editorial framework to our {asset}:",
         "example": "Before and after applying the high-end editorial framework to our in-game graphic settings file:",
         "virality_score": 99,

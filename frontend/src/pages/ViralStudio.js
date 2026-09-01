@@ -17,6 +17,26 @@ import {
 } from 'react-icons/fa';
 import { SiTiktok, SiInstagram, SiYoutube } from 'react-icons/si';
 
+const NICHE_ICONS = {
+  all: '🌐',
+  saas_tech: '💻',
+  ecommerce: '🛍️',
+  marketing: '📈',
+  fitness: '💪',
+  real_estate: '🏡',
+  finance: '💰',
+  creator: '🎬',
+  productivity: '⚡',
+  beauty_fashion: '💄',
+  food_cooking: '🍳',
+  career_jobs: '💼',
+  coaching_consulting: '🧠',
+  travel_lifestyle: '✈️',
+  legal_tax: '⚖️',
+  gaming_gear: '🎮',
+  parenting_home: '👶',
+};
+
 export default function ViralStudio() {
   const navigate = useNavigate();
 
@@ -249,7 +269,7 @@ export default function ViralStudio() {
                   >
                     {niches.map((n) => (
                       <option key={n.id} value={n.id}>
-                        {n.icon ? `${n.icon} ${n.label}` : n.label}
+                        {NICHE_ICONS[n.id] ? `${NICHE_ICONS[n.id]} ${n.label}` : n.label}
                       </option>
                     ))}
                   </select>
@@ -467,7 +487,7 @@ export default function ViralStudio() {
                       .filter((n) => n.id !== 'all')
                       .map((n) => (
                         <option key={n.id} value={n.id}>
-                          {n.icon ? `${n.icon} ${n.label}` : n.label}
+                          {NICHE_ICONS[n.id] ? `${NICHE_ICONS[n.id]} ${n.label}` : n.label}
                         </option>
                       ))}
                   </select>
