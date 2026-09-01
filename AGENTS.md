@@ -2,22 +2,17 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v4.6 shipped
+Stage: v4.7 shipped
 Branch: main
-Focus: Studio Spacing, Device Frame Containment, Reactive Swatches, & Email Verification Isolation
+Focus: Create Post Toolbar Streamlining & Integrated Action Controls
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Studio Spacing & Device Viewport Containment (`frontend/src/pages/LinkInBio.js`):
-  - Passed `noPadding={true}` to `DashboardLayout`, removing 24px gap above the studio header.
-  - Integrated device switcher pills directly into the top studio header bar.
-  - Added responsive max-width bounds and overflow containment for tablet/desktop preview devices.
-- Reactive Card Background Swatches & Publishing (`frontend/src/components/bio/BioInspectorDrawer.js`, `frontend/src/pages/LinkInBio.js`):
-  - Added `rgbaToHex` conversion and 10 instant palette swatches.
-  - Publishing automatically opens the live published bio in a new browser tab.
-- Email Verification Banner Isolation (`frontend/src/App.js`):
-  - Removed top-level `EmailVerificationBanner` so email verification notices only appear in Dashboard Action Center and Settings.
+- Create Post Toolbar Streamlining (`frontend/src/pages/CreatePostForm.js`):
+  - Removed top `headerBar` with "Create Post" text and back arrow button.
+  - Integrated `AI` and `Preview` toggle buttons directly into the connected accounts strip on the right side.
+  - Maximum vertical screen real estate for composer and previews.
 - Tests & Deployment: Frontend build compiled cleanly with 0 errors, pushed to origin/main and deployed to EC2.
 
 ## Active Work
