@@ -2,17 +2,16 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v4.8 shipped
+Stage: v4.9 shipped
 Branch: main
-Focus: Gemini Aurora Living Mesh Flowing Gradient on Sidebar Create Post Button
+Focus: Ethereal Pastel Gemini Aurora Living Color Glow on Sidebar Create Post Button
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Gemini Aurora Living Flowing Gradient (`frontend/src/index.css`, `frontend/src/components/DashboardLayout.js`):
-  - Added continuous 350% fluid gradient animation cycling through Electric Violet, Radiant Coral, Amber Glow, Cobalt, and Deep Indigo.
-  - Added dual-layer glowing halo (`gemini-aurora-glow`) with Gaussian blur that pulses and projects ambient colored light.
-  - Inset specular glass reflection and tactile micro-interactions on hover and active click.
+- Ethereal Pastel Gemini Palette (`frontend/src/index.css`, `frontend/src/components/DashboardLayout.js`):
+  - Calibrated gradient to soft, luminous pastel Gemini shades: Ethereal Indigo (#6366F1), Radiant Orchid (#A855F7), Pastel Rose (#FB7185), Warm Amber Pearl (#FBBF24), Crystal Sky (#38BDF8), and Lavender (#818CF8).
+  - Enhanced ambient Gaussian blur projection (`filter: blur(14px)`) and reinforced high-contrast typography and subtle glass specular reflection.
 - Tests & Deployment: Frontend build compiled cleanly with 0 errors, pushed to origin/main and deployed to EC2.
 
 ## Active Work
