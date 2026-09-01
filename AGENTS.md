@@ -2,21 +2,19 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v4.2 shipped
+Stage: v4.3 shipped
 Branch: main
-Focus: Direct Full-Page Create Post Composer + Universal Smart Media Engine & Real-Time Multi-Platform Rules
+Focus: Smart Bio Studio Hyper-Realistic Machined iPhone 16 Pro Viewport & Studio Stage Elevation
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Direct Full-Page Create Post Composer (`frontend/src/pages/CreatePost.js`, `frontend/src/pages/CreatePostForm.js`):
-  - Removed intermediate 4-card landing screen (`Text Post`, `Image Post`, `Video Post`, `Mixed Media`).
-  - Replaced 88vw×88vh popup modal with direct full-page composer in `DashboardLayout`.
-- Universal Smart Media Engine (`frontend/src/components/composer/PlatformEditor.js`, `frontend/src/lib/mediaValidation.js`):
-  - Universal smart dropzone accepting all media types (`image/*`, `video/*`, `.gif`, `.pdf`, `.mp3`, `.wav`) simultaneously.
-  - Multi-file drag-and-drop, PDF document preview tiles, video audio indicators, and real-time classification (`single_image`, `carousel_images`, `single_video`, `vertical_reel`, `pdf_document`, `mixed_media`).
-  - Verified platform limits for Instagram (10 carousel items), Facebook (10+ photos), Twitter/X (4 images / 1 video), LinkedIn (9 images / PDF documents), YouTube (1 video / Shorts), TikTok (1 video / 35 photos).
-- Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled with 0 errors, EC2 healthy.
+- Smart Bio Studio Preview Refinement (`frontend/src/pages/LinkInBio.js`):
+  - Aerospace Titanium Chassis: Double-bezel frame with extruded hardware buttons (action, volume up/down, power) and concentric inner radius.
+  - Interactive Dynamic Island: Glossy pill enclosure with sapphire camera reflection flare and TrueDepth sensor cutout.
+  - iOS Status Bar: 9:41 clock, 5G badge, cellular signal bars, Wi-Fi wave, battery indicator with green charge fill.
+  - Studio Stage Controls: Device switcher (iPhone 16 Pro, Tablet, Desktop), scale zoom slider (75%–120%), live QR code testing modal, and instant animation replay.
+- Tests & Deployment: Frontend build compiled cleanly with 0 errors, pushed to origin/main for Vercel deployment.
 
 ## Active Work
 Currently implementing: None
