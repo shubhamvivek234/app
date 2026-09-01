@@ -3,8 +3,6 @@ import DashboardLayout from '@/components/DashboardLayout';
 import {
   getMyBioPage,
   saveMyBioPage,
-  getBioAnalytics,
-  getBioLeads,
 } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -107,7 +105,7 @@ export default function LinkInBio() {
 
   // Studio UI state
   const [deviceMode, setDeviceMode] = useState('mobile'); // 'mobile' | 'tablet' | 'desktop'
-  const [zoomScale, setZoomScale] = useState(1); // 0.8, 0.9, 1, 1.1
+  const [zoomScale, setZoomScale] = useState(1); // 0.8 to 1.15
   const [editingBlock, setEditingBlock] = useState(null);
   const [addBlockModalOpen, setAddBlockModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -395,37 +393,98 @@ export default function LinkInBio() {
   const socialIconPx = getSocialIconSizePx(theme);
 
   return (
-    <DashboardLayout>
+    <DashboardLayout noPadding={true}>
       <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-zinc-950 overflow-hidden font-sans select-none">
         
-        {/* ── TOP STUDIO CONTROL HEADER ── */}
-        <div className="h-14 bg-zinc-900/90 border-b border-zinc-800/80 px-4 sm:px-6 flex items-center justify-between z-30 shrink-0 backdrop-blur-md">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/20" />
-              <span className="text-xs font-black uppercase tracking-widest text-zinc-300 hidden sm:inline-block">
+        {/* ── TOP STUDIO CONTROL HEADER (Flush & High-Density) ── */}
+        <div className="h-12 sm:h-13 bg-zinc-900/95 border-b border-zinc-800/90 px-3 sm:px-5 flex items-center justify-between z-30 shrink-0 backdrop-blur-md">
+          {/* Left: Branding & Handle Pill */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/20" />
+              <span className="text-xs font-black uppercase tracking-widest text-zinc-300 hidden lg:inline-block">
                 Smart Bio Studio
               </span>
             </div>
-            <div className="h-4 w-[1px] bg-zinc-800" />
-            <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-mono bg-zinc-950/80 px-3 py-1.5 rounded-xl border border-zinc-800/80 shadow-inner">
-              <span className="text-zinc-500 font-normal">unravler.bio/</span>
+            <div className="h-4 w-[1px] bg-zinc-800 hidden lg:block" />
+            <div className="flex items-center gap-1 text-xs text-zinc-300 font-mono bg-zinc-950/90 px-2.5 py-1 rounded-xl border border-zinc-800/80 shadow-inner truncate">
+              <span className="text-zinc-500 font-normal">bio/</span>
               <input
                 type="text"
                 value={handle}
                 onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-                placeholder="username"
-                className="bg-transparent font-bold text-emerald-400 outline-none w-24 sm:w-32 focus:text-white transition-colors"
+                placeholder="handle"
+                className="bg-transparent font-bold text-emerald-400 outline-none w-20 sm:w-28 focus:text-white transition-colors"
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          {/* Center: Device Mode Switcher */}
+          <div className="flex items-center gap-1 p-0.5 rounded-xl bg-zinc-950/90 border border-zinc-800/70 shadow-xs">
+            <button
+              onClick={() => { setDeviceMode('mobile'); setZoomScale(1); }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                deviceMode === 'mobile'
+                  ? 'bg-zinc-800 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="iPhone 16 Pro (Mobile)"
+            >
+              <FaMobileAlt className="text-xs" />
+              <span className="hidden md:inline">Mobile</span>
+            </button>
+            <button
+              onClick={() => { setDeviceMode('tablet'); setZoomScale(0.95); }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                deviceMode === 'tablet'
+                  ? 'bg-zinc-800 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="iPad / Tablet"
+            >
+              <FaTabletAlt className="text-xs" />
+              <span className="hidden md:inline">Tablet</span>
+            </button>
+            <button
+              onClick={() => { setDeviceMode('desktop'); setZoomScale(0.9); }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                deviceMode === 'desktop'
+                  ? 'bg-zinc-800 text-white shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Desktop Browser"
+            >
+              <FaDesktop className="text-xs" />
+              <span className="hidden md:inline">Desktop</span>
+            </button>
+          </div>
+
+          {/* Right: Actions, QR, Zoom & Publish CTA */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Zoom Controls */}
+            <div className="hidden xl:flex items-center gap-1 px-2 border-r border-zinc-800 text-xs font-mono text-zinc-400">
+              <button
+                onClick={() => setZoomScale((z) => Math.max(0.75, +(z - 0.05).toFixed(2)))}
+                className="p-1 hover:text-white rounded-md hover:bg-zinc-800 transition-colors"
+                title="Zoom Out"
+              >
+                <FaSearchMinus />
+              </button>
+              <span className="w-10 text-center font-bold text-zinc-300">{Math.round(zoomScale * 100)}%</span>
+              <button
+                onClick={() => setZoomScale((z) => Math.min(1.15, +(z + 0.05).toFixed(2)))}
+                className="p-1 hover:text-white rounded-md hover:bg-zinc-800 transition-colors"
+                title="Zoom In"
+              >
+                <FaSearchPlus />
+              </button>
+            </div>
+
             {publicUrl && (
               <button
                 onClick={() => setQrModalOpen(true)}
-                className="p-2 text-zinc-400 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all shadow-xs"
-                title="View QR Code for Mobile Testing"
+                className="p-1.5 text-zinc-400 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all"
+                title="Scan QR Code on Phone"
               >
                 <FaQrcode className="text-xs" />
               </button>
@@ -434,9 +493,10 @@ export default function LinkInBio() {
             {publicUrl && (
               <button
                 onClick={copyPublicUrl}
-                className="px-3.5 py-1.5 text-xs font-bold text-zinc-300 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all hidden md:flex items-center gap-2 shadow-xs"
+                className="px-2.5 py-1.5 text-xs font-bold text-zinc-300 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all hidden sm:flex items-center gap-1.5"
+                title="Copy Public Link"
               >
-                <FaCopy className="text-zinc-400 text-[11px]" /> Copy Link
+                <FaCopy className="text-zinc-400 text-[10px]" /> Copy
               </button>
             )}
 
@@ -445,16 +505,17 @@ export default function LinkInBio() {
                 href={publicUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="px-3.5 py-1.5 text-xs font-bold text-zinc-300 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all hidden md:flex items-center gap-2 shadow-xs"
+                className="px-2.5 py-1.5 text-xs font-bold text-zinc-300 hover:text-white bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 rounded-xl transition-all hidden sm:flex items-center gap-1.5"
+                title="View Live Public Page"
               >
-                <FaExternalLinkAlt className="text-zinc-400 text-[10px]" /> View Live
+                <FaExternalLinkAlt className="text-zinc-400 text-[9px]" /> Live
               </a>
             )}
 
             <button
               onClick={() => handleSaveAll()}
               disabled={saving}
-              className="px-5 py-2 text-xs font-black bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl shadow-md shadow-indigo-500/25 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
+              className="px-4 py-1.5 text-xs font-black bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl shadow-md shadow-indigo-500/25 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
             >
               <FaSave className="text-xs" /> {saving ? 'Publishing…' : 'Publish Bio'}
             </button>
@@ -464,8 +525,8 @@ export default function LinkInBio() {
         {/* ── 3-COLUMN STUDIO WORKSPACE ── */}
         <div className="flex-1 flex overflow-hidden">
           
-          {/* 1. LEFT COLUMN: Outline & Content Tree (~340px) */}
-          <div className="w-80 sm:w-88 shrink-0 h-full overflow-hidden flex flex-col border-r border-zinc-800/80 bg-zinc-900/40">
+          {/* 1. LEFT COLUMN: Outline & Content Tree (~320px) */}
+          <div className="w-72 md:w-80 lg:w-84 xl:w-88 shrink-0 h-full overflow-hidden flex flex-col border-r border-zinc-800/90 bg-zinc-900/50 relative z-20 shadow-lg">
             <BioOutlineTree
               title={title}
               setTitle={setTitle}
@@ -497,121 +558,57 @@ export default function LinkInBio() {
             />
           </div>
 
-          {/* 2. CENTER CANVAS: Ultra-Realistic Machined Hardware Device Viewport */}
-          <div className="flex-1 bg-zinc-950 flex flex-col items-center justify-between p-4 sm:p-6 overflow-y-auto relative custom-scrollbar">
+          {/* 2. CENTER CANVAS: Contained & Responsive Machined Hardware Viewport */}
+          <div className="flex-1 min-w-0 h-full bg-zinc-950 flex flex-col items-center justify-start p-3 sm:p-4 md:p-6 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10">
             
-            {/* Background Studio Grid & Ambient Stage Spotlight */}
-            <div className="absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none opacity-60" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[550px] bg-gradient-to-tr from-indigo-500/10 via-purple-500/10 to-pink-500/10 blur-[100px] rounded-full pointer-events-none" />
+            {/* Background Studio Grid & Stage Spotlight */}
+            <div className="absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none opacity-50" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-tr from-indigo-500/10 via-purple-500/10 to-pink-500/10 blur-[100px] rounded-full pointer-events-none" />
 
-            {/* Top Stage Control Toolbar (Floating Glass Capsule) */}
-            <div className="relative z-30 mb-3 flex items-center gap-2 p-1.5 rounded-2xl bg-zinc-900/80 border border-zinc-800/90 shadow-xl backdrop-blur-xl">
-              {/* Device Mode Switcher */}
-              <div className="flex items-center gap-1 p-0.5 rounded-xl bg-zinc-950/80 border border-zinc-800/60">
-                <button
-                  onClick={() => setDeviceMode('mobile')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    deviceMode === 'mobile'
-                      ? 'bg-zinc-800 text-white shadow-xs'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                  title="iPhone 16 Pro (Mobile)"
-                >
-                  <FaMobileAlt className="text-xs" />
-                  <span className="hidden md:inline">iPhone 16 Pro</span>
-                </button>
-                <button
-                  onClick={() => setDeviceMode('tablet')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    deviceMode === 'tablet'
-                      ? 'bg-zinc-800 text-white shadow-xs'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                  title="iPad Mini / Tablet"
-                >
-                  <FaTabletAlt className="text-xs" />
-                  <span className="hidden md:inline">Tablet</span>
-                </button>
-                <button
-                  onClick={() => setDeviceMode('desktop')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    deviceMode === 'desktop'
-                      ? 'bg-zinc-800 text-white shadow-xs'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                  title="Desktop Browser"
-                >
-                  <FaDesktop className="text-xs" />
-                  <span className="hidden md:inline">Desktop</span>
-                </button>
-              </div>
-
-              {/* Scale Zoom Controls */}
-              <div className="hidden lg:flex items-center gap-1 px-2 border-l border-zinc-800 text-xs font-mono text-zinc-400">
-                <button
-                  onClick={() => setZoomScale((z) => Math.max(0.75, +(z - 0.05).toFixed(2)))}
-                  className="p-1.5 hover:text-white rounded-md hover:bg-zinc-800 transition-colors"
-                  title="Zoom Out"
-                >
-                  <FaSearchMinus />
-                </button>
-                <span className="w-12 text-center font-bold text-zinc-300">{Math.round(zoomScale * 100)}%</span>
-                <button
-                  onClick={() => setZoomScale((z) => Math.min(1.2, +(z + 0.05).toFixed(2)))}
-                  className="p-1.5 hover:text-white rounded-md hover:bg-zinc-800 transition-colors"
-                  title="Zoom In"
-                >
-                  <FaSearchPlus />
-                </button>
-              </div>
-
-              {/* Refresh Live Canvas Animation */}
+            {/* Stage Quick Replay Pill */}
+            <div className="relative z-20 mb-2 flex items-center justify-center">
               <button
                 onClick={() => setPreviewKey((k) => k + 1)}
-                className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition-colors"
+                className="px-3 py-1 rounded-full bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 text-[11px] font-bold text-zinc-400 hover:text-white transition-all flex items-center gap-1.5 shadow-xs"
                 title="Replay Entrance Animations"
               >
-                <FaRedoAlt className="text-xs" />
+                <FaRedoAlt className="text-[10px]" /> Replay Animations
               </button>
             </div>
 
-            {/* ── THE MACHINED HARDWARE DEVICE CHASSIS (iPhone 16 Pro Titanium / Desktop) ── */}
+            {/* ── THE MACHINED HARDWARE DEVICE CHASSIS (Contained & Centered) ── */}
             <div
               style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}
-              className="transition-transform duration-300 flex items-center justify-center my-auto relative z-20"
+              className="transition-transform duration-300 flex items-center justify-center my-auto relative z-20 max-w-full"
             >
               {/* Outer Metallic Titanium Chassis */}
               <div
                 className={`relative transition-all duration-300 ${
                   deviceMode === 'mobile'
-                    ? 'w-[380px] h-[780px] rounded-[54px] p-[11px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
+                    ? 'w-[360px] sm:w-[380px] h-[750px] sm:h-[770px] rounded-[50px] p-[10px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
                     : deviceMode === 'tablet'
-                    ? 'w-[520px] h-[740px] rounded-[40px] p-[10px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
-                    : 'w-[640px] h-[760px] rounded-[28px] p-[8px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-900 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.15)_inset]'
+                    ? 'w-[440px] sm:w-[480px] md:w-[500px] h-[680px] sm:h-[720px] rounded-[36px] p-[10px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
+                    : 'w-[480px] sm:w-[540px] md:w-[580px] xl:w-[620px] h-[680px] sm:h-[720px] rounded-[24px] p-[8px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-900 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.15)_inset]'
                 }`}
               >
-                {/* Physical Hardware Buttons Extrusions (Mobile mode) */}
+                {/* Physical Hardware Buttons (Mobile Mode) */}
                 {deviceMode === 'mobile' && (
                   <>
-                    {/* Left Action Button */}
                     <div className="absolute -left-[4px] top-28 w-[4px] h-7 bg-zinc-600 rounded-l-md shadow-inner" />
-                    {/* Left Volume Up */}
                     <div className="absolute -left-[4px] top-40 w-[4px] h-12 bg-zinc-600 rounded-l-md shadow-inner" />
-                    {/* Left Volume Down */}
                     <div className="absolute -left-[4px] top-56 w-[4px] h-12 bg-zinc-600 rounded-l-md shadow-inner" />
-                    {/* Right Side Power Button */}
                     <div className="absolute -right-[4px] top-44 w-[4px] h-16 bg-zinc-600 rounded-r-md shadow-inner" />
                   </>
                 )}
 
-                {/* Inner Display Enclosure (Black Bezel with Concentric Radius) */}
+                {/* Inner Display Enclosure */}
                 <div
                   className={`w-full h-full bg-black overflow-hidden relative flex flex-col shadow-inner ${
                     deviceMode === 'mobile'
-                      ? 'rounded-[44px]'
+                      ? 'rounded-[40px]'
                       : deviceMode === 'tablet'
-                      ? 'rounded-[32px]'
-                      : 'rounded-[20px]'
+                      ? 'rounded-[28px]'
+                      : 'rounded-[18px]'
                   }`}
                 >
                   {/* Specular Diagonal Glass Gloss Reflection */}
@@ -619,21 +616,17 @@ export default function LinkInBio() {
 
                   {/* Top iOS Status Bar + Dynamic Island (Mobile Mode) */}
                   {deviceMode === 'mobile' && (
-                    <div className="relative w-full h-11 shrink-0 px-6 pt-2 flex items-center justify-between z-30 select-none bg-transparent">
-                      {/* Left Clock */}
+                    <div className="relative w-full h-10 shrink-0 px-6 pt-1.5 flex items-center justify-between z-30 select-none bg-transparent">
                       <span className="text-[12px] font-semibold tracking-tight text-white/90">9:41</span>
 
                       {/* Centered Dynamic Island Pill */}
-                      <div className="absolute left-1/2 -translate-x-1/2 top-2.5 w-28 h-6 bg-black rounded-full flex items-center justify-between px-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.15)] z-40">
-                        {/* Front Camera Lens with Sapphire Optical Flare Dot */}
+                      <div className="absolute left-1/2 -translate-x-1/2 top-2 w-28 h-6 bg-black rounded-full flex items-center justify-between px-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.15)] z-40">
                         <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 ring-1 ring-zinc-800 flex items-center justify-center">
                           <span className="w-1 h-1 rounded-full bg-blue-500/80 blur-[0.5px]" />
                         </div>
-                        {/* TrueDepth Sensor Cutout */}
                         <div className="w-2 h-2 rounded-full bg-zinc-950" />
                       </div>
 
-                      {/* Right Status Icons (Signal, 5G, Wi-Fi, Battery) */}
                       <div className="flex items-center gap-1.5 text-white/90 text-[10px]">
                         <FaSignal className="text-[9px]" />
                         <span className="text-[8px] font-bold">5G</span>
@@ -645,13 +638,13 @@ export default function LinkInBio() {
 
                   {/* Desktop / Browser Header (Desktop & Tablet Mode) */}
                   {deviceMode !== 'mobile' && (
-                    <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex items-center justify-between text-xs shrink-0 z-30">
+                    <div className="bg-zinc-900 border-b border-zinc-800 px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 z-30">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
                         <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
                       </div>
-                      <div className="bg-zinc-950/90 text-zinc-400 font-mono text-[11px] px-4 py-1 rounded-full border border-zinc-800/80 truncate max-w-xs">
+                      <div className="bg-zinc-950/90 text-zinc-400 font-mono text-[11px] px-3.5 py-0.5 rounded-full border border-zinc-800/80 truncate max-w-xs">
                         {handle ? `https://unravler.bio/${handle}` : 'https://unravler.bio/preview'}
                       </div>
                       <button onClick={copyPublicUrl} className="text-zinc-400 hover:text-white">
@@ -706,7 +699,7 @@ export default function LinkInBio() {
 
                     {/* Header Layout & Profile Hero */}
                     <div className="w-full flex flex-col items-center text-center mb-4 relative z-10">
-                      {/* Avatar with Double-Bezel Outer Glow Ring */}
+                      {/* Avatar with Custom Styling */}
                       <div
                         style={avatarStyles}
                         className="rounded-full overflow-hidden flex items-center justify-center mb-2.5 bg-black/10 shrink-0 ring-4 ring-black/5 dark:ring-white/10 shadow-lg relative group transition-transform hover:scale-105"
@@ -933,17 +926,10 @@ export default function LinkInBio() {
               </div>
             </div>
 
-            {/* Bottom Live URL Tagline */}
-            <div className="relative z-30 mt-3 text-center">
-              <span className="text-[11px] text-zinc-500 font-mono">
-                Interactive real-time preview · Changes apply live to your public bio
-              </span>
-            </div>
-
           </div>
 
-          {/* 3. RIGHT COLUMN: Inspector Drawer (~370px) */}
-          <div className="w-88 sm:w-96 shrink-0 h-full overflow-hidden flex flex-col border-l border-zinc-800/80 bg-zinc-900/40">
+          {/* 3. RIGHT COLUMN: Inspector Drawer (~340px) */}
+          <div className="w-80 md:w-84 lg:w-88 xl:w-92 shrink-0 h-full overflow-hidden flex flex-col border-l border-zinc-800/90 bg-zinc-900/50 relative z-20 shadow-lg">
             <BioInspectorDrawer
               theme={theme}
               setTheme={setTheme}
