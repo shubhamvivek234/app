@@ -260,10 +260,15 @@ export default function LinkInBio() {
         is_published: true,
       };
       const res = await saveMyBioPage(payload);
+      const savedHandle = res?.handle || safeHandle;
       if (res && res.handle) {
         setHandle(res.handle);
       }
-      toast.success('✨ Smart Bio published live!');
+      toast.success('✨ Smart Bio published live! Opening in new tab…');
+
+      // Automatically open the published public bio in a new tab
+      const targetUrl = `${window.location.origin}/bio/${savedHandle}`;
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
       console.error('Save bio error:', err);
       const errMsg = err?.response?.data?.detail || err?.message || 'Failed to save Smart Bio';

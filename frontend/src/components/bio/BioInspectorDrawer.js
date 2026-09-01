@@ -55,6 +55,32 @@ const GRADIENT_PRESETS = [
   { label: 'Nordic Aurora', value: 'linear-gradient(135deg, #030D1A 0%, #06243A 60%, #064E3B 100%)', bg: '#030D1A', text: '#E0F2FE' },
 ];
 
+const CARD_BG_SWATCHES = [
+  { label: 'White', val: '#FFFFFF', bg: '#FFFFFF' },
+  { label: 'Cream', val: '#FDFBF7', bg: '#FDFBF7' },
+  { label: 'Dark Slate', val: '#1E293B', bg: '#1E293B' },
+  { label: 'OLED Black', val: '#09090B', bg: '#09090B' },
+  { label: 'Glass White', val: 'rgba(255, 255, 255, 0.85)', bg: 'rgba(255, 255, 255, 0.85)' },
+  { label: 'Dark Glass', val: 'rgba(24, 24, 27, 0.80)', bg: 'rgba(24, 24, 27, 0.80)' },
+  { label: 'Indigo Glass', val: 'rgba(79, 70, 229, 0.15)', bg: '#4F46E5' },
+  { label: 'Rose Glass', val: 'rgba(244, 63, 94, 0.15)', bg: '#F43F5E' },
+  { label: 'Emerald Glass', val: 'rgba(16, 185, 129, 0.15)', bg: '#10B981' },
+  { label: 'Amber Glass', val: 'rgba(245, 158, 11, 0.15)', bg: '#F59E0B' },
+];
+
+const rgbaToHex = (colorStr, fallback = '#FFFFFF') => {
+  if (!colorStr) return fallback;
+  if (colorStr.startsWith('#')) return colorStr.slice(0, 7);
+  const match = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (match) {
+    const r = parseInt(match[1], 10).toString(16).padStart(2, '0');
+    const g = parseInt(match[2], 10).toString(16).padStart(2, '0');
+    const b = parseInt(match[3], 10).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
+  return fallback;
+};
+
 export default function BioInspectorDrawer({
   theme,
   setTheme,
@@ -331,95 +357,139 @@ export default function BioInspectorDrawer({
           </div>
 
           {/* Card Color Controls */}
-          <div className="space-y-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+          <div className="space-y-3.5 pt-2 border-t border-zinc-100 dark:border-zinc-800">
             <label className="block text-xs font-bold text-zinc-900 dark:text-white">
               Card Colors & Surface
             </label>
 
             {/* Card Background Color */}
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Background</span>
-                <p className="text-[10px] text-zinc-400">Fill color behind content</p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Background</span>
+                  <p className="text-[10px] text-zinc-400">Fill color behind content</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={rgbaToHex(theme.card_bg, '#FFFFFF')}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_bg: e.target.value }))}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
+                  />
+                  <input
+                    type="text"
+                    value={theme.card_bg || '#FFFFFF'}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_bg: e.target.value }))}
+                    className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={theme.card_bg?.startsWith('#') ? theme.card_bg : '#FFFFFF'}
-                  onChange={(e) => setTheme({ ...theme, card_bg: e.target.value })}
-                  className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
-                />
-                <input
-                  type="text"
-                  value={theme.card_bg || '#FFFFFF'}
-                  onChange={(e) => setTheme({ ...theme, card_bg: e.target.value })}
-                  className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                />
-              </div>
-            </div>
 
-            {/* Quick Card Opacity Presets */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] font-bold text-zinc-400 mr-1">Opacity:</span>
-              {[
-                { label: 'Solid', val: theme.card_bg?.startsWith('#') ? theme.card_bg : '#FFFFFF' },
-                { label: '90%', val: 'rgba(255, 255, 255, 0.90)' },
-                { label: '80% Glass', val: 'rgba(255, 255, 255, 0.80)' },
-                { label: 'Dark Glass', val: 'rgba(24, 24, 27, 0.80)' },
-                { label: 'Frosted', val: 'rgba(255, 255, 255, 0.60)' },
-              ].map((op, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setTheme({ ...theme, card_bg: op.val })}
-                  className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors"
-                >
-                  {op.label}
-                </button>
-              ))}
+              {/* Quick Card Color Swatches */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {CARD_BG_SWATCHES.map((sw, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, card_bg: sw.val }))}
+                    className="w-6 h-6 rounded-lg border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs relative"
+                    style={{ background: sw.bg }}
+                    title={sw.label}
+                  />
+                ))}
+              </div>
+
+              {/* Quick Card Opacity Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[10px] font-bold text-zinc-400 mr-1">Opacity:</span>
+                {[
+                  { label: 'Solid', val: rgbaToHex(theme.card_bg, '#FFFFFF') },
+                  { label: '90%', val: 'rgba(255, 255, 255, 0.90)' },
+                  { label: '80% Glass', val: 'rgba(255, 255, 255, 0.80)' },
+                  { label: 'Dark Glass', val: 'rgba(24, 24, 27, 0.80)' },
+                  { label: 'Frosted', val: 'rgba(255, 255, 255, 0.60)' },
+                ].map((op, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, card_bg: op.val }))}
+                    className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition-colors"
+                  >
+                    {op.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Card Text Color */}
-            <div className="flex items-center justify-between pt-1">
-              <div>
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Text Color</span>
-                <p className="text-[10px] text-zinc-400">Headlines & subtitles inside cards</p>
+            <div className="space-y-1.5 pt-1 border-t border-zinc-100 dark:border-zinc-800/80">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Text Color</span>
+                  <p className="text-[10px] text-zinc-400">Headlines & subtitles inside cards</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={rgbaToHex(theme.card_text_color, '#18181B')}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_text_color: e.target.value }))}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
+                  />
+                  <input
+                    type="text"
+                    value={theme.card_text_color || '#18181B'}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_text_color: e.target.value }))}
+                    className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={theme.card_text_color?.startsWith('#') ? theme.card_text_color : '#18181B'}
-                  onChange={(e) => setTheme({ ...theme, card_text_color: e.target.value })}
-                  className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
-                />
-                <input
-                  type="text"
-                  value={theme.card_text_color || '#18181B'}
-                  onChange={(e) => setTheme({ ...theme, card_text_color: e.target.value })}
-                  className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {['#18181B', '#FAFAFA', '#FEF3C7', '#4F46E5', '#10B981', '#F43F5E', '#00F0FF'].map((tc) => (
+                  <button
+                    key={tc}
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, card_text_color: tc }))}
+                    className="w-5 h-5 rounded-full border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs"
+                    style={{ background: tc }}
+                    title={tc}
+                  />
+                ))}
               </div>
             </div>
 
             {/* Card Border Color */}
-            <div className="flex items-center justify-between pt-1">
-              <div>
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Border Color</span>
-                <p className="text-[10px] text-zinc-400">Outer rim highlight</p>
+            <div className="space-y-1.5 pt-1 border-t border-zinc-100 dark:border-zinc-800/80">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Card Border Color</span>
+                  <p className="text-[10px] text-zinc-400">Outer rim highlight</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={rgbaToHex(theme.card_border, '#000000')}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_border: e.target.value }))}
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
+                  />
+                  <input
+                    type="text"
+                    value={theme.card_border || 'rgba(0,0,0,0.08)'}
+                    onChange={(e) => setTheme((prev) => ({ ...prev, card_border: e.target.value }))}
+                    className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={theme.card_border?.startsWith('#') ? theme.card_border : '#000000'}
-                  onChange={(e) => setTheme({ ...theme, card_border: e.target.value })}
-                  className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
-                />
-                <input
-                  type="text"
-                  value={theme.card_border || 'rgba(0,0,0,0.08)'}
-                  onChange={(e) => setTheme({ ...theme, card_border: e.target.value })}
-                  className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
-                />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {['rgba(0,0,0,0.08)', 'rgba(255,255,255,0.15)', '#000000', '#FFFFFF', '#6366F1', '#F59E0B', '#00F0FF'].map((bc) => (
+                  <button
+                    key={bc}
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, card_border: bc }))}
+                    className="w-5 h-5 rounded-full border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs"
+                    style={{ background: bc }}
+                    title={bc}
+                  />
+                ))}
               </div>
             </div>
           </div>
@@ -587,22 +657,22 @@ export default function BioInspectorDrawer({
               <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={theme.background_color || '#FDFBF7'}
-                  onChange={(e) => setTheme({
-                    ...theme,
+                  value={rgbaToHex(theme.background_color, '#FDFBF7')}
+                  onChange={(e) => setTheme((prev) => ({
+                    ...prev,
                     background_color: e.target.value,
                     background_gradient: `linear-gradient(180deg, ${e.target.value} 0%, ${e.target.value} 100%)`,
-                  })}
+                  }))}
                   className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
                 />
                 <input
                   type="text"
                   value={theme.background_color || '#FDFBF7'}
-                  onChange={(e) => setTheme({
-                    ...theme,
+                  onChange={(e) => setTheme((prev) => ({
+                    ...prev,
                     background_color: e.target.value,
                     background_gradient: `linear-gradient(180deg, ${e.target.value} 0%, ${e.target.value} 100%)`,
-                  })}
+                  }))}
                   className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
                 />
               </div>
@@ -616,14 +686,14 @@ export default function BioInspectorDrawer({
               <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={theme.text_color || '#18181B'}
-                  onChange={(e) => setTheme({ ...theme, text_color: e.target.value })}
+                  value={rgbaToHex(theme.text_color, '#18181B')}
+                  onChange={(e) => setTheme((prev) => ({ ...prev, text_color: e.target.value }))}
                   className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 dark:border-zinc-700 bg-transparent"
                 />
                 <input
                   type="text"
                   value={theme.text_color || '#18181B'}
-                  onChange={(e) => setTheme({ ...theme, text_color: e.target.value })}
+                  onChange={(e) => setTheme((prev) => ({ ...prev, text_color: e.target.value }))}
                   className="w-24 px-2 py-1 text-xs font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200"
                 />
               </div>
