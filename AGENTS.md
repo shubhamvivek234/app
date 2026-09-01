@@ -18,6 +18,7 @@ Completed:
 - Dark Theme Overhaul for Publish & Analytics (`DashboardLayout.js`, `Publish.js`, `PostCard.js`, `ExportReportModal.js`, `index.css`):
   - Top header navigation Publish & Analytics links upgraded with high-contrast dark pills and smooth React Router client-side routing.
   - Full dark theme styling across Publish feed, account pills, post cards, comments drawer, DM inbox, Analytics cards, and PDF export modal.
+- Viral Studio & Composer Routing Fix (`ViralStudio.js`, `CreatePost.js`, `CreatePostForm.js`, `App.js`, `ContentLibrary.js`, `InstagramGridPlanner.js`): Fixed "Use" button routing in Hook Vault and Script Generator to navigate to `/create-post` with pre-filled content and automatic composer activation. Added `/create` alias redirect.
 - Tests & Deployment: 282/282 tests passing (100%), frontend production build compiled cleanly, committed to `main` (Vercel), and deployed to EC2.
 
 ## Active Work
