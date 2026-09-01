@@ -308,30 +308,30 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
 
         <div className={`py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
           <div className="relative group">
-            {/* Ambient Gemini Aurora Living Glow */}
-            <div className="absolute -inset-0.5 rounded-xl gemini-aurora-glow opacity-60 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            {/* Ambient Gemini Aurora Living Glow (Ethereal Pastel Projection) */}
+            <div className="absolute -inset-0.5 rounded-xl gemini-aurora-glow opacity-70 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
             <button
               onClick={() => navigate('/create-post')}
               data-testid="create-post-button"
               title="Create new post (⌘N)"
-              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-white font-bold ring-1 ring-white/25 inset shadow-md shadow-indigo-500/20 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
+              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-white font-extrabold ring-1 ring-white/30 inset shadow-md shadow-indigo-500/15 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
                 collapsed ? 'justify-center py-2.5' : 'justify-between px-3.5 py-2.5 text-xs'
               }`}
             >
               {/* Subtle top specular glass reflection */}
-              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/50 to-transparent pointer-events-none" />
 
               <span className="flex items-center gap-2 relative z-10">
-                <FaPlus className="text-xs flex-shrink-0 transition-transform group-hover/btn:rotate-90 duration-300" />
+                <FaPlus className="text-xs flex-shrink-0 transition-transform group-hover/btn:rotate-90 duration-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)]" />
                 {!collapsed && (
-                  <span className="tracking-tight text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.3)]">
+                  <span className="tracking-tight text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
                     Create New Post
                   </span>
                 )}
               </span>
               {!collapsed && (
-                <kbd className="relative z-10 text-[9px] font-mono bg-white/20 px-1.5 py-0.5 rounded-md text-white/95 border border-white/20 backdrop-blur-xs shadow-xs">
+                <kbd className="relative z-10 text-[9px] font-mono bg-black/15 px-1.5 py-0.5 rounded-md text-white border border-white/25 backdrop-blur-xs shadow-2xs">
                   ⌘N
                 </kbd>
               )}
