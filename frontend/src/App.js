@@ -224,47 +224,6 @@ const ThemeApplier = () => {
   return null;
 }
 
-const EmailVerificationBanner = () => {
-  const { user } = useAuth();
-  const location = useLocation();
-
-  if (!user || user.email_verified) {
-    return null;
-  }
-
-  if (
-    location.pathname === '/verify-email'
-    || location.pathname === '/login'
-    || location.pathname === '/signup'
-    || location.pathname === '/forgot-password'
-  ) {
-    return null;
-  }
-
-  return (
-    <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-      <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p>
-          Verify your email before connecting accounts, publishing, scheduling posts, or inviting teammates.
-        </p>
-        <NavigateButton />
-      </div>
-    </div>
-  );
-};
-
-const NavigateButton = () => {
-  const location = useLocation();
-  return (
-    <a
-      href={`/verify-email${location.pathname ? `?returnTo=${encodeURIComponent(location.pathname)}` : ''}`}
-      className="inline-flex items-center justify-center rounded-md border border-amber-300 bg-white px-3 py-1.5 font-medium text-amber-900 transition hover:bg-amber-100"
-    >
-      Verify email
-    </a>
-  );
-};
-
 function App() {
   return (
 <ErrorBoundary>
@@ -273,7 +232,6 @@ function App() {
         <AuthProvider>
           <ThemeApplier />
           <div className="App flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
-            <EmailVerificationBanner />
             <Routes>
               {/* Public routes — redirect authenticated users to dashboard */}
               <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
