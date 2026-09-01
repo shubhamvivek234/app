@@ -210,3 +210,32 @@ code {
         }
     }
 }
+
+@keyframes pulseSubtle {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.02);
+        opacity: 0.96;
+    }
+}
+
+.animate-pulse-subtle {
+    animation: pulseSubtle 2.5s ease-in-out infinite;
+}
+
+@keyframes floatOrb {
+    0%, 100% {
+        transform: translate(0px, 0px) scale(1);
+    }
+    50% {
+        transform: translate(15px, -15px) scale(1.08);
+    }
+}
+
+.animate-float-slow {
+    animation: floatOrb 8s ease-in-out infinite alternate;
+}
+

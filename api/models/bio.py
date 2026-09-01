@@ -16,6 +16,7 @@ class BioBlockItem(BaseModel):
     url: str = ""
     icon: str = ""
     badge: str = ""
+    is_featured: bool = False
     provider: str = ""
     embed_url: str = ""
     media_url: str = ""
@@ -36,14 +37,18 @@ class SocialLinkItem(BaseModel):
 
 class ThemeConfig(BaseModel):
     preset: str = "editorial_cream"
-    background_type: Literal["solid", "gradient", "mesh", "dark"] = "gradient"
+    background_type: str = "gradient"
     background_color: str = "#FDFBF7"
     background_gradient: str = "linear-gradient(135deg, #fdfbf7 0%, #f4ede2 100%)"
+    background_effect: str = "none"
+    header_layout: str = "classic"
+    banner_url: str = ""
     text_color: str = "#18181B"
-    card_style: Literal["glass_double_bezel", "solid_flat", "hard_shadow", "minimal_outline", "soft_pill"] = "glass_double_bezel"
+    card_style: str = "glass_double_bezel"
     card_bg: str = "rgba(255, 255, 255, 0.85)"
     card_border: str = "rgba(0, 0, 0, 0.07)"
     card_text_color: str = "#18181B"
+    card_shadow: str = ""
     button_radius: str = "rounded-2xl"
     font_family: str = "Plus Jakarta Sans"
     accent_color: str = "#4F46E5"

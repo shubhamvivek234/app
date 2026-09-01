@@ -44,234 +44,15 @@ import {
   FaShieldAlt,
   FaChevronDown,
   FaChevronUp,
+  FaBolt,
 } from 'react-icons/fa';
-
-const THEME_PRESETS = [
-  {
-    id: 'editorial_cream',
-    name: 'Editorial Cream',
-    subtitle: 'Warm parchment & luxury typography',
-    background_type: 'gradient',
-    background_color: '#FDFBF7',
-    background_gradient: 'linear-gradient(135deg, #fdfbf7 0%, #f4ede2 100%)',
-    text_color: '#18181B',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(255, 255, 255, 0.85)',
-    card_border: 'rgba(0, 0, 0, 0.08)',
-    card_text_color: '#18181B',
-    button_radius: 'rounded-2xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#4F46E5',
-  },
-  {
-    id: 'vantablack',
-    name: 'OLED Vantablack',
-    subtitle: 'Ultra-dark glass & pure white lines',
-    background_type: 'dark',
-    background_color: '#09090B',
-    background_gradient: 'linear-gradient(180deg, #09090B 0%, #18181B 100%)',
-    text_color: '#FAFAFA',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(24, 24, 27, 0.75)',
-    card_border: 'rgba(255, 255, 255, 0.12)',
-    card_text_color: '#FAFAFA',
-    button_radius: 'rounded-2xl',
-    font_family: 'Geist',
-    accent_color: '#6366F1',
-  },
-  {
-    id: 'electric_mesh',
-    name: 'Electric Indigo',
-    subtitle: 'Vibrant mesh glow & high contrast',
-    background_type: 'gradient',
-    background_color: '#0F172A',
-    background_gradient: 'linear-gradient(135deg, #1E1B4B 0%, #0F172A 50%, #311042 100%)',
-    text_color: '#F8FAFC',
-    card_style: 'soft_pill',
-    card_bg: 'rgba(30, 27, 75, 0.8)',
-    card_border: 'rgba(129, 140, 248, 0.25)',
-    card_text_color: '#F8FAFC',
-    button_radius: 'rounded-full',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#818CF8',
-  },
-  {
-    id: 'emerald_glass',
-    name: 'Emerald Forest',
-    subtitle: 'Deep botanical jade & frosted glass',
-    background_type: 'gradient',
-    background_color: '#022C22',
-    background_gradient: 'linear-gradient(135deg, #064E3B 0%, #022C22 100%)',
-    text_color: '#ECFDF5',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(6, 78, 59, 0.75)',
-    card_border: 'rgba(52, 211, 153, 0.2)',
-    card_text_color: '#ECFDF5',
-    button_radius: 'rounded-2xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#10B981',
-  },
-  {
-    id: 'sunset_coral',
-    name: 'Sunset Rose',
-    subtitle: 'Warm coral blush & crimson accents',
-    background_type: 'gradient',
-    background_color: '#FFF1F2',
-    background_gradient: 'linear-gradient(135deg, #FFF1F2 0%, #FFE4E6 50%, #FEE2E2 100%)',
-    text_color: '#881337',
-    card_style: 'soft_pill',
-    card_bg: 'rgba(255, 255, 255, 0.9)',
-    card_border: 'rgba(225, 29, 72, 0.15)',
-    card_text_color: '#881337',
-    button_radius: 'rounded-full',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#E11D48',
-  },
-  {
-    id: 'obsidian_luxury',
-    name: 'Obsidian Gold',
-    subtitle: 'Espresso charcoal & champagne gold',
-    background_type: 'dark',
-    background_color: '#1C1917',
-    background_gradient: 'linear-gradient(180deg, #1C1917 0%, #292524 100%)',
-    text_color: '#FEF3C7',
-    card_style: 'minimal_outline',
-    card_bg: 'rgba(41, 37, 36, 0.85)',
-    card_border: 'rgba(245, 158, 11, 0.3)',
-    card_text_color: '#FEF3C7',
-    button_radius: 'rounded-xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#F59E0B',
-  },
-  {
-    id: 'nordic_slate',
-    name: 'Nordic Slate',
-    subtitle: 'Clean Scandinavian monochrome',
-    background_type: 'gradient',
-    background_color: '#F8FAFC',
-    background_gradient: 'linear-gradient(180deg, #F8FAFC 0%, #E2E8F0 100%)',
-    text_color: '#0F172A',
-    card_style: 'solid_flat',
-    card_bg: '#FFFFFF',
-    card_border: 'rgba(15, 23, 42, 0.08)',
-    card_text_color: '#0F172A',
-    button_radius: 'rounded-2xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#0EA5E9',
-  },
-  {
-    id: 'cyberpunk_neon',
-    name: 'Cyberpunk Neon',
-    subtitle: 'High energy cyan & electric purple',
-    background_type: 'dark',
-    background_color: '#05050A',
-    background_gradient: 'linear-gradient(135deg, #05050A 0%, #15002A 100%)',
-    text_color: '#00F0FF',
-    card_style: 'hard_shadow',
-    card_bg: 'rgba(20, 0, 40, 0.85)',
-    card_border: 'rgba(0, 240, 255, 0.4)',
-    card_text_color: '#00F0FF',
-    button_radius: 'rounded-xl',
-    font_family: 'Geist',
-    accent_color: '#FF0055',
-  },
-  {
-    id: 'champagne_velvet',
-    name: 'Champagne & Truffle',
-    subtitle: 'Warm dark truffle & soft gold leaf',
-    background_type: 'dark',
-    background_color: '#1B1612',
-    background_gradient: 'linear-gradient(180deg, #1B1612 0%, #261F19 100%)',
-    text_color: '#FDF6E2',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(45, 36, 30, 0.85)',
-    card_border: 'rgba(251, 191, 36, 0.25)',
-    card_text_color: '#FDF6E2',
-    button_radius: 'rounded-2xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#F59E0B',
-  },
-  {
-    id: 'tokyo_midnight',
-    name: 'Tokyo Midnight Blur',
-    subtitle: 'Deep sapphire & frosted cobalt glass',
-    background_type: 'dark',
-    background_color: '#060814',
-    background_gradient: 'linear-gradient(135deg, #060814 0%, #0F172A 50%, #1E1B4B 100%)',
-    text_color: '#F0F9FF',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(15, 23, 42, 0.75)',
-    card_border: 'rgba(56, 189, 248, 0.2)',
-    card_text_color: '#F0F9FF',
-    button_radius: 'rounded-2xl',
-    font_family: 'Geist',
-    accent_color: '#38BDF8',
-  },
-  {
-    id: 'sage_apothecary',
-    name: 'Sage & Linen',
-    subtitle: 'Earthy matcha tones & organic minimalism',
-    background_type: 'gradient',
-    background_color: '#F4F6F0',
-    background_gradient: 'linear-gradient(135deg, #F4F6F0 0%, #E8ECE1 100%)',
-    text_color: '#1C281D',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(255, 255, 255, 0.9)',
-    card_border: 'rgba(163, 177, 138, 0.3)',
-    card_text_color: '#1C281D',
-    button_radius: 'rounded-2xl',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#588157',
-  },
-  {
-    id: 'california_dusk',
-    name: 'Venice Dusk',
-    subtitle: 'Deep plum glow & warm apricot highlights',
-    background_type: 'gradient',
-    background_color: '#2E0854',
-    background_gradient: 'linear-gradient(135deg, #3B0764 0%, #701A75 50%, #9A3412 100%)',
-    text_color: '#FFEDD5',
-    card_style: 'soft_pill',
-    card_bg: 'rgba(76, 29, 149, 0.65)',
-    card_border: 'rgba(253, 186, 116, 0.25)',
-    card_text_color: '#FFEDD5',
-    button_radius: 'rounded-full',
-    font_family: 'Plus Jakarta Sans',
-    accent_color: '#FB923C',
-  },
-  {
-    id: 'aurora_borealis',
-    name: 'Nordic Aurora',
-    subtitle: 'Deep arctic night & shimmering teal',
-    background_type: 'dark',
-    background_color: '#030D1A',
-    background_gradient: 'linear-gradient(135deg, #030D1A 0%, #06243A 60%, #064E3B 100%)',
-    text_color: '#E0F2FE',
-    card_style: 'glass_double_bezel',
-    card_bg: 'rgba(6, 36, 58, 0.75)',
-    card_border: 'rgba(45, 212, 191, 0.25)',
-    card_text_color: '#E0F2FE',
-    button_radius: 'rounded-2xl',
-    font_family: 'Geist',
-    accent_color: '#2DD4BF',
-  },
-  {
-    id: 'swiss_minimal',
-    name: 'Swiss Architectural',
-    subtitle: 'Pure stark monochrome & sharp precision',
-    background_type: 'solid',
-    background_color: '#FAFAFA',
-    background_gradient: 'linear-gradient(180deg, #FAFAFA 0%, #F4F4F5 100%)',
-    text_color: '#09090B',
-    card_style: 'minimal_outline',
-    card_bg: '#FFFFFF',
-    card_border: '#09090B',
-    card_text_color: '#09090B',
-    button_radius: 'rounded-none',
-    font_family: 'Geist',
-    accent_color: '#09090B',
-  },
-];
+import {
+  THEME_PRESETS,
+  TACTILE_CARD_STYLES,
+  BACKGROUND_EFFECTS,
+  HEADER_LAYOUTS,
+  getTactileCardStyles,
+} from '@/lib/bioThemeUtils';
 
 const SOCIAL_PLATFORMS = [
   { key: 'instagram', name: 'Instagram', icon: FaInstagram, placeholder: 'https://instagram.com/username' },
@@ -290,6 +71,7 @@ export default function LinkInBio() {
   const [title, setTitle] = useState('');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [bannerUrl, setBannerUrl] = useState('');
   const [verifiedBadge, setVerifiedBadge] = useState(false);
   const [theme, setTheme] = useState(THEME_PRESETS[0]);
   const [blocks, setBlocks] = useState([]);
@@ -315,6 +97,7 @@ export default function LinkInBio() {
         setTitle(data.title || '');
         setBio(data.bio || '');
         setAvatarUrl(data.avatar_url || '');
+        setBannerUrl(data.theme?.banner_url || data.banner_url || '');
         setVerifiedBadge(data.verified_badge ?? false);
         if (data.theme) setTheme(data.theme);
         setBlocks(data.blocks || []);
@@ -362,8 +145,15 @@ export default function LinkInBio() {
         title,
         bio,
         avatar_url: avatarUrl || undefined,
+        banner_url: bannerUrl || undefined,
         verified_badge: verifiedBadge,
-        theme,
+        theme: {
+          ...theme,
+          banner_url: bannerUrl || undefined,
+          header_layout: theme.header_layout || 'classic',
+          background_effect: theme.background_effect || 'none',
+          card_style: theme.card_style || 'glass_double_bezel',
+        },
         blocks,
         social_links: socialLinks,
         custom_domain: customDomain,
@@ -656,6 +446,40 @@ export default function LinkInBio() {
                       </label>
                     </div>
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Header Architecture
+                      </label>
+                      <select
+                        value={theme.header_layout || 'classic'}
+                        onChange={(e) => setTheme({ ...theme, header_layout: e.target.value })}
+                        className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl outline-hidden text-zinc-900 dark:text-white cursor-pointer"
+                      >
+                        {HEADER_LAYOUTS.map((hl) => (
+                          <option key={hl.id} value={hl.id}>
+                            {hl.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {theme.header_layout === 'banner' && (
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Cover Banner Image URL
+                        </label>
+                        <input
+                          type="url"
+                          value={bannerUrl}
+                          onChange={(e) => setBannerUrl(e.target.value)}
+                          placeholder="https://images.unsplash.com/..."
+                          className="w-full px-3 py-2 text-xs bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl outline-hidden text-zinc-900 dark:text-white"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Blocks Stack Header */}
@@ -796,6 +620,19 @@ export default function LinkInBio() {
                                 className="w-full px-3 py-1.5 text-xs bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500 text-zinc-900 dark:text-white"
                               />
                             </div>
+
+                            <div className="flex items-center gap-2 pt-1">
+                              <input
+                                type="checkbox"
+                                id={`featured_${block.id}`}
+                                checked={block.is_featured || false}
+                                onChange={(e) => handleUpdateBlock(block.id, 'is_featured', e.target.checked)}
+                                className="w-4 h-4 text-amber-500 rounded-sm focus:ring-amber-400"
+                              />
+                              <label htmlFor={`featured_${block.id}`} className="text-xs font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer select-none">
+                                <FaBolt className="text-amber-500 text-xs" /> Priority CTA & Attention Pulse (Breathe motion to drive 3x more clicks)
+                              </label>
+                            </div>
                           </div>
                         )}
 
@@ -913,50 +750,56 @@ export default function LinkInBio() {
             {activeTab === 'themes' && (
               <div className="space-y-6">
                 <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
-                  <h2 className="text-base font-black text-zinc-900 dark:text-white tracking-tight">
-                    Curated Agency Themes
-                  </h2>
-                  <p className="text-xs text-zinc-500">
-                    Pick a handcrafted luxury aesthetic inspired by editorial publications and modern design studios.
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-black text-zinc-900 dark:text-white tracking-tight">
+                        Curated Designer Themes ({THEME_PRESETS.length})
+                      </h2>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Handcrafted aesthetics inspired by Liinks.co, Apple acrylic glass, tactile 3D convex blocks, and luxury editorial washis.
+                      </p>
+                    </div>
+                  </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
                     {THEME_PRESETS.map((preset) => {
-                      const isSelected = theme.preset === preset.id;
+                      const isSelected = (theme.id === preset.id) || (theme.preset === preset.id);
+                      const sampleCard = getTactileCardStyles(preset.card_style, preset);
                       return (
                         <div
                           key={preset.id}
                           onClick={() => setTheme(preset)}
-                          style={{ background: preset.background_gradient }}
-                          className={`p-5 rounded-3xl cursor-pointer border-2 transition-all relative overflow-hidden flex flex-col justify-between h-36 ${
+                          style={{ background: preset.background_gradient || preset.background_color }}
+                          className={`p-4 rounded-3xl cursor-pointer border-2 transition-all relative overflow-hidden flex flex-col justify-between h-40 shadow-xs hover:scale-[1.02] ${
                             isSelected
-                              ? 'border-indigo-600 ring-4 ring-indigo-500/20 shadow-lg scale-[1.02]'
-                              : 'border-black/5 hover:border-black/20 hover:scale-[1.01]'
+                              ? 'border-indigo-600 ring-4 ring-indigo-500/20 shadow-xl scale-[1.02]'
+                              : 'border-black/5 dark:border-white/10 hover:border-black/20'
                           }`}
                         >
-                          <div className="flex items-start justify-between">
+                          {/* Grain texture simulation */}
+                          {preset.background_effect === 'grain' && (
+                            <div className="absolute inset-0 pointer-events-none opacity-[0.06] bg-repeat" style={{ backgroundImage: `radial-gradient(black 1px, transparent 0)` }} />
+                          )}
+
+                          <div className="flex items-start justify-between relative z-10">
                             <div>
-                              <h3 style={{ color: preset.text_color }} className="font-extrabold text-sm tracking-tight">
+                              <h3 style={{ color: preset.text_color }} className="font-extrabold text-xs tracking-tight">
                                 {preset.name}
                               </h3>
-                              <p style={{ color: preset.text_color }} className="text-[11px] opacity-70 mt-0.5">
+                              <p style={{ color: preset.text_color }} className="text-[10px] opacity-70 mt-0.5 line-clamp-1">
                                 {preset.subtitle}
                               </p>
                             </div>
                             {isSelected && (
-                              <FaCheckCircle className="text-indigo-600 bg-white rounded-full text-base shrink-0" />
+                              <FaCheckCircle className="text-indigo-600 bg-white rounded-full text-sm shrink-0 shadow-xs" />
                             )}
                           </div>
 
                           <div
-                            style={{
-                              backgroundColor: preset.card_bg,
-                              borderColor: preset.card_border,
-                              color: preset.card_text_color,
-                            }}
-                            className={`px-3 py-2 text-center text-[11px] font-bold border shadow-xs ${preset.button_radius}`}
+                            style={sampleCard.style}
+                            className={`px-3 py-2 text-center text-[10px] font-bold border transition-all relative z-10 ${sampleCard.className}`}
                           >
-                            Sample Button
+                            Preview Button
                           </div>
                         </div>
                       );
@@ -965,57 +808,80 @@ export default function LinkInBio() {
                 </div>
 
                 {/* Fine-Tuning Controls */}
-                <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
-                  <h2 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider">
-                    Custom Theme Fine-Tuning
-                  </h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Button Shape
-                      </label>
-                      <select
-                        value={theme.button_radius}
-                        onChange={(e) => setTheme({ ...theme, button_radius: e.target.value })}
-                        className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
-                      >
-                        <option value="rounded-none">Sharp Rectangle</option>
-                        <option value="rounded-xl">Subtle Radius (12px)</option>
-                        <option value="rounded-2xl">Modern Soft (16px)</option>
-                        <option value="rounded-full">Fully Rounded Pill</option>
-                      </select>
-                    </div>
+                <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-6">
+                  <div>
+                    <h2 className="text-sm font-black text-zinc-900 dark:text-white uppercase tracking-wider">
+                      Physical UI & Engine Fine-Tuning
+                    </h2>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Configure tactile lighting physics, procedural noise backdrops, and button geometries.
+                    </p>
+                  </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Card Style
+                        Tactile Physics / Card Style
                       </label>
                       <select
-                        value={theme.card_style}
+                        value={theme.card_style || 'glass_double_bezel'}
                         onChange={(e) => setTheme({ ...theme, card_style: e.target.value })}
                         className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
                       >
-                        <option value="glass_double_bezel">Glass Double-Bezel</option>
-                        <option value="solid_flat">Solid Flat</option>
-                        <option value="hard_shadow">Hard Brutalist Shadow</option>
-                        <option value="minimal_outline">Minimal Outline</option>
-                        <option value="soft_pill">Soft Pill</option>
+                        {TACTILE_CARD_STYLES.map((tcs) => (
+                          <option key={tcs.id} value={tcs.id}>
+                            {tcs.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
                     <div>
                       <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-                        Typography
+                        Procedural Background Effect
                       </label>
                       <select
-                        value={theme.font_family}
+                        value={theme.background_effect || 'none'}
+                        onChange={(e) => setTheme({ ...theme, background_effect: e.target.value })}
+                        className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                      >
+                        {BACKGROUND_EFFECTS.map((be) => (
+                          <option key={be.id} value={be.id}>
+                            {be.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Corner Radius Geometry
+                      </label>
+                      <select
+                        value={theme.button_radius || 'rounded-2xl'}
+                        onChange={(e) => setTheme({ ...theme, button_radius: e.target.value })}
+                        className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
+                      >
+                        <option value="rounded-none">Sharp Rectangle (0px)</option>
+                        <option value="rounded-xl">Subtle Radius (12px)</option>
+                        <option value="rounded-2xl">Modern Soft (16px)</option>
+                        <option value="rounded-full">Full Marshmallow Pill (999px)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Editorial Typography
+                      </label>
+                      <select
+                        value={theme.font_family || 'Plus Jakarta Sans'}
                         onChange={(e) => setTheme({ ...theme, font_family: e.target.value })}
                         className="w-full px-3 py-2 text-xs font-bold bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl"
                       >
-                        <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
-                        <option value="Geist">Geist Monospace / Modern</option>
-                        <option value="PP Editorial New">Editorial Serif</option>
-                        <option value="Clash Display">Clash Grotesk</option>
+                        <option value="Plus Jakarta Sans">Plus Jakarta Sans (Modern Editorial)</option>
+                        <option value="Geist">Geist (Clean Monospace Tech)</option>
+                        <option value="PP Editorial New">PP Editorial New (Luxury Serif)</option>
+                        <option value="Clash Display">Clash Display (Grotesk)</option>
                       </select>
                     </div>
                   </div>
@@ -1260,39 +1126,168 @@ export default function LinkInBio() {
 
                 {/* Inner Screen Canvas */}
                 <div
-                  style={{ background: theme.background_gradient || theme.background_color }}
-                  className="w-full h-full rounded-[38px] overflow-y-auto pt-14 pb-8 px-4 text-center flex flex-col items-center justify-between scrollbar-none transition-all duration-300"
+                  style={{
+                    background: theme.background_gradient || theme.background_color,
+                    fontFamily: theme.font_family || 'Plus Jakarta Sans',
+                  }}
+                  className="w-full h-full rounded-[38px] overflow-y-auto pb-8 px-4 text-center flex flex-col items-center justify-between scrollbar-none transition-all duration-300 relative"
                 >
-                  <div className="w-full flex flex-col items-center space-y-4">
-                    {/* Avatar */}
-                    <div className="w-20 h-20 rounded-full border-2 border-white/40 overflow-hidden bg-black/10 flex items-center justify-center shadow-md shrink-0">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt={title} className="w-full h-full object-cover" />
-                      ) : (
-                        <span style={{ color: theme.text_color }} className="text-2xl font-black uppercase">
-                          {title ? title[0] : 'U'}
-                        </span>
-                      )}
-                    </div>
+                  {/* Film Grain Texture Overlay */}
+                  {(theme.background_effect === 'grain' || theme.preset === 'matcha_washi' || theme.preset === 'editorial_cream') && (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-0 opacity-[0.05] mix-blend-overlay"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+                      }}
+                    />
+                  )}
 
-                    {/* Title & Bio */}
-                    <div className="space-y-1 max-w-[280px]">
-                      <h2
-                        style={{ color: theme.text_color }}
-                        className="text-base font-extrabold tracking-tight flex items-center justify-center gap-1.5"
-                      >
-                        {title || 'Your Brand'}
-                        {verifiedBadge && <FaCheckCircle className="text-indigo-500 text-xs" />}
-                      </h2>
-                      <p style={{ color: theme.text_color }} className="text-[11px] font-mono opacity-60">
-                        @{handle || 'handle'}
-                      </p>
-                      {bio && (
-                        <p style={{ color: theme.text_color }} className="text-[11px] opacity-80 pt-1 leading-relaxed line-clamp-3">
-                          {bio}
-                        </p>
+                  {/* Ambient Glow Orbs */}
+                  {(theme.background_effect === 'ambient_orbs' || theme.background_effect === 'mesh_glow' || theme.preset === 'liquid_aura' || theme.preset === 'electric_mesh' || theme.preset === 'tokyo_cyber') && (
+                    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+                      <div
+                        className="absolute -top-12 -left-12 w-48 h-48 rounded-full blur-2xl opacity-30 animate-pulse"
+                        style={{ background: theme.accent_color || '#6366F1' }}
+                      />
+                      <div
+                        className="absolute top-1/2 -right-12 w-44 h-44 rounded-full blur-2xl opacity-25"
+                        style={{ background: theme.card_text_color || '#EC4899' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Top Cover Banner if layout is banner */}
+                  {theme.header_layout === 'banner' && (
+                    <div className="w-[calc(100%+2rem)] -mx-4 h-28 relative z-10 shrink-0 overflow-hidden bg-black/20 mb-[-2rem]">
+                      {bannerUrl ? (
+                        <img src={bannerUrl} alt="Cover" className="w-full h-full object-cover" />
+                      ) : (
+                        <div
+                          className="w-full h-full opacity-60"
+                          style={{
+                            background: `linear-gradient(135deg, ${theme.accent_color || '#6366F1'}60, ${theme.card_text_color || '#000000'}30)`,
+                          }}
+                        />
                       )}
                     </div>
+                  )}
+
+                  <div className={`w-full flex flex-col items-center relative z-10 ${theme.header_layout === 'banner' ? 'pt-4 space-y-3' : 'pt-12 space-y-4'}`}>
+                    
+                    {/* Header Architecture: Classic Centered */}
+                    {(!theme.header_layout || theme.header_layout === 'classic') && (
+                      <div className="flex flex-col items-center space-y-3">
+                        <div className="w-20 h-20 rounded-full border-2 border-white/40 overflow-hidden bg-black/10 flex items-center justify-center shadow-md shrink-0">
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt={title} className="w-full h-full object-cover" />
+                          ) : (
+                            <span style={{ color: theme.text_color }} className="text-2xl font-black uppercase">
+                              {title ? title[0] : 'U'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-1 max-w-[280px]">
+                          <h2
+                            style={{ color: theme.text_color }}
+                            className="text-sm font-extrabold tracking-tight flex items-center justify-center gap-1.5"
+                          >
+                            {title || 'Your Brand'}
+                            {verifiedBadge && <FaCheckCircle className="text-indigo-500 text-xs" />}
+                          </h2>
+                          <p style={{ color: theme.text_color }} className="text-[10px] font-mono opacity-60">
+                            @{handle || 'handle'}
+                          </p>
+                          {bio && (
+                            <p style={{ color: theme.text_color }} className="text-[10px] opacity-80 pt-0.5 leading-relaxed line-clamp-2">
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Header Architecture: Banner */}
+                    {theme.header_layout === 'banner' && (
+                      <div className="flex flex-col items-center space-y-2">
+                        <div className="w-18 h-18 rounded-full border-3 border-white dark:border-zinc-900 overflow-hidden bg-black/10 flex items-center justify-center shadow-xl shrink-0">
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt={title} className="w-full h-full object-cover" />
+                          ) : (
+                            <span style={{ color: theme.text_color }} className="text-xl font-black uppercase">
+                              {title ? title[0] : 'U'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-0.5 max-w-[280px]">
+                          <h2
+                            style={{ color: theme.text_color }}
+                            className="text-sm font-extrabold tracking-tight flex items-center justify-center gap-1.5"
+                          >
+                            {title || 'Your Brand'}
+                            {verifiedBadge && <FaCheckCircle className="text-indigo-500 text-xs" />}
+                          </h2>
+                          <p style={{ color: theme.text_color }} className="text-[10px] font-mono opacity-60">
+                            @{handle || 'handle'}
+                          </p>
+                          {bio && (
+                            <p style={{ color: theme.text_color }} className="text-[10px] opacity-80 pt-0.5 leading-snug line-clamp-2">
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Header Architecture: Editorial Split */}
+                    {theme.header_layout === 'editorial_split' && (
+                      <div className="w-full flex items-center gap-3 text-left p-3 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/5 backdrop-blur-md">
+                        <div className="w-14 h-14 rounded-xl border border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-sm shrink-0 bg-black/10">
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt={title} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-lg font-extrabold uppercase" style={{ color: theme.text_color }}>
+                              {title ? title[0] : 'U'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-0.5 flex-1 min-w-0">
+                          <h2 className="text-xs font-black tracking-tight flex items-center gap-1 truncate" style={{ color: theme.text_color }}>
+                            {title || 'Your Brand'}
+                            {verifiedBadge && <FaCheckCircle className="text-indigo-500 text-[10px] shrink-0" />}
+                          </h2>
+                          <p className="text-[9px] font-mono opacity-60" style={{ color: theme.text_color }}>
+                            @{handle || 'handle'}
+                          </p>
+                          {bio && (
+                            <p className="text-[9px] opacity-80 leading-tight line-clamp-2" style={{ color: theme.text_color }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Header Architecture: Minimal */}
+                    {theme.header_layout === 'minimal' && (
+                      <div className="w-full text-center space-y-1 pt-1">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <div className="w-6 h-6 rounded-full border border-black/15 dark:border-white/20 overflow-hidden shrink-0">
+                            {avatarUrl ? (
+                              <img src={avatarUrl} alt={title} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-[9px] font-black" style={{ color: theme.text_color }}>
+                                {title ? title[0] : 'U'}
+                              </span>
+                            )}
+                          </div>
+                          <h2 className="text-xs font-serif font-black tracking-tight flex items-center gap-1" style={{ color: theme.text_color }}>
+                            {title || 'Your Brand'}
+                            {verifiedBadge && <FaCheckCircle className="text-indigo-500 text-[9px]" />}
+                          </h2>
+                        </div>
+                        <p className="text-[9px] font-mono opacity-50">@{handle || 'handle'}</p>
+                      </div>
+                    )}
 
                     {/* Social Dock Bar */}
                     {Object.keys(socialLinks).some((k) => socialLinks[k]) && (
@@ -1302,7 +1297,7 @@ export default function LinkInBio() {
                           return (
                             <span
                               key={plat}
-                              className="w-8 h-8 rounded-full bg-black/10 dark:bg-white/10 flex items-center justify-center text-xs shadow-2xs hover:scale-105 transition-transform"
+                              className="w-7 h-7 rounded-full bg-black/10 dark:bg-white/10 flex items-center justify-center text-[11px] shadow-2xs hover:scale-105 transition-transform"
                               style={{ color: theme.text_color }}
                             >
                               <FaGlobe />
@@ -1316,29 +1311,27 @@ export default function LinkInBio() {
                     <div className="w-full space-y-2.5 pt-2">
                       {blocks.map((block) => {
                         if (!block.active) return null;
+                        const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured);
 
                         if (block.type === 'link') {
                           return (
                             <div
                               key={block.id}
-                              style={{
-                                backgroundColor: theme.card_bg,
-                                borderColor: theme.card_border,
-                                color: theme.card_text_color,
-                              }}
-                              className={`w-full py-3 px-4 ${theme.button_radius} border shadow-xs text-xs font-bold flex items-center justify-between transition-all hover:scale-[1.01]`}
+                              style={cardObj.style}
+                              className={`w-full py-3 px-3.5 border text-xs font-bold flex items-center justify-between transition-all hover:scale-[1.01] ${cardObj.className}`}
                             >
-                              <div className="text-left">
+                              <div className="text-left flex-1 min-w-0 pr-2">
                                 <div className="flex items-center gap-1.5">
-                                  <span>{block.title || 'Untitled Link'}</span>
+                                  {block.is_featured && <FaBolt className="text-amber-400 text-[10px] shrink-0 animate-bounce" />}
+                                  <span className="truncate">{block.title || 'Untitled Link'}</span>
                                   {block.badge && (
-                                    <span className="px-1.5 py-0.2 text-[8px] font-black uppercase bg-rose-500 text-white rounded-full">
+                                    <span className="px-1.5 py-0.2 text-[8px] font-black uppercase bg-rose-500 text-white rounded-full shrink-0">
                                       {block.badge}
                                     </span>
                                   )}
                                 </div>
                                 {block.subtitle && (
-                                  <p className="text-[9px] opacity-70 font-normal mt-0.5">{block.subtitle}</p>
+                                  <p className="text-[9px] opacity-70 font-normal mt-0.5 truncate">{block.subtitle}</p>
                                 )}
                               </div>
                               <FaExternalLinkAlt className="text-[10px] opacity-40 shrink-0" />
@@ -1370,15 +1363,11 @@ export default function LinkInBio() {
                           return (
                             <div
                               key={block.id}
-                              style={{
-                                backgroundColor: theme.card_bg,
-                                borderColor: theme.card_border,
-                                color: theme.card_text_color,
-                              }}
-                              className={`w-full p-3 ${theme.button_radius} border shadow-xs space-y-1.5 text-left`}
+                              style={cardObj.style}
+                              className={`w-full p-3 border space-y-1.5 text-left ${cardObj.className}`}
                             >
                               <span className="text-[10px] font-bold block">{block.title || 'Featured Media'}</span>
-                              <div className="w-full h-24 bg-black/20 rounded-xl flex items-center justify-center">
+                              <div className="w-full h-20 bg-black/20 rounded-xl flex items-center justify-center">
                                 <FaPlay className="text-base text-white/80" />
                               </div>
                             </div>
@@ -1389,23 +1378,19 @@ export default function LinkInBio() {
                           return (
                             <div
                               key={block.id}
-                              style={{
-                                backgroundColor: theme.card_bg,
-                                borderColor: theme.card_border,
-                                color: theme.card_text_color,
-                              }}
-                              className={`w-full p-3.5 ${theme.button_radius} border shadow-xs space-y-2 text-center`}
+                              style={cardObj.style}
+                              className={`w-full p-3.5 border space-y-2 text-center ${cardObj.className}`}
                             >
                               <p className="text-[11px] font-black">{block.headline || 'Join Newsletter'}</p>
                               <div className="flex items-center gap-1">
                                 <input
                                   disabled
                                   placeholder="your@email.com"
-                                  className="w-full px-2 py-1 text-[10px] bg-white/50 border border-black/10 rounded-lg"
+                                  className="w-full px-2 py-1 text-[10px] bg-white/50 dark:bg-black/20 border border-black/10 dark:border-white/10 rounded-lg"
                                 />
                                 <button
                                   disabled
-                                  className="px-2.5 py-1 text-[10px] font-black bg-indigo-600 text-white rounded-lg"
+                                  className="px-2.5 py-1 text-[10px] font-black bg-indigo-600 text-white rounded-lg shrink-0"
                                 >
                                   {block.button_label || 'Join'}
                                 </button>
@@ -1419,7 +1404,7 @@ export default function LinkInBio() {
                             <div
                               key={block.id}
                               style={{ color: theme.text_color }}
-                              className="w-full py-2 px-3 text-[10px] italic opacity-80"
+                              className="w-full py-2 px-3 text-[10px] italic opacity-80 font-serif"
                             >
                               {block.content}
                             </div>
@@ -1432,7 +1417,7 @@ export default function LinkInBio() {
                   </div>
 
                   {/* Footer Tag */}
-                  <div className="pt-6">
+                  <div className="pt-6 relative z-10">
                     <span style={{ color: theme.text_color }} className="text-[9px] font-bold opacity-40">
                       ⚡ Powered by Unravler Smart Bio
                     </span>

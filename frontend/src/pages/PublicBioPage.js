@@ -23,7 +23,9 @@ import {
   FaEnvelope,
   FaPlay,
   FaImage,
+  FaBolt,
 } from 'react-icons/fa';
+import { getTactileCardStyles } from '@/lib/bioThemeUtils';
 
 const SOCIAL_ICON_MAP = {
   instagram: FaInstagram,
@@ -128,6 +130,8 @@ export default function PublicBioPage() {
   const theme = data.theme || {};
   const blocks = data.blocks || [];
   const gridPosts = data.grid_posts || [];
+  const headerLayout = theme.header_layout || 'classic';
+  const bannerUrl = theme.banner_url || data.banner_url;
 
   return (
     <div
@@ -136,35 +140,168 @@ export default function PublicBioPage() {
         color: theme.text_color || '#18181B',
         fontFamily: theme.font_family || 'Plus Jakarta Sans, sans-serif',
       }}
-      className="min-h-screen flex flex-col items-center justify-between py-12 px-4 transition-colors duration-300"
+      className="min-h-screen relative flex flex-col items-center justify-between pb-12 transition-colors duration-300 overflow-x-hidden"
     >
-      <div className="max-w-md w-full flex flex-col items-center text-center space-y-6">
-        {/* Avatar */}
-        <div className="w-24 h-24 rounded-full border-3 border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-xl shrink-0 bg-black/5">
-          {data.avatar_url ? (
-            <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
-          ) : (
-            <span className="text-3xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-              {data.title ? data.title[0] : 'U'}
-            </span>
-          )}
-        </div>
+      {/* Film Grain Texture Overlay */}
+      {(theme.background_effect === 'grain' || theme.preset === 'matcha_washi' || theme.preset === 'editorial_cream') && (
+        <div
+          className="pointer-events-none fixed inset-0 z-0 opacity-[0.04] mix-blend-overlay"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+          }}
+        />
+      )}
 
-        {/* Title & Bio */}
-        <div className="space-y-1.5 max-w-sm">
-          <h1 className="text-xl font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
-            {data.title}
-            {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
-          </h1>
-          <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
-            @{data.handle}
-          </p>
-          {data.bio && (
-            <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
-              {data.bio}
-            </p>
+      {/* Ambient Glow Orbs */}
+      {(theme.background_effect === 'ambient_orbs' || theme.background_effect === 'mesh_glow' || theme.preset === 'liquid_aura' || theme.preset === 'electric_mesh' || theme.preset === 'tokyo_cyber') && (
+        <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+          <div
+            className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-3xl opacity-30 animate-pulse"
+            style={{ background: theme.accent_color || '#6366F1' }}
+          />
+          <div
+            className="absolute top-1/2 -right-32 w-80 h-80 rounded-full blur-3xl opacity-25"
+            style={{ background: theme.card_text_color || '#EC4899' }}
+          />
+          <div
+            className="absolute -bottom-32 left-1/4 w-96 h-96 rounded-full blur-3xl opacity-20"
+            style={{ background: theme.accent_color || '#3B82F6' }}
+          />
+        </div>
+      )}
+
+      {/* Banner Layout Cover Image */}
+      {headerLayout === 'banner' && (
+        <div className="w-full h-44 sm:h-52 relative z-10 overflow-hidden bg-zinc-900/10 dark:bg-white/10">
+          {bannerUrl ? (
+            <img src={bannerUrl} alt="Cover Banner" className="w-full h-full object-cover" />
+          ) : (
+            <div
+              className="w-full h-full opacity-60"
+              style={{
+                background: `linear-gradient(135deg, ${theme.accent_color || '#6366F1'}40, ${theme.card_text_color || '#000000'}20)`,
+              }}
+            />
           )}
         </div>
+      )}
+
+      {/* Main Content Container */}
+      <div className={`max-w-md w-full relative z-10 flex flex-col items-center px-4 space-y-6 ${headerLayout === 'banner' ? '-mt-14' : 'pt-12'}`}>
+        
+        {/* HEADER ARCHITECTURE 1: Classic Centered */}
+        {headerLayout === 'classic' && (
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="w-24 h-24 rounded-full border-3 border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-xl shrink-0 bg-black/5">
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-3xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1.5 max-w-sm">
+              <h1 className="text-xl font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 2: Banner Overlap */}
+        {headerLayout === 'banner' && (
+          <div className="flex flex-col items-center text-center space-y-3">
+            <div className="w-24 h-24 rounded-full border-4 border-white dark:border-zinc-900 overflow-hidden flex items-center justify-center shadow-2xl shrink-0 bg-black/10">
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-3xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1 max-w-sm">
+              <h1 className="text-xl font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 3: Editorial Horizontal Split */}
+        {headerLayout === 'editorial_split' && (
+          <div className="w-full flex items-center gap-4 text-left p-4 rounded-3xl bg-black/5 dark:bg-white/5 border border-black/5 backdrop-blur-md">
+            <div className="w-20 h-20 rounded-2xl border-2 border-black/10 dark:border-white/20 overflow-hidden flex items-center justify-center shadow-md shrink-0 bg-black/10">
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-0.5 flex-1 min-w-0">
+              <h1 className="text-lg font-black tracking-tight flex items-center gap-1.5 truncate" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-xs shrink-0" />}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 4: Minimalist Monograph */}
+        {headerLayout === 'minimal' && (
+          <div className="w-full text-center space-y-2 pt-2">
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-8 h-8 rounded-full border border-black/15 dark:border-white/20 overflow-hidden shrink-0">
+                {data.avatar_url ? (
+                  <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-xs font-black" style={{ color: theme.text_color }}>
+                    {data.title ? data.title[0] : 'U'}
+                  </span>
+                )}
+              </div>
+              <h1 className="text-xl font-serif font-black tracking-tight flex items-center gap-1.5" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-xs" />}
+              </h1>
+            </div>
+            <p className="text-xs font-mono opacity-50">@{data.handle}</p>
+            {data.bio && (
+              <p className="text-xs opacity-75 max-w-sm mx-auto font-serif italic" style={{ color: theme.text_color }}>
+                {data.bio}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Social Icons Bar */}
         {data.social_links && Object.keys(data.social_links).some((k) => data.social_links[k]) && (
@@ -191,20 +328,19 @@ export default function PublicBioPage() {
         {/* Dynamic Blocks Stack */}
         <div className="w-full space-y-3 pt-2">
           {blocks.map((block) => {
+            const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured);
+
             if (block.type === 'link') {
               return (
                 <button
                   key={block.id}
                   onClick={() => handleLinkClick(block)}
-                  style={{
-                    backgroundColor: theme.card_bg || 'rgba(255, 255, 255, 0.85)',
-                    borderColor: theme.card_border || 'rgba(0, 0, 0, 0.08)',
-                    color: theme.card_text_color || theme.text_color,
-                  }}
-                  className={`w-full py-4 px-5 ${theme.button_radius || 'rounded-2xl'} border shadow-md font-bold text-sm flex items-center justify-between transition-all hover:scale-[1.01] active:scale-[0.98] cursor-pointer`}
+                  style={cardObj.style}
+                  className={`w-full py-4 px-5 font-bold text-sm flex items-center justify-between transition-all hover:scale-[1.015] active:scale-[0.98] cursor-pointer ${cardObj.className}`}
                 >
                   <div className="text-left">
                     <div className="flex items-center gap-2">
+                      {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-bounce" />}
                       <span>{block.title}</span>
                       {block.badge && (
                         <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white rounded-full">
@@ -265,12 +401,8 @@ export default function PublicBioPage() {
               return (
                 <div
                   key={block.id}
-                  style={{
-                    backgroundColor: theme.card_bg || 'rgba(255, 255, 255, 0.85)',
-                    borderColor: theme.card_border || 'rgba(0, 0, 0, 0.08)',
-                    color: theme.card_text_color || theme.text_color,
-                  }}
-                  className={`w-full p-4 ${theme.button_radius || 'rounded-2xl'} border shadow-md space-y-2 text-left`}
+                  style={cardObj.style}
+                  className={`w-full p-4 space-y-2 text-left ${cardObj.className}`}
                 >
                   <span className="text-xs font-black block">{block.title || 'Featured Media'}</span>
                   {isYouTube && videoId ? (
@@ -301,12 +433,8 @@ export default function PublicBioPage() {
               return (
                 <div
                   key={block.id}
-                  style={{
-                    backgroundColor: theme.card_bg || 'rgba(255, 255, 255, 0.85)',
-                    borderColor: theme.card_border || 'rgba(0, 0, 0, 0.08)',
-                    color: theme.card_text_color || theme.text_color,
-                  }}
-                  className={`w-full p-5 ${theme.button_radius || 'rounded-2xl'} border shadow-md space-y-2.5 text-center`}
+                  style={cardObj.style}
+                  className={`w-full p-5 space-y-2.5 text-center ${cardObj.className}`}
                 >
                   <h3 className="text-sm font-black">{block.headline || 'Join Newsletter'}</h3>
                   {block.subheadline && (
@@ -358,7 +486,7 @@ export default function PublicBioPage() {
       </div>
 
       {/* Powered by Unravler footer */}
-      <div className="pt-12 text-center text-xs opacity-50 hover:opacity-100 transition-opacity">
+      <div className="pt-12 text-center text-xs opacity-50 hover:opacity-100 transition-opacity relative z-10">
         <a
           href="https://www.unravler.com"
           target="_blank"
