@@ -12,7 +12,18 @@ import {
   subMonths,
   subWeeks,
 } from 'date-fns';
-import { FaLink, FaCheck, FaExternalLinkAlt, FaSyncAlt, FaTrashAlt } from 'react-icons/fa';
+import {
+  FaLink,
+  FaCheck,
+  FaExternalLinkAlt,
+  FaSyncAlt,
+  FaTrashAlt,
+  FaCopy,
+  FaQrcode,
+  FaShieldAlt,
+  FaEye,
+} from 'react-icons/fa';
+import QRCode from 'qrcode';
 
 import DashboardLayout from '@/components/DashboardLayout';
 import CalendarDayCell from '@/components/calendar/CalendarDayCell';
@@ -57,6 +68,18 @@ const CalendarView = () => {
   const [shareLoading, setShareLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState('');
+
+  const shareUrl = shareToken ? `${window.location.origin}/calendar/public/${shareToken}` : '';
+
+  useEffect(() => {
+    if (shareUrl) {
+      QRCode.toDataURL(shareUrl, { width: 160, margin: 1 })
+        .then(setQrCodeUrl)
+        .catch(() => {});
+    }
+  }, [shareUrl]);
 
   useEffect(() => {
     fetchPosts();
@@ -273,8 +296,6 @@ const CalendarView = () => {
       setShareLoading(false);
     }
   };
-
-  const shareUrl = shareToken ? `${window.location.origin}/calendar/public/${shareToken}` : '';
   const agendaPosts = agendaDay ? getPostsForDay(agendaDay) : [];
   const agendaNotes = agendaDay ? getNotesForDay(agendaDay) : [];
 
@@ -349,64 +370,142 @@ const CalendarView = () => {
       />
 
       <Dialog open={showShareModal} onOpenChange={setShowShareModal}>
-        <DialogContent className="max-w-md border-slate-200 dark:border-slate-800 dark:bg-slate-900">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              <FaLink className="text-emerald-500" />
-              Shareable Calendar Link
+        <DialogContent
+          motionPreset="centered"
+          className="max-w-lg overflow-hidden border-gray-200 dark:border-gray-800 p-0 sm:rounded-[28px] bg-white dark:bg-gray-900 shadow-2xl"
+        >
+          {/* Header Banner */}
+          <div className="border-b border-gray-100 dark:border-gray-800 bg-gray-50/75 dark:bg-gray-900/90 px-6 py-5">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-0.5 text-[11px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live Client Link
+              </span>
+            </div>
+            <DialogTitle className="mt-2 text-xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
+              Share Content Calendar
             </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
-            Anyone with this link can view your scheduled content calendar in read-only mode without logging in.
-          </p>
-          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800">
-            <span className="flex-1 truncate font-mono text-xs text-slate-600 dark:text-slate-300">{shareUrl}</span>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 gap-1.5 h-8 px-2.5"
-              onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
-              title="Open public calendar in new tab"
-            >
-              <FaExternalLinkAlt className="text-[10px]" />
-              Open
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1.5 h-8 px-3"
-              onClick={handleCopyShare}
-            >
-              {copied ? <FaCheck className="text-xs text-emerald-300" /> : null}
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+              Anyone with this link can view your scheduled and published content calendar in read-only mode without logging in.
+            </p>
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+          {/* Modal Body */}
+          <div className="px-6 py-5 space-y-4">
+            {/* Public Link Input Box */}
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1.5">
+                Shareable URL
+              </label>
+              <div className="flex items-center gap-2 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/70 p-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
+                <div className="pl-2 text-gray-400 dark:text-gray-500">
+                  <FaLink className="text-xs text-indigo-600 dark:text-indigo-400" />
+                </div>
+                <input
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  onClick={(e) => e.target.select()}
+                  className="w-full bg-transparent font-mono text-xs text-gray-800 dark:text-gray-200 focus:outline-none select-all truncate px-1"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyShare}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold transition-all shadow-xs shrink-0"
+                >
+                  {copied ? <FaCheck className="text-xs text-emerald-300" /> : <FaCopy className="text-xs" />}
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex items-center gap-2.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
+                className="flex-1 rounded-xl border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 font-bold text-xs gap-1.5 h-9"
+              >
+                <FaExternalLinkAlt className="text-xs text-indigo-600 dark:text-indigo-400" />
+                Open in New Tab
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowQr((prev) => !prev)}
+                className={`rounded-xl border-gray-200 dark:border-gray-700 text-xs font-bold gap-1.5 h-9 px-3 transition-colors ${
+                  showQr
+                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                <FaQrcode className="text-xs" />
+                {showQr ? 'Hide QR' : 'QR Code'}
+              </Button>
+            </div>
+
+            {/* QR Code Collapsible Display */}
+            {showQr && qrCodeUrl && (
+              <div className="flex flex-col items-center justify-center p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/40 animate-in fade-in zoom-in-95 duration-150">
+                <div className="p-2.5 rounded-2xl bg-white shadow-xs border border-gray-100">
+                  <img src={qrCodeUrl} alt="Calendar Share QR Code" className="w-32 h-32 rounded-lg" />
+                </div>
+                <p className="mt-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                  Scan to preview the client calendar on mobile
+                </p>
+              </div>
+            )}
+
+            {/* Information / Permissions Cards */}
+            <div className="grid grid-cols-2 gap-2.5 p-3 rounded-2xl bg-gray-50/75 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-800 text-[11px]">
+              <div className="flex items-start gap-2">
+                <FaEye className="text-indigo-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold text-gray-800 dark:text-gray-200">Read-Only Access</p>
+                  <p className="text-gray-500 dark:text-gray-400 text-[10px] leading-tight mt-0.5">
+                    Viewers can inspect posts & notes, but cannot edit or publish
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <FaShieldAlt className="text-emerald-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold text-gray-800 dark:text-gray-200">Private & Secure</p>
+                  <p className="text-gray-500 dark:text-gray-400 text-[10px] leading-tight mt-0.5">
+                    No login required. Access can be rotated or revoked anytime
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Action Bar */}
+          <div className="border-t border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/60 px-6 py-3.5 flex items-center justify-between">
             <button
               type="button"
               onClick={handleRegenerateShare}
               disabled={shareLoading}
-              className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 font-medium transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
+              title="Generate a brand new URL, invalidating the previous link"
             >
-              <FaSyncAlt className={`text-[10px] ${shareLoading ? 'animate-spin' : ''}`} />
+              <FaSyncAlt className={`text-[10px] ${shareLoading ? 'animate-spin text-indigo-600' : ''}`} />
               Regenerate link
             </button>
             <button
               type="button"
               onClick={handleRevokeShare}
               disabled={revoking}
-              className="inline-flex items-center gap-1.5 text-rose-500 hover:text-rose-600 font-semibold transition-colors"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors disabled:opacity-50"
+              title="Immediately deactivate and delete this link"
             >
               <FaTrashAlt className="text-[10px]" />
               {revoking ? 'Revoking…' : 'Revoke link'}
             </button>
           </div>
-
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
-            This link stays active until you revoke it. Share it with clients or teammates when they only need visibility.
-          </p>
         </DialogContent>
       </Dialog>
     </DashboardLayout>
