@@ -11,6 +11,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import BellRingIcon from '@/components/ui/BellRingIcon';
+
 import {
   clearAllNotifications,
   deleteNotification,
@@ -161,10 +163,10 @@ const NotificationCenter = () => {
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
-        className="relative rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-700"
+        className="relative rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-700 group"
         aria-label="Open notifications"
       >
-        <FaBell className="text-lg" />
+        <BellRingIcon size={19} hasUnread={unreadCount > 0} className="transition-transform group-hover:scale-105" />
         {unreadCount > 0 && (
           <span className="absolute right-0 top-0 inline-flex min-w-[1.15rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-5 text-white ring-2 ring-white dark:ring-slate-900">
             {unreadCount > 9 ? '9+' : unreadCount}
