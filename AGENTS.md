@@ -2,20 +2,21 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.1 shipped
+Stage: v5.2 shipped
 Branch: main
-Focus: Viral Studio Modern & Elegant UI Overhaul (Virlo.ai-inspired Short-Form Intelligence)
+Focus: Social Graphic Studio Modern UI & Multi-Archetype Suite (Postiz & Ray.so-inspired)
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Viral Studio UI Overhaul (commit `b1cb97d`):
-  - Upgraded `/viral-studio` to an agency-grade warm editorial aesthetic matching Unravler's high-end design system.
-  - Header & Navigation: Ambient radial dot backdrop, pill eyebrow badge with pulsing amber indicator, display typography, and segmented navigation dock with badge counters.
-  - Hook Vault: Crisp hairline search bar with instant clear action, custom niche selector, horizontal category pill strip, and double-bezel card architecture.
-  - Virality Gauges & Formula Quotes: Replaced raw emojis with `FaFire` virality chips, styled formula quote containers (`bg-[#F8F8F6]`), and dashed live example cards.
-  - AI Video Scriptwriter: Rebuilt with rich brand cards (TikTok, IG Reels, YT Shorts), segmented duration switchers, and vertical timeline beat breakdown (`FaVideo`, `FaFont`, `FaCommentDots`).
-  - Teleprompter & Personalize Modal: Dark glass teleprompter viewer with 1-click copy and rounded-3xl generative modal.
+- Social Graphic Studio Modern UI & Feature Expansion (commit `5fe99ea`):
+  - Upgraded `/social-graphic-studio` to an agency-grade visual design engine matching Unravler's warm editorial design system.
+  - Page Shell & Header: Ambient radial dot backdrop, pill eyebrow badge with pulsing indicator, display typography, and breadcrumbs.
+  - 6 Card Archetypes: Modern Glassmorphic, X/Twitter Post Card with verified checkmark & metrics bar, Minimalist Editorial Paper (Georgia serif), Big Stat / KPI Callout with trend pill, macOS Code Terminal (Ray.so style), and 5-Star Testimonial.
+  - Customization & Controls: macOS traffic light bar (`🔴 🟡 🟢`), verified checkmark badge toggle, 5-star rating toggle, brand watermark toggle, card shadow depth, and texture overlays (dots, grid, scanlines).
+  - Expanded Palettes: 16 curated gradients and 6 solid luxury colors (Jet Black, Slate 900, Pure White, Warm Stone, Racing Green, Royal Navy).
+  - AI Carousel & Graphic Generator: Direct integration with `/ai/repurpose` to generate 5-slide carousels or quote copy in 1 click.
+  - Interactive Canvas Stage: Aspect ratio switchers (1:1, 4:5, 16:9, 9:16), zoom controls, slide reordering, PDF carousel export, PNG download, and direct "Attach to Post Composer" flow.
 - Tests & Deployment: Frontend build verified and 3/3 viral backend tests passed. Pushed to origin/main and synced on EC2.
 
 ## Active Work
