@@ -2,18 +2,18 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.6 shipped
+Stage: v5.7 shipped
 Branch: main
-Focus: Animated BellRingIcon Notification Bell Integration
+Focus: Single-Click Instant Logout & State Synchronization
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Animated BellRingIcon Integration (commit `f813409`):
-  - Installed `motion` package with React 19 compatibility.
-  - Created `frontend/src/components/ui/BellRingIcon.jsx` with Framer/Motion keyframed bell rotation, clapper swing, and expanding sound waves with `useReducedMotion` support.
-  - Integrated `BellRingIcon` into `NotificationCenter.js`, enabling interactive hover ringing and auto-ring pulse on unread notifications.
-  - Verified clean frontend build (`main.2d499fe4.js`), deployed live to Vercel production (`main.c8231d3e.js`), and synced EC2.
+- Single-Click Logout Race Condition Fix (commit `3b960a3`):
+  - Identified root cause of double-click logout requirement: asynchronous network request (`logoutBackendSession`) delayed state cleanup while `handleLogout` synchronously routed to `/login`, causing `PublicRoute` to see stale `user` and immediately bounce back to `/dashboard`.
+  - In `AuthContext.js`, synchronously reset all client auth state (`clearAuthData()`, `token`, `user`, `firebaseUser`, `authIssue`, `sessionStorage`) immediately before running backend revocation and Firebase sign-out concurrently (`Promise.allSettled`).
+  - Updated `handleLogout` across `DashboardLayout.js`, `OnboardingHeader.js`, and `SubscriptionExpired.js` to async/await `logout()` with a loading state guard (`isLoggingOut`) and `{ replace: true }` navigation.
+  - Verified clean frontend build (`main.bc67e0e7.js`), deployed live to Vercel (`main.6e6820c0.js`), and synced EC2.
 
 ## Active Work
 Currently implementing: None
