@@ -279,13 +279,15 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
 
         <div className="flex-1" />
 
-        <div className="flex items-center gap-3 px-6">
+        <div className="flex items-center gap-2 px-6">
           <button
+            type="button"
             onClick={toggleDarkMode}
-            className="p-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition-colors"
+            className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100 transition-colors focus:outline-none"
             title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
           >
-            {isDarkMode ? <FaSun className="text-sm text-amber-400" /> : <FaMoon className="text-sm" />}
+            {isDarkMode ? <FaSun className="text-base text-amber-400" /> : <FaMoon className="text-base" />}
           </button>
           <NotificationCenter />
           <UserMenu user={user} onLogout={handleLogout} isLoggingOut={loggingOut} />
