@@ -2,18 +2,19 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.8 shipped
+Stage: v5.9 shipped
 Branch: main
-Focus: Header Action Icons (Theme & Notification) Alignment Harmonization
+Focus: Calendar Share Link Modal UI Redesign & QR Code Integration
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Header Theme & Notification Icons Alignment (commit `8ba4d2f`):
-  - Standardized both Theme toggle and Notification Center buttons into identical `w-9 h-9 flex items-center justify-center rounded-xl` containers.
-  - Aligned icon centers horizontally and vertically along the same 18px centerline (theme icon scaled to 16px, BellRingIcon to 18px).
-  - Repositioned the unread badge to `-top-0.5 -right-0.5` and dropdown trigger to `top-full mt-2.5` to match `UserMenu`.
-  - Verified clean frontend build (`main.b8b9f485.js`), deployed live to Vercel (`main.4a6c96b0.js`), and synced EC2.
+- Calendar Share Link Modal UI Redesign (commit `8435410`):
+  - Redesigned the share dialog in `CalendarView.js` with `sm:rounded-[28px]`, centered animation, ambient header with pulse indicator, and clean design system tokens.
+  - Replaced cramped 1-line layout with a dedicated full-width monospace URL input, 1-click select-all, and prominent copy action with visual checkmark feedback.
+  - Added dedicated quick actions: "Open in New Tab" and collapsible "QR Code" generator with mobile scan instructions via `qrcode`.
+  - Added permissions & security highlights (Read-Only Access, Private & Secure) and clean separated footer for "Regenerate Token" and "Revoke Link".
+  - Verified clean frontend build (`main.0ce208bb.js`), deployed live to Vercel (`main.f50df25d.js`), and synced EC2.
 
 ## Active Work
 Currently implementing: None
