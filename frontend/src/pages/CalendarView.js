@@ -12,7 +12,7 @@ import {
   subMonths,
   subWeeks,
 } from 'date-fns';
-import { FaLink } from 'react-icons/fa';
+import { FaLink, FaCheck, FaExternalLinkAlt, FaSyncAlt, FaTrashAlt } from 'react-icons/fa';
 
 import DashboardLayout from '@/components/DashboardLayout';
 import CalendarDayCell from '@/components/calendar/CalendarDayCell';
@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import {
   createCalendarNote,
   createCalendarShare,
+  revokeCalendarShare,
   deleteCalendarNote,
   getCalendarNotes,
   getPosts,
@@ -54,6 +55,8 @@ const CalendarView = () => {
   const [shareToken, setShareToken] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
     fetchPosts();
@@ -236,6 +239,41 @@ const CalendarView = () => {
     }
   };
 
+  const handleCopyShare = () => {
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    toast.success('Share link copied to clipboard');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRevokeShare = async () => {
+    setRevoking(true);
+    try {
+      await revokeCalendarShare();
+      setShareToken(null);
+      setShowShareModal(false);
+      toast.success('Calendar share link has been revoked');
+    } catch {
+      toast.error('Failed to revoke share link');
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const handleRegenerateShare = async () => {
+    setShareLoading(true);
+    try {
+      const share = await createCalendarShare({ regenerate: true });
+      setShareToken(share.token);
+      toast.success('Generated new calendar share link');
+    } catch {
+      toast.error('Failed to regenerate share link');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
   const shareUrl = shareToken ? `${window.location.origin}/calendar/public/${shareToken}` : '';
   const agendaPosts = agendaDay ? getPostsForDay(agendaDay) : [];
   const agendaNotes = agendaDay ? getNotesForDay(agendaDay) : [];
@@ -319,24 +357,54 @@ const CalendarView = () => {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
-            Anyone with this link can view your scheduled content calendar in read-only mode.
+            Anyone with this link can view your scheduled content calendar in read-only mode without logging in.
           </p>
-          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-800">
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800">
             <span className="flex-1 truncate font-mono text-xs text-slate-600 dark:text-slate-300">{shareUrl}</span>
             <Button
               type="button"
               size="sm"
               variant="outline"
-              className="border-slate-300 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
-              onClick={() => {
-                navigator.clipboard.writeText(shareUrl);
-                toast.success('Link copied');
-              }}
+              className="border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 gap-1.5 h-8 px-2.5"
+              onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
+              title="Open public calendar in new tab"
             >
-              Copy
+              <FaExternalLinkAlt className="text-[10px]" />
+              Open
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1.5 h-8 px-3"
+              onClick={handleCopyShare}
+            >
+              {copied ? <FaCheck className="text-xs text-emerald-300" /> : null}
+              {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>
-          <p className="text-xs text-slate-400 dark:text-slate-500">
+
+          <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+            <button
+              type="button"
+              onClick={handleRegenerateShare}
+              disabled={shareLoading}
+              className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 font-medium transition-colors"
+            >
+              <FaSyncAlt className={`text-[10px] ${shareLoading ? 'animate-spin' : ''}`} />
+              Regenerate link
+            </button>
+            <button
+              type="button"
+              onClick={handleRevokeShare}
+              disabled={revoking}
+              className="inline-flex items-center gap-1.5 text-rose-500 hover:text-rose-600 font-semibold transition-colors"
+            >
+              <FaTrashAlt className="text-[10px]" />
+              {revoking ? 'Revoking…' : 'Revoke link'}
+            </button>
+          </div>
+
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
             This link stays active until you revoke it. Share it with clients or teammates when they only need visibility.
           </p>
         </DialogContent>

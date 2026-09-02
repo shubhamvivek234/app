@@ -727,9 +727,9 @@ export const deleteMediaAsset = async (assetId) => {
   return response.data;
 };
 
-// ── Public Calendar (Stub - to be implemented) ──
-export const getPublicCalendar = async (workspaceId) => {
-  const response = await axios.get(`${API}/calendar/public/${workspaceId}`);
+// ── Public Calendar ──
+export const getPublicCalendar = async (token) => {
+  const response = await axios.get(`${API}/calendar/public/${token}`);
   return response.data;
 };
 
@@ -1258,8 +1258,18 @@ export const deleteCalendarNote = async (noteId) => {
   return response.data;
 };
 
-export const createCalendarShare = async (data) => {
-  const response = await axios.post(`${API}/calendar/share`, data, { headers: getAuthHeaders() });
+export const createCalendarShare = async (data = {}) => {
+  const response = await axios.post(`${API}/calendar/share`, data || {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getCalendarShare = async () => {
+  const response = await axios.get(`${API}/calendar/share`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const revokeCalendarShare = async () => {
+  const response = await axios.delete(`${API}/calendar/share`, { headers: getAuthHeaders() });
   return response.data;
 };
 
