@@ -23,8 +23,6 @@ import {
   FaCheckDouble,
   FaThLarge,
   FaInbox,
-  FaChevronLeft,
-  FaChevronRight,
   FaChevronDown,
   FaChevronUp,
   FaMoon,
@@ -33,7 +31,6 @@ import {
   FaRss,
   FaPalette,
   FaMobileAlt,
-  FaLink,
   FaBolt,
 } from 'react-icons/fa';
 import UnravlerLogo from '@/components/UnravlerLogo';
@@ -99,8 +96,18 @@ const UserMenu = ({ user, onLogout }) => {
             <FaCog className="text-xs text-gray-400" />
             Account Settings
           </Link>
+          <Link
+            to="/support"
+            onClick={() => setOpen(false)}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          >
+            <FaQuestionCircle className="text-xs text-gray-400" />
+            Help & Support
+          </Link>
+          <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
           <button
             onClick={() => { setOpen(false); onLogout(); }}
+            data-testid="logout-button"
             className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
           >
             <FaSignOutAlt className="text-xs" />
@@ -200,7 +207,6 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
   const publishActive = isActive('/publish');
   const analyticsActive = isActive('/analytics');
   const canNavigateHome = user?.subscription_status === 'active';
-  const resolvedOrgName = user?.workspace_name || user?.display_name || 'My Workspace';
 
   return (
     <div className="min-h-screen bg-gray-50/50 dark:bg-gray-950">
@@ -272,41 +278,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
 
       <div className={`fixed top-14 left-0 bottom-0 bg-white dark:bg-gray-900 border-r border-gray-200/80 dark:border-gray-800 overflow-y-auto overflow-x-hidden transition-all duration-200 flex flex-col z-40 ${hideSidebar ? 'hidden' : collapsed ? 'w-16' : 'w-64'}`}>
         
-        <div className={`pt-3.5 pb-2 ${collapsed ? 'px-2 flex justify-center' : 'px-3.5'}`}>
-          {collapsed ? (
-            <button
-              onClick={() => setCollapsed(false)}
-              title="Expand Sidebar"
-              className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center justify-center hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
-            >
-              <FaChevronRight className="text-xs" />
-            </button>
-          ) : (
-            <div className="flex items-center justify-between p-2 rounded-xl bg-gray-50/80 dark:bg-gray-800/50 border border-gray-200/60 dark:border-gray-700/60">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-extrabold text-xs flex items-center justify-center flex-shrink-0 shadow-2xs">
-                  {resolvedOrgName.charAt(0).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-gray-900 dark:text-white truncate leading-tight">{resolvedOrgName}</p>
-                  <p className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    {user?.subscription_tier ? `${user.subscription_tier.toUpperCase()} Plan` : 'Active Workspace'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setCollapsed(true)}
-                title="Collapse Sidebar"
-                className="w-6 h-6 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
-              >
-                <FaChevronLeft className="text-[10px]" />
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className={`py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
+        <div className={`pt-3.5 pb-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
           <div className="relative group">
             {/* Ambient Gemini Aurora Living Glow (Ultra-Light Ethereal Pastel Projection) */}
             <div className="absolute -inset-1 rounded-2xl gemini-aurora-glow opacity-75 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
@@ -549,30 +521,6 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
               })}
             </nav>
           </div>
-        </div>
-
-        <div className={`mt-auto border-t border-gray-100 dark:border-gray-800 p-3 bg-gray-50/40 dark:bg-gray-900/60 ${collapsed ? 'px-2' : 'px-3'}`}>
-          <Link
-            to="/support"
-            title={collapsed ? 'Help & Support' : undefined}
-            className={`flex items-center rounded-xl text-xs font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-all ${
-              collapsed ? 'justify-center p-2' : 'gap-2.5 px-3 py-2'
-            }`}
-          >
-            <FaQuestionCircle className="text-gray-400 text-sm flex-shrink-0" />
-            {!collapsed && 'Help & Support'}
-          </Link>
-          <button
-            onClick={handleLogout}
-            title={collapsed ? 'Logout' : undefined}
-            data-testid="logout-button"
-            className={`w-full flex items-center rounded-xl text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all ${
-              collapsed ? 'justify-center p-2 mt-1' : 'gap-2.5 px-3 py-2 mt-1'
-            }`}
-          >
-            <FaSignOutAlt className="text-red-500 text-sm flex-shrink-0" />
-            {!collapsed && 'Sign Out'}
-          </button>
         </div>
 
       </div>
