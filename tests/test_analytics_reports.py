@@ -3,6 +3,7 @@ from api.routes.analytics import (
     ReportExportRequest,
     ReportScheduleRequest,
     delete_report_schedule,
+    export_analytics_csv,
     export_branded_analytics_report,
     list_report_schedules,
     schedule_analytics_report,
@@ -99,3 +100,14 @@ async def test_schedule_analytics_report_crud():
     await delete_report_schedule(schedules[0]["id"], current_user=user, db=db)
     schedules_after = await list_report_schedules(current_user=user, db=db)
     assert len(schedules_after) == 0
+
+
+@pytest.mark.asyncio
+async def test_export_analytics_csv():
+    db = _FakeDB()
+    user = {"user_id": "u1", "default_workspace_id": "ws_1"}
+    req = ReportExportRequest()
+    res = await export_analytics_csv(req, current_user=user, db=db)
+    assert res["ok"] is True
+    assert res["count"] == 1
+    assert res["rows"][0]["post_id"] == "p1"

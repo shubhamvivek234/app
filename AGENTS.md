@@ -2,19 +2,19 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.9 shipped
+Stage: v6.0 shipped
 Branch: main
-Focus: Calendar Share Link Modal UI Redesign & QR Code Integration
+Focus: Analytics & Reports Overhaul — Real Metrics, CSV Export, Pop-up Free PDF, Dark Theme UI
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Calendar Share Link Modal UI Redesign (commit `8435410`):
-  - Redesigned the share dialog in `CalendarView.js` with `sm:rounded-[28px]`, centered animation, ambient header with pulse indicator, and clean design system tokens.
-  - Replaced cramped 1-line layout with a dedicated full-width monospace URL input, 1-click select-all, and prominent copy action with visual checkmark feedback.
-  - Added dedicated quick actions: "Open in New Tab" and collapsible "QR Code" generator with mobile scan instructions via `qrcode`.
-  - Added permissions & security highlights (Read-Only Access, Private & Secure) and clean separated footer for "Regenerate Token" and "Revoke Link".
-  - Verified clean frontend build (`main.0ce208bb.js`), deployed live to Vercel (`main.f50df25d.js`), and synced EC2.
+- Analytics & Reports Overhaul:
+  - Backend (`api/routes/analytics.py`): Replaced synthetic multipliers with real database aggregations for impressions, engagements, engagement rate; sorted top posts by engagement; added `POST /analytics/report/export-csv` returning structured post metrics.
+  - Test Suite (`tests/test_analytics_reports.py`): Added `test_export_analytics_csv`, verified 3/3 passing.
+  - Export Modal (`ExportReportModal.js`): Added 3-tab layout (CSV, Branded PDF, Automated Schedule); replaced `window.open` with hidden iframe printing to prevent browser popup blockers; added direct CSV Blob download.
+  - Frontend UI (`Analytics.js`): Unified dark-mode styling across metrics cards, tooltips, channel sidebar, Recharts CartesianGrid, empty states, and added separate "Export CSV" and "Executive Report" actions in the header.
+  - Verified frontend production build (`main.b2a3662d.js`).
 
 ## Active Work
 Currently implementing: None

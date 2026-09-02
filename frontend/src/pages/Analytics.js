@@ -23,7 +23,7 @@ import {
   FaInstagram, FaFacebook, FaTwitter, FaLinkedin, FaYoutube, FaTiktok,
   FaDiscord, FaUsers, FaChartLine, FaBullseye,
   FaPinterest, FaReddit, FaSnapchat, FaSortAmountDown, FaChevronDown, FaGripLines, FaReply, FaRetweet, FaQuoteRight, FaInfoCircle, FaSync,
-  FaFilePdf,
+  FaFilePdf, FaFileCsv,
 } from 'react-icons/fa';
 import ExportReportModal from '@/components/ExportReportModal';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
@@ -517,18 +517,18 @@ const selectedPlatformAudienceSupport = (platform, computedSupport) => {
 
 // Engagement summary card
 const EngagementCard = ({ icon: Icon, label, value, color, loading, helper }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5 flex items-center gap-4">
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 flex items-center gap-4 shadow-xs">
     <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
       <Icon className="text-white text-lg" />
     </div>
     <div className="min-w-0">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</p>
+      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</p>
       {loading
-        ? <div className="h-7 w-16 bg-gray-200 animate-pulse rounded mt-1" />
-        : <p className="text-2xl font-bold text-gray-900 mt-0.5">{fmt(value)}</p>
+        ? <div className="h-7 w-16 bg-gray-200 dark:bg-slate-800 animate-pulse rounded mt-1" />
+        : <p className="text-2xl font-bold text-gray-900 dark:text-white mt-0.5">{fmt(value)}</p>
       }
       {!loading && helper && (
-        <p className="mt-1 text-[11px] leading-snug text-amber-700">{helper}</p>
+        <p className="mt-1 text-[11px] leading-snug text-amber-700 dark:text-amber-400">{helper}</p>
       )}
     </div>
   </div>
@@ -543,7 +543,7 @@ const PlatformPill = ({ platform, active, onClick }) => {
       onClick={onClick}
       style={active ? { background: color, borderColor: color, color: '#fff' } : {}}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
-        ${active ? '' : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300 hover:bg-gray-50'}`}
+        ${active ? '' : 'border-gray-200 dark:border-slate-800 text-gray-600 dark:text-gray-400 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
     >
       {Icon && <Icon className="text-sm" style={active ? {} : { color }} />}
       {PLATFORM_LABELS[platform] || platform}
@@ -555,9 +555,9 @@ const PlatformPill = ({ platform, active, onClick }) => {
 const TimelineTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700">{label}</p>
-      <p className="text-indigo-600">{payload[0]?.value} posts</p>
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 shadow-xl text-sm">
+      <p className="font-semibold text-gray-800 dark:text-slate-100">{label}</p>
+      <p className="text-indigo-600 dark:text-indigo-400 font-medium">{payload[0]?.value} posts</p>
     </div>
   );
 };
@@ -566,10 +566,10 @@ const TimelineTooltip = ({ active, payload, label }) => {
 const EngagementTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700 mb-1">{PLATFORM_LABELS[label] || label}</p>
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 shadow-xl text-sm">
+      <p className="font-semibold text-gray-800 dark:text-slate-100 mb-1">{PLATFORM_LABELS[label] || label}</p>
       {payload.map((p) => (
-        <p key={p.name} style={{ color: p.fill || p.color }} className="capitalize">
+        <p key={p.name} style={{ color: p.fill || p.color }} className="capitalize text-xs font-medium">
           {p.name}: {fmt(p.value)}
         </p>
       ))}
@@ -582,9 +582,9 @@ const AudienceGrowthTooltip = ({ active, payload, label }) => {
   const value = Number(payload[0]?.value) || 0;
   const isNegative = value < 0;
   return (
-    <div className="bg-offwhite border border-gray-200 rounded-lg px-3 py-2 shadow-lg text-sm">
-      <p className="font-semibold text-gray-700">{label}</p>
-      <p className={isNegative ? 'text-rose-600' : 'text-indigo-600'}>
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 shadow-xl text-sm">
+      <p className="font-semibold text-gray-800 dark:text-slate-100">{label}</p>
+      <p className={`font-medium ${isNegative ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
         {fmt(value)} net followers
       </p>
     </div>
@@ -604,29 +604,29 @@ const InstagramMetricTile = ({
   const isNegativeValue = Number.isFinite(numericValue) && numericValue < 0;
 
   return (
-    <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
       <div className="flex items-center gap-2">
-        <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+        <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{title}</p>
         {info ? <InfoHint text={info} /> : null}
       </div>
       {supported ? (
         <>
           <div className="mt-3 flex items-end gap-3">
-            <p className={`text-5xl font-bold tracking-tight ${isNegativeValue ? 'text-rose-600' : 'text-sky-600'}`}>
+            <p className={`text-5xl font-bold tracking-tight ${isNegativeValue ? 'text-rose-600' : 'text-sky-600 dark:text-sky-400'}`}>
               {fmt(value)}
             </p>
             {deltaPct != null && (
-              <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              <span className={`text-sm font-semibold ${deltaPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                 {pctLabel(deltaPct)}
               </span>
             )}
           </div>
-          {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+          {subtitle && <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
         </>
       ) : (
         <>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-500">Unavailable</p>
-          <p className="mt-3 text-sm text-gray-500">
+          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-400 dark:text-gray-500">Unavailable</p>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
             {unavailableMessage || 'This metric is not available for this account right now.'}
           </p>
         </>
@@ -643,20 +643,20 @@ const InstagramSummaryStatCard = ({
   supported = true,
   unavailableMessage = null,
 }) => (
-  <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+  <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60 p-4">
     <div className="flex items-center gap-2">
-      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{title}</p>
       {info ? <InfoHint text={info} /> : null}
     </div>
     {supported ? (
       <>
-        <p className="mt-2 text-3xl font-bold text-gray-900">{fmt(value)}</p>
-        {subtitle ? <p className="mt-2 text-sm text-gray-500">{subtitle}</p> : null}
+        <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">{fmt(value)}</p>
+        {subtitle ? <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p> : null}
       </>
     ) : (
       <>
-        <p className="mt-2 text-2xl font-bold text-gray-500">Unavailable</p>
-        <p className="mt-2 text-sm text-gray-500">
+        <p className="mt-2 text-2xl font-bold text-gray-400 dark:text-gray-500">Unavailable</p>
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
           {unavailableMessage || 'This metric is not available for this account right now.'}
         </p>
       </>
@@ -665,10 +665,10 @@ const InstagramSummaryStatCard = ({
 );
 
 const InstagramDetailCard = ({ title, children, action, info }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
     <div className="flex items-center justify-between gap-3 mb-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-100">{title}</h3>
         {info ? <InfoHint text={info} /> : null}
       </div>
       {action || null}
@@ -677,9 +677,9 @@ const InstagramDetailCard = ({ title, children, action, info }) => (
   </div>
 );
 
-const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600', valueFormatter = fmt }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
-    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{title}</p>
+const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky-600 dark:text-sky-400', valueFormatter = fmt }) => (
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
+    <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">{title}</p>
     <div className="mt-3 flex items-end gap-3">
       <p className={`text-5xl font-bold tracking-tight ${accent}`}>{valueFormatter(value)}</p>
       {deltaPct != null && (
@@ -688,16 +688,16 @@ const ReportMetricTile = ({ title, value, subtitle, deltaPct, accent = 'text-sky
         </span>
       )}
     </div>
-    {subtitle && <p className="mt-3 text-sm text-gray-500">{subtitle}</p>}
+    {subtitle && <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>}
   </div>
 );
 
 const InfoHint = ({ text }) => (
   <div className="group relative inline-flex">
-    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors group-hover:text-sky-600">
-      <FaInfoCircle className="h-4 w-4" />
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 dark:text-gray-500 transition-colors group-hover:text-sky-600 dark:group-hover:text-sky-400 cursor-pointer">
+      <FaInfoCircle className="h-3.5 w-3.5" />
     </span>
-    <div className="pointer-events-none absolute left-1/2 top-[calc(100%+10px)] z-20 w-64 -translate-x-1/2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium leading-5 text-gray-600 opacity-0 shadow-xl transition-all duration-150 group-hover:opacity-100">
+    <div className="pointer-events-none absolute left-1/2 top-[calc(100%+10px)] z-30 w-64 -translate-x-1/2 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-medium leading-5 text-gray-600 dark:text-slate-300 opacity-0 shadow-xl transition-all duration-150 group-hover:opacity-100">
       {text}
     </div>
   </div>
@@ -781,10 +781,10 @@ const InteractiveDonutChart = ({
 };
 
 const ReportCard = ({ title, children, action, info }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
     <div className="flex items-center justify-between gap-3 mb-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-slate-100">{title}</h3>
         {info ? <InfoHint text={info} /> : null}
       </div>
       {action || null}
@@ -921,7 +921,7 @@ const YoutubeMetricBreakdownCard = ({ title, items, emptyLabel = 'No data availa
           <div className="h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} layout="vertical" margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                 <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                 <YAxis
                   type="category"
@@ -1153,7 +1153,7 @@ const YoutubeWatchQualityCard = ({ summary, timeline, hasData, action }) => (
     {hasData ? (
       <ResponsiveContainer width="100%" height={300}>
         <ComposedChart data={timeline}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
           <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
           <YAxis yAxisId="rightDuration" orientation="right" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
@@ -1369,7 +1369,7 @@ const YoutubeRetentionCard = ({ retention, selectedVideoId, onSelectVideo }) => 
           {hasSeries ? (
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={currentVideo.series}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                 <XAxis
                   dataKey="elapsed_video_time_ratio"
                   tick={{ fontSize: 11, fill: '#9ca3af' }}
@@ -1665,10 +1665,10 @@ const PostCard = ({ post }) => {
   const dt = parseDate(post.published_at);
 
   return (
-    <div className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4 hover:shadow-sm transition-shadow">
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 flex gap-4 hover:shadow-sm dark:hover:shadow-black/40 transition-shadow">
       {/* Thumbnail */}
       {post.media_url ? (
-        <div className="w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+        <div className="w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100 dark:bg-slate-800">
           <img
             src={post.media_url}
             alt=""
@@ -1677,8 +1677,8 @@ const PostCard = ({ post }) => {
           />
         </div>
       ) : (
-        <div className="w-20 h-20 rounded-lg flex-shrink-0 bg-gray-100 flex items-center justify-center">
-          <FaFileAlt className="text-gray-400 text-2xl" />
+        <div className="w-20 h-20 rounded-lg flex-shrink-0 bg-gray-100 dark:bg-slate-800 flex items-center justify-center">
+          <FaFileAlt className="text-gray-400 dark:text-gray-500 text-2xl" />
         </div>
       )}
 
@@ -1687,32 +1687,32 @@ const PostCard = ({ post }) => {
         {/* Header */}
         <div className="flex items-center gap-2 mb-1">
           <Icon style={{ color }} className="text-sm flex-shrink-0" />
-          <span className="text-xs font-semibold text-gray-600">{post.account_username || PLATFORM_LABELS[plat]}</span>
-          {dt && <span className="text-xs text-gray-400 ml-auto">{format(dt, 'MMM d, yyyy')}</span>}
+          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{post.account_username || PLATFORM_LABELS[plat]}</span>
+          {dt && <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto">{format(dt, 'MMM d, yyyy')}</span>}
         </div>
         {/* Caption */}
-        <p className="text-sm text-gray-700 line-clamp-2 mb-2">
+        <p className="text-sm text-gray-800 dark:text-slate-200 line-clamp-2 mb-2">
           {post.content || '(no caption)'}
         </p>
         {/* Metrics row */}
         <div className="flex items-center gap-4 flex-wrap">
           {support.likes !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <FaHeart className="text-rose-400" /> {support.likes ? fmt(metrics.likes ?? 0) : '—'}
             </span>
           )}
           {support.comments !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <FaComment className="text-blue-400" /> {support.comments ? fmt(metrics.comments ?? 0) : '—'}
             </span>
           )}
           {support.shares !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <FaShare className="text-green-400" /> {support.shares ? fmt(metrics.shares ?? 0) : '—'}
             </span>
           )}
           {support.views !== false && (
-            <span className="flex items-center gap-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <FaEye className="text-purple-400" /> {support.views ? fmt(metrics.views ?? 0) : '—'}
             </span>
           )}
@@ -1721,7 +1721,7 @@ const PostCard = ({ post }) => {
               href={post.post_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-auto flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700"
+              className="ml-auto flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium"
             >
               View post <FaExternalLinkAlt className="text-[10px]" />
             </a>
@@ -1734,7 +1734,7 @@ const PostCard = ({ post }) => {
 
 // Demographic placeholder card
 const DemoCard = ({ title }) => (
-  <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+  <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
     <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">{title}</p>
     <div className="h-32 flex items-center justify-center bg-gray-50 rounded-lg">
       <p className="text-sm text-gray-400">No data available</p>
@@ -1788,17 +1788,17 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
       {/* Trigger button */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2 bg-offwhite hover:bg-gray-50 transition-colors min-w-[180px] shadow-sm"
+        className="flex items-center gap-2 border border-gray-200 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors min-w-[180px] shadow-sm"
       >
         {selected ? (
           <>
             <AccountAvatar account={selected} size="sm" />
-            <span className="flex-1 text-left text-sm font-semibold text-gray-800 truncate">
+            <span className="flex-1 text-left text-sm font-semibold text-gray-800 dark:text-slate-100 truncate">
               {displayName(selected)}
             </span>
           </>
         ) : (
-          <span className="flex-1 text-left text-sm font-semibold text-gray-600">
+          <span className="flex-1 text-left text-sm font-semibold text-gray-600 dark:text-slate-300">
             All {platformLabel} Accounts
           </span>
         )}
@@ -1807,16 +1807,16 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-offwhite rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 shadow-xl z-50 overflow-hidden">
           {/* "All accounts" option */}
           {showAll && (
             <button
               onClick={() => { onSelect(null); setOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors
-                ${!selectedId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors
+                ${!selectedId ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
             >
-              <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                <span className="text-[10px] font-bold text-gray-500">All</span>
+              <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-slate-800 flex items-center justify-center flex-shrink-0">
+                <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400">All</span>
               </div>
               <span>All {platformLabel} Accounts</span>
             </button>
@@ -1826,8 +1826,8 @@ const AccountDropdown = ({ accounts, selectedId, onSelect, platformLabel, showAl
             <button
               key={a.id}
               onClick={() => { onSelect(a.id); setOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors
-                ${selectedId === a.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-700'}`}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors
+                ${selectedId === a.id ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold' : 'text-gray-700 dark:text-gray-300'}`}
             >
               <AccountAvatar account={a} size="sm" />
               <div className="flex-1 text-left min-w-0">
@@ -1871,10 +1871,10 @@ const PlatformSidebar = ({
         onClick={() => onSelect(null)}
         className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
           ${!selectedPlatform
-            ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
-            : 'text-gray-600 hover:bg-gray-50 border-transparent'}`}
+            ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold border-indigo-500'
+            : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 border-transparent'}`}
       >
-        <span className="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+        <span className="w-6 h-6 rounded-md bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-gray-400 dark:text-gray-500 shrink-0">
           📊
         </span>
         <span className="flex-1 text-left text-[13px]">All Platforms</span>
@@ -1903,14 +1903,14 @@ const PlatformSidebar = ({
             onClick={() => onSelect(plat)}
             className={`group relative w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-r-2
               ${isActive
-                ? 'bg-indigo-50 text-indigo-700 font-semibold border-indigo-500'
-                : 'text-gray-600 hover:bg-gray-50 border-transparent'}
+                ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 font-semibold border-indigo-500'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 border-transparent'}
               ${!isConnected ? 'opacity-40' : ''}
-              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50 scale-[0.995]' : ''}`}
+              ${draggingPlatform === plat ? 'opacity-60 bg-gray-50 dark:bg-slate-800 scale-[0.995]' : ''}`}
           >
             <span
               className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors
-                ${isActive ? 'bg-indigo-100 text-indigo-500' : 'bg-gray-100 text-gray-400 group-hover:text-gray-600'}`}
+                ${isActive ? 'bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300' : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300'}`}
               aria-hidden="true"
             >
               <FaGripLines className="text-[10px]" />
@@ -1939,6 +1939,7 @@ const Analytics = () => {
   const [selectedPlatform, setSelectedPlatform] = useState(null);
   const [selectedAccount, setSelectedAccount]   = useState(null);
   const [showReportModal, setShowReportModal]   = useState(false);
+  const [reportModalTab, setReportModalTab]     = useState('csv');
 
   const [accounts, setAccounts]       = useState([]);
   const [overview, setOverview]       = useState(null);
@@ -2756,7 +2757,7 @@ const Analytics = () => {
     <select
       value={blueskyChartGranularity}
       onChange={(event) => setBlueskyChartGranularity(event.target.value)}
-      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+      className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200"
     >
       {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>
@@ -2767,7 +2768,7 @@ const Analytics = () => {
     <select
       value={instagramReachGranularity}
       onChange={(event) => setInstagramReachGranularity(event.target.value)}
-      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+      className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200"
     >
       {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>
@@ -2856,7 +2857,7 @@ const Analytics = () => {
     <select
       value={youtubeChartGranularity}
       onChange={(event) => setYoutubeChartGranularity(event.target.value)}
-      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+      className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200"
     >
       {BLUESKY_GRANULARITY_OPTIONS.map((option) => (
         <option key={option.value} value={option.value}>{option.label}</option>
@@ -2903,7 +2904,7 @@ const Analytics = () => {
       <div className="flex h-full overflow-hidden">
 
         {/* ── Left Platform Sidebar ──────────────────────────────────── */}
-        <aside className="w-52 shrink-0 border-r border-gray-200 bg-offwhite overflow-y-auto hidden md:block dark:border-slate-800 dark:bg-slate-900">
+        <aside className="w-52 shrink-0 border-r border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-y-auto hidden md:block">
           <PlatformSidebar
             accounts={accounts}
             selectedPlatform={selectedPlatform}
@@ -2945,10 +2946,17 @@ const Analytics = () => {
           {/* Right: date range selector & Export Report button */}
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowReportModal(true)}
-              className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800/60 text-xs font-bold rounded-xl border border-indigo-200/60 shadow-2xs transition-all active:scale-95"
+              onClick={() => { setReportModalTab('csv'); setShowReportModal(true); }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-900 hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-300 text-xs font-semibold rounded-xl border border-gray-200 dark:border-slate-800 shadow-xs transition-all active:scale-95"
             >
-              <FaFilePdf className="text-xs" /> Export Branded PDF
+              <FaFileCsv className="text-xs text-emerald-600 dark:text-emerald-400" /> Export CSV
+            </button>
+
+            <button
+              onClick={() => { setReportModalTab('pdf'); setShowReportModal(true); }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all active:scale-95"
+            >
+              <FaFilePdf className="text-xs" /> Executive Report
             </button>
 
             <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
@@ -2958,7 +2966,7 @@ const Analytics = () => {
                   onClick={() => setDays(opt.value)}
                   className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all
                     ${days === opt.value
-                      ? 'bg-offwhite dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                      ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
                       : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'}`}
                 >
                   {opt.label}
@@ -2975,7 +2983,7 @@ const Analytics = () => {
             className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
               ${!selectedPlatform
                 ? 'bg-indigo-600 border-indigo-600 text-white'
-                : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
+                : 'border-gray-200 dark:border-slate-800 text-gray-600 dark:text-gray-400 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700'}`}
           >
             All
           </button>
@@ -3033,7 +3041,7 @@ const Analytics = () => {
               </div>
               <a
                 href="/accounts"
-                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-offwhite px-3 py-2 text-xs font-semibold text-blue-700 hover:border-blue-300"
+                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-blue-200 dark:border-blue-900/60 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:border-blue-300"
               >
                 Manage LinkedIn connection
               </a>
@@ -3042,7 +3050,7 @@ const Analytics = () => {
         )}
 
         {/* ── Tabs ─────────────────────────────────────────────────── */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-slate-800">
           <div className="flex min-w-0 flex-wrap gap-1">
             {tabs.map((tab) => (
               <button
@@ -3050,8 +3058,8 @@ const Analytics = () => {
                 onClick={() => handleTabClick(tab.id)}
                 className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition-all -mb-px
                   ${activeTab === tab.id
-                    ? 'border-indigo-600 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
               >
                 {tab.label}
               </button>
@@ -3064,8 +3072,8 @@ const Analytics = () => {
             disabled={currentTabRefreshLoading}
             className={`mb-2 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
               currentTabRefreshLoading
-                ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
-                : 'border-gray-200 bg-offwhite text-gray-600 hover:border-indigo-200 hover:text-indigo-600'
+                ? 'cursor-not-allowed border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60 text-gray-400 dark:text-gray-500'
+                : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 hover:border-indigo-200 dark:hover:border-indigo-800 hover:text-indigo-600 dark:hover:text-indigo-400'
             }`}
           >
             <FaSync className={`text-xs ${currentTabRefreshLoading ? 'animate-spin' : ''}`} />
@@ -3095,11 +3103,11 @@ const Analytics = () => {
             {loadingTikTokReport ? (
               <div className="space-y-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !tiktokReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">TikTok report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {tiktokReport?.message || 'Connect a TikTok account to see this report.'}
@@ -3126,7 +3134,7 @@ const Analytics = () => {
                   {tiktokOverviewHasCharts ? (
                     <ResponsiveContainer width="100%" height={300}>
                       <ComposedChart data={tiktokOverviewSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
@@ -3224,7 +3232,7 @@ const Analytics = () => {
             </div>
 
             {(audienceMetricCards.length > 0 || selectedPlatform) && (
-              <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-600">
+              <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-sm text-gray-600 dark:text-slate-300">
                 Audience metrics come directly from the connected platform API when that platform exposes them. Unsupported metrics stay hidden instead of showing synthetic values.
                 {selectedPlatform === 'youtube' && ' YouTube follower growth uses subscriber gained/lost analytics; reach is not exposed as a channel-level metric.'}
                 {selectedPlatform === 'tiktok' && ' TikTok follower totals require the account to be connected with stats scopes.'}
@@ -3235,9 +3243,9 @@ const Analytics = () => {
             {!loadingEngagement && engagement?.totals?.total_posts > 0 && showEngagementInsights && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Average engagement per post */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
                   <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Avg. Engagement / Post</p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
                     {fmt(Math.round(
                       ((engagement.totals.total_likes || 0) + (engagement.totals.total_comments || 0) + (engagement.totals.total_shares || 0))
                       / (engagement.totals.total_posts || 1)
@@ -3259,7 +3267,7 @@ const Analytics = () => {
                   const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                   const totalEng = (data.likes || 0) + (data.comments || 0) + (data.shares || 0);
                   return (
-                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Best Platform</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
@@ -3278,7 +3286,7 @@ const Analytics = () => {
                   const [plat, data] = best;
                   const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                   return (
-                    <div className="bg-offwhite rounded-xl border border-gray-200 p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
                       <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Most Viewed</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
@@ -3295,7 +3303,7 @@ const Analytics = () => {
             <div className={`grid grid-cols-1 gap-4 ${showEngagementInsights ? 'xl:grid-cols-2' : ''}`}>
 
               {/* Posts Over Time */}
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts Published Over Time</h3>
                 {loadingOverview ? (
                   <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
@@ -3310,7 +3318,7 @@ const Analytics = () => {
                           <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={28} />
                       <Tooltip content={<TimelineTooltip />} />
@@ -3321,7 +3329,7 @@ const Analytics = () => {
               </div>
 
               {showEngagementInsights && (
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                   <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
                   {loadingEngagement ? (
                     <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
@@ -3330,7 +3338,7 @@ const Analytics = () => {
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={platformEngData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis
                           dataKey="platform"
                           tick={{ fontSize: 11, fill: '#9ca3af' }}
@@ -3365,7 +3373,7 @@ const Analytics = () => {
 
             {/* Post type breakdown */}
             {overview && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts by Type</h3>
                 {loadingOverview ? (
                   <div className="h-10 bg-gray-100 animate-pulse rounded-lg" />
@@ -3398,7 +3406,7 @@ const Analytics = () => {
             )}
 
             {showEngagementInsights && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
                 {loadingEngagement ? (
                   <div className="space-y-3">
@@ -3456,7 +3464,7 @@ const Analytics = () => {
 
             {/* Platform summary table */}
             {overview?.platform_counts && Object.keys(overview.platform_counts).length > 0 && (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Platform Summary</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -3557,11 +3565,11 @@ const Analytics = () => {
             {loadingBlueskyReport ? (
               <div className="space-y-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !blueskyReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">Bluesky report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {blueskyReport?.message || 'Connect a Bluesky account to see this report.'}
@@ -3717,7 +3725,7 @@ const Analytics = () => {
                           </div>
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyFollowerTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip content={<AudienceGrowthTooltip />} />
@@ -3740,7 +3748,7 @@ const Analytics = () => {
                         {blueskyPostsVsEngagementHasData ? (
                           <ResponsiveContainer width="100%" height={240}>
                             <ComposedChart data={blueskyPostsVsEngagementTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
@@ -3800,7 +3808,7 @@ const Analytics = () => {
                         <select
                           value={blueskyTopMetric}
                           onChange={(event) => setBlueskyTopMetric(event.target.value)}
-                          className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+                          className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200"
                         >
                           <option value="likes">Likes</option>
                           <option value="replies">Replies</option>
@@ -3886,7 +3894,7 @@ const Analytics = () => {
                         {blueskyPostEngagementHasData ? (
                           <ResponsiveContainer width="100%" height={240}>
                             <BarChart data={blueskyPostEngagementTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
@@ -3913,7 +3921,7 @@ const Analytics = () => {
                         {blueskyEngagementActionsHasData ? (
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyEngagementActionsTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
@@ -3933,7 +3941,7 @@ const Analytics = () => {
                         {blueskyMessagesMentionsHasData ? (
                           <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={blueskyMessagesMentionsTimeline}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                               <Tooltip />
@@ -3976,11 +3984,11 @@ const Analytics = () => {
             {loadingYoutubeReport ? (
               <div className="space-y-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !youtubeReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">YouTube report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {youtubeReport?.message || 'Connect a YouTube account to see this report.'}
@@ -4118,7 +4126,7 @@ const Analytics = () => {
                   {youtubeSubscriberGrowthHasData ? (
                     <ResponsiveContainer width="100%" height={280}>
                       <ComposedChart data={youtubeSubscriberGrowthTimeline}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <Tooltip />
@@ -4154,7 +4162,7 @@ const Analytics = () => {
                       </div>
                       <ResponsiveContainer width="100%" height={280}>
                         <ComposedChart data={youtubeViewsMinutesTimeline}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
@@ -4180,7 +4188,7 @@ const Analytics = () => {
                     <select
                       value={youtubeTopVideoMetric}
                       onChange={(event) => setYoutubeTopVideoMetric(event.target.value)}
-                      className="rounded-lg border border-gray-200 bg-offwhite px-3 py-2 text-sm font-semibold text-gray-700"
+                      className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-gray-700 dark:text-slate-200"
                     >
                       <option value="views">Views</option>
                       <option value="estimated_minutes_watched">Minutes Watched</option>
@@ -4305,11 +4313,11 @@ const Analytics = () => {
             {loadingInstagramReport ? (
               <div className="space-y-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !instagramReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">Instagram report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
@@ -4575,11 +4583,11 @@ const Analytics = () => {
             {loadingInstagramReport ? (
               <div className="space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !instagramReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">Instagram audience report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
@@ -4628,7 +4636,7 @@ const Analytics = () => {
                             <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={40} />
                         <Tooltip content={<AudienceGrowthTooltip />} />
@@ -4641,7 +4649,7 @@ const Analytics = () => {
                 </InstagramDetailCard>
 
                 {!instagramAudience.demographics_supported && (
-                  <div className="rounded-xl border border-gray-200 bg-offwhite px-4 py-3 text-sm text-gray-500">
+                  <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                     {instagramAudience.demographics_message || 'Audience demographics are not available for this Instagram account yet.'}
                   </div>
                 )}
@@ -4654,7 +4662,7 @@ const Analytics = () => {
                     {instagramDemographics.countries?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.countries} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 50 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
                           <Tooltip />
@@ -4700,7 +4708,7 @@ const Analytics = () => {
                     {instagramDemographics.age?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
                           <Tooltip />
@@ -4719,7 +4727,7 @@ const Analytics = () => {
                     {instagramDemographics.cities?.length > 0 ? (
                       <ResponsiveContainer width="100%" height={240}>
                         <BarChart data={instagramDemographics.cities} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 90 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={90} />
                           <Tooltip />
@@ -4751,11 +4759,11 @@ const Analytics = () => {
             {loadingInstagramReport ? (
               <div className="space-y-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !instagramReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">Instagram reach report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {instagramReport?.message || 'Connect an Instagram Business or Creator account to see this report.'}
@@ -4798,7 +4806,7 @@ const Analytics = () => {
                   {instagramReachHasData ? (
                     <ResponsiveContainer width="100%" height={320}>
                       <BarChart data={instagramReachTimeline} margin={{ top: 8, right: 8, bottom: 0, left: -10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={50} />
                         <Tooltip />
@@ -4836,11 +4844,11 @@ const Analytics = () => {
             {loadingTikTokReport ? (
               <div className="space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : !tiktokReport?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">TikTok content report not available</p>
                 <p className="text-sm text-gray-400 mt-1">
                   {tiktokReport?.message || 'Connect a TikTok account to see this report.'}
@@ -4859,7 +4867,7 @@ const Analytics = () => {
                     {tiktokContentHasCharts ? (
                       <ResponsiveContainer width="100%" height={260}>
                         <ComposedChart data={mergeBucketedSeries({ views: tiktokContent.post_views_series || [], engagement: tiktokContent.engagement_series || [] }, days, 'day')}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
@@ -4878,7 +4886,7 @@ const Analytics = () => {
                     {chartHasData(tiktokPublishedVideosSeries, ['count']) ? (
                       <ResponsiveContainer width="100%" height={260}>
                         <BarChart data={tiktokPublishedVideosSeries}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                           <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                           <Tooltip />
@@ -4905,7 +4913,7 @@ const Analytics = () => {
                         <button
                           key={option.key}
                           onClick={() => setTikTokTopMetric(option.key)}
-                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${tiktokTopMetric === option.key ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-gray-200 bg-offwhite text-gray-600 hover:border-gray-300'}`}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${tiktokTopMetric === option.key ? 'border-indigo-600 bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-500' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-slate-700'}`}
                         >
                           {option.label}
                         </button>
@@ -4968,7 +4976,7 @@ const Analytics = () => {
             {loadingTikTokReport ? (
               <div className="space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : (
@@ -5000,7 +5008,7 @@ const Analytics = () => {
             {loadingTikTokReport ? (
               <div className="space-y-4">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 h-36 animate-pulse" />
+                  <div key={i} className="bg-gray-100 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-800 h-36 animate-pulse" />
                 ))}
               </div>
             ) : (
@@ -5024,7 +5032,7 @@ const Analytics = () => {
                             <stop offset="95%" stopColor="#2f6690" stopOpacity={0} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <Tooltip />
@@ -5063,7 +5071,7 @@ const Analytics = () => {
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all
                     ${postsSort === opt.value
                       ? 'bg-indigo-600 border-indigo-600 text-white'
-                      : 'border-gray-200 text-gray-600 bg-offwhite hover:border-gray-300'}`}
+                      : 'border-gray-200 dark:border-slate-800 text-gray-600 dark:text-gray-400 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700'}`}
                 >
                   {opt.label}
                 </button>
@@ -5104,7 +5112,7 @@ const Analytics = () => {
             {!loadingPosts && sortedPosts.length > 0 && (
               <div className={`grid gap-3 ${visibleMetricCards.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
                 {visibleMetricCards.map(({ key, label, icon: Icon }) => (
-                  <div key={label} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex items-center gap-3">
+                  <div key={label} className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 flex items-center gap-3 shadow-xs">
                     <Icon className={`${
                       key === 'likes' ? 'text-rose-500'
                         : key === 'comments' ? 'text-blue-500'
@@ -5112,8 +5120,8 @@ const Analytics = () => {
                         : 'text-purple-500'
                     } text-lg`} />
                     <div>
-                      <p className="text-xs text-gray-500">{label}</p>
-                      <p className="text-lg font-bold text-gray-900">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">
                         {fmt(sortedPosts.reduce((sum, post) => sum + (post.metrics?.[key] || 0), 0))}
                       </p>
                     </div>
@@ -5126,18 +5134,18 @@ const Analytics = () => {
             {loadingPosts ? (
               <div className="space-y-3">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-4 flex gap-4">
-                    <div className="w-20 h-20 bg-gray-100 animate-pulse rounded-lg flex-shrink-0" />
+                  <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 flex gap-4 shadow-xs">
+                    <div className="w-20 h-20 bg-gray-100 dark:bg-slate-800 animate-pulse rounded-lg flex-shrink-0" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-1/3" />
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-2/3" />
-                      <div className="h-3 bg-gray-100 animate-pulse rounded w-1/2" />
+                      <div className="h-3 bg-gray-100 dark:bg-slate-800 animate-pulse rounded w-1/3" />
+                      <div className="h-3 bg-gray-100 dark:bg-slate-800 animate-pulse rounded w-2/3" />
+                      <div className="h-3 bg-gray-100 dark:bg-slate-800 animate-pulse rounded w-1/2" />
                     </div>
                   </div>
                 ))}
               </div>
             ) : sortedPosts.length === 0 ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 py-16 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 py-16 text-center shadow-xs">
                 <FaFileAlt className="text-4xl text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 font-medium">No published posts found</p>
                 <p className="text-sm text-gray-400 mt-1">
@@ -5181,26 +5189,26 @@ const Analytics = () => {
             {loadingDemos ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                  <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                     <div className="h-4 bg-gray-100 animate-pulse rounded w-1/3 mb-4" />
                     <div className="h-40 bg-gray-100 animate-pulse rounded-lg" />
                   </div>
                 ))}
               </div>
             ) : !demographics?.supported ? (
-              <div className="bg-offwhite rounded-xl border border-gray-200 p-8 text-center">
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-8 text-center shadow-xs">
                 <p className="text-gray-500 font-medium">Demographics not available</p>
                 <p className="text-sm text-gray-400 mt-1">{demographics?.message || 'Connect an Instagram Business or Facebook Page account to see demographics.'}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Age Distribution */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Age Distribution</h4>
                   {demographics?.demographics?.age?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={200}>
                       <BarChart data={demographics.demographics.age} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis dataKey="range" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={50} />
                         <Tooltip />
@@ -5213,7 +5221,7 @@ const Analytics = () => {
                 </div>
 
                 {/* Gender Breakdown */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Gender Breakdown</h4>
                   {demographics?.demographics?.gender?.length > 0 ? (
                     <div className="space-y-3 mt-2">
@@ -5240,12 +5248,12 @@ const Analytics = () => {
                 </div>
 
                 {/* Top Cities */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Cities</h4>
                   {demographics?.demographics?.cities?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={demographics.demographics.cities.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 80 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} tickLine={false} axisLine={false} width={80} />
                         <Tooltip />
@@ -5258,12 +5266,12 @@ const Analytics = () => {
                 </div>
 
                 {/* Top Countries */}
-                <div className="bg-offwhite rounded-xl border border-gray-200 p-5">
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
                   <h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">Top Countries</h4>
                   {demographics?.demographics?.countries?.length > 0 ? (
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={demographics.demographics.countries.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 40 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.2)" />
                         <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
                         <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#6b7280' }} tickLine={false} axisLine={false} width={40} />
                         <Tooltip />
@@ -5284,7 +5292,7 @@ const Analytics = () => {
           </div>{/* closes max-w-5xl */}
         </div>{/* closes flex-1 overflow-y-auto */}
       </div>{/* closes flex h-full */}
-      <ExportReportModal isOpen={showReportModal} onClose={() => setShowReportModal(false)} />
+      <ExportReportModal isOpen={showReportModal} onClose={() => setShowReportModal(false)} defaultTab={reportModalTab} />
     </DashboardLayout>
   );
 };

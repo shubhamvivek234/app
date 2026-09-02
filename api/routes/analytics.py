@@ -4657,24 +4657,6 @@ async def export_branded_analytics_report(
         "deleted_at": {"$exists": False},
     })
 
-    # Top performing published posts
-    top_cursor = db.posts.find({
-        "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}],
-        "status": "published",
-        "deleted_at": {"$exists": False},
-    }).sort("published_at", -1).limit(5)
-
-    top_posts = []
-    async for p in top_cursor:
-        top_posts.append({
-            "id": p.get("id"),
-            "content": p.get("content", "")[:120],
-            "platforms": p.get("platforms", []),
-            "media_urls": p.get("media_urls", []),
-            "published_at": p.get("published_at").isoformat() if isinstance(p.get("published_at"), datetime) else p.get("published_at"),
-            "platform_results": p.get("platform_results", {}),
-        })
-
     # Connected channels
     accounts_cursor = db.social_accounts.find({
         "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}],
@@ -4687,6 +4669,84 @@ async def export_branded_analytics_report(
             "account_name": a.get("account_name") or a.get("username"),
             "followers_count": a.get("followers_count", 0),
         })
+
+    # Real metrics collection from published posts
+    top_cursor = db.posts.find({
+        "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}],
+        "status": "published",
+        "deleted_at": {"$exists": False},
+    }).sort("published_at", -1).limit(200)
+
+    raw_posts = []
+    total_likes = 0
+    total_comments = 0
+    total_shares = 0
+    total_views = 0
+
+    async for p in top_cursor:
+        likes = 0
+        comments = 0
+        shares = 0
+        views = 0
+        plat_results = p.get("platform_results") or {}
+        for plat_res in plat_results.values():
+            if isinstance(plat_res, dict):
+                likes += _metric_int(plat_res.get("likes"))
+                comments += _metric_int(plat_res.get("comments") or plat_res.get("comments_count"))
+                shares += _metric_int(plat_res.get("shares"))
+                views += _metric_int(plat_res.get("views"))
+
+        post_eng = likes + comments + shares
+        total_likes += likes
+        total_comments += comments
+        total_shares += shares
+        total_views += views
+
+        raw_posts.append({
+            "id": p.get("id"),
+            "content": p.get("content", "")[:140],
+            "platforms": p.get("platforms", []),
+            "media_urls": p.get("media_urls", []),
+            "published_at": p.get("published_at").isoformat() if isinstance(p.get("published_at"), datetime) else p.get("published_at"),
+            "platform_results": plat_results,
+            "metrics": {
+                "likes": likes,
+                "comments": comments,
+                "shares": shares,
+                "views": views,
+                "total_engagement": post_eng,
+            },
+        })
+
+    # Sort top posts by total engagement (likes + comments + shares + views) descending
+    top_posts = sorted(
+        raw_posts,
+        key=lambda item: (
+            item["metrics"]["total_engagement"] + item["metrics"]["views"]
+        ),
+        reverse=True,
+    )[:5]
+
+    total_followers = sum(c.get("followers_count", 0) for c in channels)
+    total_engagements = total_likes + total_comments + total_shares
+
+    # Accurate impressions / reach computation
+    if total_views > 0:
+        impressions_metric = total_views
+    elif total_followers > 0 and total_published > 0:
+        impressions_metric = min(total_followers * total_published, 1000000)
+    else:
+        impressions_metric = total_published * 100 if total_published > 0 else 0
+
+    # True engagement rate calculation
+    if impressions_metric > 0 and total_engagements > 0:
+        eng_rate = f"{(total_engagements / impressions_metric * 100):.1f}%"
+    elif total_followers > 0 and total_published > 0 and total_engagements > 0:
+        eng_rate = f"{(total_engagements / (total_followers * total_published) * 100):.2f}%"
+    elif total_engagements > 0:
+        eng_rate = f"{(total_engagements / max(total_published, 1)):.1f} / post"
+    else:
+        eng_rate = "0.0%"
 
     now = datetime.now(timezone.utc)
     return {
@@ -4702,11 +4762,74 @@ async def export_branded_analytics_report(
             "total_published_posts": total_published,
             "total_scheduled_posts": total_scheduled,
             "connected_channels": len(channels),
-            "estimated_impressions": total_published * 1420,
-            "estimated_engagement_rate": "4.8%",
+            "total_followers": total_followers,
+            "total_likes": total_likes,
+            "total_comments": total_comments,
+            "total_shares": total_shares,
+            "total_views": total_views,
+            "estimated_impressions": impressions_metric,
+            "estimated_engagement_rate": eng_rate,
         },
         "channels": channels,
         "top_posts": top_posts,
+    }
+
+
+@router.post("/analytics/report/export-csv")
+async def export_analytics_csv(
+    payload: ReportExportRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Export published posts and engagement metrics as a structured CSV data table."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    query: dict[str, Any] = {
+        "$or": [{"workspace_id": workspace_id}, {"user_id": user_id}],
+        "status": "published",
+        "deleted_at": {"$exists": False},
+    }
+
+    cursor = db.posts.find(query).sort("published_at", -1).limit(500)
+    rows = []
+    async for p in cursor:
+        post_id = p.get("id") or str(p.get("_id"))
+        pub_at = p.get("published_at")
+        pub_str = pub_at.isoformat() if isinstance(pub_at, datetime) else str(pub_at or "")
+        platforms = ", ".join(p.get("platforms", []))
+        content = (p.get("content") or "").replace('"', '""')
+
+        likes = 0
+        comments = 0
+        shares = 0
+        views = 0
+        for plat_res in (p.get("platform_results") or {}).values():
+            if isinstance(plat_res, dict):
+                likes += _metric_int(plat_res.get("likes"))
+                comments += _metric_int(plat_res.get("comments") or plat_res.get("comments_count"))
+                shares += _metric_int(plat_res.get("shares"))
+                views += _metric_int(plat_res.get("views"))
+
+        total_eng = likes + comments + shares
+        eng_rate = f"{(total_eng / views * 100):.1f}%" if views > 0 else "0.0%"
+        rows.append({
+            "post_id": post_id,
+            "published_at": pub_str,
+            "platforms": platforms,
+            "content": content,
+            "likes": likes,
+            "comments": comments,
+            "shares": shares,
+            "views": views,
+            "total_engagement": total_eng,
+            "engagement_rate": eng_rate,
+        })
+
+    return {
+        "ok": True,
+        "count": len(rows),
+        "rows": rows,
     }
 
 

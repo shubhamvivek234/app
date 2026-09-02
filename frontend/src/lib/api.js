@@ -1554,6 +1554,11 @@ export const exportBrandedReport = async (data) => {
   return response.data;
 };
 
+export const exportAnalyticsCSV = async (data = {}) => {
+  const response = await axios.post(`${API}/analytics/report/export-csv`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const scheduleReport = async (data) => {
   const response = await axios.post(`${API}/analytics/report/schedules`, data, { headers: getAuthHeaders() });
   return response.data;
