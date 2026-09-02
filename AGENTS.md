@@ -2,24 +2,19 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.3 shipped
+Stage: v5.4 shipped
 Branch: main
-Focus: Full Deployment Verification & Smart Bio Block Image Visibility Fix
+Focus: Sidebar Layout Streamlining & User Profile Menu Help & Support Integration
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Smart Bio Block Editor Image Visibility Fix (commit `24cb35f`):
-  - Solved image preview issues in `BioBlockEditorModal.js` by adding `normalizeImageUrl` to clean whitespace and auto-convert Google Drive (`drive.google.com/file/d/`), Dropbox (`dropbox.com`), and Imgur sharing links to direct thumbnail/image links.
-  - Added direct local image file upload (`FileReader` via `<input type="file" />`) so users can load any image file from their device without needing a public URL.
-  - Added real-time image error detection (`imageError`) with a clear advisory alert if an image URL fails to load.
-  - Added 6 curated royalty-free image presets and interactive pickers for Icon, Emoji, and 3D Art tabs.
-  - Upgraded live Card Preview to accurately render all layout archetypes (`card_banner_top`, `card_left_image`, `compact_pill`) and media fallbacks.
-  - Added `onError` fallback handlers in `BioOutlineTree.js` and `LinkInBio.js` canvas to prevent broken browser image icons.
-- Full 3-Hour Deployment Verification:
-  - Verified and deployed commits `b1cb97d` (Viral Studio overhaul), `5fe99ea` (Social Graphic Studio multi-archetypes & AI carousel), and `24cb35f` (Smart Bio image fixes).
-  - Promoted and aliased production build (`main.fab4fed6.js`) to `https://www.unravler.com`.
-  - EC2 backend synchronized at commit `24cb35f` with 100% healthy services.
+- Sidebar Layout Cleanup & User Menu Help & Support (commit `f5b74bc`):
+  - Removed the redundant top workspace/user pill (`[A] Access User / Active Workspace <`) from the left sidebar, allowing the Create Post button to sit cleanly at the top.
+  - Removed the bottom sidebar footer container containing `Help & Support` and `Sign Out`.
+  - Added `Help & Support` (`/support`) with icon `FaQuestionCircle` into the top-right user profile dropdown menu directly below `Account Settings`.
+  - Maintained `data-testid="logout-button"` on the user dropdown Logout action for test suites.
+  - Verified frontend build (`main.329be608.js`), deployed and aliased to production on `https://www.unravler.com`, and synced EC2 backend.
 
 ## Active Work
 Currently implementing: None
