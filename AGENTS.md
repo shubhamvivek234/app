@@ -2,18 +2,18 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v5.7 shipped
+Stage: v5.8 shipped
 Branch: main
-Focus: Single-Click Instant Logout & State Synchronization
+Focus: Header Action Icons (Theme & Notification) Alignment Harmonization
 
 ## Last Session Completed
 Date: 2026-09-02
 Completed:
-- Single-Click Logout Race Condition Fix (commit `3b960a3`):
-  - Identified root cause of double-click logout requirement: asynchronous network request (`logoutBackendSession`) delayed state cleanup while `handleLogout` synchronously routed to `/login`, causing `PublicRoute` to see stale `user` and immediately bounce back to `/dashboard`.
-  - In `AuthContext.js`, synchronously reset all client auth state (`clearAuthData()`, `token`, `user`, `firebaseUser`, `authIssue`, `sessionStorage`) immediately before running backend revocation and Firebase sign-out concurrently (`Promise.allSettled`).
-  - Updated `handleLogout` across `DashboardLayout.js`, `OnboardingHeader.js`, and `SubscriptionExpired.js` to async/await `logout()` with a loading state guard (`isLoggingOut`) and `{ replace: true }` navigation.
-  - Verified clean frontend build (`main.bc67e0e7.js`), deployed live to Vercel (`main.6e6820c0.js`), and synced EC2.
+- Header Theme & Notification Icons Alignment (commit `8ba4d2f`):
+  - Standardized both Theme toggle and Notification Center buttons into identical `w-9 h-9 flex items-center justify-center rounded-xl` containers.
+  - Aligned icon centers horizontally and vertically along the same 18px centerline (theme icon scaled to 16px, BellRingIcon to 18px).
+  - Repositioned the unread badge to `-top-0.5 -right-0.5` and dropdown trigger to `top-full mt-2.5` to match `UserMenu`.
+  - Verified clean frontend build (`main.b8b9f485.js`), deployed live to Vercel (`main.4a6c96b0.js`), and synced EC2.
 
 ## Active Work
 Currently implementing: None
