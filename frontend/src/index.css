@@ -279,6 +279,26 @@ code {
         color: #94a3b8;
     }
 
+    .dark .text-slate-900 {
+        color: #f8fafc;
+    }
+
+    .dark .text-slate-800 {
+        color: #f1f5f9;
+    }
+
+    .dark .text-slate-700 {
+        color: #e2e8f0;
+    }
+
+    .dark .text-slate-600 {
+        color: #cbd5e1;
+    }
+
+    .dark .text-slate-500 {
+        color: #94a3b8;
+    }
+
     .dark .bg-gray-50 {
         background-color: #1e293b;
     }
