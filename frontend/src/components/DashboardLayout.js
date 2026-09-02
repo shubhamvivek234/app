@@ -38,7 +38,7 @@ import NotificationCenter from '@/components/NotificationCenter';
 import { useTheme } from '@/context/ThemeContext';
 import { canReadApprovalsWorkspace, canReadTeamWorkspace } from '@/lib/workspacePermissions';
 
-const UserMenu = ({ user, onLogout }) => {
+const UserMenu = ({ user, onLogout, isLoggingOut = false }) => {
   const [open, setOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
   const ref = useRef(null);
@@ -106,12 +106,18 @@ const UserMenu = ({ user, onLogout }) => {
           </Link>
           <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
           <button
-            onClick={() => { setOpen(false); onLogout(); }}
+            type="button"
+            onClick={async (e) => {
+              e.stopPropagation();
+              setOpen(false);
+              await onLogout();
+            }}
+            disabled={isLoggingOut}
             data-testid="logout-button"
-            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <FaSignOutAlt className="text-xs" />
-            Logout
+            {isLoggingOut ? 'Logging out...' : 'Logout'}
           </button>
         </div>
       )}
@@ -192,9 +198,19 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
     )),
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    } finally {
+      navigate('/login', { replace: true });
+      setLoggingOut(false);
+    }
   };
 
   const isActive = (path) => {
@@ -272,7 +288,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
             {isDarkMode ? <FaSun className="text-sm text-amber-400" /> : <FaMoon className="text-sm" />}
           </button>
           <NotificationCenter />
-          <UserMenu user={user} onLogout={handleLogout} />
+          <UserMenu user={user} onLogout={handleLogout} isLoggingOut={loggingOut} />
         </div>
       </header>
 

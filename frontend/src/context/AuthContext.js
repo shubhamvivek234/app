@@ -325,30 +325,35 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    // 1. Immediately and synchronously clear all local auth state & storage
+    // so any component or route guard (PublicRoute, PrivateRoute) instantly
+    // sees the user as logged out without race conditions.
+    clearAuthData();
+    setToken(null);
+    setUser(null);
+    setFirebaseUser(null);
+    setAuthIssue(null);
+    resetUser();
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('pending_google_auth');
+      sessionStorage.removeItem('google_auth_step');
+    }
+
+    // 2. Perform backend session revocation and Firebase signout concurrently
     try {
-      try {
-        await logoutBackendSession();
-      } catch (sessionError) {
-        console.warn('[AuthContext] Backend session logout failed:', sessionError?.message);
-      }
-      // Clear state and storage BEFORE signOut so onAuthStateChanged
-      // doesn't skip cleanup due to the localStorage token check
-      setToken(null);
-      setUser(null);
-      setFirebaseUser(null);
-      resetUser();
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('pending_google_auth');
-      }
-      // Use authService logout which clears all auth data
-      await firebaseSignOut();
+      await Promise.allSettled([
+        logoutBackendSession().catch((sessionError) => {
+          console.warn('[AuthContext] Backend session logout failed:', sessionError?.message);
+        }),
+        firebaseSignOut().catch((signOutError) => {
+          console.warn('[AuthContext] Firebase signOut failed:', signOutError?.message);
+        }),
+      ]);
     } catch (error) {
       console.error('[AuthContext] Logout error:', error);
-      // Even if signOut fails, ensure local state is cleared
+    } finally {
+      // 3. Guarantee cleanup is complete
       clearAuthData();
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('pending_google_auth');
-      }
       setToken(null);
       setUser(null);
       setFirebaseUser(null);

@@ -17,9 +17,12 @@ const OnboardingHeader = ({ step }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
 
-    const handleLogout = () => {
-        logout();
-        navigate('/login');
+    const handleLogout = async () => {
+        try {
+            await logout();
+        } finally {
+            navigate('/login', { replace: true });
+        }
     };
 
     const steps = [1, 2, 3];
