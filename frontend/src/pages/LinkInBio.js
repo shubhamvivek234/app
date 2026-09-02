@@ -882,14 +882,24 @@ export default function LinkInBio() {
                             >
                               {isBannerTop && block.media_url && (
                                 <div className="w-full h-32 overflow-hidden bg-black/10 relative">
-                                  <img src={block.media_url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                                  <img
+                                    src={block.media_url}
+                                    alt=""
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                  />
                                   <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
                                 </div>
                               )}
 
                               <div className={`flex items-center gap-3 w-full ${isBannerTop ? 'p-3.5' : ''}`}>
                                 {!isBannerTop && block.media_url && (
-                                  <img src={block.media_url} alt="" className="w-10 h-10 rounded-xl object-cover flex-shrink-0 shadow-xs" />
+                                  <img
+                                    src={block.media_url}
+                                    alt=""
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                    className="w-10 h-10 rounded-xl object-cover flex-shrink-0 shadow-xs"
+                                  />
                                 )}
 
                                 <div className="min-w-0 flex-1">

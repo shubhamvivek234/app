@@ -492,7 +492,12 @@ export default function BioOutlineTree({
                         onClick={() => onOpenBlockEditor(block)}
                         className="w-10 h-10 rounded-xl overflow-hidden bg-gray-100 border border-gray-200 flex-shrink-0 cursor-pointer"
                       >
-                        <img src={block.media_url} alt="" className="w-full h-full object-cover" />
+                        <img
+                          src={block.media_url}
+                          alt=""
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          className="w-full h-full object-cover"
+                        />
                       </div>
                     ) : (
                       <button
