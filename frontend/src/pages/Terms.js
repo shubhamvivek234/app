@@ -149,7 +149,7 @@ const Terms = () => {
               <strong>UNRAVLER TECHNOLOGIES</strong><br />
               Attn: Legal &amp; Compliance Department<br />
               Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India<br />
-              Email: <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a> / <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a><br />
+              Email: <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a><br />
               Phone: +91 9031777441
             </div>
           </section>

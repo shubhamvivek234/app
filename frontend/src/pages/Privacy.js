@@ -159,7 +159,7 @@ const Privacy = () => {
                 <div><span className="text-slate-500">Designation:</span> Proprietor &amp; Grievance Redressal Officer</div>
                 <div><span className="text-slate-500">Enterprise:</span> Unravler Technologies (UDYAM-JH-20-0144275)</div>
                 <div><span className="text-slate-500">Physical Address:</span> Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
-                <div><span className="text-slate-500">Official Email:</span> <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a> / <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a></div>
+                <div><span className="text-slate-500">Official Email:</span> <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
                 <div><span className="text-slate-500">Phone:</span> +91 9031777441</div>
                 <div><span className="text-slate-500">Response SLA:</span> Acknowledgment within 24 hours; resolution within 15 business days.</div>
               </div>
@@ -185,7 +185,7 @@ const Privacy = () => {
             </p>
             <p className="mt-2 font-medium">
               <strong>UNRAVLER TECHNOLOGIES</strong><br />
-              Email: <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a> / <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a><br />
+              Email: <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a><br />
               Address: Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India
             </p>
           </section>

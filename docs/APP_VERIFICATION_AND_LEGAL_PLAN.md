@@ -19,8 +19,8 @@ All legal and policy pages across Unravler must use the following verified detai
 | **Permanent Account Number (PAN)**| `AKOPP5096M` |
 | **Registered Business Address** | **Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India** |
 | **Official Contact Number** | `+91 9031777441` |
-| **Official Email** | `findbinduprasad@zohomail.in` (Support: `support@unravler.com`) |
-| **Designated Grievance Officer** | **Bindu Prasad** (`findbinduprasad@zohomail.in`) |
+| **Official Email** | `contact@unravler.com` |
+| **Designated Grievance Officer** | **Bindu Prasad** (`contact@unravler.com`) |
 | **Governing Law & Jurisdiction** | **Courts of Ranchi, Jharkhand, India** |
 | **Bank Account** | ICICI Bank (A/C: `017501536141`, IFSC: `ICIC0000175`) |
 | **NIC Classification Codes** | `62013` (Software support/maintenance), `62020` (IT consultancy), `62099` (IT services n.e.c), `63122` (Media web portals) |
@@ -38,7 +38,7 @@ All legal and policy pages across Unravler must use the following verified detai
    - **Meta Graph API Permissions**: Explicitly list requested permissions (`instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_manage_posts`) with justifications.
    - **No-Sale of Data Affirmation**: Strict affirmation: *"We do not sell, rent, trade, or monetize user social media data to data brokers or third parties."*
    - **Encryption & Security**: Detail AES-256 GCM encryption of OAuth tokens at rest and TLS 1.3 in transit.
-   - **India DPDP Act (2023) Compliance**: Explicit data principal rights (Access, Rectification, Erasure) and designated Grievance Officer details (**Bindu Prasad**, `findbinduprasad@zohomail.in`, Ranchi, Jharkhand).
+   - **India DPDP Act (2023) Compliance**: Explicit data principal rights (Access, Rectification, Erasure) and designated Grievance Officer details (**Bindu Prasad**, `contact@unravler.com`, Ranchi, Jharkhand).
 
 2. **`/terms` (`frontend/src/pages/Terms.js`)**:
    - **Entity & Jurisdiction**: Update company name from legacy placeholders to **Unravler Technologies**; change governing law and exclusive jurisdiction to the **Courts of Ranchi, Jharkhand, India**.
@@ -48,12 +48,12 @@ All legal and policy pages across Unravler must use the following verified detai
 3. **`/refund` (`frontend/src/pages/RefundPolicy.js`) [NEW]**:
    - Standalone Refund & Cancellation page (mandatory for Razorpay & Stripe India merchant activations).
    - **Policy**: 7-day money-back guarantee for first-time subscribers; refunds processed back to original source payment method (ICICI Bank / Card / UPI) within 5–7 business days.
-   - Instructions on how users can initiate cancellation directly from their Billing settings or via email to `support@unravler.com`.
+   - Instructions on how users can initiate cancellation directly from their Billing settings or via email to `contact@unravler.com`.
 
 4. **`/contact` (`frontend/src/pages/Contact.js`) [NEW]**:
    - Standalone Contact Us page required for merchant validation.
    - Displays official enterprise address: `Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand - 834002, India`.
-   - Contact phone: `+91 9031777441`, Email: `support@unravler.com` / `findbinduprasad@zohomail.in`.
+   - Contact phone: `+91 9031777441`, Email: `contact@unravler.com`.
    - Operating hours and support ticket response SLA (< 24 hours).
    - Grievance Redressal Officer box.
 
@@ -104,7 +104,7 @@ All legal and policy pages across Unravler must use the following verified detai
    - App Category: Business / Social Media Management.
 3. **Google Cloud OAuth Consent Screen Verification**:
    - App Name: `Unravler`.
-   - User Support Email: `findbinduprasad@zohomail.in` or `support@unravler.com`.
+   - User Support Email: `contact@unravler.com`.
    - Authorized Domain: `unravler.com`.
    - Application Home Page: `https://www.unravler.com`.
    - Privacy Policy: `https://www.unravler.com/privacy`.

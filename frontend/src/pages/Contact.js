@@ -96,11 +96,8 @@ const Contact = () => {
                   </div>
                   <div>
                     <span className="text-xs uppercase font-bold tracking-wider text-slate-400 block">Electronic Support</span>
-                    <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium block mt-0.5">
-                      support@unravler.com
-                    </a>
-                    <a href="mailto:findbinduprasad@zohomail.in" className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs block mt-0.5">
-                      findbinduprasad@zohomail.in
+                    <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium block mt-0.5">
+                      contact@unravler.com
                     </a>
                   </div>
                 </div>
@@ -145,7 +142,7 @@ const Contact = () => {
               </p>
               <div className="text-xs text-slate-800 dark:text-slate-200 font-medium space-y-0.5 pt-1">
                 <div><strong>Officer:</strong> Bindu Prasad (Proprietor)</div>
-                <div><strong>Email:</strong> <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a></div>
+                <div><strong>Email:</strong> <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
                 <div><strong>Address:</strong> Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
               </div>
             </div>

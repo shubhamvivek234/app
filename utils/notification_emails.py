@@ -38,7 +38,7 @@ def get_notification_email_config() -> dict[str, Any]:
         "sender_name": sender_name,
         "frontend_url": frontend_url,
         "logo_url": logo_url,
-        "support_email": _clean_env("SUPPORT_EMAIL", "support@unravler.com"),
+        "support_email": _clean_env("SUPPORT_EMAIL", "contact@unravler.com"),
     }
 
 

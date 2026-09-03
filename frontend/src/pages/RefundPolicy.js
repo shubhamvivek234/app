@@ -68,7 +68,7 @@ const RefundPolicy = () => {
               <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
                 <span className="font-bold text-slate-900 dark:text-white block mb-1">Option 2: Direct Email</span>
                 <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-                  Send an email to <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium">support@unravler.com</a> or <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline font-medium">findbinduprasad@zohomail.in</a> with your account email address and payment transaction ID.
+                  Send an email to <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium">contact@unravler.com</a> with your account email address and payment transaction ID.
                 </p>
               </div>
             </div>
@@ -117,7 +117,7 @@ const RefundPolicy = () => {
             <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-sm font-medium space-y-1">
               <div><strong>UNRAVLER TECHNOLOGIES</strong> &bull; Billing Department</div>
               <div>Address: Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
-              <div>Email: <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a></div>
+              <div>Email: <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
               <div>Phone / WhatsApp: +91 9031777441</div>
               <div>Operating Hours: Monday – Saturday, 9:00 AM – 6:00 PM IST (Response within 24 hours)</div>
             </div>
