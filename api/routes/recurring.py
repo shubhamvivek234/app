@@ -26,6 +26,7 @@ class RecurringRuleCreate(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     is_active: bool = True
+    ai_remix: bool = False
 
 
 @router.get("/recurring-rules")

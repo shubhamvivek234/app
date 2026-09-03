@@ -9,20 +9,16 @@ Focus: Analytics & Reports Overhaul — Real Metrics, CSV Export, Pop-up Free PD
 ## Last Session Completed
 Date: 2026-09-04
 Completed:
-- Legal & App Verification Overhaul & Contact Email Standardized:
-  - Standardized corporate contact email to `contact@unravler.com` across all legal pages, contact forms, and email utilities.
-  - Removed phone / WhatsApp details (+91 9031777441) from Contact, Terms, Privacy, Data Deletion, and Refund pages to rely on official email and web contact.
-- Permanent Account Deletion Pipeline (GDPR / DPDP Compliant):
-  - Frontend (`Settings.js`): Added strict `DELETE` text typing confirmation dialog in Danger Zone, with disabled action state, loading indicators, and post-deletion logout.
-  - Auth Layer (`api/deps.py`): Immediately rejects (`403 Forbidden`) active tokens/sessions for accounts with `deletion_pending` or `deleted` status.
-  - Cascading Erasure Worker (`celery_workers/tasks/gdpr.py`): Purges all 18 collections (posts, social_accounts, media_assets, bio_pages, short_links, notifications, workspaces), deletes physical files from Cloudflare R2 / S3 storage, deletes Firebase Auth identity, cancels gateway subscriptions, and hard-deletes `db.users`.
-  - Test Suite (`tests/test_account_erasure.py`): Added 3 unit tests verifying queued status, 403 authorization lock, and cascading storage & collection purge (297/297 passing).
-  - Verified frontend build (`main.1ecc0c08.js`).
+- Enterprise Features & Campaigns Hub (Phases 1-3 Shipped & Verified):
+  - Phase 1: Workspace Approval Governance (`api/routes/team.py`, `api/routes/posts.py`, `Settings.js`), Universal First Comment Execution (`celery_workers/tasks/publish.py`), AI Remix for Evergreen Posts (`api/routes/recurring.py`, `celery_workers/tasks/recurring.py`, `RecurringPosts.js`).
+  - Phase 2: Pre-Publish Video & Media Validator (`CreatePostForm.js`, `mediaInspector.js`), Multi-Profile Brand Kit with Signature CTA (`api/routes/ai.py`, `BrandVoiceSettings.js`), RSS Autopilot with AI Hook Generation (`api/routes/rss_feeds.py`).
+  - Phase 3: Dedicated Campaigns Hub (`api/routes/campaigns.py`, `Campaigns.js`, `App.js`, `DashboardLayout.js`, `CreatePostForm.js`), Social Inbox Lead Tagging & CRM Lite (`api/routes/inbox.py`, `Inbox.js`), Thread Splitter Utility (`utils/thread_splitter.py`).
+  - Test Suite: 9/9 new tests passing in `tests/test_phase1_postly_features.py`; all 306 backend tests passing; frontend build clean (`main.a3c1ef9f.js`).
 
 ## Active Work
-Currently implementing: None
+Currently implementing: Deployment & Verification
 Next:
-- Implement Postly-inspired features from roadmap (Phase 1: Workspace Approval Governance, AI Remix for Recurring Posts, First Comment Scheduling).
+- Deploy to EC2 production backend and verify live endpoints.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -1013,7 +1013,17 @@ export const sendSupportRequest = async (formData) => {
   return response.data;
 };
 
-// ── Approval Queue ──
+// ── Approval Queue & Policy ──
+export const getWorkspaceApprovalPolicy = async () => {
+  const response = await axios.get(`${API}/workspace/approval-policy`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateWorkspaceApprovalPolicy = async (policy) => {
+  const response = await axios.put(`${API}/workspace/approval-policy`, policy, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const getApprovalQueue = async () => {
   const response = await axios.get(`${API}/approvals`, { headers: getAuthHeaders() });
   return response.data;
@@ -1600,5 +1610,33 @@ export const saveBrandVoice = async (data) => {
   const response = await axios.put(`${API}/ai/brand-voice`, data, { headers: getAuthHeaders() });
   return response.data;
 };
+
+// ── Campaigns API (Feature 1 & Phase 3) ──
+export const getCampaigns = async (status) => {
+  const params = status ? { status } : {};
+  const response = await axios.get(`${API}/campaigns`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const createCampaign = async (campaignData) => {
+  const response = await axios.post(`${API}/campaigns`, campaignData, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getCampaign = async (campaignId) => {
+  const response = await axios.get(`${API}/campaigns/${campaignId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateCampaign = async (campaignId, campaignData) => {
+  const response = await axios.put(`${API}/campaigns/${campaignId}`, campaignData, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteCampaign = async (campaignId) => {
+  const response = await axios.delete(`${API}/campaigns/${campaignId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 
 

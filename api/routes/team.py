@@ -387,3 +387,37 @@ async def accept_invite(token: str, current_user: CurrentUser, db: DB):
         "workspace_name": (workspace or {}).get("name") or "Workspace",
         "role": invite["role"],
     }
+
+
+class ApprovalPolicyUpdate(BaseModel):
+    enabled: bool = False
+    required_for_roles: list[str] = ["editor", "client", "viewer"]
+    auto_assign_reviewer_id: str | None = None
+
+
+@router.get("/workspace/approval-policy")
+async def get_workspace_approval_policy(current_user: CurrentUser, db: DB):
+    """Retrieve workspace publishing approval policy."""
+    workspace_id = _workspace_id_for(current_user)
+    workspace = await db.workspaces.find_one({"workspace_id": workspace_id}) or {}
+    policy = workspace.get("approval_policy", {
+        "enabled": False,
+        "required_for_roles": ["editor", "client"],
+        "auto_assign_reviewer_id": None,
+    })
+    return policy
+
+
+@router.put("/workspace/approval-policy", dependencies=[require_permission("team:manage")])
+async def update_workspace_approval_policy(body: ApprovalPolicyUpdate, current_user: CurrentUser, db: DB):
+    """Update workspace publishing approval policy (requires team:manage permission)."""
+    workspace_id = _workspace_id_for(current_user)
+    now = datetime.now(timezone.utc)
+    policy_data = body.model_dump()
+    await db.workspaces.update_one(
+        {"workspace_id": workspace_id},
+        {"$set": {"approval_policy": policy_data, "updated_at": now}},
+        upsert=True,
+    )
+    return {"status": "ok", "approval_policy": policy_data}
+

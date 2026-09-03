@@ -60,6 +60,7 @@ import LinkInBio from '@/pages/LinkInBio';
 import PublicBioPage from '@/pages/PublicBioPage';
 import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
 import ViralStudio from '@/pages/ViralStudio';
+import Campaigns from '@/pages/Campaigns';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -407,6 +408,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <RecurringPosts />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/campaigns"
+                element={
+                  <PrivateRoute>
+                    <Campaigns />
                   </PrivateRoute>
                 }
               />

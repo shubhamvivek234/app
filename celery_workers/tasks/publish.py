@@ -2214,6 +2214,29 @@ async def _async_publish_to_platform(
                 },
             )
 
+            # Universal First Comment Automation
+            fc_text = post.get("effective_first_comment") or post.get("first_comment")
+            fc_enabled = post.get("first_comment_enabled", bool(fc_text))
+            if fc_text and fc_enabled and platform_post_id:
+                try:
+                    from utils.first_comment import post_first_comment
+                    fc_res = await post_first_comment(
+                        platform=platform,
+                        platform_post_id=str(platform_post_id),
+                        first_comment_text=fc_text,
+                        account=account,
+                    )
+                    await _update_platform_result(db, post_id, platform, {
+                        "first_comment": fc_res,
+                    }, account_id=resolved_account_id)
+                    await db.posts.update_one(
+                        {"id": post_id},
+                        {"$set": {"first_comment_status": fc_res}},
+                    )
+                    logger.info("First comment dispatched for post %s on %s: %s", post_id, platform, fc_res.get("status"))
+                except Exception as fc_err:
+                    logger.warning("First comment execution failed for post %s on %s: %s", post_id, platform, fc_err)
+
             user_id, prev_agg_status, agg_status = await _finalize_post_status(db, post_id)
             await _send_success_notification(db, post_id, platform, post_url or "", user_id or "")
             if agg_status == "published" and prev_agg_status == "partial":

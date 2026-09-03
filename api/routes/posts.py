@@ -1120,17 +1120,34 @@ async def create_post(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=message or "No available timeslot found",
             )
-        post_status = PostStatus.SCHEDULED
         scheduled_time = next_slot
-    elif body.publish_now:
-        post_status = PostStatus.QUEUED
-        scheduled_time = now
-    elif body.scheduled_time:
         post_status = PostStatus.SCHEDULED
+    elif body.publish_now:
+        scheduled_time = now
+        post_status = PostStatus.QUEUED
+    elif body.scheduled_time:
         scheduled_time = body.scheduled_time
+        post_status = PostStatus.SCHEDULED
     else:
-        post_status = PostStatus.DRAFT
         scheduled_time = None
+        post_status = PostStatus.DRAFT
+
+    # Workspace Approval Governance Check
+    workspace_doc = await db.workspaces.find_one({"workspace_id": workspace_id}) or {}
+    approval_policy = workspace_doc.get("approval_policy") or {}
+    requires_approval = False
+    if approval_policy.get("enabled"):
+        member = await db.workspace_members.find_one({"workspace_id": workspace_id, "user_id": user_id})
+        user_role = (member.get("role") if member else current_user.get("role")) or "owner"
+        roles_requiring_approval = approval_policy.get("required_for_roles", ["editor", "client", "viewer"])
+        if user_role in roles_requiring_approval:
+            requires_approval = True
+
+    if requires_approval and post_status in {PostStatus.SCHEDULED, PostStatus.QUEUED}:
+        post_status = PostStatus.PENDING_APPROVAL
+        if scheduled_time is None:
+            scheduled_time = now + timedelta(hours=2)
+        body.publish_now = False
 
     # Phase 10.1 — Schedule density warning (non-blocking)
     density_ws = body.workspace_id or current_user.get("default_workspace_id")
@@ -1157,6 +1174,7 @@ async def create_post(
         "id": str(ObjectId()),
         "user_id": user_id,
         "workspace_id": workspace_id,
+        "campaign_id": body.campaign_id,
         "content": body.content,
         "title": body.title,
         "platforms": body.platforms,
@@ -1204,6 +1222,7 @@ async def create_post(
         "first_comment": body.first_comment,
         "first_comment_enabled": bool(body.first_comment and body.first_comment_enabled),
         "first_comment_status": None,
+        "assigned_reviewer_id": approval_policy.get("auto_assign_reviewer_id") if requires_approval else None,
         "platform_overrides": normalized_platform_overrides,
         "account_overrides": normalized_account_overrides,
         "created_at": now,
@@ -1211,6 +1230,30 @@ async def create_post(
     }
 
     await db.posts.insert_one(doc)
+
+    if post_status == PostStatus.PENDING_APPROVAL:
+        try:
+            await _record_approval_activity(
+                db,
+                post_doc=doc,
+                actor_id=user_id,
+                action="submitted",
+                old_status=None,
+                new_status=PostStatus.PENDING_APPROVAL,
+                reason="Submitted for review via workspace policy",
+                created_at=now,
+            )
+            await _emit_approval_notification(
+                db,
+                doc,
+                event="approval.submitted",
+                title="Post submitted for approval",
+                body_text="A new post was submitted for approval in your workspace.",
+                target_role="admin",
+                dedup_suffix="submitted",
+            )
+        except Exception as app_exc:
+            logger.warning("Failed to record approval activity/notification for post %s: %s", doc["id"], app_exc)
 
     if post_status == PostStatus.SCHEDULED and scheduled_time is not None:
         try:
@@ -1429,6 +1472,7 @@ async def list_posts(
     db: DB,
     workspace_id: Annotated[str | None, Query(max_length=100)] = None,
     status_filter: Annotated[str | None, Query(alias="status", max_length=50)] = None,
+    campaign_id: Annotated[str | None, Query(max_length=100)] = None,
     published_window: Annotated[str | None, Query(max_length=50)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -1441,6 +1485,8 @@ async def list_posts(
         "user_id": user_id,
         "deleted_at": {"$exists": False},
     }
+    if campaign_id:
+        query["campaign_id"] = campaign_id
     if status_filter:
         query["status"] = status_filter
     if status_filter == PostStatus.PUBLISHED and published_window == "past_6_months":

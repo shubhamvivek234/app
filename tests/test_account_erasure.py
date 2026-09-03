@@ -10,11 +10,12 @@ from celery_workers.tasks.gdpr import _async_erase
 
 @pytest.mark.asyncio
 async def test_delete_account_endpoint_queues_erasure():
+    import uuid
     scope = {
         "type": "http",
         "method": "DELETE",
         "path": "/api/user/account",
-        "client": ("127.0.0.1", 12345),
+        "client": (f"10.99.{uuid.uuid4().hex[:2]}.{uuid.uuid4().hex[:2]}", 12345),
         "headers": [],
     }
     req = Request(scope=scope)

@@ -34,11 +34,13 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import {
   getNotificationPreferences,
+  getWorkspaceApprovalPolicy,
   requestAccountDeletion,
   requestDataExport,
   requestVerificationEmail,
   updateCurrentUser,
   updateNotificationPreferences,
+  updateWorkspaceApprovalPolicy,
 } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -258,6 +260,12 @@ const Settings = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
   const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [approvalPolicy, setApprovalPolicy] = useState({
+    enabled: false,
+    required_for_roles: ['editor', 'client', 'viewer'],
+    auto_assign_reviewer_id: null,
+  });
+  const [savingApprovalPolicy, setSavingApprovalPolicy] = useState(false);
 
   useEffect(() => {
     setDisplayName(user?.display_name || user?.name || '');
@@ -287,10 +295,35 @@ const Settings = () => {
     };
 
     loadPreferences();
+
+    const loadApprovalPolicy = async () => {
+      try {
+        const policy = await getWorkspaceApprovalPolicy();
+        if (!cancelled && policy) {
+          setApprovalPolicy(policy);
+        }
+      } catch {
+        // Fallback for solo workspaces or non-team users
+      }
+    };
+    loadApprovalPolicy();
+
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const handleSaveApprovalPolicy = async () => {
+    setSavingApprovalPolicy(true);
+    try {
+      await updateWorkspaceApprovalPolicy(approvalPolicy);
+      toast.success('Workspace approval governance policy updated.');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to update approval policy.');
+    } finally {
+      setSavingApprovalPolicy(false);
+    }
+  };
 
   const timezoneOptions = useMemo(() => {
     const values = new Set(COMMON_TIMEZONES);
@@ -805,6 +838,84 @@ const Settings = () => {
 
           <Card className="border-slate-200 shadow-sm p-6 lg:col-span-2">
             <BrandVoiceSettings />
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm dark:border-slate-800 lg:col-span-2">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
+                    <FaShieldAlt className="text-sm text-indigo-600 dark:text-indigo-400" />
+                    Publishing Approvals &amp; Governance
+                  </CardTitle>
+                  <CardDescription>
+                    Enforce compliance and review checkpoints before team members can schedule or publish content.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    {approvalPolicy.enabled ? 'Active' : 'Disabled'}
+                  </span>
+                  <Switch
+                    checked={approvalPolicy.enabled}
+                    onCheckedChange={(checked) => setApprovalPolicy((prev) => ({ ...prev, enabled: checked }))}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300">
+                <p>
+                  When enabled, posts created by team members with intercepted roles cannot be published immediately or scheduled directly. Their drafts are automatically intercepted and routed to <Link to="/approvals" className="font-semibold text-indigo-600 dark:text-indigo-400 underline">/approvals</Link> for workspace admin sign-off.
+                </p>
+              </div>
+
+              {approvalPolicy.enabled && (
+                <div className="space-y-3 pt-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Intercept publishing for roles:
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {['editor', 'client', 'viewer'].map((role) => {
+                      const isSelected = (approvalPolicy.required_for_roles || []).includes(role);
+                      return (
+                        <button
+                          key={role}
+                          type="button"
+                          onClick={() => {
+                            const current = new Set(approvalPolicy.required_for_roles || []);
+                            if (isSelected) {
+                              current.delete(role);
+                            } else {
+                              current.add(role);
+                            }
+                            setApprovalPolicy((prev) => ({ ...prev, required_for_roles: Array.from(current) }));
+                          }}
+                          className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-all ${
+                            isSelected
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-950/40 dark:text-indigo-200 shadow-sm'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400'
+                          }`}
+                        >
+                          {isSelected ? '✓ ' : '+ '}
+                          {role.charAt(0).toUpperCase() + role.slice(1)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={handleSaveApprovalPolicy}
+                  disabled={savingApprovalPolicy}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {savingApprovalPolicy ? 'Saving…' : 'Save approval policy'}
+                </Button>
+              </div>
+            </CardContent>
           </Card>
 
           <Card className="border-rose-200 shadow-sm dark:border-rose-900/60 lg:col-span-2">

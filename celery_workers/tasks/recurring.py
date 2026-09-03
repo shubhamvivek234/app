@@ -77,11 +77,12 @@ def spawn_recurring_instances() -> dict:
     return run_async(_async_spawn())
 
 
-async def _async_spawn() -> dict:
+async def _async_spawn(db=None) -> dict:
     import uuid
 
-    client = await get_client()
-    db = client[os.environ["DB_NAME"]]
+    if db is None:
+        client = await get_client()
+        db = client[os.environ["DB_NAME"]]
 
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=_SPAWN_HORIZON_DAYS)
@@ -126,9 +127,32 @@ async def _async_spawn() -> dict:
                 "scheduled_time": next_time,
             })
             if not existing:
+                instance_content = template.get("content", "")
+                ai_remixed = False
+                if recurrence.get("ai_remix") and instance_content:
+                    try:
+                        from utils.free_llm_router import free_llm
+                        system_prompt = (
+                            "You are an expert social media copywriter. Rephrase the provided social post to give it a fresh, "
+                            "engaging hook and distinct phrasing while strictly preserving all URLs, hashtags, user mentions, "
+                            "and core message. Return ONLY the rewritten post copy without explanation."
+                        )
+                        remixed_text, provider, _ = await free_llm.generate_text(
+                            system_message=system_prompt,
+                            user_prompt=instance_content,
+                        )
+                        if remixed_text and remixed_text.strip():
+                            instance_content = remixed_text.strip()
+                            ai_remixed = True
+                            logger.info("AI Remix applied (%s) for recurring post template %s", provider, template["_id"])
+                    except Exception as remix_err:
+                        logger.warning("AI Remix failed for recurring post %s, using original: %s", template["_id"], remix_err)
+
                 instance = {
                     **{k: v for k, v in template.items() if k not in ("_id", "status", "recurrence")},
                     "id": str(uuid.uuid4()),
+                    "content": instance_content,
+                    "ai_remixed": ai_remixed,
                     "status": "scheduled",
                     "recurrence_template_id": str(template["_id"]),
                     "scheduled_time": next_time,
@@ -140,11 +164,11 @@ async def _async_spawn() -> dict:
                 await db.posts.insert_one(instance)
                 spawned += 1
                 logger.info(
-                    "Spawned recurring instance %s from template %s at %s",
-                    instance["id"], template["_id"], next_time.isoformat(),
+                    "Spawned recurring instance %s from template %s at %s (remixed=%s)",
+                    instance["id"], template["_id"], next_time.isoformat(), ai_remixed,
                 )
 
             next_time = next_occurrence(next_time, frequency, interval, anchor_day)
 
-    logger.info("recurring: spawned %d instances", spawned)
+    logger.info("recurring: spawned %s instances", spawned)
     return {"spawned": spawned}

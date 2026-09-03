@@ -133,6 +133,7 @@ class CreatePostRequest(BaseModel):
     timezone: str = Field(default="UTC", max_length=100)
     first_comment: str | None = Field(None, max_length=3000)
     first_comment_enabled: bool = False
+    campaign_id: str | None = Field(None, max_length=100)
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
     account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
 
@@ -257,6 +258,7 @@ class PostResponse(BaseModel):
     id: str
     user_id: str
     workspace_id: str | None = None
+    campaign_id: str | None = None
     content: str
     platforms: list[str]
     status: PostStatus

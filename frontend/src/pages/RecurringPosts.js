@@ -38,6 +38,7 @@ const defaultForm = {
   days_of_week: [1], // Mon
   day_of_month: 1,
   time_of_day: '09:00',
+  ai_remix: false,
 };
 
 // ── Frequency description helper ──────────────────────────────────────────────
@@ -76,6 +77,11 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
               <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                 {FREQ_LABELS[rule.frequency] || rule.frequency}
               </span>
+              {rule.ai_remix && (
+                <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  ✨ AI Remix
+                </span>
+              )}
               <span className="text-xs text-gray-500">{describeFrequency(rule)}</span>
               {rule.platforms?.length > 0 && (
                 <span className="text-xs text-gray-400">
@@ -255,6 +261,24 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
           </select>
         </div>
       )}
+
+      {/* AI Remix Toggle */}
+      <div className="flex items-center justify-between p-3 rounded-lg border border-indigo-100 bg-indigo-50/50 dark:border-indigo-900/40 dark:bg-indigo-950/20">
+        <div>
+          <span className="text-xs font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+            ✨ AI Remix Copy
+          </span>
+          <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300 mt-0.5">
+            Dynamically rewrite the hook &amp; phrasing for each occurrence to eliminate duplicate content flags.
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          checked={Boolean(form.ai_remix)}
+          onChange={(e) => set('ai_remix', e.target.checked)}
+          className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer ml-3 flex-shrink-0"
+        />
+      </div>
 
       {/* Preview */}
       {form.content && form.platforms.length > 0 && (

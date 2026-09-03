@@ -59,6 +59,7 @@ class BrandVoiceConfig(BaseModel):
     banned_words: list[str] = Field(default_factory=list)
     formatting_rules: str | None = None
     custom_guidelines: str | None = None
+    signature_cta: str | None = None
 
 
 class AIContentRequest(BaseModel):
@@ -211,6 +212,8 @@ def _build_system_message(
         b_parts = []
         if brand_voice.get("brand_name"):
             b_parts.append(f"Brand: {brand_voice['brand_name']}.")
+        if brand_voice.get("tone"):
+            b_parts.append(f"Voice Tone: {brand_voice['tone']}.")
         if brand_voice.get("target_audience"):
             b_parts.append(f"Target Audience: {brand_voice['target_audience']}.")
         if brand_voice.get("mission"):
@@ -225,6 +228,8 @@ def _build_system_message(
         banned = [w.strip() for w in brand_voice.get("banned_words", []) if w and w.strip()]
         if banned:
             b_parts.append(f"NEVER use these words/phrases: {', '.join(banned)}.")
+        if brand_voice.get("signature_cta"):
+            b_parts.append(f"Always conclude with this signature Call-To-Action (CTA): \"{brand_voice['signature_cta']}\".")
         if b_parts:
             brand_hint = " BRAND VOICE & GUIDELINES: " + " ".join(b_parts)
 
@@ -748,6 +753,7 @@ async def get_brand_voice(
         banned_words=doc.get("banned_words") or [],
         formatting_rules=doc.get("formatting_rules"),
         custom_guidelines=doc.get("custom_guidelines"),
+        signature_cta=doc.get("signature_cta"),
     )
 
 
@@ -769,6 +775,7 @@ async def save_brand_voice(
         "banned_words": body.banned_words,
         "formatting_rules": body.formatting_rules,
         "custom_guidelines": body.custom_guidelines,
+        "signature_cta": body.signature_cta,
         "updated_at": datetime.now(timezone.utc),
     }
     await db.brand_voices.update_one(

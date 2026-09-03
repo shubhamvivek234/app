@@ -205,6 +205,23 @@ async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> d
         # Auto-publish if enabled
         if feed.get("auto_publish") and target_accounts:
             content = _format_post_content(feed.get("post_template", DEFAULT_POST_TEMPLATE), item)
+            if feed.get("use_ai_enhancement") and item.get("title"):
+                try:
+                    from utils.free_llm_router import free_llm
+                    tone = feed.get("ai_tone", "engaging")
+                    sys_prompt = (
+                        f"You are an expert social media manager writing in a {tone} tone. "
+                        "Summarize this newly published article into a compelling, high-engagement social post. "
+                        "Include an attention-grabbing hook, 2-3 concise takeaways, 2 relevant hashtags, and preserve the article link at the end. "
+                        "Return ONLY the post text."
+                    )
+                    user_p = f"Article Title: {item.get('title')}\n\nSummary/Content: {item.get('summary') or ''}\n\nLink: {item.get('url') or ''}"
+                    ai_text, _, _ = await free_llm.generate_text(sys_prompt, user_p)
+                    if ai_text and ai_text.strip():
+                        content = ai_text.strip()
+                except Exception as rss_ai_err:
+                    logger.warning("RSS AI enhancement failed, falling back to template: %s", rss_ai_err)
+
             post_status = feed.get("post_status", "scheduled")
 
             scheduled_time = None

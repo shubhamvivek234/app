@@ -29,6 +29,7 @@ const FILTER_TABS = [
   { key: 'unread',   label: 'Unread' },
   { key: 'comment',  label: 'Comments', typeFilter: true },
   { key: 'dm',       label: 'DMs',      typeFilter: true },
+  { key: 'lead',     label: '🎯 Leads', leadFilter: true },
   { key: 'replied',  label: 'Replied' },
 ];
 
@@ -95,6 +96,7 @@ const Inbox = () => {
       const tab = FILTER_TABS.find((t) => t.key === activeTab);
       const params = {};
       if (tab?.typeFilter) params.type = activeTab;
+      else if (tab?.leadFilter) params.lead_tag = 'lead';
       else if (activeTab !== 'all') params.status = activeTab;
 
       const [msgs, st] = await Promise.all([getInbox(params), getInboxStats()]);
@@ -107,6 +109,17 @@ const Inbox = () => {
       toast.error('Failed to load inbox');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateLeadTag = async (id, tag) => {
+    try {
+      const leadTag = tag === 'none' ? null : tag;
+      await updateInboxMessage(id, { lead_tag: leadTag });
+      setMessages((prev) => prev.map((m) => m.id === id ? { ...m, lead_tag: leadTag } : m));
+      toast.success(leadTag ? `Tagged as ${leadTag}` : 'Lead tag removed');
+    } catch {
+      toast.error('Failed to update lead tag');
     }
   };
 
@@ -271,6 +284,11 @@ const Inbox = () => {
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <span className="text-xs font-semibold text-gray-800 dark:text-slate-200 truncate">{msg.author_name}</span>
                         <span className="flex-shrink-0">{PLATFORM_ICONS[msg.platform] || null}</span>
+                        {msg.lead_tag && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                            {msg.lead_tag}
+                          </span>
+                        )}
                         <span className="ml-auto text-[10px] text-gray-400 dark:text-slate-500 flex-shrink-0">
                           {msg.received_at ? format(parseISO(msg.received_at), 'MMM d') : ''}
                         </span>
@@ -320,6 +338,22 @@ const Inbox = () => {
                     )}
                   </div>
                 </div>
+
+                {/* Lead CRM Tag */}
+                <select
+                  value={selected.lead_tag || 'none'}
+                  onChange={(e) => handleUpdateLeadTag(selected.id, e.target.value)}
+                  className="text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title="Tag as CRM Lead"
+                >
+                  <option value="none">No Lead Tag</option>
+                  <option value="lead">🎯 Lead</option>
+                  <option value="high_intent">🔥 High Intent</option>
+                  <option value="customer">💎 Customer</option>
+                  <option value="vip">⭐ VIP</option>
+                  <option value="partner">🤝 Partner</option>
+                </select>
+
                 <button
                   onClick={() => handleDelete(selected.id)}
                   className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors"

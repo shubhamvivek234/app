@@ -648,6 +648,7 @@ async def list_inbox(
     type: str | None = Query(None),
     status: str | None = Query(None),
     account_id: str | None = Query(None, alias="account_id"),
+    lead_tag: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ):
     workspace_id = _workspace_id(current_user)
@@ -661,6 +662,8 @@ async def list_inbox(
         query["type"] = type
     if account_id:
         query["account_id"] = account_id
+    if lead_tag:
+        query["lead_tag"] = lead_tag
     if status:
         if status == "unread":
             query["status"] = "unread"
@@ -678,24 +681,23 @@ async def list_inbox(
         "messages": docs,
         "capabilities": capabilities,
         "connected_platforms": sorted(capabilities.keys()),
+        "total": len(docs),
     }
 
 
 @router.get("/inbox/stats")
-async def inbox_stats(current_user: CurrentUser, db: DB):
+async def get_inbox_stats(current_user: CurrentUser, db: DB):
     workspace_id = _workspace_id(current_user)
-
-    async def _count(q):
-        return await db.inbox_messages.count_documents(q)
-
-    total, unread, comments, dms, replied = await asyncio.gather(
-        _count({"workspace_id": workspace_id, "user_id": current_user["user_id"]}),
-        _count({"workspace_id": workspace_id, "user_id": current_user["user_id"], "status": "unread"}),
-        _count({"workspace_id": workspace_id, "user_id": current_user["user_id"], "type": "comment"}),
-        _count({"workspace_id": workspace_id, "user_id": current_user["user_id"], "type": "dm"}),
-        _count({"workspace_id": workspace_id, "user_id": current_user["user_id"], "status": "replied"}),
+    unread = await db.inbox_messages.count_documents(
+        {"workspace_id": workspace_id, "user_id": current_user["user_id"], "status": "unread"}
     )
-    return {"total": total, "unread": unread, "comments": comments, "dms": dms, "replied": replied}
+    total = await db.inbox_messages.count_documents(
+        {"workspace_id": workspace_id, "user_id": current_user["user_id"]}
+    )
+    leads_count = await db.inbox_messages.count_documents(
+        {"workspace_id": workspace_id, "user_id": current_user["user_id"], "lead_tag": {"$exists": True, "$ne": None}}
+    )
+    return {"unread": unread, "total": total, "leads_count": leads_count}
 
 
 @router.patch("/inbox/{message_id}")
@@ -704,7 +706,10 @@ async def update_inbox_message(message_id: str, body: dict, current_user: Curren
     allowed = {
         key: value
         for key, value in body.items()
-        if key in {"is_read", "status", "assigned_to", "reply", "reply_status", "replied_at", "platform_reply_error"}
+        if key in {
+            "is_read", "status", "assigned_to", "reply", "reply_status", "replied_at",
+            "platform_reply_error", "lead_tag", "crm_notes", "sentiment", "priority",
+        }
     }
     if not allowed:
         raise HTTPException(status_code=422, detail="No valid fields to update")

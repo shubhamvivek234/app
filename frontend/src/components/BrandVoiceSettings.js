@@ -12,6 +12,7 @@ export default function BrandVoiceSettings() {
   const [customGuidelines, setCustomGuidelines] = useState('');
   const [bannedWords, setBannedWords] = useState([]);
   const [newBannedWord, setNewBannedWord] = useState('');
+  const [signatureCta, setSignatureCta] = useState('');
   const [contentDna, setContentDna] = useState(null);
   const [isScanningDna, setIsScanningDna] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -30,6 +31,7 @@ export default function BrandVoiceSettings() {
           setFormattingRules(data.formatting_rules || '');
           setCustomGuidelines(data.custom_guidelines || '');
           setBannedWords(data.banned_words || []);
+          setSignatureCta(data.signature_cta || '');
           setContentDna(data.content_dna || null);
         }
       } catch (err) {
@@ -86,6 +88,7 @@ export default function BrandVoiceSettings() {
         formatting_rules: formattingRules || undefined,
         custom_guidelines: customGuidelines || undefined,
         banned_words: bannedWords,
+        signature_cta: signatureCta || undefined,
         content_dna: contentDna || undefined,
       });
       toast.success('Brand Voice & AI Persona guidelines saved!');
@@ -283,6 +286,23 @@ export default function BrandVoiceSettings() {
               <span className="text-xs text-gray-400">No banned words added yet.</span>
             )}
           </div>
+        </div>
+
+        {/* Signature CTA */}
+        <div>
+          <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+            Signature Call-To-Action (CTA)
+          </label>
+          <input
+            type="text"
+            placeholder="e.g. 👉 Try free for 14 days at unravler.com or Link in bio 🔗"
+            value={signatureCta}
+            onChange={(e) => setSignatureCta(e.target.value)}
+            className="w-full px-3.5 py-2 text-xs border border-gray-200 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-[10px] text-gray-400 mt-1">
+            AI post generation and repurposing will automatically append this signature CTA to generated content.
+          </p>
         </div>
 
         <div className="pt-3 border-t border-gray-100 flex justify-end">

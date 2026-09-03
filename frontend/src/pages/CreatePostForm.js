@@ -26,7 +26,10 @@ import {
   cleanupTemporaryAudio,
   getPost,
   updatePost,
+  getWorkspaceApprovalPolicy,
+  getCampaigns,
 } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { convertWallClockToUtcIso, getScheduledWallClockParts } from '@/lib/scheduledTime';
 import { getPublishFailureAction, getPublishFailureMessage, getTikTokRestrictionFromAccount } from '@/lib/publishFailures';
 import {
@@ -35,6 +38,7 @@ import {
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
   FaChevronUp, FaChevronDown, FaDiscord, FaImages,
   FaMicrophone, FaStop, FaLink, FaMagic, FaPen, FaBolt,
+  FaShieldAlt,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -580,6 +584,28 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [linkedinDocumentTitle, setLinkedinDocumentTitle] = useState(null);
   const [tiktokPrivacy,         setTiktokPrivacy]         = useState('public');
   const [tiktokAllowDuet,       setTiktokAllowDuet]       = useState(true);
+
+  const { user } = useAuth();
+  const [requiresApproval, setRequiresApproval] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const checkApprovalPolicy = async () => {
+      try {
+        const policy = await getWorkspaceApprovalPolicy();
+        if (active && policy?.enabled) {
+          const userRole = user?.role || 'owner';
+          if ((policy.required_for_roles || ['editor', 'client', 'viewer']).includes(userRole)) {
+            setRequiresApproval(true);
+          }
+        }
+      } catch {
+        // Solo plan or non-team workspace
+      }
+    };
+    checkApprovalPolicy();
+    return () => { active = false; };
+  }, [user?.role]);
   const [tiktokAllowStitch,     setTiktokAllowStitch]     = useState(true);
   const [tiktokAllowComments,   setTiktokAllowComments]   = useState(true);
 
@@ -647,6 +673,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [quickHooksLoading, setQuickHooksLoading] = useState(false);
   const [quickHooksSearch, setQuickHooksSearch] = useState('');
   const [quickHooksCategory, setQuickHooksCategory] = useState('all');
+
+  // ── Campaigns state ─────────────────────────────────────────────────────────
+  const [campaignsList, setCampaignsList] = useState([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState('');
+
+  useEffect(() => {
+    getCampaigns('active')
+      .then((data) => setCampaignsList(data || []))
+      .catch(() => {});
+  }, []);
 
   const loadQuickHooks = async (category = 'all', search = '') => {
     setQuickHooksLoading(true);
@@ -2022,6 +2058,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         tiktok_allow_duet: tiktokAllowDuet,
         tiktok_allow_stitch: tiktokAllowStitch,
         tiktok_allow_comment: tiktokAllowComments,
+        campaign_id: selectedCampaignId || undefined,
         platform_overrides: {},
         account_overrides: accountOverridesPayload,
       };
@@ -2037,6 +2074,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           post_type: postPayload.post_type,
           title: fallbackTitle || null,
           timezone: selectedTimezone,
+          campaign_id: selectedCampaignId || undefined,
           first_comment: commonFirstComment || firstComment || linkedinFirstComment || null,
           first_comment_enabled: Boolean((commonFirstComment && commonFirstComment.trim()) || (firstComment && firstComment.trim()) || (linkedinFirstComment && linkedinFirstComment.trim())),
           account_overrides: accountOverridesPayload,
@@ -2056,6 +2094,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         isEditMode
           ? (mode === 'scheduled' ? 'Post updated and rescheduled!' : 'Draft updated!')
           : mode === 'draft' ? 'Draft saved!' :
+        requiresApproval ? 'Post submitted for workspace approval!' :
         mode === 'now'   ? 'Post published!' :
         mode === 'timeslot' ? 'Post added to timeslot!' :
         'Post scheduled!'
@@ -2065,7 +2104,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         resetForm();
         resetComposerAudioSession();
       } else {
-        navigate('/content-library');
+        navigate(requiresApproval ? '/approvals' : '/content-library');
         onClose?.();
       }
     } catch (err) {
@@ -2340,6 +2379,39 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               </div>
             )}
           </div>
+
+          {/* Campaign Selector Bar */}
+          {campaignsList.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-2xl shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 text-xs">
+                  <FaBullhorn />
+                </span>
+                <span className="text-xs font-bold text-slate-700 dark:text-zinc-300">
+                  Campaign:
+                </span>
+                <select
+                  value={selectedCampaignId}
+                  onChange={(e) => setSelectedCampaignId(e.target.value)}
+                  className="text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">None (Individual Post)</option>
+                  {campaignsList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedCampaignId && (
+                <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Post clicks &amp; engagement will link to campaign ROI
+                </div>
+              )}
+            </div>
+          )}
 
           <PlatformEditor
             platform="common"
@@ -2830,9 +2902,16 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 size="sm"
                 onClick={() => handleSubmit('now')}
                 disabled={loading || hasBlockingErrors || Boolean(blockingSelectedTikTokRestriction)}
-                className="h-9 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+                className={`h-9 font-bold px-6 shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2 ${
+                  requiresApproval
+                    ? 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white'
+                    : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white'
+                }`}
               >
-                {loading ? 'Posting…' : 'Post Now'}
+                {requiresApproval && <FaShieldAlt className="text-xs" />}
+                {loading
+                  ? (requiresApproval ? 'Submitting…' : 'Posting…')
+                  : (requiresApproval ? 'Submit for Approval' : 'Post Now')}
               </Button>
 
               <Button
