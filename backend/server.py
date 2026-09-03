@@ -2828,7 +2828,11 @@ async def delete_account(current_user: User = Depends(get_current_user)):
     try:
         from celery_workers.tasks.gdpr import process_erasure_request
         process_erasure_request.apply_async(
-            kwargs={"user_id": current_user.user_id, "workspace_id": current_user.user_id},
+            kwargs={
+                "user_id": current_user.user_id,
+                "workspace_id": getattr(current_user, "default_workspace_id", current_user.user_id) or current_user.user_id,
+                "firebase_uid": getattr(current_user, "firebase_uid", None),
+            },
             queue="default",
         )
     except ImportError:

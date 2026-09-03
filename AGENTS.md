@@ -9,13 +9,14 @@ Focus: Analytics & Reports Overhaul — Real Metrics, CSV Export, Pop-up Free PD
 ## Last Session Completed
 Date: 2026-09-04
 Completed:
-- Legal & App Verification Overhaul:
-  - Entity Registration: Integrated Government of India Udyam MSME details for **UNRAVLER TECHNOLOGIES** (UDYAM-JH-20-0144275, Proprietor: Bindu Prasad, Ranchi, Jharkhand).
-  - Legal Pages (`Privacy.js`, `Terms.js`): Added Google API Limited Use compliance, Meta Graph permissions, India DPDP Act Grievance Officer details, and updated jurisdiction to Ranchi, Jharkhand, India.
-  - New Pages (`RefundPolicy.js`, `Contact.js`): Added 7-day money-back policy (mandatory for Razorpay/Stripe) and full corporate contact page with phone and inquiry form. Wired routes in `App.js` and links in `Footer.js`.
-  - Automated Data Deletion (`api/routes/webhooks.py`, `api/routes/user.py`, `DataDeletion.js`): Added Meta signed_request deletion & deauth webhooks, confirmation code generator, and public status API `GET /user/data-deletion-status/{code}` with live lookup in UI.
-  - Test Suite (`tests/test_meta_data_deletion.py`): Added unit tests for signed_request parsing, webhook deletion, and status API; verified 7/7 passing.
-  - Verified frontend production build (`main.37efaa03.js`).
+- Legal & App Verification Overhaul & Contact Email Standardized:
+  - Standardized corporate contact email to `contact@unravler.com` across all legal pages, contact forms, and email utilities.
+- Permanent Account Deletion Pipeline (GDPR / DPDP Compliant):
+  - Frontend (`Settings.js`): Added strict `DELETE` text typing confirmation dialog in Danger Zone, with disabled action state, loading indicators, and post-deletion logout.
+  - Auth Layer (`api/deps.py`): Immediately rejects (`403 Forbidden`) active tokens/sessions for accounts with `deletion_pending` or `deleted` status.
+  - Cascading Erasure Worker (`celery_workers/tasks/gdpr.py`): Purges all 18 collections (posts, social_accounts, media_assets, bio_pages, short_links, notifications, workspaces), deletes physical files from Cloudflare R2 / S3 storage, deletes Firebase Auth identity, cancels gateway subscriptions, and hard-deletes `db.users`.
+  - Test Suite (`tests/test_account_erasure.py`): Added 3 unit tests verifying queued status, 403 authorization lock, and cascading storage & collection purge (297/297 passing).
+  - Verified frontend build (`main.fd8bdee2.js`).
 
 ## Active Work
 Currently implementing: None

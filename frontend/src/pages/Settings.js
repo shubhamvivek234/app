@@ -254,6 +254,8 @@ const Settings = () => {
   const [resendingVerification, setResendingVerification] = useState(false);
   const [exportingData, setExportingData] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
   const [updatingPassword, setUpdatingPassword] = useState(false);
 
@@ -423,10 +425,16 @@ const Settings = () => {
   };
 
   const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'DELETE') {
+      toast.error('Please type DELETE to confirm account deletion.');
+      return;
+    }
     setDeletingAccount(true);
     try {
       await requestAccountDeletion();
-      toast.success('Account deletion queued. Your data will be removed within 30 days.');
+      toast.success('Account permanently queued for deletion. Signing out...');
+      setIsDeleteDialogOpen(false);
+      setDeleteConfirmText('');
       await logout();
     } catch (error) {
       toast.error(error?.response?.data?.detail || 'Failed to queue account deletion.');
@@ -822,7 +830,10 @@ const Settings = () => {
                 </div>
               </div>
 
-              <AlertDialog>
+              <AlertDialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+                setIsDeleteDialogOpen(open);
+                if (!open) setDeleteConfirmText('');
+              }}>
                 <AlertDialogTrigger asChild>
                   <Button variant="destructive" className="w-full">
                     Delete account
@@ -831,18 +842,42 @@ const Settings = () => {
                 <AlertDialogContent>
                   <AlertDialogHeader className="text-left sm:text-left">
                     <AlertDialogTitle>Delete your Unravler account?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This queues permanent deletion of your account, scheduled posts, media, and workspace data. The request cannot be undone after it is submitted.
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+                        <p>
+                          This permanently deletes your account, scheduled posts, uploaded media, connected social channels, and workspace data. This action <strong>cannot be undone</strong>.
+                        </p>
+                        <p className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+                          To confirm, please type <span className="font-mono font-bold underline tracking-wider">DELETE</span> below:
+                        </p>
+                      </div>
                     </AlertDialogDescription>
                   </AlertDialogHeader>
+
+                  <div className="py-2">
+                    <Input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Type DELETE to confirm"
+                      disabled={deletingAccount}
+                      className="border-rose-300 focus:border-rose-500 focus:ring-rose-500 font-mono text-sm tracking-wider"
+                      autoFocus
+                    />
+                  </div>
+
                   <AlertDialogFooter>
-                    <AlertDialogCancel disabled={deletingAccount}>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel
+                      disabled={deletingAccount}
+                      onClick={() => setDeleteConfirmText('')}
+                    >
+                      Cancel
+                    </AlertDialogCancel>
                     <AlertDialogAction
                       onClick={handleDeleteAccount}
-                      disabled={deletingAccount}
-                      className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-500"
+                      disabled={deletingAccount || deleteConfirmText !== 'DELETE'}
+                      className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {deletingAccount ? 'Deleting…' : 'Yes, queue deletion'}
+                      {deletingAccount ? 'Deleting…' : 'Permanently delete account'}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

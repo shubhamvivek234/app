@@ -362,6 +362,12 @@ async def get_current_user(
             detail="User profile is still being prepared. Please try again.",
         )
 
+    if user.get("status") in {"deletion_pending", "deleted"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been submitted for permanent deletion and is no longer accessible.",
+        )
+
     request.state.user_id = user["user_id"]
     return user
 
@@ -396,6 +402,12 @@ async def get_current_user_from_cookie(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="User profile is still being prepared. Please try again.",
+        )
+
+    if user.get("status") in {"deletion_pending", "deleted"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been submitted for permanent deletion and is no longer accessible.",
         )
 
     request.state.user_id = user["user_id"]

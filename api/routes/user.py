@@ -116,6 +116,7 @@ async def delete_account(
             kwargs={
                 "user_id": user_id,
                 "workspace_id": current_user.get("default_workspace_id", user_id),
+                "firebase_uid": current_user.get("firebase_uid"),
             },
             queue="default",
         )
