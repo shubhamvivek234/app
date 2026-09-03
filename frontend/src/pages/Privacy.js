@@ -7,142 +7,188 @@ const Privacy = () => {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
   return (
-    <div className="min-h-screen bg-offwhite">
-      <nav className="bg-offwhite border-b border-gray-100">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+      <nav className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16 items-center">
             <Link to="/" className="flex items-center space-x-2">
-              <UnravlerLogo size="small" showText={true} />
+              <UnravlerLogo size="default" showText={true} />
             </Link>
+            <div className="flex items-center space-x-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+              <Link to="/terms" className="hover:text-indigo-600 dark:hover:text-indigo-400">Terms</Link>
+              <Link to="/refund" className="hover:text-indigo-600 dark:hover:text-indigo-400">Refund Policy</Link>
+              <Link to="/contact" className="hover:text-indigo-600 dark:hover:text-indigo-400">Contact</Link>
+            </div>
           </div>
         </div>
       </nav>
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-8">Privacy Policy for Unravler</h1>
-
-        <div className="prose prose-slate max-w-none">
-          <p className="text-gray-600 mb-6">Last Updated: 2026-04-22</p>
-
-          <p className="text-gray-700 leading-relaxed mb-6">
-            Thank you for using Unravler ("we," "us," or "our"). This Privacy Policy explains how we collect, use, and share information when you use our websites and services (the "Service"), including:
-            https://unravler.com and https://app.unravler.com.
+        <div className="border-b border-slate-200 dark:border-slate-800 pb-8 mb-8">
+          <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 mb-3 border border-indigo-200/60 dark:border-indigo-800/60">
+            Legal Transparency &amp; DPDP Act Compliance
+          </span>
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-950 dark:text-white">
+            Privacy Policy
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+            Last Updated: September 04, 2026 &bull; Effective Date: September 01, 2026
           </p>
-          <p className="text-gray-700 leading-relaxed mb-6">
-            By accessing or using the Service, you agree to this Privacy Policy. If you do not agree, please do not use the Service.
-          </p>
+          <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+            <strong className="text-slate-900 dark:text-white font-semibold">Entity Declaration: </strong>
+            This Service (<a href="https://unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">unravler.com</a> and its subdomains) is owned, operated, and provided by <strong>UNRAVLER TECHNOLOGIES</strong> (Sole Proprietorship registered under Government of India Udyam MSME: <strong>UDYAM-JH-20-0144275</strong>), with its principal place of business at <em>Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</em>.
+          </div>
+        </div>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">1. Information We Collect</h2>
+        <div className="space-y-8 text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300">
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">1. Overview and Core Philosophy</h2>
+            <p className="mb-3">
+              At <strong>Unravler Technologies</strong> ("Unravler," "we," "us," or "our"), we respect your privacy and are committed to protecting personal and business data. This Privacy Policy details the exact types of information collected, processed, and secured when you access our cross-platform publishing platform, mobile-responsive bio pages, social CRM inbox, and analytics dashboard.
+            </p>
+            <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 font-medium">
+              &check; <strong>Our Non-Negotiable Commitment:</strong> We do not sell, rent, trade, monetize, or lease your personal information, customer contacts, or social media tokens to data brokers, marketing agencies, or any third parties. Your data is used strictly to provide and operate the Unravler services you authorize.
+            </div>
+          </section>
 
-            <h3 className="text-xl font-semibold text-gray-900 mb-2 mt-4">1.1 Personal Data</h3>
-            <p className="text-gray-700 leading-relaxed mb-2">We collect the following personal information from you:</p>
-            <ul className="list-disc pl-6 space-y-2 text-gray-700 mb-4">
-              <li><strong>Name:</strong> We collect your name to personalize your experience and communicate with you effectively.</li>
-              <li><strong>Email:</strong> We collect your email address to send you important information regarding your account, updates, and communication.</li>
-              <li><strong>Billing Details:</strong> Subscription and payment status related to your plan. Payment card details are processed by our payment providers; we do not store full card numbers on our servers.</li>
-              <li><strong>Social Account Connection Data:</strong> When you connect a social account (such as Instagram), we receive and store identifiers and access tokens needed to provide posting and account-management features.</li>
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">2. Information We Collect</h2>
+            <h3 className="font-semibold text-slate-900 dark:text-white mt-3 mb-1">2.1 User-Supplied Information</h3>
+            <ul className="list-disc pl-6 space-y-1.5 mb-4">
+              <li><strong>Account Credentials:</strong> Full name, verified email address, workspace name, and password hashes (stored strictly via one-way bcrypt hashing; plaintext passwords are never saved).</li>
+              <li><strong>Billing &amp; Transaction Details:</strong> Name, billing address, and payment confirmation status. Full credit/debit card numbers, UPI VPAs, and bank credentials are handled directly by PCI-DSS certified payment gateways (e.g. Razorpay, Stripe); Unravler never stores card numbers on its servers.</li>
+              <li><strong>User Content:</strong> Text captions, hashtags, images, videos, audio mixes, and scheduling timestamps uploaded for publishing.</li>
             </ul>
 
-            <h3 className="text-xl font-semibold text-gray-900 mb-2 mt-4">1.2 Non-Personal Data</h3>
-            <p className="text-gray-700 leading-relaxed">
-              We may collect usage data such as IP address (approximate), device/browser information, pages viewed, and interactions. We may use cookies or similar technologies to keep you signed in and to understand how the Service is used.
+            <h3 className="font-semibold text-slate-900 dark:text-white mt-3 mb-1">2.2 Social Network OAuth Data</h3>
+            <p className="mb-2">
+              When you connect third-party platforms (including Instagram, Facebook, LinkedIn, YouTube, TikTok, X, Threads, and Bluesky), we receive scoped OAuth 2.0 access tokens. We collect:
             </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">2. Purpose of Data Collection</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We use information to operate the Service, including account creation and login, connecting social accounts, publishing content on your behalf, customer support, billing/subscription management, security/fraud prevention, and product analytics and improvements.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">3. Social Platform Integrations (Including Instagram)</h2>
-            <p className="text-gray-700 leading-relaxed">
-              If you choose to connect a social media account (for example, Instagram), you authorize us to access and act on that account according to the permissions you grant during the login/authorization flow. We use that access to provide features such as reading basic profile/account details, publishing content, and managing messages/comments where supported.
-            </p>
-            <p className="text-gray-700 leading-relaxed mt-4">
-              You can disconnect a social account at any time from within the Service. Disconnecting stops future actions from Unravler, but it may not revoke previously granted permissions at the platform level. You can also revoke access from within the social platform’s settings.
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">4. YouTube API Services</h2>
-            <p className="text-gray-700 leading-relaxed">
-              Unravler may use YouTube API Services. By using our Service to interact with YouTube, you are also subject to the YouTube Terms of Service (https://www.youtube.com/t/terms) and Google’s Privacy Policy (https://policies.google.com/privacy).
-            </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">5. Data Sharing</h2>
-            <p className="text-gray-700 leading-relaxed mb-4">
-              We share information only as needed to run the Service:
-            </p>
-            <ul className="list-disc pl-6 space-y-2 text-gray-700 mb-4">
-              <li><strong>Service Providers:</strong> Hosting, database, analytics, email, and payment processing vendors that help us operate the Service (for example, AWS/Vercel, MongoDB Atlas, PostHog, Resend, and payment processors like Stripe/Razorpay/PayPal).</li>
-              <li><strong>Social Platforms:</strong> When you connect an account or publish content, we transmit the necessary data to the platform APIs you choose (for example, Instagram).</li>
-              <li><strong>Legal/Safety:</strong> If required by law, or to protect the rights, safety, and security of users and the Service.</li>
+            <ul className="list-disc pl-6 space-y-1.5">
+              <li>Public profile data: Username, profile handle, avatar image URL, and platform user ID.</li>
+              <li>Encrypted OAuth access and refresh tokens necessary to post content and read performance analytics on your behalf.</li>
             </ul>
           </section>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">6. Children's Privacy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              Unravler is not intended for children under 13 (or the minimum age required in your jurisdiction). We do not knowingly collect personal information from children.
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">3. Google API Services &amp; YouTube Limited Use Disclosure</h2>
+            <p className="mb-3">
+              Unravler integrates with Google API Services and the YouTube API Services to allow you to upload and schedule video content to your connected YouTube channels.
+            </p>
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+              <p className="font-medium text-slate-900 dark:text-white">
+                Google API Services User Data Policy Compliance:
+              </p>
+              <p className="italic text-slate-800 dark:text-slate-200">
+                "Unravler's use and transfer to any other app of information received from Google APIs will adhere to the{' '}
+                <a
+                  href="https://developers.google.com/terms/api-services-user-data-policy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-600 dark:text-indigo-400 underline font-semibold"
+                >
+                  Google API Services User Data Policy
+                </a>
+                , including the Limited Use requirements."
+              </p>
+            </div>
+            <p className="mt-3">
+              By connecting your YouTube account, you also agree to be bound by the{' '}
+              <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 underline">
+                YouTube Terms of Service
+              </a>{' '}
+              and the{' '}
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 underline">
+                Google Privacy Policy
+              </a>.
+            </p>
+            <p className="mt-2">
+              You can view and revoke Unravler's access to your Google account at any time via the{' '}
+              <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 underline font-medium">
+                Google Security Account Permissions Page
+              </a>.
             </p>
           </section>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">7. Data Retention</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We keep your information for as long as needed to provide the Service and comply with legal obligations. If you delete your account, we delete or de-identify your data consistent with operational and legal requirements.
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">4. Meta (Facebook &amp; Instagram) Permissions</h2>
+            <p className="mb-2">
+              For Facebook Pages and Instagram Professional/Creator accounts, Unravler requests the following explicit Meta Graph API permissions:
             </p>
-          </section>
-
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">8. Your Choices &amp; Data Deletion</h2>
-            <p className="text-gray-700 leading-relaxed mb-4">
-              You can manage, export, or delete your data from inside the app:
-            </p>
-            <ul className="list-disc pl-6 space-y-2 text-gray-700 mb-4">
-              <li><strong>Export:</strong> Go to Settings → Privacy &amp; Data → Export My Data.</li>
-              <li><strong>Delete:</strong> Go to Settings → Privacy &amp; Data → Delete Account.</li>
-              <li><strong>Disconnect social accounts:</strong> Use Connected Accounts inside the app.</li>
+            <ul className="list-disc pl-6 space-y-2">
+              <li><code className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-indigo-600 dark:text-indigo-400">instagram_basic</code>: Used to retrieve profile identifiers, username, and account profile picture.</li>
+              <li><code className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-indigo-600 dark:text-indigo-400">instagram_content_publish</code>: Used to schedule, validate, and publish photos, Reels, and carousels directly to your Instagram account.</li>
+              <li><code className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-indigo-600 dark:text-indigo-400">pages_show_list</code>: Used to list Facebook Pages you administer so you can select which pages to connect.</li>
+              <li><code className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono text-indigo-600 dark:text-indigo-400">pages_manage_posts</code>: Used to dispatch scheduled posts, stories, and videos to your chosen Facebook Pages.</li>
             </ul>
-            <p className="text-gray-700 leading-relaxed">
-              If you need help with data deletion or account access, contact us at the email below.
+            <p className="mt-3">
+              We provide automated data erasure for Meta users in accordance with Meta Platform Terms. Please visit our{' '}
+              <Link to="/data-deletion" className="text-indigo-600 dark:text-indigo-400 underline font-semibold">
+                User Data Deletion Instructions page
+              </Link>{' '}
+              for instant deauthorization steps and confirmation status checks.
             </p>
           </section>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">9. Security</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We use reasonable technical and organizational measures to protect information, including access controls and encryption in transit (TLS). No method of transmission or storage is 100% secure, so we cannot guarantee absolute security.
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">5. Data Security &amp; Encryption Standards</h2>
+            <p className="mb-2">
+              We employ industry-grade physical, technical, and procedural safeguards:
             </p>
+            <ul className="list-disc pl-6 space-y-1.5">
+              <li><strong>Encryption at Rest:</strong> All OAuth tokens, refresh keys, and sensitive access tokens are encrypted using AES-256-GCM prior to storage in our databases.</li>
+              <li><strong>Encryption in Transit:</strong> All HTTP traffic to and from Unravler APIs is enforced over TLS 1.3 encryption.</li>
+              <li><strong>Access Controls:</strong> Server infrastructure and databases operate with least-privilege role boundaries and IP-restricted firewalls.</li>
+            </ul>
           </section>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">10. Updates to the Privacy Policy</h2>
-            <p className="text-gray-700 leading-relaxed">
-              We may update this Privacy Policy from time to time. The "Last Updated" date above reflects the most recent revision.
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">6. Digital Personal Data Protection (DPDP) Act Compliance &amp; Grievance Redressal</h2>
+            <p className="mb-3">
+              In full compliance with India's Digital Personal Data Protection (DPDP) Act, 2023 and the Information Technology (Reasonable Security Practices and Procedures and Sensitive Personal Data or Information) Rules, 2011, Indian Data Principals have the right to access, rectify, erase, or withdraw consent for processing their personal data.
             </p>
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+              <h4 className="font-bold text-slate-950 dark:text-white text-base mb-2">Designated Grievance Redressal Officer</h4>
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                In accordance with Rule 5(9) of the IT Rules and DPDP statutory requirements, the details of our Grievance Officer are:
+              </p>
+              <div className="mt-3 space-y-1 text-xs sm:text-sm font-medium">
+                <div><span className="text-slate-500">Name:</span> <strong className="text-slate-900 dark:text-white">Bindu Prasad</strong></div>
+                <div><span className="text-slate-500">Designation:</span> Proprietor &amp; Grievance Redressal Officer</div>
+                <div><span className="text-slate-500">Enterprise:</span> Unravler Technologies (UDYAM-JH-20-0144275)</div>
+                <div><span className="text-slate-500">Physical Address:</span> Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
+                <div><span className="text-slate-500">Official Email:</span> <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a> / <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a></div>
+                <div><span className="text-slate-500">Phone:</span> +91 9031777441</div>
+                <div><span className="text-slate-500">Response SLA:</span> Acknowledgment within 24 hours; resolution within 15 business days.</div>
+              </div>
+            </div>
           </section>
 
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-4">11. Contact Information</h2>
-            <p className="text-gray-700 leading-relaxed mb-2">
-              If you have any questions, concerns, or requests related to this Privacy Policy, you can contact us at:
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">7. Data Retention and Account Erasure</h2>
+            <p className="mb-2">
+              We retain your account data and post history for as long as your workspace remains active. When you cancel or delete your account:
             </p>
-            <p className="text-gray-700 leading-relaxed font-medium">
-              Email: contact@unravler.com
-            </p>
+            <ul className="list-disc pl-6 space-y-1.5">
+              <li>All active OAuth tokens across all platforms are permanently invalidated and deleted.</li>
+              <li>Your drafts, scheduled queues, and cached analytics are purged from our primary database within 30 days.</li>
+              <li>You can trigger immediate erasure via <strong>Settings &rarr; Delete Account</strong> or by following our <Link to="/data-deletion" className="text-indigo-600 dark:text-indigo-400 underline font-semibold">Data Deletion Guide</Link>.</li>
+            </ul>
           </section>
 
-          <p className="text-gray-700 leading-relaxed mt-8 font-semibold">
-            By using Unravler, you consent to the terms of this Privacy Policy.
-          </p>
+          <section>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">8. Contact Us</h2>
+            <p>
+              If you have any questions, inquiries, or privacy requests regarding this Privacy Policy, please contact our support desk or visit our <Link to="/contact" className="text-indigo-600 dark:text-indigo-400 underline font-semibold">Contact Page</Link>:
+            </p>
+            <p className="mt-2 font-medium">
+              <strong>UNRAVLER TECHNOLOGIES</strong><br />
+              Email: <a href="mailto:support@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">support@unravler.com</a> / <a href="mailto:findbinduprasad@zohomail.in" className="text-indigo-600 dark:text-indigo-400 underline">findbinduprasad@zohomail.in</a><br />
+              Address: Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India
+            </p>
+          </section>
         </div>
       </div>
 

@@ -22,7 +22,7 @@ const Footer = () => {
                 <span className="font-medium text-indigo-600 mt-2 inline-block">Cross posting made easy.</span>
               </p>
               <p className="text-xs text-gray-500 mt-auto">
-                Copyright © 2026 - All rights reserved
+                Copyright © 2026 Unravler Technologies. All rights reserved.
               </p>
             </div>
 
@@ -89,8 +89,10 @@ const Footer = () => {
             <div>
               <h3 className="text-sm font-bold text-gray-900 mb-8 uppercase tracking-wider">Legal</h3>
               <ul className="space-y-4">
-                <li><Link to="/terms" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Terms of services</Link></li>
+                <li><Link to="/terms" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Terms of service</Link></li>
                 <li><Link to="/privacy" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Privacy policy</Link></li>
+                <li><Link to="/refund" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Refund policy</Link></li>
+                <li><Link to="/contact" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Contact us</Link></li>
                 <li><Link to="/data-deletion" className="text-sm text-gray-600 hover:text-indigo-600 transition-colors">Data deletion</Link></li>
               </ul>
             </div>

@@ -7,19 +7,20 @@ Branch: main
 Focus: Analytics & Reports Overhaul — Real Metrics, CSV Export, Pop-up Free PDF, Dark Theme UI
 
 ## Last Session Completed
-Date: 2026-09-02
+Date: 2026-09-04
 Completed:
-- Analytics & Reports Overhaul:
-  - Backend (`api/routes/analytics.py`): Replaced synthetic multipliers with real database aggregations for impressions, engagements, engagement rate; sorted top posts by engagement; added `POST /analytics/report/export-csv` returning structured post metrics.
-  - Test Suite (`tests/test_analytics_reports.py`): Added `test_export_analytics_csv`, verified 3/3 passing.
-  - Export Modal (`ExportReportModal.js`): Added 3-tab layout (CSV, Branded PDF, Automated Schedule); replaced `window.open` with hidden iframe printing to prevent browser popup blockers; added direct CSV Blob download.
-  - Frontend UI (`Analytics.js`): Unified dark-mode styling across metrics cards, tooltips, channel sidebar, Recharts CartesianGrid, empty states, and added separate "Export CSV" and "Executive Report" actions in the header.
-  - Verified frontend production build (`main.b2a3662d.js`).
+- Legal & App Verification Overhaul:
+  - Entity Registration: Integrated Government of India Udyam MSME details for **UNRAVLER TECHNOLOGIES** (UDYAM-JH-20-0144275, Proprietor: Bindu Prasad, Ranchi, Jharkhand).
+  - Legal Pages (`Privacy.js`, `Terms.js`): Added Google API Limited Use compliance, Meta Graph permissions, India DPDP Act Grievance Officer details, and updated jurisdiction to Ranchi, Jharkhand, India.
+  - New Pages (`RefundPolicy.js`, `Contact.js`): Added 7-day money-back policy (mandatory for Razorpay/Stripe) and full corporate contact page with phone and inquiry form. Wired routes in `App.js` and links in `Footer.js`.
+  - Automated Data Deletion (`api/routes/webhooks.py`, `api/routes/user.py`, `DataDeletion.js`): Added Meta signed_request deletion & deauth webhooks, confirmation code generator, and public status API `GET /user/data-deletion-status/{code}` with live lookup in UI.
+  - Test Suite (`tests/test_meta_data_deletion.py`): Added unit tests for signed_request parsing, webhook deletion, and status API; verified 7/7 passing.
+  - Verified frontend production build (`main.37efaa03.js`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Implement legal & app verification roadmap (`docs/APP_VERIFICATION_AND_LEGAL_PLAN.md`) when business details are provided.
+- Implement Postly-inspired features from roadmap (Phase 1: Workspace Approval Governance, AI Remix for Recurring Posts, First Comment Scheduling).
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

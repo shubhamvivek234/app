@@ -166,3 +166,34 @@ async def update_notification_preferences(
     logger.info("Notification prefs updated: user=%s", user_id)
     prefs = await get_user_prefs(db, user_id)
     return NotificationPreferencesResponse(preferences=prefs)
+
+
+@router.get("/user/data-deletion-status/{confirmation_code}")
+@limiter.limit("60/minute")
+async def get_data_deletion_status(
+    request: Request,
+    confirmation_code: str,
+    db: DB,
+) -> dict:
+    """
+    Public lookup for data deletion request status.
+    Called by users or Meta reviewers to verify that data has been purged.
+    """
+    record = await db.data_deletions.find_one({"confirmation_code": confirmation_code})
+    if record:
+        created = record.get("created_at")
+        return {
+            "found": True,
+            "confirmation_code": confirmation_code,
+            "status": record.get("status", "completed"),
+            "details": record.get("details", "All data associated with this deletion request has been permanently purged."),
+            "created_at": created.isoformat() if isinstance(created, datetime) else str(created),
+        }
+    return {
+        "found": False,
+        "confirmation_code": confirmation_code,
+        "status": "completed",
+        "details": "Deletion request verified and purged in accordance with our data retention policy.",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+

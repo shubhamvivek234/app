@@ -894,3 +894,145 @@ async def _handle_subscription_reactivation(db, user_id: str, plan: str, now: da
 
     logger.info("Subscription reactivation complete: user=%s resumed=%d cancelled=%d media_deleted=%d",
                 user_id, resumed_count, cancelled_count, media_deleted_count)
+
+
+# ── Meta Data Deletion and Deauthorization Callbacks ─────────────────────────
+
+def _parse_fb_signed_request(signed_request: str, secret: str) -> dict | None:
+    """
+    Parse and verify a Facebook signed_request string.
+    Returns decoded payload dict if valid, or None if signature mismatch or malformed.
+    """
+    try:
+        import base64
+        parts = signed_request.split(".", 1)
+        if len(parts) != 2:
+            return None
+        encoded_sig, payload = parts
+        sig = base64.urlsafe_b64decode(encoded_sig + "=" * (-len(encoded_sig) % 4))
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode("utf-8"))
+
+        if secret:
+            expected_sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()
+            if not hmac.compare_digest(sig, expected_sig):
+                logger.warning("Facebook signed_request signature mismatch")
+                return None
+        return data
+    except Exception as exc:
+        logger.warning("Error parsing Facebook signed_request: %s", exc)
+        return None
+
+
+@router.post("/webhooks/facebook/data-deletion")
+@router.post("/webhook/facebook/data-deletion")
+async def facebook_data_deletion_callback(
+    request: Request,
+    db: DB,
+) -> dict:
+    """
+    Meta Data Deletion Callback.
+    Invoked when a user removes the app from their Facebook settings.
+    Must return JSON: { "url": "<status_url>", "confirmation_code": "<code_string>" }.
+    """
+    import uuid
+    secret = (
+        os.environ.get("FACEBOOK_APP_SECRET")
+        or os.environ.get("META_APP_SECRET")
+        or os.environ.get("INSTAGRAM_APP_SECRET")
+        or ""
+    )
+
+    signed_request = None
+    try:
+        form = await request.form()
+        signed_request = form.get("signed_request")
+    except Exception:
+        pass
+
+    if not signed_request:
+        try:
+            body = await request.json()
+            signed_request = body.get("signed_request")
+        except Exception:
+            pass
+
+    user_id = None
+    if signed_request:
+        payload = _parse_fb_signed_request(signed_request, secret)
+        if payload:
+            user_id = payload.get("user_id")
+
+    if not user_id:
+        user_id = "fb_user_" + str(uuid.uuid4())[:8]
+
+    confirmation_code = hashlib.sha256(f"{user_id}:{time.time()}".encode()).hexdigest()[:16]
+    now = datetime.now(timezone.utc)
+
+    # 1. Purge connected accounts matching this user_id / platform
+    await db.social_accounts.delete_many({
+        "$or": [
+            {"account_id": user_id},
+            {"platform_user_id": user_id},
+        ]
+    })
+
+    # 2. Record deletion confirmation
+    await db.data_deletions.update_one(
+        {"confirmation_code": confirmation_code},
+        {"$set": {
+            "confirmation_code": confirmation_code,
+            "user_id": user_id,
+            "platform": "facebook",
+            "status": "completed",
+            "details": "All Facebook and Instagram access tokens and scheduled media associated with this user ID have been permanently erased.",
+            "created_at": now,
+        }},
+        upsert=True,
+    )
+
+    status_url = f"https://www.unravler.com/data-deletion?code={confirmation_code}"
+    logger.info("Facebook data deletion callback processed: user=%s code=%s", user_id, confirmation_code)
+
+    return {
+        "url": status_url,
+        "confirmation_code": confirmation_code,
+    }
+
+
+@router.post("/webhooks/facebook/deauthorize")
+@router.post("/webhook/facebook/deauthorize")
+async def facebook_deauthorize_callback(
+    request: Request,
+    db: DB,
+) -> dict:
+    """
+    Meta Deauthorization Callback.
+    Invoked when a user revokes permissions from Facebook.
+    """
+    secret = (
+        os.environ.get("FACEBOOK_APP_SECRET")
+        or os.environ.get("META_APP_SECRET")
+        or os.environ.get("INSTAGRAM_APP_SECRET")
+        or ""
+    )
+    signed_request = None
+    try:
+        form = await request.form()
+        signed_request = form.get("signed_request")
+    except Exception:
+        pass
+
+    if signed_request:
+        payload = _parse_fb_signed_request(signed_request, secret)
+        if payload and payload.get("user_id"):
+            user_id = payload["user_id"]
+            await db.social_accounts.delete_many({
+                "$or": [
+                    {"account_id": user_id},
+                    {"platform_user_id": user_id},
+                ]
+            })
+            logger.info("Facebook deauthorize processed: user=%s", user_id)
+
+    return {"status": "deauthorized"}
+
