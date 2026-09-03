@@ -211,7 +211,6 @@ const DataDeletion = () => {
               <div><strong>Enterprise:</strong> UNRAVLER TECHNOLOGIES</div>
               <div><strong>Address:</strong> Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
               <div><strong>Email:</strong> <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
-              <div><strong>Phone:</strong> +91 9031777441</div>
             </div>
           </section>
         </div>

@@ -118,7 +118,6 @@ const RefundPolicy = () => {
               <div><strong>UNRAVLER TECHNOLOGIES</strong> &bull; Billing Department</div>
               <div>Address: Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
               <div>Email: <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
-              <div>Phone / WhatsApp: +91 9031777441</div>
               <div>Operating Hours: Monday – Saturday, 9:00 AM – 6:00 PM IST (Response within 24 hours)</div>
             </div>
           </section>

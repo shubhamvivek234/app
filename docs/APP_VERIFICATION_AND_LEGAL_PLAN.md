@@ -18,7 +18,6 @@ All legal and policy pages across Unravler must use the following verified detai
 | **Proprietor / Owner** | **BINDU PRASAD** |
 | **Permanent Account Number (PAN)**| `AKOPP5096M` |
 | **Registered Business Address** | **Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India** |
-| **Official Contact Number** | `+91 9031777441` |
 | **Official Email** | `contact@unravler.com` |
 | **Designated Grievance Officer** | **Bindu Prasad** (`contact@unravler.com`) |
 | **Governing Law & Jurisdiction** | **Courts of Ranchi, Jharkhand, India** |
@@ -53,7 +52,7 @@ All legal and policy pages across Unravler must use the following verified detai
 4. **`/contact` (`frontend/src/pages/Contact.js`) [NEW]**:
    - Standalone Contact Us page required for merchant validation.
    - Displays official enterprise address: `Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand - 834002, India`.
-   - Contact phone: `+91 9031777441`, Email: `contact@unravler.com`.
+   - Official Support Email: `contact@unravler.com`.
    - Operating hours and support ticket response SLA (< 24 hours).
    - Grievance Redressal Officer box.
 

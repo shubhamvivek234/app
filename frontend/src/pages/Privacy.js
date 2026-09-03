@@ -160,7 +160,6 @@ const Privacy = () => {
                 <div><span className="text-slate-500">Enterprise:</span> Unravler Technologies (UDYAM-JH-20-0144275)</div>
                 <div><span className="text-slate-500">Physical Address:</span> Om Niwas, Near Over Bridge, Anantpur Road, New Anantpur, Ranchi, Jharkhand – 834002, India</div>
                 <div><span className="text-slate-500">Official Email:</span> <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline">contact@unravler.com</a></div>
-                <div><span className="text-slate-500">Phone:</span> +91 9031777441</div>
                 <div><span className="text-slate-500">Response SLA:</span> Acknowledgment within 24 hours; resolution within 15 business days.</div>
               </div>
             </div>

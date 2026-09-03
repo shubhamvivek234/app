@@ -11,12 +11,13 @@ Date: 2026-09-04
 Completed:
 - Legal & App Verification Overhaul & Contact Email Standardized:
   - Standardized corporate contact email to `contact@unravler.com` across all legal pages, contact forms, and email utilities.
+  - Removed phone / WhatsApp details (+91 9031777441) from Contact, Terms, Privacy, Data Deletion, and Refund pages to rely on official email and web contact.
 - Permanent Account Deletion Pipeline (GDPR / DPDP Compliant):
   - Frontend (`Settings.js`): Added strict `DELETE` text typing confirmation dialog in Danger Zone, with disabled action state, loading indicators, and post-deletion logout.
   - Auth Layer (`api/deps.py`): Immediately rejects (`403 Forbidden`) active tokens/sessions for accounts with `deletion_pending` or `deleted` status.
   - Cascading Erasure Worker (`celery_workers/tasks/gdpr.py`): Purges all 18 collections (posts, social_accounts, media_assets, bio_pages, short_links, notifications, workspaces), deletes physical files from Cloudflare R2 / S3 storage, deletes Firebase Auth identity, cancels gateway subscriptions, and hard-deletes `db.users`.
   - Test Suite (`tests/test_account_erasure.py`): Added 3 unit tests verifying queued status, 403 authorization lock, and cascading storage & collection purge (297/297 passing).
-  - Verified frontend build (`main.fd8bdee2.js`).
+  - Verified frontend build (`main.1ecc0c08.js`).
 
 ## Active Work
 Currently implementing: None

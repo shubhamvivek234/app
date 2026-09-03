@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import {
   FaMapMarkerAlt,
   FaEnvelope,
-  FaPhoneAlt,
   FaClock,
   FaShieldAlt,
   FaPaperPlane,
@@ -99,19 +98,6 @@ const Contact = () => {
                     <a href="mailto:contact@unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium block mt-0.5">
                       contact@unravler.com
                     </a>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
-                    <FaPhoneAlt className="text-sm" />
-                  </div>
-                  <div>
-                    <span className="text-xs uppercase font-bold tracking-wider text-slate-400 block">Direct Telephone</span>
-                    <span className="font-semibold text-slate-900 dark:text-white block mt-0.5">
-                      +91 9031777441
-                    </span>
-                    <span className="text-[11px] text-slate-500 block">Voice &amp; WhatsApp Business Support</span>
                   </div>
                 </div>
 
