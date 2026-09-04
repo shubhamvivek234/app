@@ -16,7 +16,7 @@ Completed:
   * Auto silent audio track injection (`anullsrc`) for platforms requiring audio streams.
 - Transformation API Endpoints (`api/routes/upload.py`): `auto-fit-vertical`, `auto-compress`, and `add-silent-audio`.
 - Post Composer 1-Click Fixes (`PlatformEditor.js`, `CreatePostForm.js`, `mediaValidation.js`): Interactive 1-click action buttons on validation errors, warnings, and media thumbnails.
-- Test Suite: 325/325 backend tests passing; 19/19 Jest tests passing; frontend production build clean (`main.2617a123.js`).
+- Test Suite: 327/327 backend tests passing; 19/19 Jest tests passing; frontend production build clean (`main.2617a123.js`).
 
 ## Active Work
 Currently implementing: None
