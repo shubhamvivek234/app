@@ -15,10 +15,16 @@ Completed:
   - Phase 3: Dedicated Campaigns Hub (`api/routes/campaigns.py`, `Campaigns.js`, `App.js`, `DashboardLayout.js`, `CreatePostForm.js`), Social Inbox Lead Tagging & CRM Lite (`api/routes/inbox.py`, `Inbox.js`), Thread Splitter Utility (`utils/thread_splitter.py`).
   - Test Suite: 9/9 new tests passing in `tests/test_phase1_postly_features.py`; all 306 backend tests passing; frontend build clean (`main.a3c1ef9f.js`).
 
+- Star Button & Particles Integration Shipped & Deployed:
+  - Created `star-button.tsx`, `star-button.jsx`, and `demo.tsx` in `frontend/src/components/ui/`.
+  - Integrated 6-star cubic-bezier particle hover burst into the "Create New Post" buttons in `DashboardLayout.js` and `Dashboard.js`.
+  - Deployed live to production on Vercel (`https://www.unravler.com`, bundle `main.c15f2785.js`).
+  - Synced with EC2 repository (`ubuntu@51.20.210.184`).
+
 ## Active Work
-Currently implementing: Deployment & Verification
+Currently implementing: None
 Next:
-- Deploy to EC2 production backend and verify live endpoints.
+- Monitor live user interactions on Create New Post button and Campaigns Hub.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
