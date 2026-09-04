@@ -25,6 +25,8 @@ import {
   FaInbox,
   FaChevronDown,
   FaChevronUp,
+  FaChevronLeft,
+  FaChevronRight,
   FaMoon,
   FaSun,
   FaRegClock,
@@ -132,7 +134,23 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { isDarkMode, toggleDarkMode } = useTheme();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('unravler_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('unravler_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const isCalendarOrPostRoute = location.pathname.startsWith('/calendar') || location.pathname.startsWith('/content-library');
   const [calendarExpanded, setCalendarExpanded] = useState(true);
@@ -144,6 +162,13 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
         if (targetTag !== 'input' && targetTag !== 'textarea') {
           e.preventDefault();
           navigate('/create-post');
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        const targetTag = e.target?.tagName?.toLowerCase();
+        if (targetTag !== 'input' && targetTag !== 'textarea') {
+          e.preventDefault();
+          toggleSidebar();
         }
       }
     };
@@ -550,7 +575,52 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
           </div>
         </div>
 
+        {/* Bottom Sidebar Collapse Action Button */}
+        <div className="p-2 border-t border-gray-100 dark:border-gray-800 flex-shrink-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xs">
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title={collapsed ? "Expand sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={`w-full flex items-center rounded-xl text-xs font-semibold text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white hover:bg-gray-100/80 dark:hover:bg-gray-800/80 transition-all ${
+              collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2'
+            }`}
+          >
+            {collapsed ? (
+              <FaChevronRight className="text-xs flex-shrink-0 text-gray-400 dark:text-gray-500" />
+            ) : (
+              <>
+                <FaChevronLeft className="text-xs flex-shrink-0 text-gray-400 dark:text-gray-500" />
+                <span className="truncate text-[11px] font-medium">Collapse sidebar</span>
+                <kbd className="ml-auto text-[9px] font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded border border-gray-200 dark:border-gray-700">
+                  ⌘B
+                </kbd>
+              </>
+            )}
+          </button>
+        </div>
+
       </div>
+
+      {/* Floating small arrow button to collapse/expand sidebar */}
+      {!hideSidebar && (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          title={collapsed ? "Expand sidebar (⌘B)" : "Collapse sidebar (⌘B)"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          data-testid="collapse-sidebar-arrow-button"
+          className={`fixed top-[4.5rem] z-50 -ml-3 flex items-center justify-center w-6 h-6 rounded-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-md hover:shadow-lg text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:scale-110 active:scale-95 transition-all duration-200 cursor-pointer ${
+            collapsed ? 'left-16' : 'left-64'
+          }`}
+        >
+          {collapsed ? (
+            <FaChevronRight className="text-[10px] ml-0.5" />
+          ) : (
+            <FaChevronLeft className="text-[10px] mr-0.5" />
+          )}
+        </button>
+      )}
 
       <div className={`pt-14 transition-all duration-200 ${hideSidebar ? 'ml-0' : collapsed ? 'ml-16' : 'ml-64'}`}>
         <main className={hideSidebar || noPadding ? 'h-[calc(100vh-3.5rem)] overflow-hidden' : 'p-6'}>{children}</main>
