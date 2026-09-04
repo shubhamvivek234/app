@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
-import { validateCommonPostPlatform } from '@/lib/mediaValidation';
+import { validateCommonPostPlatform, COMMON_POST_RULES, PLATFORM_LIMITS } from '@/lib/mediaValidation';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -1543,7 +1543,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           const arr = [...override.media];
           const [moved] = arr.splice(fromIndex, 1);
           arr.splice(toIndex, 0, moved);
-          next[accId] = { ...override, media: arr };
+          let altArr = override.altTexts;
+          if (Array.isArray(override.altTexts) && override.altTexts.length > Math.max(fromIndex, toIndex)) {
+            altArr = [...override.altTexts];
+            const [movedAlt] = altArr.splice(fromIndex, 1);
+            altArr.splice(toIndex, 0, movedAlt);
+          }
+          next[accId] = { ...override, media: arr, altTexts: altArr };
         }
       });
       return next;
@@ -2125,6 +2131,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     if (mode !== 'draft' && hasBlockingErrors) {
       toast.error('Resolve all Common Post errors before posting or scheduling.');
       return;
+    }
+    if (mode !== 'draft') {
+      const missingMediaAccount = selectedAccounts
+        .map((accountId) => availableAccounts.find((a) => a.id === accountId))
+        .find((account) => {
+          if (!account) return false;
+          const rule = COMMON_POST_RULES[account.platform];
+          if (rule && !rule.allowTextOnly) {
+            const media = getEffectiveMediaForAccount(account.id);
+            return media.length === 0;
+          }
+          return false;
+        });
+      if (missingMediaAccount) {
+        const platformLabel = PLATFORM_LIMITS[missingMediaAccount.platform]?.label || missingMediaAccount.platform;
+        toast.error(`${platformLabel} requires media. Please attach an image or video before posting or scheduling.`);
+        return;
+      }
     }
     if (mode !== 'draft' && blockingSelectedTikTokRestriction) {
       toast.error('Reconnect or change the restricted TikTok account before posting.');

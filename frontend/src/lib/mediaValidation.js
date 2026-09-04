@@ -157,7 +157,7 @@ const PLATFORM_ASPECT_RULES = {
 
 const ASPECT_RATIO_TOLERANCE = 0.1;
 
-const COMMON_POST_RULES = {
+export const COMMON_POST_RULES = {
   facebook: {
     allowTextOnly: true,
     maxImages: 10,

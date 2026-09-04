@@ -110,4 +110,68 @@ describe('mediaValidation', () => {
     expect(result.platforms.find((p) => p.platform === 'twitter').shortLabel).toBe('X');
     expect(result.platforms.find((p) => p.platform === 'instagram').shortLabel).toBe('IG');
   });
+
+  describe('validateCommonPostPlatform', () => {
+    it('enforces character limit per platform', () => {
+      const longText = 'A'.repeat(300);
+      const twitterVal = validateCommonPostPlatform('twitter', { caption: longText });
+      expect(twitterVal.errors.some((e) => e.includes('maximum is 280') || e.includes('Maximum is 280'))).toBe(true);
+
+      const linkedinVal = validateCommonPostPlatform('linkedin', { caption: longText });
+      expect(linkedinVal.errors.some((e) => e.includes('Maximum is'))).toBe(false);
+    });
+
+    it('enforces image count ceilings (e.g. 4 for Twitter, 10 for Instagram)', () => {
+      const fiveImages = Array(5).fill(null).map((_, i) => ({
+        type: 'image',
+        width: 1000,
+        height: 1000,
+        size: 500 * 1024,
+      }));
+
+      const twitterVal = validateCommonPostPlatform('twitter', { media: fiveImages });
+      expect(twitterVal.errors.some((e) => e.includes('supports up to 4 images'))).toBe(true);
+
+      const igVal = validateCommonPostPlatform('instagram', { media: fiveImages });
+      expect(igVal.errors.some((e) => e.includes('supports up to'))).toBe(false);
+    });
+
+    it('blocks mixed images and videos on platforms that do not support it', () => {
+      const mixedMedia = [
+        { type: 'image', width: 1000, height: 1000, size: 500 * 1024 },
+        { type: 'video', width: 1920, height: 1080, size: 5 * 1024 * 1024 },
+      ];
+
+      const twitterVal = validateCommonPostPlatform('twitter', { media: mixedMedia });
+      expect(twitterVal.errors.some((e) => e.includes('mixed image and video'))).toBe(true);
+
+      const fbVal = validateCommonPostPlatform('facebook', { media: mixedMedia });
+      expect(fbVal.errors.some((e) => e.includes('mixed image and video'))).toBe(false);
+    });
+
+    it('enforces video requirement on YouTube', () => {
+      const textOnly = validateCommonPostPlatform('youtube', { caption: 'Hello World' });
+      expect(textOnly.notes.some((n) => n.includes('Add media'))).toBe(true);
+
+      const imageOnly = validateCommonPostPlatform('youtube', {
+        caption: 'Hello World',
+        media: [{ type: 'image', width: 1000, height: 1000, size: 500 * 1024 }],
+      });
+      expect(imageOnly.errors.some((e) => e.includes('does not support image uploads'))).toBe(true);
+    });
+
+    it('validates polls and prohibits poll + media attachments', () => {
+      const pollWithMedia = {
+        question: 'What is your favorite color?',
+        options: ['Blue', 'Green'],
+        duration: 'ONE_DAY',
+      };
+      const result = validateCommonPostPlatform('twitter', {
+        poll: pollWithMedia,
+        media: [{ type: 'image', width: 1000, height: 1000, size: 500 * 1024 }],
+      });
+      expect(result.errors.some((e) => e.includes('poll posts cannot include media'))).toBe(true);
+    });
+  });
 });
+
