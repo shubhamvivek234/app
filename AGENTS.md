@@ -33,14 +33,19 @@ Completed:
   - Hardened frontend error handling, platform fallback, account mapping, and dark mode UI in `RecurringPosts.js`.
   - Added unit test suite `tests/test_recurring_rules_flow.py` (3/3 passing, 309/309 backend tests passing).
   - Rebuilt and deployed API, worker, beat containers on EC2 and deployed frontend to Vercel (`main.d535c453.js`).
-- Master Calendar Default Collapsed in Sidebar Menu:
-  - Updated `DashboardLayout.js` so Master Calendar accordion defaults to collapsed (`calendarExpanded = false`), expanding on click.
-  - Built and deployed to Vercel production (`main.e2931687.js`).
+- Campaigns Hub End-to-End Overhaul Shipped & Deployed:
+  - Visual Pacing & Timeline Bar: Dual-track progress bar, days remaining (`Day X of Y`), status delivery pills (`Published · Scheduled · Draft`).
+  - Master Calendar Sync: Bidirectional campaign filter dropdown in `CalendarToolbar.js`, color-coded campaign badge chips on `CalendarPostChip.js`, and "View in Calendar" deep links.
+  - Built-in Campaign UTM & Short Link Generator: In-drawer URL shortener with live UTM parameter tagging (`api/routes/short_links.py`, `Campaigns.js`), 1-click clipboard copy, and click analytics.
+  - Budget ROI & CPC/CPE: Automated calculations for Cost Per Click and Cost Per Engagement across cards, bento metrics row, and CSV export.
+  - AI Campaign Content Blueprint: 5-stage sequential story narrative generator (`api/routes/campaigns.py`, FreeLLM + heuristic fallback) with 1-click "Send to Composer" prefill (`/create-post?campaign=...`).
+  - CSV Performance Export: Client-side export utility downloading complete campaign metrics, status counts, post breakdown, and short links to CSV.
+  - Verification: 4/4 passing in `tests/test_campaigns_flow.py`; 313/313 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.0c9140fb.js`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor live user interactions on collapsible sidebar, Create New Post button, and Campaigns Hub.
+- Monitor live user interactions on Campaigns Hub, UTM links, and AI Blueprint generator.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
