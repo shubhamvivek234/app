@@ -2,26 +2,24 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v6.7 shipped
+Stage: v6.8 shipped
 Branch: main
-Focus: Unified Smart Media Preflight & Auto-Optimization Engine
+Focus: Adaptive Multi-Network Master Composer & Platform-Aware Common Post
 
 ## Last Session Completed
-Date: 2026-09-04
+Date: 2026-09-05
 Completed:
-- Canonical Platform Specs (`media_pipeline/platform_specs.py`): Single source of truth for 10 platforms, eliminating rule drift across frontend, upload validator, and worker pipeline.
-- Smart Media Transformations (`media_pipeline/ffmpeg_worker.py` & `media_pipeline/image_worker.py`):
-  * Vertical 9:16 auto-fit (`blur_pad` blurred Gaussian background padding or `center_crop`) for TikTok, Reels, Shorts.
-  * Smart auto-compression for video (computed target bitrate) and images (iterative Pillow compression).
-  * Auto silent audio track injection (`anullsrc`) for platforms requiring audio streams.
-- Transformation API Endpoints (`api/routes/upload.py`): `auto-fit-vertical`, `auto-compress`, and `add-silent-audio`.
-- Post Composer 1-Click Fixes (`PlatformEditor.js`, `CreatePostForm.js`, `mediaValidation.js`): Interactive 1-click action buttons on validation errors, warnings, and media thumbnails.
-- Test Suite: 327/327 backend tests passing; 19/19 Jest tests passing; frontend production build clean (`main.2617a123.js`).
+- Adaptive Visibility (`CreatePostForm.js`): Automatically hides Common Post when 1 account is selected to avoid duplicate boxes; renders Common Post as Master Composer when 2+ accounts are selected.
+- Real-Time Multi-Network Limit Badges (`PlatformEditor.js`, `mediaValidation.js`): Live per-platform character pills (`[X: 180/280]`, `[IG: 180/2200]`, etc.) with amber/red limit alerts and dynamic strictest remaining countdown.
+- 1-Click Optimization in Master Composer: Surfaced 9:16 auto-fit, auto-compress, and silent audio track fixes directly in Common Post, updating assets once for all destinations.
+- Universal First Comment & Alt Text Preservation: First comments in Common Post auto-propagate to Instagram & LinkedIn; image alt texts are preserved on submission.
+- Non-Destructive Override Sync: Safe reordering/removing preserves platform-specific crops and custom media.
+- Test Suite: 327/327 backend tests passing; 21/21 Jest tests passing; frontend production build clean.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Real-world validation with end-user uploads and social platform publishing.
+- Real-world validation with multi-network scheduled publishing.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

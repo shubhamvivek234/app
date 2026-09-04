@@ -1061,9 +1061,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
       return [...existing, ...newOnes];
     });
 
-    // Auto-expand first platform if none expanded (or expanded was removed)
+    // Auto-expand first platform if none expanded (or single platform if only 1 account selected)
     setExpandedPlatform(prev => {
       if (platforms.length === 0) return null;
+      if (platforms.length === 1 && selectedAccounts.length === 1) return platforms[0];
       if (prev === COMMON_POST_SECTION || (prev && platforms.includes(prev))) return prev;
       return COMMON_POST_SECTION;
     });
@@ -1263,6 +1264,28 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const blockingPlatforms = selectedPlatforms.filter((platform) =>
     selectedAccountsByPlatform(platform).some((account) => (accountValidation[account.id]?.errors || []).length > 0)
   );
+
+  const commonAggregatedErrors = useMemo(() => {
+    const errorSet = new Set();
+    selectedAccounts.forEach((accountId) => {
+      (accountValidation[accountId]?.errors || []).forEach((err) => {
+        errorSet.add(err);
+      });
+    });
+    return Array.from(errorSet);
+  }, [accountValidation, selectedAccounts]);
+
+  const commonAggregatedNotes = useMemo(() => {
+    const noteSet = new Set();
+    selectedAccounts.forEach((accountId) => {
+      (accountValidation[accountId]?.notes || []).forEach((note) => {
+        noteSet.add(note);
+      });
+    });
+    return Array.from(noteSet);
+  }, [accountValidation, selectedAccounts]);
+
+  const showCommonPost = selectedAccounts.length !== 1;
   const selectedTikTokAccounts = useMemo(
     () => availableAccounts.filter((account) => selectedAccounts.includes(account.id) && account.platform === 'tiktok'),
     [availableAccounts, selectedAccounts]
@@ -1483,7 +1506,20 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   // Remove a single item by index
   const removeMediaItem = (index) => {
     setUploadedMedia(prev => prev.filter((_, i) => i !== index));
-    clearDerivedPlatformMediaOverrides();
+    setAltTexts(prev => prev.filter((_, i) => i !== index));
+    setAccountOverrides((prev) => {
+      const next = { ...prev };
+      Object.entries(next).forEach(([accId, override]) => {
+        if (Array.isArray(override?.media)) {
+          next[accId] = {
+            ...override,
+            media: override.media.filter((_, i) => i !== index),
+            altTexts: Array.isArray(override.altTexts) ? override.altTexts.filter((_, i) => i !== index) : override.altTexts,
+          };
+        }
+      });
+      return next;
+    });
   };
 
   // Reorder media by dragging thumbnails
@@ -1494,7 +1530,24 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
       arr.splice(toIndex, 0, moved);
       return arr;
     });
-    clearDerivedPlatformMediaOverrides();
+    setAltTexts(prev => {
+      const arr = [...prev];
+      const [moved] = arr.splice(fromIndex, 1);
+      arr.splice(toIndex, 0, moved);
+      return arr;
+    });
+    setAccountOverrides((prev) => {
+      const next = { ...prev };
+      Object.entries(next).forEach(([accId, override]) => {
+        if (Array.isArray(override?.media) && override.media.length > Math.max(fromIndex, toIndex)) {
+          const arr = [...override.media];
+          const [moved] = arr.splice(fromIndex, 1);
+          arr.splice(toIndex, 0, moved);
+          next[accId] = { ...override, media: arr };
+        }
+      });
+      return next;
+    });
   };
 
   const appendMediaAssets = async (files) => {
@@ -2141,10 +2194,14 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           const account = availableAccounts.find((candidate) => candidate.id === accountId);
           const platform = account?.platform;
           const accountMedia = getEffectiveMediaForAccount(accountId);
-          const effectiveContent = getEffectiveCaptionForAccount(accountId) || primaryContent;
+          const accountContent = getEffectiveCaptionForAccount(accountId);
+          const effectiveContent = hasAccountFieldOverride(accountId, 'content')
+            ? (accountContent || '')
+            : (commonCaption || primaryContent);
           const effectiveVideoTitle = getEffectiveValueForAccount(accountId, 'videoTitle', videoTitle) || '';
           const effectiveLinkedinDocumentTitle = getEffectiveValueForAccount(accountId, 'linkedinDocumentTitle', linkedinDocumentTitle) || '';
           const effectiveLinkedinDocumentUrl = getEffectiveValueForAccount(accountId, 'linkedinDocumentUrl', linkedinDocumentUrl) || null;
+          const accountAltTexts = getEffectiveValueForAccount(accountId, 'altTexts', altTexts);
           const override = {
             content: effectiveContent,
             media_ids: accountMedia.map((m) => m.mediaId).filter(Boolean),
@@ -2153,6 +2210,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               ...(effectiveLinkedinDocumentUrl ? [effectiveLinkedinDocumentUrl] : []),
             ],
             media_types: accountMedia.map((m) => m.type).filter(Boolean),
+            alt_texts: Array.isArray(accountAltTexts) ? accountAltTexts : (altTexts || []),
             first_comment: getEffectiveValueForAccount(
               accountId,
               platform === 'linkedin' ? 'linkedinFirstComment' : 'firstComment',
@@ -2201,6 +2259,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         media_ids: mediaIds,
         media_urls: mediaUrls,
         media_types: mediaTypes,
+        alt_texts: altTexts,
         account_ids: selectedAccounts,
         publish_now: publishNow,
         scheduled_time: scheduledDateTime,
@@ -2605,72 +2664,79 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             </div>
           )}
 
-          <PlatformEditor
-            platform="common"
-            title="Common Post"
-            headerIcon={FaImages}
-            headerColor="#2563EB"
-            postType={commonEditorPostType}
-            content={commonCaption}
-            onContentChange={setCommonCaption}
-            isExpanded={expandedPlatform === COMMON_POST_SECTION}
-            onToggleExpand={() => handleToggleExpand(COMMON_POST_SECTION)}
-            media={uploadedMedia}
-            uploading={uploading}
-            uploadProgress={uploadProgress}
-            onFilesSelect={(files) => handleFilesSelectForPlatform(null, files)}
-            onImportRemoteMedia={(items) => handleImportRemoteMediaForPlatform(null, items)}
-            onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
-            onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
-            onEditAudio={(idx) => handleEditAudioForPlatform(null, idx)}
-            onRemoveAudio={(idx) => handleRemoveAudioForPlatform(null, idx)}
-            fileInputRef={fileInputRef}
-            postFormat={postFormat}
-            onPostFormatChange={setPostFormat}
-            firstComment={commonFirstComment}
-            onFirstCommentChange={(value) => {
-              setFirstComment(value);
-              if (!linkedinFirstComment.trim() || linkedinFirstComment === commonFirstComment) {
-                setLinkedinFirstComment(value);
-              }
-            }}
-            location={location}
-            onLocationChange={setLocation}
-            shopGridLink={shopGridLink}
-            onShopGridLinkChange={setShopGridLink}
-            videoTitle={videoTitle}
-            onVideoTitleChange={setVideoTitle}
-            youtubePrivacy={youtubePrivacy}
-            onYoutubePrivacyChange={setYoutubePrivacy}
-            linkedinFirstComment={linkedinFirstComment}
-            onLinkedinFirstCommentChange={setLinkedinFirstComment}
-            linkedinDocumentUrl={linkedinDocumentUrl}
-            linkedinDocumentTitle={linkedinDocumentTitle}
-            onLinkedinDocumentChange={() => {}}
-            tiktokPrivacy={tiktokPrivacy}
-            onTiktokPrivacyChange={setTiktokPrivacy}
-            tiktokAllowDuet={tiktokAllowDuet}
-            onTiktokAllowDuetChange={setTiktokAllowDuet}
-            tiktokAllowStitch={tiktokAllowStitch}
-            onTiktokAllowStitchChange={setTiktokAllowStitch}
-            tiktokAllowComments={tiktokAllowComments}
-            onTiktokAllowCommentsChange={setTiktokAllowComments}
-            googleBusinessTopicType={googleBusinessTopicType}
-            onGoogleBusinessTopicTypeChange={setGoogleBusinessTopicType}
-            googleBusinessCallToAction={googleBusinessCallToAction}
-            onGoogleBusinessCallToActionChange={setGoogleBusinessCallToAction}
-            googleBusinessActionUrl={googleBusinessActionUrl}
-            onGoogleBusinessActionUrlChange={setGoogleBusinessActionUrl}
-            altTexts={altTexts}
-            onAltTextsChange={setAltTexts}
-            onCropMedia={(idx, ratio) => handleCropMedia(COMMON_POST_SECTION, idx, ratio)}
-            onAutoFitMedia={(idx, mode) => handleAutoFitMedia(COMMON_POST_SECTION, idx, mode)}
-            onAutoCompressMedia={(idx, platform) => handleAutoCompressMedia(COMMON_POST_SECTION, idx, platform)}
-            onAddSilentAudio={(idx) => handleAddSilentAudio(COMMON_POST_SECTION, idx)}
-            transformingMediaId={transformingMediaId}
-            hashtagGroups={hashtagGroups}
-            showPlatformSpecificFields={false}
-          />
+          {showCommonPost && (
+            <PlatformEditor
+              platform="common"
+              title="Common Post (Master)"
+              headerIcon={FaImages}
+              headerColor="#2563EB"
+              postType={commonEditorPostType}
+              content={commonCaption}
+              onContentChange={setCommonCaption}
+              isExpanded={expandedPlatform === COMMON_POST_SECTION}
+              onToggleExpand={() => handleToggleExpand(COMMON_POST_SECTION)}
+              media={uploadedMedia}
+              uploading={uploading}
+              uploadProgress={uploadProgress}
+              onFilesSelect={(files) => handleFilesSelectForPlatform(null, files)}
+              onImportRemoteMedia={(items) => handleImportRemoteMediaForPlatform(null, items)}
+              onRemoveMedia={(idx) => handleRemoveMediaForPlatform(null, idx)}
+              onReorderMedia={(from, to) => handleReorderMediaForPlatform(null, from, to)}
+              onEditAudio={(idx) => handleEditAudioForPlatform(null, idx)}
+              onRemoveAudio={(idx) => handleRemoveAudioForPlatform(null, idx)}
+              fileInputRef={fileInputRef}
+              postFormat={postFormat}
+              onPostFormatChange={setPostFormat}
+              firstComment={commonFirstComment}
+              onFirstCommentChange={(value) => {
+                setFirstComment(value);
+                if (!linkedinFirstComment.trim() || linkedinFirstComment === commonFirstComment) {
+                  setLinkedinFirstComment(value);
+                }
+              }}
+              location={location}
+              onLocationChange={setLocation}
+              shopGridLink={shopGridLink}
+              onShopGridLinkChange={setShopGridLink}
+              videoTitle={videoTitle}
+              onVideoTitleChange={setVideoTitle}
+              youtubePrivacy={youtubePrivacy}
+              onYoutubePrivacyChange={setYoutubePrivacy}
+              linkedinFirstComment={linkedinFirstComment}
+              onLinkedinFirstCommentChange={setLinkedinFirstComment}
+              linkedinDocumentUrl={linkedinDocumentUrl}
+              linkedinDocumentTitle={linkedinDocumentTitle}
+              onLinkedinDocumentChange={() => {}}
+              tiktokPrivacy={tiktokPrivacy}
+              onTiktokPrivacyChange={setTiktokPrivacy}
+              tiktokAllowDuet={tiktokAllowDuet}
+              onTiktokAllowDuetChange={setTiktokAllowDuet}
+              tiktokAllowStitch={tiktokAllowStitch}
+              onTiktokAllowStitchChange={setTiktokAllowStitch}
+              tiktokAllowComments={tiktokAllowComments}
+              onTiktokAllowCommentsChange={setTiktokAllowComments}
+              googleBusinessTopicType={googleBusinessTopicType}
+              onGoogleBusinessTopicTypeChange={setGoogleBusinessTopicType}
+              googleBusinessCallToAction={googleBusinessCallToAction}
+              onGoogleBusinessCallToActionChange={setGoogleBusinessCallToAction}
+              googleBusinessActionUrl={googleBusinessActionUrl}
+              onGoogleBusinessActionUrlChange={setGoogleBusinessActionUrl}
+              altTexts={altTexts}
+              onAltTextsChange={setAltTexts}
+              onCropMedia={(idx, ratio) => handleCropMedia(COMMON_POST_SECTION, idx, ratio)}
+              onAutoFitMedia={(idx, mode) => handleAutoFitMedia(COMMON_POST_SECTION, idx, mode)}
+              onAutoCompressMedia={(idx, platform) => handleAutoCompressMedia(COMMON_POST_SECTION, idx, platform)}
+              onAddSilentAudio={(idx) => handleAddSilentAudio(COMMON_POST_SECTION, idx)}
+              transformingMediaId={transformingMediaId}
+              hashtagGroups={hashtagGroups}
+              showPlatformSpecificFields={false}
+              errorMessages={commonAggregatedErrors}
+              infoMessages={commonAggregatedNotes}
+              issueCountOverride={commonAggregatedErrors.length}
+              selectedPlatforms={selectedPlatforms}
+              showFirstComment={selectedPlatforms.some((p) => p === 'instagram' || p === 'linkedin')}
+            />
+          )}
 
           {orderedPlatforms.map((platform, index) => {
             const platformAccounts = selectedAccountsByPlatform(platform);
@@ -2692,6 +2758,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 onContentChange={(val) => {
                   if (!activePlatformAccount) return;
                   updateAccountOverride(activePlatformAccount.id, { content: val });
+                  if (selectedAccounts.length === 1) {
+                    setCommonCaption(val);
+                  }
                 }}
                 isExpanded={expandedPlatform === platform}
                 onToggleExpand={() => handleToggleExpand(platform)}
@@ -2785,6 +2854,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                   setExpandedPlatform(platform);
                 }}
                 issueCountOverride={platformIssueCount}
+                selectedPlatforms={selectedPlatforms}
               />
             );
           })}

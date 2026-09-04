@@ -532,7 +532,77 @@ export function buildCommonPostValidation({
   }, {});
 }
 
-export function getMediaActionableIssues(platformId, { media = [], postFormat = 'Post' } = {}) {
+export const PLATFORM_SHORT_LABELS = {
+  twitter: 'X',
+  facebook: 'FB',
+  instagram: 'IG',
+  linkedin: 'LI',
+  youtube: 'YT',
+  tiktok: 'TT',
+  pinterest: 'PIN',
+  threads: 'TH',
+  bluesky: 'BSKY',
+  google_business: 'GBP',
+  gbp: 'GBP',
+};
+
+export function getCommonCharacterLimits(selectedPlatforms = []) {
+  const platforms = Array.isArray(selectedPlatforms) ? selectedPlatforms : [];
+  if (platforms.length === 0) {
+    return {
+      platforms: [],
+      minLimit: 5000,
+      strictestPlatform: null,
+    };
+  }
+
+  const list = platforms.map((p) => {
+    const limit = PLATFORM_TEXT_LIMITS[p] || 5000;
+    const shortLabel = PLATFORM_SHORT_LABELS[p] || (PLATFORM_LIMITS[p]?.label || p).slice(0, 4).toUpperCase();
+    const fullLabel = PLATFORM_LIMITS[p]?.label || p;
+    return {
+      platform: p,
+      limit,
+      shortLabel,
+      fullLabel,
+    };
+  });
+
+  const minItem = list.reduce((min, cur) => (cur.limit < min.limit ? cur : min), list[0]);
+
+  return {
+    platforms: list,
+    minLimit: minItem ? minItem.limit : 5000,
+    strictestPlatform: minItem ? minItem.platform : null,
+  };
+}
+
+export function getMediaActionableIssues(platformId, { media = [], postFormat = 'Post', selectedPlatforms = [] } = {}) {
+  if (platformId === 'common') {
+    const platformsToEvaluate = Array.isArray(selectedPlatforms) && selectedPlatforms.length > 0
+      ? selectedPlatforms
+      : ['tiktok', 'instagram', 'twitter', 'linkedin', 'youtube'];
+
+    const aggregated = [];
+    const seen = new Set();
+
+    for (const p of platformsToEvaluate) {
+      const pActions = getMediaActionableIssues(p, { media, postFormat });
+      for (const act of pActions) {
+        const key = `${act.type}_${act.mediaIndex}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          aggregated.push({
+            ...act,
+            platformId: 'common',
+            targetPlatform: p,
+          });
+        }
+      }
+    }
+    return aggregated;
+  }
+
   const actions = [];
   const limit = PLATFORM_LIMITS[platformId];
   if (!limit) return actions;

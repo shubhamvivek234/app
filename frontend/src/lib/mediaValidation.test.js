@@ -80,4 +80,34 @@ describe('mediaValidation', () => {
 
     expect(actions.some((a) => a.type === 'add_silent_audio')).toBe(true);
   });
+
+  it('aggregates actionable issues for Common Post across selected platforms', () => {
+    const landscapeVideo = {
+      id: 'job-common-landscape',
+      type: 'video',
+      width: 1920,
+      height: 1080,
+      size: 30 * 1024 * 1024,
+      has_audio: false,
+    };
+
+    const actions = getMediaActionableIssues('common', {
+      media: [landscapeVideo],
+      postFormat: 'Post',
+      selectedPlatforms: ['tiktok', 'twitter'],
+    });
+
+    expect(actions.length).toBeGreaterThan(0);
+    expect(actions.some((a) => a.type === 'auto_fit_9_16')).toBe(true);
+    expect(actions.some((a) => a.type === 'add_silent_audio')).toBe(true);
+  });
+
+  it('computes character limits and strictest platform for Common Post', () => {
+    const { getCommonCharacterLimits } = require('./mediaValidation');
+    const result = getCommonCharacterLimits(['twitter', 'linkedin', 'instagram']);
+    expect(result.minLimit).toBe(280);
+    expect(result.strictestPlatform).toBe('twitter');
+    expect(result.platforms.find((p) => p.platform === 'twitter').shortLabel).toBe('X');
+    expect(result.platforms.find((p) => p.platform === 'instagram').shortLabel).toBe('IG');
+  });
 });

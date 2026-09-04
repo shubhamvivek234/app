@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,7 +30,7 @@ import {
   createCanvaExport,
   getCanvaExport,
 } from '@/lib/api';
-import { getMediaActionableIssues } from '@/lib/mediaValidation';
+import { getMediaActionableIssues, getCommonCharacterLimits } from '@/lib/mediaValidation';
 import { listenForOAuthResult } from '@/lib/oauthPopup';
 import {
   buildGooglePhotosAuthUrl,
@@ -301,6 +301,8 @@ const PlatformEditor = ({
   onAutoCompressMedia,
   onAddSilentAudio,
   transformingMediaId = null,
+  selectedPlatforms = [],
+  showFirstComment = false,
 }) => {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [hashtagOpen, setHashtagOpen] = useState(false);
@@ -365,13 +367,24 @@ const PlatformEditor = ({
     })
     .filter(Boolean);
 
-  const actionableIssues = getMediaActionableIssues(platform, { media: mediaArray, postFormat });
+  const actionableIssues = getMediaActionableIssues(platform, {
+    media: mediaArray,
+    postFormat,
+    selectedPlatforms,
+  });
+
+  const commonLimits = useMemo(() => {
+    if (platform === 'common' && Array.isArray(selectedPlatforms) && selectedPlatforms.length > 0) {
+      return getCommonCharacterLimits(selectedPlatforms);
+    }
+    return null;
+  }, [platform, selectedPlatforms]);
 
   const meta = PLATFORM_ICONS[platform] || { icon: FaFacebook, color: '#888' };
   const Icon = HeaderIcon || meta.icon;
   const platformColor = headerColor || meta.color;
   const label = title || platform;
-  const limit = CHAR_LIMITS[platform] || 2200;
+  const limit = commonLimits?.minLimit || CHAR_LIMITS[platform] || 2200;
   const contentLength = (content || '').length;
   const remaining = limit - contentLength;
   const pct = contentLength / limit;
@@ -1145,15 +1158,17 @@ const PlatformEditor = ({
           isExpanded ? 'border-b border-gray-100 dark:border-slate-800' : ''
         } hover:bg-gray-50/70 dark:hover:bg-slate-800/50`}
         onClick={onToggleExpand}
-        draggable
+        draggable={Boolean(onDragStart)}
         onDragStart={(e) => { e.stopPropagation(); onDragStart?.(e); }}
         onDragEnd={onDragEnd}
       >
         {/* Drag handle */}
-        <FaGripVertical
-          className="text-gray-300 dark:text-slate-600 hover:text-gray-400 dark:hover:text-slate-400 flex-shrink-0 text-sm cursor-grab active:cursor-grabbing"
-          onClick={(e) => e.stopPropagation()}
-        />
+        {Boolean(onDragStart) && (
+          <FaGripVertical
+            className="text-gray-300 dark:text-slate-600 hover:text-gray-400 dark:hover:text-slate-400 flex-shrink-0 text-sm cursor-grab active:cursor-grabbing"
+            onClick={(e) => e.stopPropagation()}
+          />
+        )}
 
         {/* Platform icon with brand color bg */}
         <div
@@ -1710,6 +1725,25 @@ const PlatformEditor = ({
                       ))}
                     </div>
                   )}
+
+                  {/* Universal First Comment in Common Post */}
+                  {(showFirstComment || (platform === 'common' && Array.isArray(selectedPlatforms) && selectedPlatforms.some(p => p === 'instagram' || p === 'linkedin'))) && (
+                    <div className="mt-3 rounded-lg border border-gray-200/80 bg-gray-50/50 p-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                          <span>💬 Universal First Comment</span>
+                          <span className="text-[10px] text-gray-400 font-normal">(Auto-publishes to Instagram &amp; LinkedIn)</span>
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Write a first comment with hashtags or links (e.g. #marketing #launch)..."
+                        value={firstComment || ''}
+                        onChange={(e) => onFirstCommentChange?.(e.target.value)}
+                        className="w-full h-8 px-2.5 text-xs bg-white border border-gray-200 rounded-md placeholder:text-gray-400 text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
@@ -2087,10 +2121,39 @@ const PlatformEditor = ({
               )}
             </div>
 
-            {/* Character counter */}
-            <span className={`text-xs font-semibold tabular-nums ${counterColor} bg-gray-50 px-2 py-0.5 rounded`}>
-              {remaining >= 0 ? remaining : `−${Math.abs(remaining)}`}
-            </span>
+            {/* Character counter & Multi-Platform Badges */}
+            <div className="flex items-center gap-1.5">
+              {platform === 'common' && commonLimits?.platforms?.length > 0 && (
+                <div className="hidden sm:flex items-center gap-1">
+                  {commonLimits.platforms.map((p) => {
+                    const isOver = contentLength > p.limit;
+                    const isNear = contentLength > p.limit * 0.9;
+                    const badgeClass = isOver
+                      ? 'bg-red-50 text-red-700 border-red-200 font-bold'
+                      : isNear
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-gray-50 text-gray-500 border-gray-200';
+                    return (
+                      <span
+                        key={p.platform}
+                        title={`${p.fullLabel}: ${contentLength} / ${p.limit} max`}
+                        className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border tabular-nums ${badgeClass}`}
+                      >
+                        {p.shortLabel} {contentLength}/{p.limit}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Primary remaining counter */}
+              <span
+                className={`text-xs font-semibold tabular-nums ${counterColor} bg-gray-50 px-2 py-0.5 rounded`}
+                title={commonLimits?.strictestPlatform ? `Strictest limit: ${commonLimits.strictestPlatform} (${limit} max)` : undefined}
+              >
+                {remaining >= 0 ? remaining : `−${Math.abs(remaining)}`}
+              </span>
+            </div>
           </div>
 
           {hasPoll && (
