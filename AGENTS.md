@@ -14,7 +14,7 @@ Completed:
 - 1-Click Optimization in Master Composer: Surfaced 9:16 auto-fit, auto-compress, and silent audio track fixes directly in Common Post, updating assets once for all destinations.
 - Universal First Comment & Alt Text Preservation: First comments in Common Post auto-propagate to Instagram & LinkedIn; image alt texts are preserved on submission.
 - Non-Destructive Override Sync: Safe reordering/removing preserves platform-specific crops and custom media.
-- Test Suite: 327/327 backend tests passing; 21/21 Jest tests passing; frontend production build clean.
+- Test Suite: 327/327 backend tests passing; 26/26 Jest tests passing; frontend production build clean.
 
 ## Active Work
 Currently implementing: None
