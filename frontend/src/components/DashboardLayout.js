@@ -153,7 +153,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
   };
 
   const isCalendarOrPostRoute = location.pathname.startsWith('/calendar') || location.pathname.startsWith('/content-library');
-  const [calendarExpanded, setCalendarExpanded] = useState(true);
+  const [calendarExpanded, setCalendarExpanded] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -416,7 +416,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
                   <button
                     type="button"
                     onClick={() => setCalendarExpanded((prev) => !prev)}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/60 transition-colors"
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/60 transition-colors cursor-pointer"
                   >
                     <span className="flex items-center gap-2.5">
                       <FaCalendarAlt className={`text-sm ${isCalendarOrPostRoute ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500'}`} />
