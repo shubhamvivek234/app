@@ -13,6 +13,7 @@ import PerformanceSnapshot7d from '@/components/dashboard/PerformanceSnapshot7d'
 import RecentActivity from '@/components/dashboard/RecentActivity';
 import RecentWins from '@/components/dashboard/RecentWins';
 import { Button } from '@/components/ui/button';
+import { StarParticles } from '@/components/ui/star-button';
 import { getDashboardOverview } from '@/lib/api';
 import { usePostStatusStream } from '@/hooks/usePostStatusStream';
 import { useAuth } from '@/context/AuthContext';
@@ -246,7 +247,8 @@ const Dashboard = () => {
                 See what needs attention, what is going out next, which accounts are unhealthy, and how the workspace performed over the last {DASHBOARD_WINDOW_DAYS} days.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Button className="bg-white text-slate-950 hover:bg-slate-100" onClick={() => navigate('/create-post')} data-testid="create-post-button">
+                <Button className="group relative overflow-visible bg-white text-slate-950 hover:bg-slate-100 shadow-sm active:scale-95 transition-all" onClick={() => navigate('/create-post')} data-testid="create-post-button">
+                  <StarParticles starClassName="fill-amber-400 dark:fill-amber-300" />
                   <FaPlus className="mr-2" />
                   Create Post
                 </Button>

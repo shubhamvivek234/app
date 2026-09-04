@@ -36,6 +36,7 @@ import {
 } from 'react-icons/fa';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
+import { StarParticles } from '@/components/ui/star-button';
 import { useTheme } from '@/context/ThemeContext';
 import { canReadApprovalsWorkspace, canReadTeamWorkspace } from '@/lib/workspacePermissions';
 
@@ -308,12 +309,17 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
               onClick={() => navigate('/create-post')}
               data-testid="create-post-button"
               title="Create new post (⌘N)"
-              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-slate-900 font-extrabold ring-1 ring-slate-900/10 dark:ring-white/40 shadow-sm shadow-indigo-500/10 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 overflow-hidden ${
+              className={`relative w-full group/btn flex items-center rounded-xl gemini-aurora-btn text-slate-900 font-extrabold ring-1 ring-slate-900/10 dark:ring-white/40 shadow-sm shadow-indigo-500/10 active:scale-[0.98] hover:scale-[1.01] transition-transform duration-200 ${
                 collapsed ? 'justify-center py-2.5' : 'justify-between px-3.5 py-2.5 text-xs'
               }`}
             >
+              {/* Star Particle Burst on Hover */}
+              <StarParticles starClassName="fill-amber-400 dark:fill-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+
               {/* Subtle top specular glass reflection */}
-              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/80 to-transparent pointer-events-none" />
+              <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
+                <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/80 to-transparent" />
+              </div>
 
               <span className="flex items-center gap-2 relative z-10">
                 <FaPlus className="text-xs flex-shrink-0 text-indigo-700 dark:text-indigo-900 transition-transform group-hover/btn:rotate-90 duration-300" />
