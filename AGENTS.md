@@ -33,6 +33,9 @@ Completed:
   - Hardened frontend error handling, platform fallback, account mapping, and dark mode UI in `RecurringPosts.js`.
   - Added unit test suite `tests/test_recurring_rules_flow.py` (3/3 passing, 309/309 backend tests passing).
   - Rebuilt and deployed API, worker, beat containers on EC2 and deployed frontend to Vercel (`main.d535c453.js`).
+- Master Calendar Default Collapsed in Sidebar Menu:
+  - Updated `DashboardLayout.js` so Master Calendar accordion defaults to collapsed (`calendarExpanded = false`), expanding on click.
+  - Built and deployed to Vercel production (`main.e2931687.js`).
 
 ## Active Work
 Currently implementing: None
