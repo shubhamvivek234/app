@@ -22,8 +22,12 @@ Completed:
 - Collapsible Sidebar Toggle Arrow Button Shipped & Deployed:
   - Added floating boundary toggle arrow (`FaChevronLeft`/`FaChevronRight`) & bottom menu action in `DashboardLayout.js`.
   - Added `⌘B` / `Ctrl+B` hotkey and `localStorage` persistence (`unravler_sidebar_collapsed`).
-  - Production deployed to Vercel (`https://www.unravler.com`, bundle `main.ee252ace.js`).
-  - Synced with EC2 repository (`ubuntu@51.20.210.184`).
+- Create Post Account Selection Crash Fix & Campaign Integration:
+  - Resolved runtime crash: missing `FaBullhorn` import in `CreatePostForm.js` triggered by active campaigns on account selection.
+  - Hardened previews (`TwitterPreview`, `FacebookPreview`, `InstagramPreview`, `LinkedInPreview`) and `PlatformEditor` with safe string guards.
+  - Linked Campaigns with Composer: Target channel badges, auto-select matching accounts, query parameter hydration (`?campaign=...`), and "New Post" shortcut in `Campaigns.js`.
+  - Added Jest tests (`AccountSelector.test.js`, `Previews.test.js`) & configured Jest `@/*` alias in `craco.config.js`.
+  - Deployed to Vercel (`main.2c0060e9.js`) and synced EC2 repo.
 
 ## Active Work
 Currently implementing: None
