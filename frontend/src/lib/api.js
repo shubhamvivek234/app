@@ -468,6 +468,33 @@ export const getUploadStatus = async (mediaJobId) => {
   return response.data;
 };
 
+export const autoFitMediaVertical = async (mediaJobId, mode = 'blur_pad') => {
+  const response = await axios.post(
+    `${API}/upload/${mediaJobId}/auto-fit-vertical`,
+    { mode },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const autoCompressMedia = async (mediaJobId, { platform = null, targetMaxBytes = null } = {}) => {
+  const response = await axios.post(
+    `${API}/upload/${mediaJobId}/auto-compress`,
+    { platform, target_max_bytes: targetMaxBytes },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
+export const addSilentAudioToMedia = async (mediaJobId) => {
+  const response = await axios.post(
+    `${API}/upload/${mediaJobId}/add-silent-audio`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
 export const waitForUploadReady = async (
   mediaJobId,
   { intervalMs = 2000, timeoutMs = 300000, onPoll = null } = {}

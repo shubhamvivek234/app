@@ -531,3 +531,66 @@ export function buildCommonPostValidation({
     return acc;
   }, {});
 }
+
+export function getMediaActionableIssues(platformId, { media = [], postFormat = 'Post' } = {}) {
+  const actions = [];
+  const limit = PLATFORM_LIMITS[platformId];
+  if (!limit) return actions;
+
+  const normalizedMedia = Array.isArray(media) ? media : [];
+  normalizedMedia.forEach((item, index) => {
+    if (!item) return;
+    const isVideo = item.type === 'video';
+    const isImage = item.type === 'image';
+    const sizeBytes = item.size || item.file?.size || 0;
+    const width = item.width || 0;
+    const height = item.height || 0;
+    const actualRatio = width > 0 && height > 0 ? width / height : 0;
+    const mediaId = item.id || item.media_id || item.media_job_id;
+
+    // 1. Aspect ratio issue -> Offer Auto-Fit 9:16 or Center Crop
+    const aspectRule = getAspectRule(platformId, isVideo ? 'video' : 'image', postFormat);
+    if (aspectRule && actualRatio && isAspectRatioOutOfRange(actualRatio, aspectRule.ratio)) {
+      if (aspectRule.label === '9:16') {
+        actions.push({
+          type: 'auto_fit_9_16',
+          mediaIndex: index,
+          mediaId,
+          item,
+          platformId,
+          label: '✨ Auto-Fit 9:16 (Blur Pad)',
+          cropLabel: '✂️ Center Crop 9:16',
+          aspectRatio: aspectRule.ratio,
+        });
+      }
+    }
+
+    // 2. File size issue -> Offer Auto-Compress
+    const maxBytes = isVideo ? limit.maxVideoBytes : limit.maxImageBytes;
+    if (maxBytes && sizeBytes > maxBytes) {
+      actions.push({
+        type: 'auto_compress',
+        mediaIndex: index,
+        mediaId,
+        item,
+        platformId,
+        label: `⚡ Auto-Compress (${formatBytes(sizeBytes)} → <${formatBytes(maxBytes)})`,
+        maxBytes,
+      });
+    }
+
+    // 3. Audio requirement -> Offer Add Silent Audio
+    if (isVideo && item.has_audio === false && (platformId === 'tiktok' || (platformId === 'instagram' && (postFormat === 'Reel' || postFormat === 'Story')))) {
+      actions.push({
+        type: 'add_silent_audio',
+        mediaIndex: index,
+        mediaId,
+        item,
+        platformId,
+        label: '🔇 Add Silent Audio Track',
+      });
+    }
+  });
+
+  return actions;
+}

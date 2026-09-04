@@ -14,7 +14,7 @@ import {
   FaSmile, FaHashtag, FaCloudUploadAlt, FaTimes,
   FaChevronDown, FaChevronUp, FaGripVertical,
   FaFileAlt, FaFilePdf, FaFilePowerpoint, FaFileWord,
-  FaCrop, FaSearch, FaExternalLinkAlt, FaImages, FaSpinner, FaChartBar,
+  FaCrop, FaSearch, FaExternalLinkAlt, FaImages, FaSpinner, FaChartBar, FaBolt,
 } from 'react-icons/fa';
 import {
   SiBluesky, SiThreads, SiGiphy,
@@ -30,6 +30,7 @@ import {
   createCanvaExport,
   getCanvaExport,
 } from '@/lib/api';
+import { getMediaActionableIssues } from '@/lib/mediaValidation';
 import { listenForOAuthResult } from '@/lib/oauthPopup';
 import {
   buildGooglePhotosAuthUrl,
@@ -296,6 +297,10 @@ const PlatformEditor = ({
   activeAccountId = null,
   onSelectAccount,
   issueCountOverride,
+  onAutoFitMedia,
+  onAutoCompressMedia,
+  onAddSilentAudio,
+  transformingMediaId = null,
 }) => {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [hashtagOpen, setHashtagOpen] = useState(false);
@@ -348,18 +353,19 @@ const PlatformEditor = ({
   const canAddMore = onFilesSelect && !uploading && !hasVideo && !isVideo;
   const canImportFromSources = Boolean(onImportRemoteMedia);
 
-  // Aspect ratio logic
+  // Aspect ratio & preflight optimization logic
   const idealInfo = getIdealAspectInfo(platform, postFormat);
-  // Find images with mismatched aspect ratio (only for first platform that has onCropMedia)
   const aspectWarnings = mediaArray
     .map((item, idx) => {
-      if (item.type === 'video' || !item.width || !item.height || !idealInfo) return null;
+      if (!item.width || !item.height || !idealInfo) return null;
       const actual = item.width / item.height;
       const delta = Math.abs(actual - idealInfo.ratio) / idealInfo.ratio;
       if (delta <= ASPECT_RATIO_TOLERANCE) return null;
-      return { idx, actual, ideal: idealInfo };
+      return { idx, actual, ideal: idealInfo, isVideo: item.type === 'video', item };
     })
     .filter(Boolean);
+
+  const actionableIssues = getMediaActionableIssues(platform, { media: mediaArray, postFormat });
 
   const meta = PLATFORM_ICONS[platform] || { icon: FaFacebook, color: '#888' };
   const Icon = HeaderIcon || meta.icon;
@@ -1278,6 +1284,61 @@ const PlatformEditor = ({
                       </li>
                     ))}
                   </ul>
+
+                  {actionableIssues.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-red-200/80 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-red-800 flex items-center gap-1 mr-1">
+                        <FaBolt className="text-[10px] text-amber-500" /> 1-Click Fix:
+                      </span>
+                      {actionableIssues.map((action, aIdx) => (
+                        <div key={`act-err-${aIdx}`} className="flex items-center gap-1.5 flex-wrap">
+                          {action.type === 'auto_fit_9_16' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={Boolean(transformingMediaId)}
+                                onClick={() => onAutoFitMedia?.(action.mediaIndex, 'blur_pad')}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-md shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {transformingMediaId ? <FaSpinner className="animate-spin text-[10px]" /> : null}
+                                {action.label}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={Boolean(transformingMediaId)}
+                                onClick={() => onAutoFitMedia ? onAutoFitMedia(action.mediaIndex, 'center_crop') : onCropMedia?.(action.mediaIndex, action.aspectRatio)}
+                                className="inline-flex items-center gap-1 text-[11px] font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-1 rounded-md transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {action.cropLabel}
+                              </button>
+                            </>
+                          )}
+                          {action.type === 'auto_compress' && (
+                            <button
+                              type="button"
+                              disabled={Boolean(transformingMediaId)}
+                              onClick={() => onAutoCompressMedia?.(action.mediaIndex, platform)}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded-md shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                            >
+                              {transformingMediaId ? <FaSpinner className="animate-spin text-[10px]" /> : null}
+                              {action.label}
+                            </button>
+                          )}
+                          {action.type === 'add_silent_audio' && (
+                            <button
+                              type="button"
+                              disabled={Boolean(transformingMediaId)}
+                              onClick={() => onAddSilentAudio?.(action.mediaIndex)}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-md shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                            >
+                              {transformingMediaId ? <FaSpinner className="animate-spin text-[10px]" /> : null}
+                              {action.label}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {infoMessages.length > 0 && (
@@ -1414,10 +1475,23 @@ const PlatformEditor = ({
                         {onCropMedia && item.type !== 'video' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
-                            className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                            className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-black/90 cursor-pointer"
                             title="Crop image"
                           >
                             <FaCrop />
+                          </button>
+                        )}
+
+                        {/* Quick 9:16 auto-fit button */}
+                        {onAutoFitMedia && (idealInfo?.label === '9:16' || isVideoPlatform) && (
+                          <button
+                            type="button"
+                            disabled={Boolean(transformingMediaId)}
+                            onClick={(e) => { e.stopPropagation(); onAutoFitMedia(idx, 'blur_pad'); }}
+                            className="absolute bottom-1 left-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
+                            title="Auto-Fit to 9:16 with Blurred Background"
+                          >
+                            <FaBolt className="text-[8px]" /> 9:16
                           </button>
                         )}
 
@@ -1540,31 +1614,66 @@ const PlatformEditor = ({
                       <FaInfoCircle className="text-blue-500 text-sm mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-blue-700 leading-snug">
-                          Photos at <strong>{idealInfo.label}</strong> aspect ratio look best on your{' '}
-                          {idealInfo.name}.{' '}
-                          {onCropMedia ? (
-                            <span>
-                              Post as-is or{' '}
+                          Media at <strong>{idealInfo.label}</strong> aspect ratio looks best on your{' '}
+                          {idealInfo.name}.
+                        </p>
+                        {idealInfo.label === '9:16' && onAutoFitMedia ? (
+                          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              disabled={Boolean(transformingMediaId)}
+                              onClick={() => onAutoFitMedia(aspectWarnings[0].idx, 'blur_pad')}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded shadow-xs transition-colors cursor-pointer"
+                            >
+                              <FaBolt className="text-[9px]" /> Auto-Fit 9:16 (Blur Pad)
+                            </button>
+                            <button
+                              type="button"
+                              disabled={Boolean(transformingMediaId)}
+                              onClick={() => onAutoFitMedia(aspectWarnings[0].idx, 'center_crop')}
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-800 bg-blue-100 hover:bg-blue-200 border border-blue-300 px-2 py-1 rounded transition-colors cursor-pointer"
+                            >
+                              ✂️ Center Crop
+                            </button>
+                            {onCropMedia && !aspectWarnings[0].isVideo && (
                               <button
                                 type="button"
                                 onClick={() => onCropMedia(aspectWarnings[0].idx, idealInfo.ratio)}
-                                className="font-semibold underline text-blue-700 hover:text-blue-900 transition-colors"
+                                className="text-[11px] underline text-blue-700 hover:text-blue-900 ml-1 cursor-pointer"
                               >
-                                crop image
+                                manual crop
                               </button>
-                            </span>
-                          ) : 'Post as-is or crop before uploading.'}
-                        </p>
+                            )}
+                          </div>
+                        ) : onCropMedia && !aspectWarnings[0].isVideo ? (
+                          <p className="text-xs text-blue-700 leading-snug mt-1">
+                            Post as-is or{' '}
+                            <button
+                              type="button"
+                              onClick={() => onCropMedia(aspectWarnings[0].idx, idealInfo.ratio)}
+                              className="font-semibold underline text-blue-700 hover:text-blue-900 transition-colors cursor-pointer"
+                            >
+                              crop image
+                            </button>
+                          </p>
+                        ) : null}
+
                         {aspectWarnings.length > 1 && (
-                          <div className="flex gap-1 mt-1.5 flex-wrap">
+                          <div className="flex gap-1 mt-2 flex-wrap">
                             {aspectWarnings.map(w => (
                               <button
                                 key={w.idx}
                                 type="button"
-                                onClick={() => onCropMedia?.(w.idx, idealInfo.ratio)}
-                                className="flex items-center gap-1 text-[11px] text-blue-700 bg-blue-100 hover:bg-blue-200 px-2 py-0.5 rounded-full transition-colors"
+                                onClick={() => {
+                                  if (idealInfo.label === '9:16' && onAutoFitMedia) {
+                                    onAutoFitMedia(w.idx, 'blur_pad');
+                                  } else if (onCropMedia && !w.isVideo) {
+                                    onCropMedia(w.idx, idealInfo.ratio);
+                                  }
+                                }}
+                                className="flex items-center gap-1 text-[11px] text-blue-700 bg-blue-100 hover:bg-blue-200 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
                               >
-                                <FaCrop className="text-[9px]" /> Crop #{w.idx + 1}
+                                <FaCrop className="text-[9px]" /> Fit #{w.idx + 1}
                               </button>
                             ))}
                           </div>
@@ -1648,10 +1757,23 @@ const PlatformEditor = ({
                         {onCropMedia && item.type !== 'video' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
-                            className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                            className="absolute bottom-1 right-1 w-5 h-5 rounded bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-black/90 cursor-pointer"
                             title="Crop image"
                           >
                             <FaCrop />
+                          </button>
+                        )}
+
+                        {/* Quick 9:16 auto-fit button */}
+                        {onAutoFitMedia && (idealInfo?.label === '9:16' || isVideoPlatform) && (
+                          <button
+                            type="button"
+                            disabled={Boolean(transformingMediaId)}
+                            onClick={(e) => { e.stopPropagation(); onAutoFitMedia(idx, 'blur_pad'); }}
+                            className="absolute bottom-1 left-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
+                            title="Auto-Fit to 9:16 with Blurred Background"
+                          >
+                            <FaBolt className="text-[8px]" /> 9:16
                           </button>
                         )}
                       </div>

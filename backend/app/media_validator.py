@@ -9,9 +9,11 @@ import mimetypes
 from typing import Optional
 from fastapi import UploadFile, HTTPException
 
+from media_pipeline.platform_specs import PLATFORM_SPECS, get_platform_spec
+
 # Per-platform limits (bytes)
-MAX_IMAGE_SIZE = 8 * 1024 * 1024        # 8 MB
-MAX_VIDEO_SIZE = 500 * 1024 * 1024      # 500 MB
+MAX_IMAGE_SIZE = 30 * 1024 * 1024       # 30 MB (supports modern IG/FB hi-res photos)
+MAX_VIDEO_SIZE = 4 * 1024 * 1024 * 1024 # 4 GB (matches Reels/Shorts)
 MAX_DOCUMENT_SIZE = 20 * 1024 * 1024    # 20 MB (LinkedIn docs)
 
 ALLOWED_IMAGE_TYPES = {
@@ -106,15 +108,23 @@ def validate_file_size(size_bytes: int, media_type: str, platform: Optional[str]
         "document": MAX_DOCUMENT_SIZE,
     }
     limit = limits.get(media_type, MAX_IMAGE_SIZE)
+    if platform:
+        spec = get_platform_spec(platform)
+        if media_type == "video":
+            limit = spec.get("max_video_bytes", limit)
+        elif media_type == "image":
+            limit = spec.get("max_image_bytes", limit)
+
     if size_bytes > limit:
         limit_mb = limit // (1024 * 1024)
         size_mb = round(size_bytes / (1024 * 1024), 1)
+        platform_str = f" on {platform.capitalize()}" if platform else ""
         raise HTTPException(
             status_code=413,
             detail={
                 "error_code": "UPLOAD_TOO_LARGE",
-                "message": f"File too large: {size_mb} MB. Maximum allowed: {limit_mb} MB for {media_type}s.",
-                "details": {"size_mb": size_mb, "limit_mb": limit_mb},
+                "message": f"File too large: {size_mb} MB. Maximum allowed: {limit_mb} MB for {media_type}s{platform_str}.",
+                "details": {"size_mb": size_mb, "limit_mb": limit_mb, "platform": platform},
             }
         )
 

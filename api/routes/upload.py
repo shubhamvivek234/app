@@ -23,6 +23,8 @@ from api.models.media import (
     MediaUploadResponse,
     MediaUploadSessionRequest,
     MediaUploadSessionResponse,
+    MediaAutoFitRequest,
+    MediaAutoCompressRequest,
 )
 from api.task_queue import enqueue_task
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
@@ -648,6 +650,297 @@ async def get_upload_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media job not found")
 
     return MediaAssetResponse(**doc)
+
+
+async def _resolve_media_local_file(doc: dict, media_job_id: str) -> tuple[str, bool]:
+    """
+    Locates local file if already on disk (quarantine / temp),
+    or downloads to a temp file from storage.
+    Returns (local_file_path, should_delete_when_done).
+    """
+    quarantine_path = doc.get("quarantine_path")
+    if quarantine_path and os.path.exists(quarantine_path):
+        return quarantine_path, False
+
+    storage_ref = (
+        doc.get("storage_key")
+        or doc.get("source_storage_key")
+        or doc.get("media_url")
+        or doc.get("url")
+    )
+    if not storage_ref:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No storage reference found for media asset",
+        )
+
+    mime_type = doc.get("mime_type") or doc.get("content_type") or "application/octet-stream"
+    ext = _mime_to_ext(mime_type)
+    import tempfile
+    fd, temp_path = tempfile.mkstemp(prefix=f"transform-{media_job_id}-", suffix=ext)
+    os.close(fd)
+
+    from utils.storage import download_file_to_path_async
+    await download_file_to_path_async(storage_ref, temp_path)
+    return temp_path, True
+
+
+@router.post("/upload/{media_job_id}/auto-fit-vertical", response_model=MediaAssetResponse)
+async def auto_fit_vertical(
+    media_job_id: str,
+    payload: MediaAutoFitRequest,
+    current_user: CurrentUser,
+    db: DB,
+) -> MediaAssetResponse:
+    """Auto-fit video or image to 9:16 vertical ratio (blur pad or center crop)."""
+    user_id = current_user["user_id"]
+    doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media asset not found")
+
+    mime_type = doc.get("mime_type") or doc.get("content_type") or ""
+    is_video = mime_type.startswith("video/") or doc.get("asset_kind") == "video"
+    is_image = mime_type.startswith("image/") or doc.get("asset_kind") == "image"
+    if not is_video and not is_image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only video and image assets can be fitted to 9:16 vertical",
+        )
+
+    from media_pipeline.ffmpeg_worker import auto_fit_video_vertical
+    from media_pipeline.image_worker import auto_fit_image_vertical
+    from media_pipeline.thumbnail import generate_thumbnail
+    from utils.storage import upload_file_from_path_async
+
+    source_path, need_cleanup_source = await _resolve_media_local_file(doc, media_job_id)
+    out_ext = ".mp4" if is_video else (".jpg" if ("jpeg" in mime_type or "jpg" in mime_type) else ".png")
+    out_dir = "/tmp/media_processing"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{uuid.uuid4()}_vertical{out_ext}")
+    thumb_path = None
+
+    try:
+        if is_video:
+            await auto_fit_video_vertical(source_path, out_path, mode=payload.mode, ensure_audio=True)
+            new_w, new_h = 1080, 1920
+            out_mime = "video/mp4"
+            thumb_path = await generate_thumbnail(out_path, out_mime, f"{media_job_id}_v", user_id)
+        else:
+            await auto_fit_image_vertical(source_path, out_path, mode=payload.mode)
+            new_w, new_h = 1080, 1920
+            out_mime = "image/jpeg" if out_ext == ".jpg" else "image/png"
+            thumb_path = await generate_thumbnail(out_path, out_mime, f"{media_job_id}_v", user_id)
+
+        new_size_bytes = os.path.getsize(out_path)
+        dest_filename = f"{media_job_id}_v_{uuid.uuid4().hex[:8]}{out_ext}"
+        media_folder = f"media/{user_id}"
+        new_media_url = await upload_file_from_path_async(out_path, dest_filename, out_mime, folder=media_folder)
+
+        new_thumb_url = doc.get("thumbnail_url")
+        if thumb_path and os.path.exists(thumb_path):
+            thumb_filename = f"{media_job_id}_v_{uuid.uuid4().hex[:8]}.webp"
+            new_thumb_url = await upload_file_from_path_async(
+                thumb_path, thumb_filename, "image/webp", folder=f"thumbnails/{user_id}"
+            )
+
+        updates = {
+            "media_url": new_media_url,
+            "url": new_media_url,
+            "thumbnail_url": new_thumb_url,
+            "storage_key": f"{media_folder}/{dest_filename}",
+            "file_size_bytes": new_size_bytes,
+            "width": new_w,
+            "height": new_h,
+            "mime_type": out_mime,
+            "status": MediaStatus.READY.value,
+            "processed_at": datetime.now(timezone.utc),
+        }
+        if is_video:
+            updates["has_audio"] = True
+            video_meta = dict(doc.get("video_metadata") or {})
+            video_meta["width"] = new_w
+            video_meta["height"] = new_h
+            video_meta["aspect_ratio"] = round(new_w / new_h, 3)
+            video_meta["has_audio"] = True
+            updates["video_metadata"] = video_meta
+
+        await db.media_assets.update_one({"media_id": media_job_id, "user_id": user_id}, {"$set": updates})
+        updated_doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id}, {"_id": 0})
+        return MediaAssetResponse(**updated_doc)
+    finally:
+        if need_cleanup_source and os.path.exists(source_path):
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+        if os.path.exists(out_path):
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
+        if thumb_path and os.path.exists(thumb_path):
+            try:
+                os.unlink(thumb_path)
+            except OSError:
+                pass
+
+
+@router.post("/upload/{media_job_id}/auto-compress", response_model=MediaAssetResponse)
+async def auto_compress(
+    media_job_id: str,
+    payload: MediaAutoCompressRequest,
+    current_user: CurrentUser,
+    db: DB,
+) -> MediaAssetResponse:
+    """Compress video or image to meet platform size constraints."""
+    user_id = current_user["user_id"]
+    doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media asset not found")
+
+    mime_type = doc.get("mime_type") or doc.get("content_type") or ""
+    is_video = mime_type.startswith("video/") or doc.get("asset_kind") == "video"
+    is_image = mime_type.startswith("image/") or doc.get("asset_kind") == "image"
+    if not is_video and not is_image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only video and image assets can be compressed",
+        )
+
+    from media_pipeline.platform_specs import get_max_media_size
+    from media_pipeline.ffmpeg_worker import auto_compress_video
+    from media_pipeline.image_worker import auto_compress_image
+    from media_pipeline.thumbnail import generate_thumbnail
+    from utils.storage import upload_file_from_path_async
+
+    target_bytes = payload.target_max_bytes
+    if not target_bytes and payload.platform:
+        target_bytes = get_max_media_size(payload.platform, "video" if is_video else "image")
+    if not target_bytes:
+        target_bytes = (500 * 1024 * 1024) if is_video else (5 * 1024 * 1024)
+
+    source_path, need_cleanup_source = await _resolve_media_local_file(doc, media_job_id)
+    out_ext = ".mp4" if is_video else (".jpg" if ("jpeg" in mime_type or "jpg" in mime_type) else ".png")
+    out_dir = "/tmp/media_processing"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{uuid.uuid4()}_comp{out_ext}")
+    thumb_path = None
+
+    try:
+        if is_video:
+            dur = doc.get("duration_seconds")
+            await auto_compress_video(source_path, out_path, target_bytes, duration_sec=dur)
+            out_mime = "video/mp4"
+            thumb_path = await generate_thumbnail(out_path, out_mime, f"{media_job_id}_c", user_id)
+        else:
+            await auto_compress_image(source_path, out_path, target_bytes)
+            out_mime = "image/jpeg" if out_ext == ".jpg" else "image/png"
+            thumb_path = await generate_thumbnail(out_path, out_mime, f"{media_job_id}_c", user_id)
+
+        new_size_bytes = os.path.getsize(out_path)
+        dest_filename = f"{media_job_id}_c_{uuid.uuid4().hex[:8]}{out_ext}"
+        media_folder = f"media/{user_id}"
+        new_media_url = await upload_file_from_path_async(out_path, dest_filename, out_mime, folder=media_folder)
+
+        new_thumb_url = doc.get("thumbnail_url")
+        if thumb_path and os.path.exists(thumb_path):
+            thumb_filename = f"{media_job_id}_c_{uuid.uuid4().hex[:8]}.webp"
+            new_thumb_url = await upload_file_from_path_async(
+                thumb_path, thumb_filename, "image/webp", folder=f"thumbnails/{user_id}"
+            )
+
+        updates = {
+            "media_url": new_media_url,
+            "url": new_media_url,
+            "thumbnail_url": new_thumb_url,
+            "storage_key": f"{media_folder}/{dest_filename}",
+            "file_size_bytes": new_size_bytes,
+            "mime_type": out_mime,
+            "status": MediaStatus.READY.value,
+            "processed_at": datetime.now(timezone.utc),
+        }
+        await db.media_assets.update_one({"media_id": media_job_id, "user_id": user_id}, {"$set": updates})
+        updated_doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id}, {"_id": 0})
+        return MediaAssetResponse(**updated_doc)
+    finally:
+        if need_cleanup_source and os.path.exists(source_path):
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+        if os.path.exists(out_path):
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
+        if thumb_path and os.path.exists(thumb_path):
+            try:
+                os.unlink(thumb_path)
+            except OSError:
+                pass
+
+
+@router.post("/upload/{media_job_id}/add-silent-audio", response_model=MediaAssetResponse)
+async def add_silent_audio(
+    media_job_id: str,
+    current_user: CurrentUser,
+    db: DB,
+) -> MediaAssetResponse:
+    """Inject silent stereo audio track into silent video so platform validation passes."""
+    user_id = current_user["user_id"]
+    doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media asset not found")
+
+    mime_type = doc.get("mime_type") or doc.get("content_type") or ""
+    if not (mime_type.startswith("video/") or doc.get("asset_kind") == "video"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Silent audio can only be added to video files",
+        )
+
+    from media_pipeline.ffmpeg_worker import add_silent_audio_track
+    from utils.storage import upload_file_from_path_async
+
+    source_path, need_cleanup_source = await _resolve_media_local_file(doc, media_job_id)
+    generated_path = None
+    try:
+        generated_path = await add_silent_audio_track(source_path)
+        new_size_bytes = os.path.getsize(generated_path)
+        dest_filename = f"{media_job_id}_aud_{uuid.uuid4().hex[:8]}.mp4"
+        media_folder = f"media/{user_id}"
+        new_media_url = await upload_file_from_path_async(
+            generated_path, dest_filename, "video/mp4", folder=media_folder
+        )
+
+        updates = {
+            "media_url": new_media_url,
+            "url": new_media_url,
+            "storage_key": f"{media_folder}/{dest_filename}",
+            "file_size_bytes": new_size_bytes,
+            "has_audio": True,
+            "status": MediaStatus.READY.value,
+            "processed_at": datetime.now(timezone.utc),
+        }
+        if doc.get("video_metadata"):
+            video_meta = dict(doc["video_metadata"])
+            video_meta["has_audio"] = True
+            updates["video_metadata"] = video_meta
+
+        await db.media_assets.update_one({"media_id": media_job_id, "user_id": user_id}, {"$set": updates})
+        updated_doc = await db.media_assets.find_one({"media_id": media_job_id, "user_id": user_id}, {"_id": 0})
+        return MediaAssetResponse(**updated_doc)
+    finally:
+        if need_cleanup_source and os.path.exists(source_path):
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+        if generated_path and os.path.exists(generated_path):
+            try:
+                os.unlink(generated_path)
+            except OSError:
+                pass
 
 
 # ── CDN purge helper ──────────────────────────────────────────────────────────

@@ -86,6 +86,15 @@ class MediaUploadAbortRequest(BaseModel):
     reason: str | None = None
 
 
+class MediaAutoFitRequest(BaseModel):
+    mode: Literal["blur_pad", "center_crop"] = "blur_pad"
+
+
+class MediaAutoCompressRequest(BaseModel):
+    platform: str | None = None
+    target_max_bytes: int | None = None
+
+
 class MediaAssetResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

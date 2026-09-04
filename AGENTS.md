@@ -2,23 +2,26 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v6.6 shipped
+Stage: v6.7 shipped
 Branch: main
-Focus: Social Graphic Studio Archetypes & Modern UI Overhaul
+Focus: Unified Smart Media Preflight & Auto-Optimization Engine
 
 ## Last Session Completed
 Date: 2026-09-04
 Completed:
-- Social Graphic Studio 12 Archetypes: `glassmorphic`, `bento_glow`, `tweet_card`, `editorial_paper`, `metric_stat`, `brutalist_mono`, `code_snippet`, `testimonial`, `minimal_swiss`, `chat_bubble`, `versus_comparison`, `split_contrast`.
-- Card Placement & Sizing: 4 placement modes (Centered, Grounded Bottom, Top Anchored, Edge-to-Edge), 3 width ratios (Compact 78%, Balanced 86%, Wide 94%), live corner radius slider (0-48px).
-- Modern 4-Tab Inspector: Layout & Archetype, Canvas & Style, Content & Copy, Archetype Extras with contextual settings (Versus comparison, Chat dialogue, Swiss index, KPI delta, Code lines).
-- 12 Curated 1-Click Templates & AI Magic Writer integration.
-- Test Suite: 318/318 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.5f7a4329.js`).
+- Canonical Platform Specs (`media_pipeline/platform_specs.py`): Single source of truth for 10 platforms, eliminating rule drift across frontend, upload validator, and worker pipeline.
+- Smart Media Transformations (`media_pipeline/ffmpeg_worker.py` & `media_pipeline/image_worker.py`):
+  * Vertical 9:16 auto-fit (`blur_pad` blurred Gaussian background padding or `center_crop`) for TikTok, Reels, Shorts.
+  * Smart auto-compression for video (computed target bitrate) and images (iterative Pillow compression).
+  * Auto silent audio track injection (`anullsrc`) for platforms requiring audio streams.
+- Transformation API Endpoints (`api/routes/upload.py`): `auto-fit-vertical`, `auto-compress`, and `add-silent-audio`.
+- Post Composer 1-Click Fixes (`PlatformEditor.js`, `CreatePostForm.js`, `mediaValidation.js`): Interactive 1-click action buttons on validation errors, warnings, and media thumbnails.
+- Test Suite: 325/325 backend tests passing; 19/19 Jest tests passing; frontend production build clean (`main.2617a123.js`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- User testing and feedback on visual exports and LinkedIn PDF carousels.
+- Real-world validation with end-user uploads and social platform publishing.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -5,6 +5,7 @@ All subprocess calls use create_subprocess_exec with explicit arg lists (no shel
 Paths are server-generated UUIDs — never user-supplied strings passed to shell.
 """
 import asyncio
+import json
 import logging
 import os
 import struct
@@ -431,3 +432,186 @@ async def _run_process(args: list[str], *, timeout: int | None = None) -> None:
         raise RuntimeError(
             f"Process failed (exit {proc.returncode}): {stderr.decode()[-300:]}"
         )
+
+
+async def _probe_has_audio(file_path: str) -> bool:
+    """Check whether a media file has an audio stream."""
+    args = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-select_streams", "a",
+        file_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        data = json.loads(stdout)
+        return len(data.get("streams", [])) > 0
+    except Exception:
+        return False
+
+
+async def _probe_duration(file_path: str) -> float:
+    """Return video duration in seconds."""
+    args = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_format",
+        file_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        data = json.loads(stdout)
+        dur = data.get("format", {}).get("duration", "0")
+        return float(dur) if dur else 0.0
+    except Exception:
+        return 0.0
+
+
+async def auto_fit_video_vertical(
+    input_path: str,
+    output_path: str,
+    mode: str = "blur_pad",
+    ensure_audio: bool = True,
+) -> str:
+    """
+    Transform video to 1080x1920 (9:16) for TikTok, Reels, Shorts.
+    - mode="blur_pad": Scale to fit with blurred video background
+    - mode="center_crop": Center crop to 1080x1920
+    - If ensure_audio is True and input has no audio, injects a silent stereo AAC track.
+    """
+    has_audio = await _probe_has_audio(input_path)
+    need_silent_audio = ensure_audio and not has_audio
+
+    if mode == "center_crop":
+        filter_str = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+        if need_silent_audio:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-vf", filter_str,
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-shortest",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+        elif has_audio:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-vf", filter_str,
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+        else:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-vf", filter_str,
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-an",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+    else:
+        # blur_pad (default)
+        blur_filter = (
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg];"
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2[v]"
+        )
+        if need_silent_audio:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-filter_complex", blur_filter,
+                "-map", "[v]",
+                "-map", "1:a",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-shortest",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+        elif has_audio:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-filter_complex", blur_filter,
+                "-map", "[v]",
+                "-map", "0:a:0",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+        else:
+            cmd_args = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-filter_complex", blur_filter,
+                "-map", "[v]",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+                "-an",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+
+    await _run_process(cmd_args, timeout=_ffmpeg_timeout_for_file(input_path))
+    return output_path
+
+
+async def auto_compress_video(
+    input_path: str,
+    output_path: str,
+    target_max_bytes: int,
+    duration_sec: float | None = None,
+) -> str:
+    """
+    Compress video to fit within target_max_bytes by computing bitrate constraint.
+    """
+    dur = duration_sec or (await _probe_duration(input_path))
+    dur = max(float(dur or 0), 1.0)
+
+    # 93% budget for container muxing overhead
+    target_bits = float(target_max_bytes) * 8.0 * 0.93
+    has_audio = await _probe_has_audio(input_path)
+    audio_bitrate_bps = 128_000 if has_audio else 0
+    video_bitrate_bps = max(int((target_bits / dur) - audio_bitrate_bps), 200_000)
+    max_rate = int(video_bitrate_bps * 1.25)
+    buf_size = int(video_bitrate_bps * 2.0)
+
+    cmd_args = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-c:v", "libx264",
+        "-b:v", str(video_bitrate_bps),
+        "-maxrate", str(max_rate),
+        "-bufsize", str(buf_size),
+        "-preset", "medium",
+        "-pix_fmt", "yuv420p",
+    ]
+    if has_audio:
+        cmd_args.extend(["-c:a", "aac", "-b:a", "128k"])
+    else:
+        cmd_args.append("-an")
+
+    cmd_args.extend(["-movflags", "+faststart", output_path])
+    await _run_process(cmd_args, timeout=_ffmpeg_timeout_for_file(input_path))
+    return output_path
+

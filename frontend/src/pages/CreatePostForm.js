@@ -28,6 +28,9 @@ import {
   updatePost,
   getWorkspaceApprovalPolicy,
   getCampaigns,
+  autoFitMediaVertical,
+  autoCompressMedia,
+  addSilentAudioToMedia,
 } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { convertWallClockToUtcIso, getScheduledWallClockParts } from '@/lib/scheduledTime';
@@ -625,6 +628,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [coverImageUploading,setCoverImageUploading]= useState(false);
   const [mediaRawAspectRatio,setMediaRawAspectRatio]= useState(null);
   const [hashtagGroups,      setHashtagGroups]      = useState([]);
+  const [transformingMediaId, setTransformingMediaId] = useState(null);
 
   // ── Image cropper ─────────────────────────────────────────────────────────
   const [showCropper,      setShowCropper]      = useState(false);
@@ -1861,6 +1865,125 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     }
   };
 
+  const updateTransformedMediaInState = (targetAccountId, mediaIndex, updatedAsset) => {
+    const buildNextItem = (currentItem) => ({
+      ...currentItem,
+      id: updatedAsset.media_id,
+      mediaId: updatedAsset.media_id,
+      url: updatedAsset.media_url || updatedAsset.url,
+      thumbnailUrl: updatedAsset.thumbnail_url || updatedAsset.media_url || updatedAsset.url,
+      width: updatedAsset.width || currentItem.width,
+      height: updatedAsset.height || currentItem.height,
+      size: updatedAsset.file_size_bytes || currentItem.size,
+      has_audio: updatedAsset.has_audio !== undefined ? updatedAsset.has_audio : currentItem.has_audio,
+    });
+
+    if (!targetAccountId || targetAccountId === COMMON_POST_SECTION) {
+      setUploadedMedia((prev) => {
+        const next = [...prev];
+        if (!next[mediaIndex]) return prev;
+        next[mediaIndex] = buildNextItem(next[mediaIndex]);
+        return next;
+      });
+    } else {
+      const accountMedia = [...getEffectiveMediaForAccount(targetAccountId)];
+      if (accountMedia[mediaIndex]) {
+        accountMedia[mediaIndex] = buildNextItem(accountMedia[mediaIndex]);
+        updateAccountOverride(targetAccountId, { media: accountMedia });
+      }
+    }
+  };
+
+  const handleAutoFitMedia = async (accountId, index, mode = 'blur_pad') => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const effectiveMedia = getEffectiveMediaForAccount(normalizedAccountId);
+    const item = effectiveMedia[index];
+    if (!item) return;
+
+    const mediaId = item.id || item.mediaId || item.media_id || item.media_job_id;
+    if (!mediaId) {
+      toast.error('Media ID not found. Please wait for upload to finish.');
+      return;
+    }
+
+    setTransformingMediaId(mediaId);
+    const toastId = toast.loading(
+      mode === 'center_crop'
+        ? '✂️ Center cropping to 9:16 vertical...'
+        : '✨ Auto-fitting to 9:16 vertical with blurred background...'
+    );
+
+    try {
+      const updatedAsset = await autoFitMediaVertical(mediaId, mode);
+      updateTransformedMediaInState(normalizedAccountId, index, updatedAsset);
+      toast.success(
+        mode === 'center_crop'
+          ? '✂️ Successfully cropped to 9:16 vertical!'
+          : '✨ Successfully fitted to 9:16 vertical!',
+        { id: toastId }
+      );
+    } catch (err) {
+      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
+      toast.error(`Transformation failed: ${msg}`, { id: toastId });
+    } finally {
+      setTransformingMediaId(null);
+    }
+  };
+
+  const handleAutoCompressMedia = async (accountId, index, platform) => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const effectiveMedia = getEffectiveMediaForAccount(normalizedAccountId);
+    const item = effectiveMedia[index];
+    if (!item) return;
+
+    const mediaId = item.id || item.mediaId || item.media_id || item.media_job_id;
+    if (!mediaId) {
+      toast.error('Media ID not found. Please wait for upload to finish.');
+      return;
+    }
+
+    setTransformingMediaId(mediaId);
+    const toastId = toast.loading(`⚡ Auto-compressing media for ${platform}...`);
+
+    try {
+      const updatedAsset = await autoCompressMedia(mediaId, { platform });
+      updateTransformedMediaInState(normalizedAccountId, index, updatedAsset);
+      toast.success('⚡ Media compressed to meet platform limit!', { id: toastId });
+    } catch (err) {
+      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
+      toast.error(`Compression failed: ${msg}`, { id: toastId });
+    } finally {
+      setTransformingMediaId(null);
+    }
+  };
+
+  const handleAddSilentAudio = async (accountId, index) => {
+    const normalizedAccountId = accountId === COMMON_POST_SECTION ? null : accountId;
+    const effectiveMedia = getEffectiveMediaForAccount(normalizedAccountId);
+    const item = effectiveMedia[index];
+    if (!item) return;
+
+    const mediaId = item.id || item.mediaId || item.media_id || item.media_job_id;
+    if (!mediaId) {
+      toast.error('Media ID not found. Please wait for upload to finish.');
+      return;
+    }
+
+    setTransformingMediaId(mediaId);
+    const toastId = toast.loading('🔇 Adding silent audio track to video...');
+
+    try {
+      const updatedAsset = await addSilentAudioToMedia(mediaId);
+      updateTransformedMediaInState(normalizedAccountId, index, updatedAsset);
+      toast.success('🔇 Silent audio track added!', { id: toastId });
+    } catch (err) {
+      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
+      toast.error(`Failed to add audio track: ${msg}`, { id: toastId });
+    } finally {
+      setTransformingMediaId(null);
+    }
+  };
+
   const handleCoverImageChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2541,6 +2664,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             altTexts={altTexts}
             onAltTextsChange={setAltTexts}
             onCropMedia={(idx, ratio) => handleCropMedia(COMMON_POST_SECTION, idx, ratio)}
+            onAutoFitMedia={(idx, mode) => handleAutoFitMedia(COMMON_POST_SECTION, idx, mode)}
+            onAutoCompressMedia={(idx, platform) => handleAutoCompressMedia(COMMON_POST_SECTION, idx, platform)}
+            onAddSilentAudio={(idx) => handleAddSilentAudio(COMMON_POST_SECTION, idx)}
+            transformingMediaId={transformingMediaId}
             hashtagGroups={hashtagGroups}
             showPlatformSpecificFields={false}
           />
@@ -2637,6 +2764,10 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 poll={activePlatformAccount ? getEffectivePollForAccount(activePlatformAccount.id) : null}
                 onPollChange={(value) => activePlatformAccount && setAccountOverrideField(activePlatformAccount.id, 'poll', value || undefined)}
                 onCropMedia={(idx, ratio) => activePlatformAccount && handleCropMedia(activePlatformAccount.id, idx, ratio)}
+                onAutoFitMedia={(idx, mode) => activePlatformAccount && handleAutoFitMedia(activePlatformAccount.id, idx, mode)}
+                onAutoCompressMedia={(idx, platform) => activePlatformAccount && handleAutoCompressMedia(activePlatformAccount.id, idx, platform)}
+                onAddSilentAudio={(idx) => activePlatformAccount && handleAddSilentAudio(activePlatformAccount.id, idx)}
+                transformingMediaId={transformingMediaId}
                 hashtagGroups={hashtagGroups}
                 errorMessages={activeAccountErrors}
                 infoMessages={activeAccountNotes}

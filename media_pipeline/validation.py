@@ -15,13 +15,15 @@ FFPROBE_TIMEOUT = 120  # doubled — large files (10GB) need more time for ffpro
 FFMPEG_TIMEOUT = 300   # 5 minutes (base — ffmpeg_worker uses dynamic timeout)
 MAX_IMAGE_PIXELS = 178_956_970  # ~12000x12000 (decompression bomb limit)
 
+from media_pipeline.platform_specs import PLATFORM_SPECS, get_platform_spec, is_vertical_required
+
 PLATFORM_LIMITS = {
-    "instagram": {"max_size_bytes": 650 * 1024 * 1024, "max_duration": 3600, "max_width": 1920},
-    "facebook":  {"max_size_bytes": 4 * 1024 * 1024 * 1024, "max_duration": 7200, "max_width": 1920},
-    "youtube":   {"max_size_bytes": 256 * 1024 * 1024 * 1024, "max_duration": None, "max_width": None},
-    "twitter":   {"max_size_bytes": 512 * 1024 * 1024, "max_duration": 140, "max_width": 1280},
-    "linkedin":  {"max_size_bytes": 5 * 1024 * 1024 * 1024, "max_duration": 600, "max_width": 1920},
-    "tiktok":    {"max_size_bytes": 4 * 1024 * 1024 * 1024, "max_duration": 600, "max_width": 1920},
+    platform: {
+        "max_size_bytes": spec["max_video_bytes"],
+        "max_duration": spec["max_duration_seconds"],
+        "max_width": spec["max_width"],
+    }
+    for platform, spec in PLATFORM_SPECS.items()
 }
 
 
