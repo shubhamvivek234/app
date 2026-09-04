@@ -24,6 +24,9 @@ import {
   FaPlay,
   FaImage,
   FaBolt,
+  FaFolder,
+  FaChevronUp,
+  FaChevronDown,
 } from 'react-icons/fa';
 import {
   getTactileCardStyles,

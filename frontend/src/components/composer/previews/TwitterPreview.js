@@ -70,13 +70,13 @@ const TwitterMediaGrid = ({ mediaArray }) => {
   );
 };
 
-/* ── TwitterPreview ──────────────────────────────────────────────────────── */
-const TwitterPreview = ({ content, media, account, poll }) => {
+const TwitterPreview = ({ content = '', media, account, poll }) => {
+  const safeContent = content || '';
   const name   = account?.platform_username || 'YourHandle';
   const avatar = account?.picture_url;
   const LIMIT  = 280;
-  const over   = content.length - LIMIT;
-  const remaining = LIMIT - content.length;
+  const over   = safeContent.length - LIMIT;
+  const remaining = LIMIT - safeContent.length;
 
   // Circular progress ring for character count (like real Twitter/X)
   const radius  = 10;

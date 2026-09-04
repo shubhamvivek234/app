@@ -38,7 +38,7 @@ import {
   FaEye, FaEyeSlash, FaInfoCircle, FaClock, FaTimes,
   FaChevronUp, FaChevronDown, FaDiscord, FaImages,
   FaMicrophone, FaStop, FaLink, FaMagic, FaPen, FaBolt,
-  FaShieldAlt,
+  FaShieldAlt, FaBullhorn,
 } from 'react-icons/fa';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 
@@ -548,7 +548,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const cachedAccounts = cachedAccountsRef.current;
   const { type: typeFromParam } = useParams();
   const [searchParams] = useSearchParams();
+  const routerLocation = useLocation();
   const navigate = useNavigate();
+  const campaignFromQuery = searchParams.get('campaign') || searchParams.get('campaign_id') || routerLocation.state?.campaignId || null;
   const fileInputRef = useRef(null);
   const coverImageInputRef = useRef(null);
   const hydratedEditPostRef = useRef(null);
@@ -566,8 +568,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [selectedAccounts, setSelectedAccounts]   = useState([]);
   const [availableAccounts, setAvailableAccounts] = useState(() => cachedAccounts || []);
   const [accountsLoading, setAccountsLoading]     = useState(() => !cachedAccounts);
-
-  const routerLocation = useLocation();
   // ── Shared + per-platform content ────────────────────────────────────────
   const [commonCaption, setCommonCaption] = useState(() => initialContent || routerLocation?.state?.initialContent || routerLocation?.state?.initialCaption || routerLocation?.state?.caption || '');
   const [accountOverrides, setAccountOverrides] = useState({});
@@ -676,13 +676,33 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   // ── Campaigns state ─────────────────────────────────────────────────────────
   const [campaignsList, setCampaignsList] = useState([]);
-  const [selectedCampaignId, setSelectedCampaignId] = useState('');
+  const [selectedCampaignId, setSelectedCampaignId] = useState(() => campaignFromQuery || '');
 
   useEffect(() => {
     getCampaigns('active')
-      .then((data) => setCampaignsList(data || []))
+      .then((data) => {
+        const list = data || [];
+        setCampaignsList(list);
+        if (campaignFromQuery && list.some((c) => c.id === campaignFromQuery)) {
+          setSelectedCampaignId(campaignFromQuery);
+        }
+      })
       .catch(() => {});
-  }, []);
+  }, [campaignFromQuery]);
+
+  const handleSelectCampaign = (campId) => {
+    setSelectedCampaignId(campId);
+    if (!campId) return;
+    const camp = campaignsList.find((c) => c.id === campId);
+    if (camp?.target_platforms?.length > 0 && selectedAccounts.length === 0) {
+      const matchingAccountIds = availableAccounts
+        .filter((a) => camp.target_platforms.includes(a.platform))
+        .map((a) => a.id);
+      if (matchingAccountIds.length > 0) {
+        setSelectedAccounts(matchingAccountIds);
+      }
+    }
+  };
 
   const loadQuickHooks = async (category = 'all', search = '') => {
     setQuickHooksLoading(true);
@@ -790,7 +810,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     }
     let cancelled = false;
     setTimeslotPreview({ loading: true, slot: null, message: null });
-    const acctId = selectedAccounts[0].account_id || selectedAccounts[0].id;
+    const acctId = selectedAccounts[0]?.account_id || selectedAccounts[0]?.id || selectedAccounts[0];
     const tz = selectedTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     fetch(
       `${process.env.REACT_APP_BACKEND_URL}/api/v1/timeslots/next-slot?account_id=${encodeURIComponent(acctId)}&category=${encodeURIComponent(selectedTimeslotCategory)}&timezone=${encodeURIComponent(tz)}`,
@@ -2383,7 +2403,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           {/* Campaign Selector Bar */}
           {campaignsList.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-2xl shadow-2xs">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 text-xs">
                   <FaBullhorn />
                 </span>
@@ -2392,7 +2412,7 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 </span>
                 <select
                   value={selectedCampaignId}
-                  onChange={(e) => setSelectedCampaignId(e.target.value)}
+                  onChange={(e) => handleSelectCampaign(e.target.value)}
                   className="text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">None (Individual Post)</option>
@@ -2402,6 +2422,30 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                     </option>
                   ))}
                 </select>
+
+                {/* Target Channels of selected campaign */}
+                {(() => {
+                  const activeCamp = campaignsList.find((c) => c.id === selectedCampaignId);
+                  if (!activeCamp || !activeCamp.target_platforms?.length) return null;
+                  return (
+                    <div className="flex items-center gap-1 ml-1 flex-wrap">
+                      <span className="text-[11px] text-slate-400 font-medium">Target Channels:</span>
+                      {activeCamp.target_platforms.map((p) => {
+                        const meta = platformIcons[p] || {};
+                        const PlatformIcon = meta.icon;
+                        return (
+                          <span
+                            key={p}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/60 dark:border-indigo-800 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300 capitalize"
+                          >
+                            {PlatformIcon && <PlatformIcon className={`text-[10px] ${meta.color || ''}`} />}
+                            {p}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
 
               {selectedCampaignId && (

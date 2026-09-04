@@ -186,6 +186,7 @@ const ApprovalCard = ({
   permissions,
   selected,
   highlighted,
+  onToggleSelected,
 }) => {
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState('');

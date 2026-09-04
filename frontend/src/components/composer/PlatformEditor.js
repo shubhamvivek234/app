@@ -230,7 +230,7 @@ const PlatformEditor = ({
   headerIcon: HeaderIcon,
   headerColor,
   postType,
-  content,
+  content = '',
   onContentChange,
   media,            // array of {url, type, name}
   uploading,
@@ -354,8 +354,9 @@ const PlatformEditor = ({
   const platformColor = headerColor || meta.color;
   const label = title || platform;
   const limit = CHAR_LIMITS[platform] || 2200;
-  const remaining = limit - content.length;
-  const pct = content.length / limit;
+  const contentLength = (content || '').length;
+  const remaining = limit - contentLength;
+  const pct = contentLength / limit;
   const issueCount = typeof issueCountOverride === 'number' ? issueCountOverride : errorMessages.length;
 
   const counterColor =

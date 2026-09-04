@@ -84,20 +84,20 @@ const MediaGrid = ({ mediaArray }) => {
   );
 };
 
-/* ── FacebookPreview ─────────────────────────────────────────────────────── */
-const FacebookPreview = ({ content, media, account }) => {
+const FacebookPreview = ({ content = '', media, account }) => {
+  const safeContent = content || '';
   const [expanded, setExpanded] = useState(false);
   const name   = account?.platform_username || 'Your Page';
   const avatar = account?.picture_url;
   const MAX    = 180;
-  const shouldTruncate = content.length > MAX && !expanded;
-  const displayText    = shouldTruncate ? content.slice(0, MAX) + '…' : content;
+  const shouldTruncate = safeContent.length > MAX && !expanded;
+  const displayText    = shouldTruncate ? safeContent.slice(0, MAX) + '…' : safeContent;
 
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
 
   // Short text-only posts get a colored background (Facebook feature)
-  const isTextOnly   = mediaArray.length === 0 && content.length > 0;
-  const isShortText  = isTextOnly && content.length <= 130;
+  const isTextOnly   = mediaArray.length === 0 && safeContent.length > 0;
+  const isShortText  = isTextOnly && safeContent.length <= 130;
   const bgStyle      = TEXT_BG_STYLES[(name.charCodeAt(0) || 0) % TEXT_BG_STYLES.length];
 
   return (

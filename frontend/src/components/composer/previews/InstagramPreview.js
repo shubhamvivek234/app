@@ -358,15 +358,16 @@ const FeedPost = ({
 /* ─────────────────────────────────────────────────────────────────────────
    Main component — routes to the right sub-preview
 ───────────────────────────────────────────────────────────────────────── */
-const InstagramPreview = ({ content, media, account, postFormat }) => {
+const InstagramPreview = ({ content = '', media, account, postFormat }) => {
+  const safeContent = content || '';
   const [expanded, setExpanded] = useState(false);
   const [activeSlide, setActiveSlide] = useState(0);
 
   const name   = account?.platform_username || 'your_account';
   const avatar = account?.picture_url;
   const MAX    = 100;
-  const shouldTruncate = content.length > MAX && !expanded;
-  const displayText    = shouldTruncate ? content.slice(0, MAX) + '…' : content;
+  const shouldTruncate = safeContent.length > MAX && !expanded;
+  const displayText    = shouldTruncate ? safeContent.slice(0, MAX) + '…' : safeContent;
 
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
   const isCarousel = mediaArray.length > 1;

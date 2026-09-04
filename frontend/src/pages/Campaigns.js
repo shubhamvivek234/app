@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   getCampaigns,
   createCampaign,
@@ -18,6 +19,7 @@ import {
   FaShareAlt,
   FaTrash,
   FaEdit,
+  FaPen,
   FaLayerGroup,
   FaTimes,
 } from 'react-icons/fa';
@@ -51,6 +53,7 @@ const COLOR_PRESETS = [
 ];
 
 export default function Campaigns() {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -387,6 +390,13 @@ export default function Campaigns() {
 
                   <div className="flex items-center gap-1">
                     <button
+                      onClick={() => navigate(`/create-post?campaign=${camp.id}`)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-zinc-800 text-xs"
+                      title="Create Post for this Campaign"
+                    >
+                      <FaPen />
+                    </button>
+                    <button
                       onClick={() => openEditModal(camp)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-zinc-800 text-xs"
                       title="Edit Campaign"
@@ -694,9 +704,18 @@ export default function Campaigns() {
 
             {/* Linked Posts */}
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-300 mb-3">
-                Assigned Posts ({selectedCampaignDetail.posts.length})
-              </h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-300">
+                  Assigned Posts ({selectedCampaignDetail.posts.length})
+                </h3>
+                <button
+                  onClick={() => navigate(`/create-post?campaign=${selectedCampaignDetail.campaign.id}`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs transition-colors"
+                >
+                  <FaPen className="text-[10px]" />
+                  New Post for Campaign
+                </button>
+              </div>
               {selectedCampaignDetail.posts.length === 0 ? (
                 <div className="text-center py-8 text-xs text-slate-400 border border-dashed border-slate-200 dark:border-zinc-800 rounded-xl">
                   No posts linked to this campaign yet. Select this campaign when composing a new post!

@@ -89,14 +89,14 @@ const MediaGrid = ({ mediaArray }) => {
   );
 };
 
-/* ── LinkedInPreview ─────────────────────────────────────────────────────── */
-const LinkedInPreview = ({ content, media, account, poll }) => {
+const LinkedInPreview = ({ content = '', media, account, poll }) => {
+  const safeContent = content || '';
   const [expanded, setExpanded] = useState(false);
   const name   = account?.platform_username || 'Your Name';
   const avatar = account?.picture_url;
   const MAX    = 210;
-  const shouldTruncate = content.length > MAX && !expanded;
-  const displayText    = shouldTruncate ? content.slice(0, MAX) + '…' : content;
+  const shouldTruncate = safeContent.length > MAX && !expanded;
+  const displayText    = shouldTruncate ? safeContent.slice(0, MAX) + '…' : safeContent;
 
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);
 
