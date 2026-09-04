@@ -11,6 +11,8 @@ const RING_HEX = {
   bluesky:   '#0085FF',
   threads:   '#101010',
   instagram: '#E1306C',
+  google_business: '#4285F4',
+  gbp:       '#4285F4',
 };
 
 const AccountSelector = ({

@@ -8,11 +8,12 @@ import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
 import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup, FaCommentDots } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
-import { SiBluesky, SiThreads } from 'react-icons/si';
+import { SiBluesky, SiThreads, SiGoogle } from 'react-icons/si';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
 import PostCommentsDrawer from '@/components/PostCommentsDrawer';
 import { formatScheduledCompactDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
 import ScheduledCalendarView from '@/components/scheduled/ScheduledCalendarView';
+import PostDeliveryInspector from '@/components/publish/PostDeliveryInspector';
 
 // 18.7 — Per-platform status colours and icons
 const PLATFORM_ICON_MAP = {
@@ -24,6 +25,8 @@ const PLATFORM_ICON_MAP = {
   linkedin: <FaLinkedin className="text-blue-700" />,
   bluesky: <SiBluesky className="text-blue-500" />,
   threads: <SiThreads className="text-gray-900" />,
+  google_business: <SiGoogle className="text-blue-600" />,
+  gbp: <SiGoogle className="text-blue-600" />,
 };
 
 const PLATFORM_STATUS_STYLE = {
@@ -191,7 +194,9 @@ const platformIcons = {
   instagram: <FaInstagram className="text-pink-500" />,
   facebook: <FaFacebook className="text-blue-500" />,
   tiktok: <FaTiktok className="text-black" />,
-  twitter: <FaXTwitter className="text-black" />
+  twitter: <FaXTwitter className="text-black" />,
+  google_business: <SiGoogle className="text-blue-600" />,
+  gbp: <SiGoogle className="text-blue-600" />,
 };
 
 const PUBLISHED_MEDIA_KIND_META = {
@@ -307,6 +312,20 @@ const ContentLibrary = () => {
     }, 30000);
     return () => clearInterval(intervalId);
   }, [fetchAll, initialStatus]);
+
+  const highlightPostId = queryParams.get('highlightPost') || null;
+
+  useEffect(() => {
+    if (highlightPostId && posts.length > 0) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`post-card-${highlightPostId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightPostId, posts]);
 
   const defaultTimeFilter = initialStatus === 'published' ? 'past_6_months' : 'all';
 
@@ -674,7 +693,10 @@ const ContentLibrary = () => {
               return (
                 <div
                   key={post.id}
-                  className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group"
+                  id={`post-card-${post.id}`}
+                  className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow relative group ${
+                    highlightPostId === post.id ? 'ring-2 ring-indigo-500 shadow-lg' : ''
+                  }`}
                 >
                   {/* Action Dropdown Hover (Top Right) */}
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 dark:bg-slate-800/90 rounded border border-slate-100 dark:border-slate-700 px-1 py-1 backdrop-blur-sm shadow-sm">
@@ -802,10 +824,16 @@ const ContentLibrary = () => {
                     </div>
                   </div>
 
-                  {/* 18.7 — Per-platform status rows (published/partial/failed posts) */}
-                  {['published', 'partial', 'failed', 'processing', 'publishing'].includes(post.status) &&
-                    post.platform_results && Object.keys(post.platform_results).length > 0 && (
-                    <PlatformStatusRows post={post} onRetry={handleRetryPlatform} />
+                  {/* Per-platform delivery inspector (published/partial/failed posts) */}
+                  {['published', 'partial', 'failed', 'processing', 'publishing'].includes(post.status) && (
+                    <div className="border-t border-slate-100 dark:border-slate-800 p-2.5">
+                      <PostDeliveryInspector
+                        post={post}
+                        onRetrySuccess={() => {
+                          fetchAll();
+                        }}
+                      />
+                    </div>
                   )}
 
                   {/* 17.6 — Pre-upload timeline (only for scheduled/queued video posts) */}

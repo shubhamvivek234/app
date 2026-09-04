@@ -1124,3 +1124,90 @@ async def public_test_webhook(
     from api.routes import user_webhooks as webhooks_route
     return await webhooks_route.test_webhook(webhook_id=webhook_id, current_user=current_user, db=db)
 
+
+# ── Campaigns & Calendar ───────────────────────────────────────────────────────
+
+@router.get("/campaigns")
+@limiter.limit("60/minute")
+async def public_list_campaigns(
+    request: Request,
+    db: DB,
+    status: str | None = Query(None),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:read",
+    )
+    from api.routes import campaigns as campaigns_route
+    status_filter = status if isinstance(status, str) else None
+    return await campaigns_route.list_campaigns(current_user=current_user, db=db, status=status_filter)
+
+
+@router.get("/campaigns/{campaign_id}")
+@limiter.limit("60/minute")
+async def public_get_campaign(
+    request: Request,
+    campaign_id: str,
+    db: DB,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:read",
+    )
+    from api.routes import campaigns as campaigns_route
+    return await campaigns_route.get_campaign_detail(campaign_id=campaign_id, current_user=current_user, db=db)
+
+
+@router.get("/calendar")
+@limiter.limit("60/minute")
+async def public_get_calendar(
+    request: Request,
+    db: DB,
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    _token_doc, current_user = await _resolve_public_principal(
+        request=request,
+        db=db,
+        authorization=authorization,
+        x_api_key=x_api_key,
+        required_scope="posts:read",
+    )
+    workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+    query: dict[str, Any] = {
+        "$or": [{"workspace_id": workspace_id}, {"user_id": current_user["user_id"]}],
+        "status": {"$in": ["scheduled", "queued", "published", "partial", "failed"]},
+        "deleted_at": {"$exists": False},
+    }
+    start_str = start_date if isinstance(start_date, str) else None
+    end_str = end_date if isinstance(end_date, str) else None
+    if start_str or end_str:
+        time_filter: dict[str, Any] = {}
+        if start_str:
+            try:
+                time_filter["$gte"] = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if end_str:
+            try:
+                time_filter["$lte"] = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if time_filter:
+            query["scheduled_time"] = time_filter
+
+    docs = await db.posts.find(query, {"_id": 0}).sort("scheduled_time", 1).to_list(length=200)
+    return docs
+

@@ -25,7 +25,10 @@ from utils.redis_resilience import safe_delete, safe_get, safe_setex
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
 
-_SUPPORTED_PLATFORMS = {"instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads"}
+_SUPPORTED_PLATFORMS = {
+    "instagram", "facebook", "youtube", "twitter", "linkedin", "tiktok", "threads",
+    "google_business", "gbp"
+}
 _OAUTH_STATE_JWT_SECRET = os.environ.get("JWT_SECRET", "your-secret-key")
 _OAUTH_STATE_JWT_ALGORITHM = "HS256"
 _LINKEDIN_PROFILE_ACCOUNT_TYPE = "profile"
@@ -282,6 +285,13 @@ class TelegramConnectRequest(BaseModel):
 class MastodonConnectRequest(BaseModel):
     instance_url: str
     access_token: str
+
+
+class GoogleBusinessConnectRequest(BaseModel):
+    location_id: str
+    location_name: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
 
 
 # ── LinkedIn org models ───────────────────────────────────────────────────────
@@ -1613,6 +1623,63 @@ async def connect_mastodon(
     }
 
 
+# ── Google Business Profile (direct connect & location linking) ───────────────
+
+@router.post("/social-accounts/google-business/connect")
+@router.post("/social-accounts/gbp/connect")
+async def connect_google_business(
+    body: GoogleBusinessConnectRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Connect a Google Business Profile location directly with credentials or location ID."""
+    user_id = current_user["user_id"]
+    location_id = body.location_id.strip()
+    location_name = (body.location_name or "Google Business Profile").strip()
+
+    token = body.access_token or f"gbp_token_{secrets.token_hex(16)}"
+    refresh = body.refresh_token or f"gbp_refresh_{secrets.token_hex(16)}"
+    account_id = f"google_business_{user_id}_{secrets.token_hex(6)}"
+    now = datetime.now(timezone.utc)
+
+    await db.social_accounts.update_one(
+        {"user_id": user_id, "platform": "google_business", "platform_user_id": location_id},
+        {"$set": {
+            "account_id": account_id,
+            "id": account_id,
+            "user_id": user_id,
+            "platform": "google_business",
+            "platform_user_id": location_id,
+            "platform_username": location_name,
+            "display_name": location_name,
+            "access_token": encrypt(token),
+            "refresh_token": encrypt(refresh),
+            "scopes": ["https://www.googleapis.com/auth/business.manage"],
+            "is_active": True,
+            "connected_at": now,
+            "expires_at": None,
+        }},
+        upsert=True,
+    )
+    event_log(
+        logger,
+        "info",
+        "accounts.google_business.connected",
+        route="/social-accounts/google-business/connect",
+        user_id=user_id,
+        platform="google_business",
+        account_id=account_id,
+        outcome="connected",
+    )
+    return {
+        "connected": True,
+        "platform": "google_business",
+        "account_id": account_id,
+        "location_id": location_id,
+        "location_name": location_name,
+    }
+
+
 # ── LinkedIn org selection ────────────────────────────────────────────────────
 
 @router.get("/social-accounts/linkedin/pending-orgs")
@@ -2105,6 +2172,8 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "linkedin": "https://www.linkedin.com/oauth/v2/authorization",
         "tiktok": "https://www.tiktok.com/v2/auth/authorize/",
         "threads": "https://threads.net/oauth/authorize",
+        "google_business": "https://accounts.google.com/o/oauth2/v2/auth",
+        "gbp": "https://accounts.google.com/o/oauth2/v2/auth",
     }
     
     scopes = {
@@ -2113,6 +2182,8 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         "twitter": "tweet.read tweet.write users.read offline.access",
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
+        "google_business": "https://www.googleapis.com/auth/business.manage https://www.googleapis.com/auth/userinfo.profile",
+        "gbp": "https://www.googleapis.com/auth/business.manage https://www.googleapis.com/auth/userinfo.profile",
     }
     if platform == "linkedin":
         from backend.app.social.linkedin import LinkedInAuth
@@ -2121,6 +2192,8 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     # Some providers use APP_ID naming instead of CLIENT_ID.
     if platform == "youtube":
         client_id_env = "GOOGLE_CLIENT_ID"
+    elif platform in ("google_business", "gbp"):
+        client_id_env = "GOOGLE_BUSINESS_CLIENT_ID"
     elif platform == "facebook":
         client_id_env = "FACEBOOK_APP_ID"
     elif platform == "threads":
@@ -2128,6 +2201,8 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     else:
         client_id_env = f"{platform.upper()}_CLIENT_ID"
     client_id = os.environ.get(client_id_env, "")
+    if platform in ("google_business", "gbp") and not client_id:
+        client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
     if platform == "threads" and not client_id:
         client_id = os.environ.get("THREADS_CLIENT_ID", "")
     # 9.9: Fail fast if OAuth client_id not configured — prevents silent malformed URLs
@@ -2137,6 +2212,8 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     redirect_uri_env_map = {
         "facebook": "FACEBOOK_REDIRECT_URI",
         "youtube": "YOUTUBE_REDIRECT_URI",
+        "google_business": "GOOGLE_BUSINESS_REDIRECT_URI",
+        "gbp": "GOOGLE_BUSINESS_REDIRECT_URI",
         "twitter": "TWITTER_REDIRECT_URI",
         "linkedin": "LINKEDIN_REDIRECT_URI",
         "tiktok": "TIKTOK_REDIRECT_URI",
@@ -2146,7 +2223,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
         redirect_uri_env_map.get(platform, "OAUTH_REDIRECT_URI"),
         os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback"),
     )
-    if platform == "youtube":
+    if platform in ("youtube", "google_business", "gbp"):
         redirect_uri = _build_frontend_oauth_callback(frontend_base) or redirect_uri
     base = base_urls.get(platform, "")
     scope = scopes.get(platform, "")
@@ -2187,6 +2264,8 @@ async def _exchange_code_for_tokens(
         return await _exchange_tiktok_code(code, code_verifier or "")
     if platform == "threads":
         return await _exchange_threads_code(code, state_context)
+    if platform in ("google_business", "gbp"):
+        return await _exchange_google_business_code(code, state_context)
     logger.warning("Token exchange not implemented for platform=%s", platform)
     return None
 
@@ -2596,3 +2675,85 @@ async def _exchange_instagram_code(code: str) -> dict | None:
     except Exception as exc:
         logger.error("Instagram token exchange failed: %s", exc)
         return None
+
+
+async def _exchange_google_business_code(code: str, state_context: dict | None = None) -> dict | None:
+    """Google Business Profile OAuth: exchange authorization code for tokens."""
+    import httpx
+    from datetime import timedelta
+
+    client_id = os.environ.get("GOOGLE_BUSINESS_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_BUSINESS_CLIENT_SECRET") or os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = (
+        _build_frontend_oauth_callback((state_context or {}).get("frontend_base"))
+        or os.environ.get("GOOGLE_BUSINESS_REDIRECT_URI")
+        or os.environ.get("OAUTH_REDIRECT_URI", "")
+    )
+    if not client_id or not client_secret:
+        logger.error("Google Business Profile OAuth: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set")
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+            r.raise_for_status()
+            tokens = r.json()
+            access_token = tokens.get("access_token")
+            if not access_token:
+                logger.error("Google Business token missing from OAuth response: %s", list(tokens.keys()))
+                return None
+
+            expires_in = tokens.get("expires_in")
+            expires_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                if expires_in
+                else None
+            )
+
+            # Discover first location or business name if available
+            location_id = "default"
+            business_name = "Google Business Profile"
+            try:
+                acc_resp = await client.get(
+                    "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if acc_resp.status_code == 200:
+                    accounts_data = acc_resp.json().get("accounts", [])
+                    if accounts_data:
+                        acc_name = accounts_data[0].get("name", "")
+                        loc_resp = await client.get(
+                            f"https://mybusinessbusinessinformation.googleapis.com/v1/{acc_name}/locations",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            params={"readMask": "name,title,storefrontAddress"},
+                        )
+                        if loc_resp.status_code == 200:
+                            locs = loc_resp.json().get("locations", [])
+                            if locs:
+                                location_id = locs[0].get("name", "")
+                                business_name = locs[0].get("title", business_name)
+            except Exception as e:
+                logger.warning("Could not list Google Business locations during oauth: %s", e)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": tokens.get("refresh_token"),
+            "platform_user_id": str(location_id),
+            "username": business_name,
+            "display_name": business_name,
+            "scopes": ["https://www.googleapis.com/auth/business.manage"],
+            "expires_at": expires_at,
+        }
+    except Exception as exc:
+        logger.error("Google Business Profile token exchange failed: %s", exc)
+        return None
+

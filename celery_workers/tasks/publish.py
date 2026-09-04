@@ -567,7 +567,7 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
         )
 
     # Dispatch outbound user webhooks if status is terminal
-    if agg_status in ("published", "partially_published", "failed", "dlq"):
+    if agg_status in ("published", "partially_published", "partial", "failed", "dlq"):
         try:
             from api.routes.user_webhooks import dispatch_webhook_event
             workspace_id = updated_post.get("workspace_id") or updated_post.get("user_id")
@@ -576,12 +576,17 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
                 if agg_status in ("published", "partially_published")
                 else ("post.dlq" if agg_status == "dlq" else "post.failed")
             )
+            failed_platforms = [
+                p for p, res in (aggregated_platform_results or {}).items()
+                if (res or {}).get("status") in ("failed", "permanently_failed") or bool((res or {}).get("error"))
+            ]
             webhook_payload = {
                 "post_id": post_id,
                 "title": updated_post.get("title") or (updated_post.get("content") or "")[:60],
                 "content": updated_post.get("content", ""),
                 "status": agg_status,
                 "platforms": updated_post.get("platforms", []),
+                "failed_platforms": failed_platforms,
                 "platform_results": aggregated_platform_results,
                 "published_at": now.isoformat() if agg_status in ("published", "partially_published") else None,
             }
@@ -686,7 +691,7 @@ async def _emit_aggregate_publish_notification(
         message=message,
         severity=severity,
         metadata=metadata,
-        target_path="/content-library?status=failed" if event != "post.published" else "/content-library?status=published",
+        target_path=f"/content-library?status=failed&highlightPost={post_id}" if event != "post.published" else "/content-library?status=published",
         dedup_key=f"post:{post_id}:publish:{event}",
         created_at=created_at,
     )

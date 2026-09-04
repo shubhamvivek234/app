@@ -18,7 +18,7 @@ import {
 } from 'react-icons/fa';
 import {
   SiBluesky, SiThreads, SiGiphy,
-  SiCanva, SiDropbox, SiGoogledrive, SiUnsplash,
+  SiCanva, SiDropbox, SiGoogledrive, SiUnsplash, SiGoogle,
 } from 'react-icons/si';
 import { MdPhotoLibrary } from 'react-icons/md';
 import { toast } from 'sonner';
@@ -46,11 +46,14 @@ const PLATFORM_ICONS = {
   pinterest: { icon: FaPinterest, color: '#E60023' },
   bluesky:   { icon: SiBluesky,   color: '#0085FF' },
   threads:   { icon: SiThreads,   color: '#101010' },
+  google_business: { icon: SiGoogle, color: '#4285F4' },
+  gbp:       { icon: SiGoogle, color: '#4285F4' },
 };
 
 const CHAR_LIMITS = {
   twitter: 280, bluesky: 300, facebook: 63206, instagram: 2200,
   linkedin: 3000, youtube: 5000, tiktok: 2200, pinterest: 500, threads: 500, common: 5000,
+  google_business: 1500, gbp: 1500,
 };
 
 // Ideal aspect ratios (width/height) per platform/format
@@ -68,6 +71,8 @@ const PLATFORM_ASPECT_RATIOS = {
   pinterest: { ratio: 2 / 3,   label: '2:3',     name: 'Pinterest' },
   threads:   { ratio: 1,        label: '1:1',     name: 'Threads' },
   bluesky:   { ratio: 1,        label: '1:1',     name: 'Bluesky' },
+  google_business: { ratio: 4 / 3, label: '4:3', name: 'Google Business Profile' },
+  gbp:             { ratio: 4 / 3, label: '4:3', name: 'Google Business Profile' },
 };
 
 // How far off (fraction) before we show a warning (10% tolerance)
@@ -267,6 +272,13 @@ const PlatformEditor = ({
   tiktokAllowDuet = true, onTiktokAllowDuetChange,
   tiktokAllowStitch = true, onTiktokAllowStitchChange,
   tiktokAllowComments = true, onTiktokAllowCommentsChange,
+  // Google Business Profile
+  googleBusinessTopicType = 'STANDARD',
+  onGoogleBusinessTopicTypeChange,
+  googleBusinessCallToAction = 'LEARN_MORE',
+  onGoogleBusinessCallToActionChange,
+  googleBusinessActionUrl = '',
+  onGoogleBusinessActionUrlChange,
   // Alt Text (parallel array to media)
   altTexts = [],
   onAltTextsChange,
@@ -2182,6 +2194,48 @@ const PlatformEditor = ({
                     <span className="text-sm text-gray-700">{label}</span>
                   </label>
                 ))}
+              </div>
+            </div>
+          )}
+          {/* ── Google Business Profile-specific fields ──────────────────────── */}
+          {showPlatformSpecificFields && (platform === 'google_business' || platform === 'gbp') && (
+            <div className="border-t border-gray-100 dark:border-slate-800 px-4 py-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">Google Business Profile Settings</span>
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">Google Search & Maps Post</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 block">Call to Action Button</Label>
+                  <Select
+                    value={googleBusinessCallToAction}
+                    onValueChange={onGoogleBusinessCallToActionChange}
+                  >
+                    <SelectTrigger className="h-9 text-sm border-gray-200 dark:border-slate-700">
+                      <SelectValue placeholder="Select CTA" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NONE">None</SelectItem>
+                      <SelectItem value="BOOK">Book</SelectItem>
+                      <SelectItem value="ORDER">Order Online</SelectItem>
+                      <SelectItem value="SHOP">Buy / Shop</SelectItem>
+                      <SelectItem value="LEARN_MORE">Learn More</SelectItem>
+                      <SelectItem value="SIGN_UP">Sign Up</SelectItem>
+                      <SelectItem value="CALL">Call Now</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 block">Action Link URL</Label>
+                  <Input
+                    type="url"
+                    placeholder="https://example.com/promo"
+                    value={googleBusinessActionUrl}
+                    onChange={(e) => onGoogleBusinessActionUrlChange?.(e.target.value)}
+                    className="h-9 text-sm border-gray-200 dark:border-slate-700"
+                    disabled={googleBusinessCallToAction === 'NONE' || googleBusinessCallToAction === 'CALL'}
+                  />
+                </div>
               </div>
             </div>
           )}

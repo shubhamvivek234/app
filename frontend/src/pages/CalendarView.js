@@ -417,6 +417,7 @@ const CalendarView = () => {
         onDeleteNote={handleDeleteNote}
         savingNote={savingNote}
         onClose={closeAgenda}
+        onRetrySuccess={fetchPosts}
       />
 
       <Dialog open={showShareModal} onOpenChange={setShowShareModal}>

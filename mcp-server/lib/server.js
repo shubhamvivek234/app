@@ -317,6 +317,48 @@ export function createUnravlerMcpServer({ getApi }) {
         return data;
       }),
     },
+    {
+      name: 'campaigns.list',
+      aliases: ['list_campaigns'],
+      description: 'List marketing campaigns for the active workspace, including pacing, post counts, and performance metrics.',
+      inputSchema: {
+        status: z.enum(['active', 'draft', 'completed', 'archived']).optional()
+          .describe('Optional campaign status filter.'),
+      },
+      handler: async ({ status }, extra) => call(getApi, extra, async (api) => {
+        const params = status ? { status } : undefined;
+        const { data } = await api.get('/campaigns', { params });
+        return data;
+      }),
+    },
+    {
+      name: 'campaigns.get',
+      aliases: ['get_campaign'],
+      description: 'Fetch complete details for a campaign, including associated posts, status breakdown, UTM links, and ROI analytics.',
+      inputSchema: {
+        campaign_id: z.string().min(1).describe('The campaign ID.'),
+      },
+      handler: async ({ campaign_id }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.get(`/campaigns/${campaign_id}`);
+        return data;
+      }),
+    },
+    {
+      name: 'calendar.get',
+      aliases: ['get_calendar_posts'],
+      description: 'Retrieve scheduled and published calendar posts within a date range for agent awareness of upcoming schedule.',
+      inputSchema: {
+        start_date: z.string().optional().describe('ISO 8601 start timestamp filter.'),
+        end_date: z.string().optional().describe('ISO 8601 end timestamp filter.'),
+      },
+      handler: async ({ start_date, end_date }, extra) => call(getApi, extra, async (api) => {
+        const params = {};
+        if (start_date) params.start_date = start_date;
+        if (end_date) params.end_date = end_date;
+        const { data } = await api.get('/calendar', { params });
+        return data;
+      }),
+    },
   ];
 
   for (const tool of tools) {

@@ -1347,6 +1347,20 @@ export const addLinkedInPageManually = async (data) => {
   return response.data;
 };
 
+export const connectGoogleBusiness = async ({ locationId, locationName, accessToken, refreshToken }) => {
+  const response = await axios.post(
+    `${API}/social-accounts/google-business/connect`,
+    {
+      location_id: locationId,
+      location_name: locationName || null,
+      access_token: accessToken || null,
+      refresh_token: refreshToken || null,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data;
+};
+
 // ── Posts (extra actions) ──
 export const duplicatePost = async (postId) => {
   const response = await axios.post(`${API}/posts/${postId}/duplicate`, {}, { headers: getAuthHeaders() });

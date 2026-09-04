@@ -20,6 +20,7 @@ _MAX_WEBHOOKS_PER_WORKSPACE = 15
 _SUPPORTED_EVENTS = {
     "post.published",
     "post.failed",
+    "post.partial_failed",
     "post.dlq",
     "post.scheduled",
     "post.cancelled",
@@ -97,7 +98,12 @@ def _is_discord_webhook(url: str) -> bool:
 def _format_slack_payload(event: str, payload: dict) -> dict:
     title = payload.get("title") or payload.get("content", "Social Post")[:60]
     platforms = ", ".join(payload.get("platforms", [])) or "All connected"
-    status_emoji = "🚀" if "published" in event else "⚠️" if "failed" in event else "📅"
+    failed_platforms = ", ".join(payload.get("failed_platforms", []))
+    status_emoji = "🚀" if "published" in event else "⚠️" if ("failed" in event or "dlq" in event) else "📅"
+
+    details = f"*Post:* {title}\n*Platforms:* {platforms}\n*Status:* `{payload.get('status', 'processed')}`"
+    if failed_platforms:
+        details += f"\n*⚠️ Failed Targets:* `{failed_platforms}`"
 
     return {
         "blocks": [
@@ -109,7 +115,7 @@ def _format_slack_payload(event: str, payload: dict) -> dict:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Post:* {title}\n*Platforms:* {platforms}\n*Status:* `{payload.get('status', 'processed')}`"
+                    "text": details
                 }
             },
             {
@@ -128,13 +134,18 @@ def _format_slack_payload(event: str, payload: dict) -> dict:
 def _format_discord_payload(event: str, payload: dict) -> dict:
     title = payload.get("title") or payload.get("content", "Social Post")[:60]
     platforms = ", ".join(payload.get("platforms", [])) or "All connected"
-    color = 0x10B981 if "published" in event else 0xEF4444 if "failed" in event else 0x6366F1
+    failed_platforms = ", ".join(payload.get("failed_platforms", []))
+    color = 0x10B981 if "published" in event else 0xEF4444 if ("failed" in event or "dlq" in event) else 0x6366F1
+
+    desc = f"**Post:** {title}\n**Platforms:** {platforms}\n**Status:** `{payload.get('status', 'processed')}`"
+    if failed_platforms:
+        desc += f"\n**⚠️ Failed Targets:** `{failed_platforms}`"
 
     return {
         "embeds": [
             {
                 "title": f"Unravler: {event}",
-                "description": f"**Post:** {title}\n**Platforms:** {platforms}\n**Status:** `{payload.get('status', 'processed')}`",
+                "description": desc,
                 "color": color,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "footer": {"text": "Unravler Social Automation"}

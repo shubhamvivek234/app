@@ -43,6 +43,7 @@ import {
   FaYoutube,
   FaTiktok,
 } from 'react-icons/fa';
+import PostDeliveryInspector from '@/components/publish/PostDeliveryInspector';
 
 const PLATFORM_ICONS = {
   twitter: { icon: FaTwitter, color: '#1DA1F2', label: 'Twitter' },
@@ -1381,6 +1382,16 @@ export default function Campaigns() {
                         <p className="text-slate-800 dark:text-zinc-200 line-clamp-3 leading-relaxed">
                           {post.content}
                         </p>
+                        {['published', 'partial', 'failed', 'processing', 'retrying'].includes(post.status) && (
+                          <div className="pt-2 border-t border-slate-200/60 dark:border-zinc-700/60">
+                            <PostDeliveryInspector
+                              post={post}
+                              onRetrySuccess={() => {
+                                handleOpenDrawer(selectedCampaignDetail.campaign);
+                              }}
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}

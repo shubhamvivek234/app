@@ -40,7 +40,7 @@ import {
   FaMicrophone, FaStop, FaLink, FaMagic, FaPen, FaBolt,
   FaShieldAlt, FaBullhorn,
 } from 'react-icons/fa';
-import { SiBluesky, SiThreads } from 'react-icons/si';
+import { SiBluesky, SiThreads, SiGoogle } from 'react-icons/si';
 
 import AccountSelector from '@/components/composer/AccountSelector';
 import PlatformEditor from '@/components/composer/PlatformEditor';
@@ -342,6 +342,8 @@ const platformIcons = {
   bluesky:   { icon: SiBluesky,   color: 'text-blue-500' },
   threads:   { icon: SiThreads,   color: 'text-gray-900' },
   discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
+  google_business: { icon: SiGoogle, color: 'text-blue-600' },
+  gbp:       { icon: SiGoogle, color: 'text-blue-600' },
 };
 
 const TIMESLOT_CATEGORIES = ['Category 1', 'Category 2', 'Category 3', 'Custom'];
@@ -395,6 +397,9 @@ const createDefaultAccountOverrides = () => ({
   tiktokAllowDuet: undefined,
   tiktokAllowStitch: undefined,
   tiktokAllowComments: undefined,
+  googleBusinessTopicType: undefined,
+  googleBusinessCallToAction: undefined,
+  googleBusinessActionUrl: undefined,
   altTexts: undefined,
   poll: undefined,
 });
@@ -584,6 +589,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [linkedinDocumentTitle, setLinkedinDocumentTitle] = useState(null);
   const [tiktokPrivacy,         setTiktokPrivacy]         = useState('public');
   const [tiktokAllowDuet,       setTiktokAllowDuet]       = useState(true);
+  const [tiktokAllowStitch,     setTiktokAllowStitch]     = useState(true);
+  const [tiktokAllowComments,   setTiktokAllowComments]   = useState(true);
+  const [googleBusinessTopicType,    setGoogleBusinessTopicType]    = useState('STANDARD');
+  const [googleBusinessCallToAction, setGoogleBusinessCallToAction] = useState('LEARN_MORE');
+  const [googleBusinessActionUrl,    setGoogleBusinessActionUrl]    = useState('');
 
   const { user } = useAuth();
   const [requiresApproval, setRequiresApproval] = useState(false);
@@ -606,8 +616,6 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     checkApprovalPolicy();
     return () => { active = false; };
   }, [user?.role]);
-  const [tiktokAllowStitch,     setTiktokAllowStitch]     = useState(true);
-  const [tiktokAllowComments,   setTiktokAllowComments]   = useState(true);
 
   // ── Upload state ──────────────────────────────────────────────────────────
   const [uploading,          setUploading]          = useState(false);
@@ -2046,6 +2054,11 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             override.tiktok_allow_stitch = getEffectiveValueForAccount(accountId, 'tiktokAllowStitch', tiktokAllowStitch);
             override.tiktok_allow_comment = getEffectiveValueForAccount(accountId, 'tiktokAllowComments', tiktokAllowComments);
           }
+          if (platform === 'google_business' || platform === 'gbp') {
+            override.google_business_topic_type = getEffectiveValueForAccount(accountId, 'googleBusinessTopicType', googleBusinessTopicType);
+            override.google_business_call_to_action = getEffectiveValueForAccount(accountId, 'googleBusinessCallToAction', googleBusinessCallToAction);
+            override.google_business_action_url = getEffectiveValueForAccount(accountId, 'googleBusinessActionUrl', googleBusinessActionUrl) || undefined;
+          }
           const effectivePoll = getEffectivePollForAccount(accountId);
           if (effectivePoll?.question) {
             override.poll = {
@@ -2079,7 +2092,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         tiktok_allow_stitch: tiktokAllowStitch,
         tiktok_allow_comment: tiktokAllowComments,
         campaign_id: selectedCampaignId || undefined,
-        platform_overrides: {},
+        platform_overrides: {
+          google_business: {
+            topic_type: googleBusinessTopicType,
+            call_to_action: googleBusinessCallToAction,
+            action_url: googleBusinessActionUrl || undefined,
+          },
+        },
         account_overrides: accountOverridesPayload,
       };
 
@@ -2098,7 +2117,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           first_comment: commonFirstComment || firstComment || linkedinFirstComment || null,
           first_comment_enabled: Boolean((commonFirstComment && commonFirstComment.trim()) || (firstComment && firstComment.trim()) || (linkedinFirstComment && linkedinFirstComment.trim())),
           account_overrides: accountOverridesPayload,
-          platform_overrides: {},
+          platform_overrides: {
+            google_business: {
+              topic_type: googleBusinessTopicType,
+              call_to_action: googleBusinessCallToAction,
+              action_url: googleBusinessActionUrl || undefined,
+            },
+          },
           ...(mode === 'scheduled' ? { scheduled_time: scheduledDateTime } : {}),
         };
         const updatedPost = await updatePost(editingPost.id, updatePayload);
@@ -2507,6 +2532,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
             onTiktokAllowStitchChange={setTiktokAllowStitch}
             tiktokAllowComments={tiktokAllowComments}
             onTiktokAllowCommentsChange={setTiktokAllowComments}
+            googleBusinessTopicType={googleBusinessTopicType}
+            onGoogleBusinessTopicTypeChange={setGoogleBusinessTopicType}
+            googleBusinessCallToAction={googleBusinessCallToAction}
+            onGoogleBusinessCallToActionChange={setGoogleBusinessCallToAction}
+            googleBusinessActionUrl={googleBusinessActionUrl}
+            onGoogleBusinessActionUrlChange={setGoogleBusinessActionUrl}
             altTexts={altTexts}
             onAltTextsChange={setAltTexts}
             onCropMedia={(idx, ratio) => handleCropMedia(COMMON_POST_SECTION, idx, ratio)}
@@ -2575,6 +2606,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
                 onTiktokAllowStitchChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokAllowStitch: value })}
                 tiktokAllowComments={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'tiktokAllowComments', tiktokAllowComments) : tiktokAllowComments}
                 onTiktokAllowCommentsChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { tiktokAllowComments: value })}
+                googleBusinessTopicType={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'googleBusinessTopicType', googleBusinessTopicType) : googleBusinessTopicType}
+                onGoogleBusinessTopicTypeChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { googleBusinessTopicType: value })}
+                googleBusinessCallToAction={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'googleBusinessCallToAction', googleBusinessCallToAction) : googleBusinessCallToAction}
+                onGoogleBusinessCallToActionChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { googleBusinessCallToAction: value })}
+                googleBusinessActionUrl={activePlatformAccount ? getEffectiveValueForAccount(activePlatformAccount.id, 'googleBusinessActionUrl', googleBusinessActionUrl) : googleBusinessActionUrl}
+                onGoogleBusinessActionUrlChange={(value) => activePlatformAccount && updateAccountOverride(activePlatformAccount.id, { googleBusinessActionUrl: value })}
                 onLinkedinDocumentChange={async ({ file, url, title }) => {
                   if (!activePlatformAccount) return;
                   if (file) {

@@ -13,6 +13,7 @@ import {
   getLinkedInPendingOrgs,
   saveLinkedInOrgs,
   addLinkedInPageManually,
+  connectGoogleBusiness,
 } from '@/lib/api';
 import {
   getPublishFailureAction,
@@ -38,7 +39,7 @@ import {
   FaYoutube,
   FaPaperPlane,
 } from 'react-icons/fa';
-import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads, SiTelegram } from 'react-icons/si';
+import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads, SiTelegram, SiGoogle } from 'react-icons/si';
 import {
   Dialog,
   DialogContent,
@@ -48,7 +49,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-const MANUAL_PLATFORMS = new Set(['bluesky', 'discord', 'telegram', 'mastodon']);
+const MANUAL_PLATFORMS = new Set(['bluesky', 'discord', 'telegram', 'mastodon', 'google_business']);
 const OAUTH_PLATFORMS = new Set([
   'facebook',
   'instagram',
@@ -60,6 +61,7 @@ const OAUTH_PLATFORMS = new Set([
   'pinterest',
   'snapchat',
   'tiktok',
+  'google_business',
 ]);
 const ATTENTION_STATES = new Set(['reconnect_required', 'restricted', 'expiring']);
 const STATE_ORDER = {
@@ -74,6 +76,7 @@ const PLATFORMS = [
   { id: 'facebook', name: 'Facebook', icon: FaFacebook, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700' },
   { id: 'twitter', name: 'X (Twitter)', icon: FaTwitter, color: 'text-sky-400', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-gray-900 hover:bg-black' },
   { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-300', btn: 'bg-blue-700 hover:bg-blue-800' },
+  { id: 'google_business', name: 'Google Business Profile', icon: SiGoogle, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700', badge: 'Local SEO & Maps' },
   { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
   { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
   { id: 'threads', name: 'Threads', icon: SiThreads, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
@@ -595,6 +598,11 @@ const ConnectedAccounts = () => {
   const [mastodonAccessToken, setMastodonAccessToken] = useState('');
   const [mastodonLoading, setMastodonLoading] = useState(false);
 
+  const [gbpLocationId, setGbpLocationId] = useState('');
+  const [gbpLocationName, setGbpLocationName] = useState('');
+  const [gbpAccessToken, setGbpAccessToken] = useState('');
+  const [gbpLoading, setGbpLoading] = useState(false);
+
   const [linkedinOrgsModal, setLinkedinOrgsModal] = useState(false);
   const [linkedinOrgs, setLinkedinOrgs] = useState([]);
   const [selectedOrgs, setSelectedOrgs] = useState([]);
@@ -681,6 +689,9 @@ const ConnectedAccounts = () => {
     setDiscordChannelName('');
     setMastodonInstanceUrl('');
     setMastodonAccessToken('');
+    setGbpLocationId('');
+    setGbpLocationName('');
+    setGbpAccessToken('');
   };
 
   const openManualModal = (platformId, mode) => {
@@ -844,6 +855,28 @@ const ConnectedAccounts = () => {
       toast.error(error?.response?.data?.detail || 'Failed to connect Mastodon');
     } finally {
       setMastodonLoading(false);
+    }
+  };
+
+  const handleGoogleBusinessConnect = async () => {
+    if (!gbpLocationId.trim()) {
+      toast.error('Location ID or Resource Name is required');
+      return;
+    }
+    setGbpLoading(true);
+    try {
+      await connectGoogleBusiness({
+        locationId: gbpLocationId.trim(),
+        locationName: gbpLocationName.trim() || undefined,
+        accessToken: gbpAccessToken.trim() || undefined,
+      });
+      toast.success(`Google Business Profile ${manualModal.mode === 'reconnect' ? 'reconnected' : 'connected'}!`);
+      closeManualModal();
+      fetchAccounts();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || 'Failed to connect Google Business Profile');
+    } finally {
+      setGbpLoading(false);
     }
   };
 
@@ -1294,6 +1327,89 @@ const ConnectedAccounts = () => {
               className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
               onKeyDown={(event) => { if (event.key === 'Enter') handleMastodonConnect(); }}
             />
+          </div>
+        </CredentialDialogShell>
+
+        <CredentialDialogShell
+          open={manualModal.platformId === 'google_business'}
+          onOpenChange={(open) => { if (!open) closeManualModal(); }}
+          color="blue"
+          icon={<SiGoogle className="text-xl text-blue-600" />}
+          title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Google Business Profile`}
+          description={manualModal.mode === 'reconnect'
+            ? 'Update your Google Business Profile location credentials or re-authorize with Google.'
+            : 'Publish posts, promotional updates, and events directly to Google Maps and Search.'}
+          footer={(
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  closeManualModal();
+                  startOAuth('google_business');
+                }}
+                className="rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 shadow-xs"
+              >
+                Sign in with Google OAuth
+              </button>
+              <button
+                type="button"
+                onClick={closeManualModal}
+                className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition-colors hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleGoogleBusinessConnect}
+                disabled={gbpLoading || !gbpLocationId.trim()}
+                className="rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+              >
+                {gbpLoading ? 'Saving…' : manualModal.mode === 'reconnect' ? 'Reconnect Profile' : 'Connect Profile'}
+              </button>
+            </>
+          )}
+        >
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Two ways to connect</p>
+              <ol className="mt-2 space-y-1.5 text-sm text-blue-900">
+                <li>1. Click <span className="font-semibold">Sign in with Google OAuth</span> above for 1-click Google authentication.</li>
+                <li>2. Or enter your Location Resource ID below (e.g. <span className="font-mono">locations/1234567890</span> or numeric store ID) to link directly.</li>
+              </ol>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-700 block mb-1">Location Resource ID *</label>
+                <input
+                  type="text"
+                  value={gbpLocationId}
+                  onChange={(event) => setGbpLocationId(event.target.value)}
+                  placeholder="locations/10987654321 or store number"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-700 block mb-1">Business Storefront Name (optional)</label>
+                <input
+                  type="text"
+                  value={gbpLocationName}
+                  onChange={(event) => setGbpLocationName(event.target.value)}
+                  placeholder="e.g. Acme Cafe Downtown"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-700 block mb-1">API Access Token / Key (optional for sandbox)</label>
+                <input
+                  type="password"
+                  value={gbpAccessToken}
+                  onChange={(event) => setGbpAccessToken(event.target.value)}
+                  placeholder="Paste access token if configuring custom API access"
+                  className="w-full rounded-2xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onKeyDown={(event) => { if (event.key === 'Enter') handleGoogleBusinessConnect(); }}
+                />
+              </div>
+            </div>
           </div>
         </CredentialDialogShell>
 

@@ -109,6 +109,9 @@ class PlatformOverride(BaseModel):
     tiktok_allow_comment: bool | None = None
     linkedin_document_url: str | None = Field(None, max_length=4000)
     linkedin_document_title: str | None = Field(None, max_length=500)
+    google_business_topic_type: str | None = Field(None, max_length=50)
+    google_business_call_to_action: str | None = Field(None, max_length=50)
+    google_business_action_url: str | None = Field(None, max_length=2000)
     poll: PollPayload | None = None
 
 
@@ -142,7 +145,8 @@ class CreatePostRequest(BaseModel):
     def validate_platforms(cls, v: list[str]) -> list[str]:
         allowed = {
             "instagram", "facebook", "youtube", "twitter", "linkedin",
-            "tiktok", "threads", "bluesky", "pinterest", "discord", "telegram"
+            "tiktok", "threads", "bluesky", "pinterest", "discord", "telegram",
+            "google_business", "gbp"
         }
         invalid = set(v) - allowed
         if invalid:

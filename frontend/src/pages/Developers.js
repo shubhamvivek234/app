@@ -17,6 +17,8 @@ import {
   FaShieldAlt,
   FaSpinner,
   FaTrash,
+  FaRobot,
+  FaTerminal,
 } from 'react-icons/fa';
 
 import DashboardLayout from '@/components/DashboardLayout';
@@ -55,6 +57,7 @@ const MCP_HTTP_ENDPOINT = `${BACKEND_URL}/mcp`;
 const SUPPORTED_WEBHOOK_EVENTS = [
   { key: 'post.published', label: 'post.published', desc: 'Fires when a post successfully goes live on connected channels' },
   { key: 'post.failed', label: 'post.failed', desc: 'Fires when publishing fails with platform error details' },
+  { key: 'post.partial_failed', label: 'post.partial_failed', desc: 'Fires when some platform targets publish but others fail' },
   { key: 'post.scheduled', label: 'post.scheduled', desc: 'Fires when a new draft is scheduled into the queue' },
   { key: 'post.cancelled', label: 'post.cancelled', desc: 'Fires when a scheduled post is removed or cancelled' },
   { key: 'account.disconnected', label: 'account.disconnected', desc: 'Fires when an OAuth token expires or permissions are lost' },
@@ -422,6 +425,43 @@ function WebhookSection({
         onSubmit={handleSubmit}
         className="space-y-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
       >
+        <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-gray-100 dark:border-slate-800">
+          <span className="text-[11px] font-semibold text-gray-500 dark:text-slate-400">Quick Presets:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setDescription('Slack Channel Alerts');
+              setSelectedEvents(['post.published', 'post.failed', 'post.partial_failed']);
+              toast.info('Slack preset selected! Paste your incoming webhook URL below.');
+            }}
+            className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 transition-colors"
+          >
+            🚀 Slack Channel Alerts
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDescription('Discord Social Feed');
+              setSelectedEvents(['post.published', 'post.failed']);
+              toast.info('Discord preset selected! Paste your discord webhook URL below.');
+            }}
+            className="rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:bg-purple-950 dark:text-purple-300 transition-colors"
+          >
+            🎮 Discord Channel Alerts
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDescription('Zapier Automation Trigger');
+              setSelectedEvents(SUPPORTED_WEBHOOK_EVENTS.map((e) => e.key));
+              toast.info('Zapier/Make preset selected! Subscribed to all events.');
+            }}
+            className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300 transition-colors"
+          >
+            ⚡ Zapier / Make / n8n
+          </button>
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
@@ -659,6 +699,253 @@ function DeliveriesModal({ endpoint, deliveries, open, onClose, loading }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AiAgentMcpHub({ personalTokens = [], generatedToken = '', backendUrl = '', mcpEndpoint = '' }) {
+  const [activeClient, setActiveClient] = useState('cursor');
+  const [transport, setTransport] = useState('remote');
+
+  const effectiveToken =
+    generatedToken ||
+    (personalTokens?.[0]?.token_preview
+      ? `unrv_${personalTokens[0].token_preview.replace(/\*/g, 'x')}`
+      : 'YOUR_PERSONAL_TOKEN');
+
+  const CLIENT_CONFIGS = {
+    cursor: {
+      label: 'Cursor IDE',
+      filename: '.cursor/mcp.json',
+      hint: 'Place in your project root at .cursor/mcp.json or configure in Cursor Settings > Features > MCP.',
+      remoteSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "url": "${mcpEndpoint}",
+      "headers": {
+        "Authorization": "Bearer ${effectiveToken}"
+      }
+    }
+  }
+}`,
+      stdioSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "command": "node",
+      "args": ["/absolute/path/to/unravler/app/mcp-server/index.js"],
+      "env": {
+        "UNRAVLER_TOKEN": "${effectiveToken}",
+        "UNRAVLER_BASE_URL": "${backendUrl}"
+      }
+    }
+  }
+}`,
+    },
+    claude: {
+      label: 'Claude Desktop',
+      filename: 'claude_desktop_config.json',
+      hint: 'Add to ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%/Claude (Windows).',
+      remoteSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "${mcpEndpoint}", "--header", "Authorization: Bearer ${effectiveToken}"]
+    }
+  }
+}`,
+      stdioSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "command": "node",
+      "args": ["/absolute/path/to/unravler/app/mcp-server/index.js"],
+      "env": {
+        "UNRAVLER_TOKEN": "${effectiveToken}",
+        "UNRAVLER_BASE_URL": "${backendUrl}"
+      }
+    }
+  }
+}`,
+    },
+    windsurf: {
+      label: 'Windsurf (Codeium)',
+      filename: '~/.codeium/windsurf/mcp_config.json',
+      hint: 'Configure in Cascade Settings > MCP or add to ~/.codeium/windsurf/mcp_config.json.',
+      remoteSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "serverUrl": "${mcpEndpoint}",
+      "headers": {
+        "Authorization": "Bearer ${effectiveToken}"
+      }
+    }
+  }
+}`,
+      stdioSnippet: `{
+  "mcpServers": {
+    "unravler": {
+      "command": "node",
+      "args": ["/absolute/path/to/unravler/app/mcp-server/index.js"],
+      "env": {
+        "UNRAVLER_TOKEN": "${effectiveToken}",
+        "UNRAVLER_BASE_URL": "${backendUrl}"
+      }
+    }
+  }
+}`,
+    },
+    http: {
+      label: 'cURL / Direct HTTP',
+      filename: 'Terminal Probe',
+      hint: 'Probe the hosted JSON-RPC 2.0 endpoint directly over HTTPS.',
+      remoteSnippet: `curl -X POST "${mcpEndpoint}" \\
+  -H "Authorization: Bearer ${effectiveToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`,
+      stdioSnippet: `curl -X POST "${mcpEndpoint}" \\
+  -H "Authorization: Bearer ${effectiveToken}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`,
+    },
+  };
+
+  const activeConf = CLIENT_CONFIGS[activeClient] || CLIENT_CONFIGS.cursor;
+  const currentSnippet = transport === 'remote' ? activeConf.remoteSnippet : activeConf.stdioSnippet;
+
+  return (
+    <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+            <FaRobot className="text-[11px]" />
+            Unravler MCP Server for AI Agents
+          </div>
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+            Supercharge Claude Desktop, Cursor, and Windsurf
+          </h2>
+          <p className="max-w-3xl text-sm leading-relaxed text-gray-600 dark:text-slate-400">
+            Enable autonomous AI agents to list accounts, schedule and publish posts, retry failed platforms, inspect campaigns, query master calendar schedules, and generate copy using standard Model Context Protocol tools.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-offwhite p-1 dark:border-slate-800 dark:bg-slate-800/80 self-start">
+          <button
+            type="button"
+            onClick={() => setTransport('remote')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              transport === 'remote'
+                ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            🌐 Hosted Remote (HTTPS)
+          </button>
+          <button
+            type="button"
+            onClick={() => setTransport('stdio')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              transport === 'stdio'
+                ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            💻 Local Stdio
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 dark:border-slate-800 pb-3">
+        {Object.entries(CLIENT_CONFIGS).map(([key, conf]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setActiveClient(key)}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeClient === key
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-offwhite text-gray-600 hover:bg-gray-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+            }`}
+          >
+            {key === 'cursor' && '⚡'}
+            {key === 'claude' && '🧠'}
+            {key === 'windsurf' && '🏄'}
+            {key === 'http' && '🔌'}
+            {conf.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs">
+        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+          <FaTerminal className="text-indigo-500 shrink-0" />
+          <span>Config path: <strong className="font-mono text-slate-900 dark:text-white">{activeConf.filename}</strong></span>
+        </div>
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+          {activeConf.hint}
+        </div>
+      </div>
+
+      <div className="relative">
+        <CodeBlock label={`${activeConf.label} Configuration (${transport === 'remote' ? 'Hosted' : 'Local'})`}>
+          {currentSnippet}
+        </CodeBlock>
+      </div>
+
+      <div className="space-y-3 pt-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
+            19 Exposed Model Context Protocol Tools
+          </h3>
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+            Ready for Claude 3.7 / Claude 3.5 Sonnet / Cursor Agent / Windsurf Cascade
+          </span>
+        </div>
+
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 text-xs">
+          <div className="p-3 rounded-xl border border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-850 space-y-1.5">
+            <p className="font-bold text-slate-800 dark:text-slate-200">Posts & Publishing</p>
+            <div className="flex flex-wrap gap-1">
+              {['posts.create', 'posts.update', 'posts.list', 'posts.get', 'posts.delete', 'posts.retry'].map((t) => (
+                <span key={t} className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-slate-700 dark:text-slate-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl border border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-850 space-y-1.5">
+            <p className="font-bold text-slate-800 dark:text-slate-200">Campaigns & Calendar</p>
+            <div className="flex flex-wrap gap-1">
+              {['campaigns.list', 'campaigns.get', 'calendar.get'].map((t) => (
+                <span key={t} className="px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 font-mono text-[10px] text-indigo-700 dark:text-indigo-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl border border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-850 space-y-1.5">
+            <p className="font-bold text-slate-800 dark:text-slate-200">Team Governance</p>
+            <div className="flex flex-wrap gap-1">
+              {['approvals.list', 'approvals.submit', 'approvals.approve', 'approvals.reject', 'approvals.return_to_draft'].map((t) => (
+                <span key={t} className="px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 font-mono text-[10px] text-amber-700 dark:text-amber-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl border border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-850 space-y-1.5">
+            <p className="font-bold text-slate-800 dark:text-slate-200">Intelligence & Stats</p>
+            <div className="flex flex-wrap gap-1">
+              {['accounts.list', 'stats.get', 'ai.generate', 'analytics.summary'].map((t) => (
+                <span key={t} className="px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1016,32 +1303,12 @@ function DevelopersContent({ user, navigate }) {
         )
       ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-start gap-3">
-            <FaCloud className="mt-1 text-gray-400" />
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Hosted MCP setup</h2>
-              <p className="text-sm text-gray-600 dark:text-slate-400">
-                Use the hosted HTTP MCP endpoint when your client supports remote MCP calls over HTTPS. Authenticate with a personal token in the bearer header.
-              </p>
-            </div>
-          </div>
-          <CodeBlock label="HTTP MCP probe">{hostedCurlSnippet}</CodeBlock>
-        </div>
-        <div className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-start gap-3">
-            <FaCode className="mt-1 text-gray-400" />
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Local stdio MCP setup</h2>
-              <p className="text-sm text-gray-600 dark:text-slate-400">
-                Use the bundled local package when your client prefers stdio transport. Legacy <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">SOCIALENTANGLER_API_KEY</code> still works, but <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">UNRAVLER_TOKEN</code> is the preferred env var now.
-              </p>
-            </div>
-          </div>
-          <CodeBlock label="Claude or Cursor config">{localConfigSnippet}</CodeBlock>
-        </div>
-      </section>
+      <AiAgentMcpHub
+        personalTokens={personalTokens}
+        generatedToken={generatedPersonalToken}
+        backendUrl={BACKEND_URL}
+        mcpEndpoint={MCP_HTTP_ENDPOINT}
+      />
 
       <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-start gap-3">

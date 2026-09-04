@@ -9,7 +9,7 @@ import {
   FaTiktok,
   FaYoutube,
 } from 'react-icons/fa';
-import { SiBluesky, SiThreads, SiX } from 'react-icons/si';
+import { SiBluesky, SiThreads, SiX, SiGoogle } from 'react-icons/si';
 
 import { cn } from '@/lib/utils';
 
@@ -37,6 +37,8 @@ const PLATFORM_META = {
   tiktok: { icon: FaTiktok, color: 'text-slate-900', label: 'TikTok' },
   bluesky: { icon: SiBluesky, color: 'text-sky-500', label: 'Bluesky' },
   threads: { icon: SiThreads, color: 'text-slate-900', label: 'Threads' },
+  google_business: { icon: SiGoogle, color: 'text-blue-600', label: 'Google Business' },
+  gbp: { icon: SiGoogle, color: 'text-blue-600', label: 'Google Business' },
 };
 
 const AccountAvatar = ({ account, size = 'sm' }) => {

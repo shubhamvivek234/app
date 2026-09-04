@@ -2,50 +2,23 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v6.0 shipped
+Stage: v6.5 shipped
 Branch: main
-Focus: Analytics & Reports Overhaul — Real Metrics, CSV Export, Pop-up Free PDF, Dark Theme UI
+Focus: Postpeer Capabilities (P1–P4) — MCP Server, Failure Diagnostics & Retry, Webhooks, Google Business Profile
 
 ## Last Session Completed
 Date: 2026-09-04
 Completed:
-- Enterprise Features & Campaigns Hub (Phases 1-3 Shipped & Verified):
-  - Phase 1: Workspace Approval Governance (`api/routes/team.py`, `api/routes/posts.py`, `Settings.js`), Universal First Comment Execution (`celery_workers/tasks/publish.py`), AI Remix for Evergreen Posts (`api/routes/recurring.py`, `celery_workers/tasks/recurring.py`, `RecurringPosts.js`).
-  - Phase 2: Pre-Publish Video & Media Validator (`CreatePostForm.js`, `mediaInspector.js`), Multi-Profile Brand Kit with Signature CTA (`api/routes/ai.py`, `BrandVoiceSettings.js`), RSS Autopilot with AI Hook Generation (`api/routes/rss_feeds.py`).
-  - Phase 3: Dedicated Campaigns Hub (`api/routes/campaigns.py`, `Campaigns.js`, `App.js`, `DashboardLayout.js`, `CreatePostForm.js`), Social Inbox Lead Tagging & CRM Lite (`api/routes/inbox.py`, `Inbox.js`), Thread Splitter Utility (`utils/thread_splitter.py`).
-  - Test Suite: 9/9 new tests passing in `tests/test_phase1_postly_features.py`; all 306 backend tests passing; frontend build clean (`main.a3c1ef9f.js`).
-
-- Star Button & Particles Integration Shipped & Deployed:
-  - Created `star-button.tsx`, `star-button.jsx`, and `demo.tsx` in `frontend/src/components/ui/`.
-  - Integrated 6-star cubic-bezier particle hover burst into the "Create New Post" buttons in `DashboardLayout.js` and `Dashboard.js`.
-  - Deployed live to production on Vercel (`https://www.unravler.com`, bundle `main.c15f2785.js`).
-- Collapsible Sidebar Toggle Arrow Button Shipped & Deployed:
-  - Added floating boundary toggle arrow (`FaChevronLeft`/`FaChevronRight`) & bottom menu action in `DashboardLayout.js`.
-  - Added `⌘B` / `Ctrl+B` hotkey and `localStorage` persistence (`unravler_sidebar_collapsed`).
-- Create Post Account Selection Crash Fix & Campaign Integration:
-  - Resolved runtime crash: missing `FaBullhorn` import in `CreatePostForm.js` triggered by active campaigns on account selection.
-  - Hardened previews (`TwitterPreview`, `FacebookPreview`, `InstagramPreview`, `LinkedInPreview`) and `PlatformEditor` with safe string guards.
-  - Linked Campaigns with Composer: Target channel badges, auto-select matching accounts, query parameter hydration (`?campaign=...`), and "New Post" shortcut in `Campaigns.js`.
-  - Added Jest tests (`AccountSelector.test.js`, `Previews.test.js`) & configured Jest `@/*` alias in `craco.config.js`.
-- Recurring Post Rule Creation Fix & Instance Spawner Pipeline:
-  - Resolved 422 Unprocessable Entity in `POST /api/recurring-rules` (Pydantic required `name` without default, integer `days_of_week` type, and missing `RecurringRuleUpdate` for toggle pause/resume).
-  - Connected recurring rules to post templates in `db.posts` (`status="template"`) with initial scheduled instance computation & upcoming counts.
-  - Hardened frontend error handling, platform fallback, account mapping, and dark mode UI in `RecurringPosts.js`.
-  - Added unit test suite `tests/test_recurring_rules_flow.py` (3/3 passing, 309/309 backend tests passing).
-  - Rebuilt and deployed API, worker, beat containers on EC2 and deployed frontend to Vercel (`main.d535c453.js`).
-- Campaigns Hub End-to-End Overhaul Shipped & Deployed:
-  - Visual Pacing & Timeline Bar: Dual-track progress bar, days remaining (`Day X of Y`), status delivery pills (`Published · Scheduled · Draft`).
-  - Master Calendar Sync: Bidirectional campaign filter dropdown in `CalendarToolbar.js`, color-coded campaign badge chips on `CalendarPostChip.js`, and "View in Calendar" deep links.
-  - Built-in Campaign UTM & Short Link Generator: In-drawer URL shortener with live UTM parameter tagging (`api/routes/short_links.py`, `Campaigns.js`), 1-click clipboard copy, and click analytics.
-  - Budget ROI & CPC/CPE: Automated calculations for Cost Per Click and Cost Per Engagement across cards, bento metrics row, and CSV export.
-  - AI Campaign Content Blueprint: 5-stage sequential story narrative generator (`api/routes/campaigns.py`, FreeLLM + heuristic fallback) with 1-click "Send to Composer" prefill (`/create-post?campaign=...`).
-  - CSV Performance Export: Client-side export utility downloading complete campaign metrics, status counts, post breakdown, and short links to CSV.
-  - Verification: 4/4 passing in `tests/test_campaigns_flow.py`; 313/313 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.0c9140fb.js`).
+- P1 (Unravler MCP Server for AI Agents): Public API `/campaigns` and `/calendar`, MCP tools `campaigns.list`, `campaigns.get`, `calendar.get` (19 total tools), interactive client tabs (Cursor, Claude, Windsurf) in `Developers.js`.
+- P2 ("Retry Failed Platforms Only" + Granular Error Diagnostics): `publishFailures.js` error parser (Meta, X, LinkedIn, YouTube, TikTok), `PostDeliveryInspector.js` with isolated platform retries & error banners, integrated into `ContentLibrary.js`, `DayAgendaPanel.js`, `CalendarView.js`, `Campaigns.js`, with notification deep linking (`highlightPost`).
+- P3 (Webhook Triggers Suite): `post.partial_failed` webhook event, enriched diagnostic payloads with `failed_platforms`, 1-click Slack/Discord/Zapier quick presets in `Developers.js`.
+- P4 (Google Business Profile Integration): `GoogleBusinessAdapter` with Call-To-Action buttons, photo attachments, direct connect `/social-accounts/google-business/connect` + OAuth, Composer CTA controls in `PlatformEditor.js` & `CreatePostForm.js`, badge chips in `CalendarPostChip.js`, `ContentLibrary.js`, `ConnectedAccounts.js`.
+- Test Suite: 5/5 passing in `tests/test_p1_p4_features.py`; 318/318 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.f18d7934.js`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor live user interactions on Campaigns Hub, UTM links, and AI Blueprint generator.
+- Monitor live MCP server and Google Business Profile usage.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

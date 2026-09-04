@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 
 import CalendarNotesSection from './CalendarNotesSection';
 import CalendarPostChip from './CalendarPostChip';
+import PostDeliveryInspector from '@/components/publish/PostDeliveryInspector';
 import {
   formatScheduledDateTime,
   getPostScheduledTimeZone,
@@ -29,6 +30,7 @@ const DayAgendaPanel = ({
   onDeleteNote,
   savingNote,
   onClose,
+  onRetrySuccess,
 }) => (
   <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose?.(); }}>
     <DialogContent motionPreset="centered" className="max-w-5xl overflow-hidden border-slate-200 p-0 sm:rounded-[28px] dark:border-slate-800 dark:bg-slate-900">
@@ -102,6 +104,12 @@ const DayAgendaPanel = ({
                         </div>
                       </div>
                     </div>
+
+                    {['published', 'partial', 'failed', 'processing', 'retrying'].includes(post?.status) && (
+                      <div className="mt-3">
+                        <PostDeliveryInspector post={post} onRetrySuccess={onRetrySuccess} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
