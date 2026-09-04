@@ -27,7 +27,12 @@ Completed:
   - Hardened previews (`TwitterPreview`, `FacebookPreview`, `InstagramPreview`, `LinkedInPreview`) and `PlatformEditor` with safe string guards.
   - Linked Campaigns with Composer: Target channel badges, auto-select matching accounts, query parameter hydration (`?campaign=...`), and "New Post" shortcut in `Campaigns.js`.
   - Added Jest tests (`AccountSelector.test.js`, `Previews.test.js`) & configured Jest `@/*` alias in `craco.config.js`.
-  - Deployed to Vercel (`main.2c0060e9.js`) and synced EC2 repo.
+- Recurring Post Rule Creation Fix & Instance Spawner Pipeline:
+  - Resolved 422 Unprocessable Entity in `POST /api/recurring-rules` (Pydantic required `name` without default, integer `days_of_week` type, and missing `RecurringRuleUpdate` for toggle pause/resume).
+  - Connected recurring rules to post templates in `db.posts` (`status="template"`) with initial scheduled instance computation & upcoming counts.
+  - Hardened frontend error handling, platform fallback, account mapping, and dark mode UI in `RecurringPosts.js`.
+  - Added unit test suite `tests/test_recurring_rules_flow.py` (3/3 passing, 309/309 backend tests passing).
+  - Rebuilt and deployed API, worker, beat containers on EC2 and deployed frontend to Vercel (`main.d535c453.js`).
 
 ## Active Work
 Currently implementing: None
