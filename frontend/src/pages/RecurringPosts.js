@@ -60,21 +60,21 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
   const toggling = false;
 
   return (
-    <div className={`bg-offwhite rounded-xl border transition-colors ${isActive ? 'border-gray-200' : 'border-gray-100 opacity-75'}`}>
+    <div className={`bg-white dark:bg-zinc-900 rounded-xl border transition-colors ${isActive ? 'border-gray-200 dark:border-zinc-800' : 'border-gray-100 dark:border-zinc-800/60 opacity-75'}`}>
       <div className="p-4">
         <div className="flex items-start gap-3">
           {/* Status dot */}
-          <div className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-400' : 'bg-gray-300'}`} />
+          <div className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActive ? 'bg-green-400 dark:bg-green-500' : 'bg-gray-300 dark:bg-zinc-600'}`} />
 
           <div className="flex-1 min-w-0">
             {/* Content preview */}
-            <p className="text-sm font-medium text-gray-900 line-clamp-2 leading-snug">
-              {rule.content || <span className="text-gray-400 italic">No content</span>}
+            <p className="text-sm font-medium text-gray-900 dark:text-zinc-100 line-clamp-2 leading-snug">
+              {rule.content || <span className="text-gray-400 dark:text-zinc-500 italic">No content</span>}
             </p>
 
             {/* Metadata row */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
-              <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+              <span className="text-xs font-semibold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/40 px-2 py-0.5 rounded-full">
                 {FREQ_LABELS[rule.frequency] || rule.frequency}
               </span>
               {rule.ai_remix && (
@@ -82,16 +82,16 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
                   ✨ AI Remix
                 </span>
               )}
-              <span className="text-xs text-gray-500">{describeFrequency(rule)}</span>
+              <span className="text-xs text-gray-500 dark:text-zinc-400">{describeFrequency(rule)}</span>
               {rule.platforms?.length > 0 && (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-400 dark:text-zinc-500">
                   {rule.platforms.map((p) => PLATFORM_LABELS[p] || p).join(' · ')}
                 </span>
               )}
             </div>
 
             {/* Upcoming count */}
-            <p className="text-xs text-gray-400 mt-1.5">
+            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1.5">
               {isActive
                 ? `${rule.upcoming_count ?? 0} upcoming scheduled post${rule.upcoming_count !== 1 ? 's' : ''}`
                 : 'Paused — no posts being generated'}
@@ -106,8 +106,8 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
               title={isActive ? 'Pause' : 'Resume'}
               className={`p-2 rounded-lg transition-colors text-sm ${
                 isActive
-                  ? 'text-amber-500 hover:bg-amber-50'
-                  : 'text-green-500 hover:bg-green-50'
+                  ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                  : 'text-green-500 hover:bg-green-50 dark:hover:bg-green-950/30'
               }`}
             >
               {isActive ? <FaPause /> : <FaPlay />}
@@ -115,7 +115,7 @@ const RuleCard = ({ rule, onToggle, onDelete }) => {
             <button
               onClick={() => onDelete(rule)}
               title="Delete"
-              className="p-2 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors text-sm"
+              className="p-2 rounded-lg text-gray-400 dark:text-zinc-500 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 dark:hover:text-red-400 transition-colors text-sm"
             >
               <FaTrash />
             </button>
@@ -132,10 +132,23 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
 
   const set = (key, val) => setForm((prev) => ({ ...prev, [key]: val }));
 
+  const availablePlatforms = [...new Set((accounts || []).map((a) => a.platform))];
+  const selectablePlatforms = availablePlatforms.length > 0
+    ? availablePlatforms
+    : ['instagram', 'twitter', 'facebook', 'linkedin', 'threads', 'bluesky'];
+
   const togglePlatform = (platform) => {
-    set('platforms', form.platforms.includes(platform)
+    const nextPlatforms = form.platforms.includes(platform)
       ? form.platforms.filter((p) => p !== platform)
-      : [...form.platforms, platform]);
+      : [...form.platforms, platform];
+    const nextAccounts = (accounts || [])
+      .filter((a) => nextPlatforms.includes(a.platform))
+      .map((a) => a.id || a.account_id);
+    setForm((prev) => ({
+      ...prev,
+      platforms: nextPlatforms,
+      accounts: nextAccounts,
+    }));
   };
 
   const toggleDay = (day) => {
@@ -143,8 +156,6 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
       ? form.days_of_week.filter((d) => d !== day)
       : [...form.days_of_week, day]);
   };
-
-  const availablePlatforms = [...new Set(accounts.map((a) => a.platform))];
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -157,53 +168,56 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-offwhite rounded-xl border border-green-200 p-5 space-y-4">
-      <h3 className="text-sm font-semibold text-gray-900">New Recurring Post</h3>
+    <form onSubmit={handleSubmit} className="bg-white dark:bg-zinc-900 rounded-xl border border-green-200 dark:border-green-900/60 p-5 space-y-4">
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-zinc-100">New Recurring Post</h3>
 
       {/* Content */}
       <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">Post Content</label>
+        <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-1">Post Content</label>
         <textarea
           rows={3}
           value={form.content}
           onChange={(e) => set('content', e.target.value)}
           placeholder="What would you like to post repeatedly?"
-          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-green-300 placeholder:text-gray-300"
+          className="w-full text-sm border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-green-400 dark:focus:ring-green-500 placeholder:text-gray-400 dark:placeholder:text-zinc-500"
           required
         />
       </div>
 
       {/* Platforms */}
-      {availablePlatforms.length > 0 && (
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">Platforms</label>
-          <div className="flex flex-wrap gap-2">
-            {availablePlatforms.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => togglePlatform(p)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                  form.platforms.includes(p)
-                    ? 'bg-green-500 border-green-500 text-white'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                {PLATFORM_LABELS[p] || p}
-              </button>
-            ))}
-          </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-2">Platforms</label>
+        <div className="flex flex-wrap gap-2">
+          {selectablePlatforms.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => togglePlatform(p)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                form.platforms.includes(p)
+                  ? 'bg-green-500 border-green-500 text-white'
+                  : 'border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 hover:border-gray-300 dark:hover:border-zinc-600 bg-white dark:bg-zinc-800'
+              }`}
+            >
+              {PLATFORM_LABELS[p] || p}
+            </button>
+          ))}
         </div>
-      )}
+        {availablePlatforms.length === 0 && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
+            Tip: Connect social accounts in Settings to auto-publish directly to them.
+          </p>
+        )}
+      </div>
 
-      {/* Frequency */}
+      {/* Frequency & Time */}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Frequency</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-1">Frequency</label>
           <select
             value={form.frequency}
             onChange={(e) => set('frequency', e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-offwhite"
+            className="w-full text-sm border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 dark:focus:ring-green-500"
           >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
@@ -213,12 +227,12 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
 
         {/* Time */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Time (UTC)</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-1">Time (UTC)</label>
           <input
             type="time"
             value={form.time_of_day}
             onChange={(e) => set('time_of_day', e.target.value)}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300"
+            className="w-full text-sm border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 dark:focus:ring-green-500"
           />
         </div>
       </div>
@@ -226,7 +240,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
       {/* Days of week (weekly only) */}
       {form.frequency === 'weekly' && (
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">Days of Week</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-2">Days of Week</label>
           <div className="flex gap-1.5">
             {DAY_LABELS.map((day, i) => (
               <button
@@ -236,7 +250,7 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
                 className={`w-9 h-9 text-xs font-semibold rounded-lg border transition-colors ${
                   form.days_of_week.includes(i)
                     ? 'bg-green-500 border-green-500 text-white'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    : 'border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 hover:border-gray-300 dark:hover:border-zinc-600 bg-white dark:bg-zinc-800'
                 }`}
               >
                 {day}
@@ -249,11 +263,11 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
       {/* Day of month (monthly only) */}
       {form.frequency === 'monthly' && (
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Day of Month</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-zinc-400 mb-1">Day of Month</label>
           <select
             value={form.day_of_month}
-            onChange={(e) => set('day_of_month', parseInt(e.target.value))}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 bg-offwhite"
+            onChange={(e) => set('day_of_month', parseInt(e.target.value, 10))}
+            className="w-full text-sm border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-400 dark:focus:ring-green-500"
           >
             {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
               <option key={d} value={d}>{ORDINALS[d]} ({d})</option>
@@ -282,8 +296,8 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
 
       {/* Preview */}
       {form.content && form.platforms.length > 0 && (
-        <div className="bg-offwhite rounded-lg px-3 py-2.5 text-xs text-gray-500 border border-gray-200">
-          <span className="font-medium text-gray-700">Preview: </span>
+        <div className="bg-gray-50 dark:bg-zinc-800/80 rounded-lg px-3 py-2.5 text-xs text-gray-500 dark:text-zinc-400 border border-gray-200 dark:border-zinc-700">
+          <span className="font-medium text-gray-700 dark:text-zinc-200">Preview: </span>
           {describeFrequency(form)} on {form.platforms.map((p) => PLATFORM_LABELS[p] || p).join(', ')}
         </div>
       )}
@@ -293,14 +307,14 @@ const CreateForm = ({ accounts, onSubmit, onCancel, saving }) => {
         <button
           type="submit"
           disabled={saving}
-          className="px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-60"
+          className="px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-60 cursor-pointer"
         >
           {saving ? 'Creating…' : 'Create Rule'}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700 rounded-lg transition-colors"
+          className="px-4 py-2 text-xs font-semibold text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-200 rounded-lg transition-colors cursor-pointer"
         >
           Cancel
         </button>
@@ -321,8 +335,8 @@ const RecurringPosts = () => {
     setLoading(true);
     try {
       const [r, a] = await Promise.all([getRecurringRules(), getSocialAccounts()]);
-      setRules(r);
-      setAccounts(a.filter ? a.filter((acc) => acc.is_active !== false) : a);
+      setRules(r || []);
+      setAccounts(a && a.filter ? a.filter((acc) => acc.is_active !== false) : (a || []));
     } catch {
       toast.error('Failed to load recurring posts');
     } finally {
@@ -339,8 +353,15 @@ const RecurringPosts = () => {
       setRules((prev) => [created, ...prev]);
       setShowForm(false);
       toast.success(`Recurring rule created — ${created.upcoming_count ?? 0} posts scheduled`);
-    } catch {
-      toast.error('Failed to create rule');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      let errorMsg = 'Failed to create rule';
+      if (typeof detail === 'string') {
+        errorMsg = detail;
+      } else if (Array.isArray(detail) && detail[0]?.msg) {
+        errorMsg = `${detail[0].loc?.slice(1)?.join('.') || 'Error'}: ${detail[0].msg}`;
+      }
+      toast.error(errorMsg);
     } finally {
       setSaving(false);
     }
@@ -350,10 +371,11 @@ const RecurringPosts = () => {
     const newStatus = rule.status === 'active' ? 'paused' : 'active';
     try {
       const updated = await updateRecurringRule(rule.id, { status: newStatus });
-      setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)));
+      setRules((prev) => prev.map((r) => (r.id === rule.id ? { ...r, ...updated, status: newStatus } : r)));
       toast.success(newStatus === 'active' ? 'Rule resumed' : 'Rule paused');
-    } catch {
-      toast.error('Failed to update rule');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'Failed to update rule');
     }
   };
 
@@ -363,8 +385,9 @@ const RecurringPosts = () => {
       await deleteRecurringRule(rule.id);
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
       toast.success('Rule deleted');
-    } catch {
-      toast.error('Failed to delete rule');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : 'Failed to delete rule');
     }
   };
 
@@ -376,18 +399,18 @@ const RecurringPosts = () => {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
               <FaRedo className="text-green-500 text-base" />
               Recurring Posts
             </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <p className="text-sm text-gray-500 dark:text-zinc-400 mt-0.5">
               {rules.length} rule{rules.length !== 1 ? 's' : ''}{activeCount > 0 ? ` · ${activeCount} active` : ''}
             </p>
           </div>
           {!showForm && (
             <button
               onClick={() => setShowForm(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors cursor-pointer"
             >
               <FaPlus className="text-xs" />
               New Rule
@@ -411,19 +434,19 @@ const RecurringPosts = () => {
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="bg-offwhite rounded-xl border border-gray-200 p-4 h-24 animate-pulse" />
+              <div key={i} className="bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-zinc-800 p-4 h-24 animate-pulse" />
             ))}
           </div>
         ) : rules.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center bg-offwhite rounded-xl border border-dashed border-gray-200">
-            <FaRedo className="text-4xl text-gray-200 mb-3" />
-            <p className="text-sm font-semibold text-gray-500">No recurring rules yet</p>
-            <p className="text-xs text-gray-400 mt-1 max-w-xs">
+          <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-zinc-900 rounded-xl border border-dashed border-gray-200 dark:border-zinc-800">
+            <FaRedo className="text-4xl text-gray-200 dark:text-zinc-700 mb-3" />
+            <p className="text-sm font-semibold text-gray-500 dark:text-zinc-400">No recurring rules yet</p>
+            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1 max-w-xs">
               Create a rule to automatically schedule the same post on a recurring basis — daily, weekly, or monthly.
             </p>
             <button
               onClick={() => setShowForm(true)}
-              className="mt-4 px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+              className="mt-4 px-4 py-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors cursor-pointer"
             >
               Create First Rule
             </button>
@@ -443,7 +466,7 @@ const RecurringPosts = () => {
 
         {/* Info callout */}
         {rules.length > 0 && (
-          <p className="text-xs text-gray-400 text-center mt-6">
+          <p className="text-xs text-gray-400 dark:text-zinc-500 text-center mt-6">
             Recurring posts are pre-scheduled for the next 60 days. Active rules regenerate automatically.
           </p>
         )}
