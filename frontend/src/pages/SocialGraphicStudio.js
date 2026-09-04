@@ -15,7 +15,7 @@ export default function SocialGraphicStudioPage() {
           {/* Top Studio Header */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-gray-200/80 dark:border-zinc-800/80">
             <div>
-              <div className="flex items-center gap-2 mb-2.5">
+              <div className="flex items-center gap-2 mb-2.5 flex-wrap">
                 <Link
                   to="/social-tools"
                   className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-indigo-400 transition-colors"
@@ -28,12 +28,19 @@ export default function SocialGraphicStudioPage() {
                   <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
                   Visual & Document Studio
                 </div>
+                <span className="text-gray-300 dark:text-gray-700 hidden sm:inline">•</span>
+                <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold">
+                  12 Card Archetypes
+                </div>
+                <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold">
+                  Multi-Page PDF Carousels
+                </div>
               </div>
               <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
                 Social Graphic Studio
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5 max-w-2xl leading-relaxed">
-                Design agency-grade social graphics, X/Twitter quote shots, big stat highlights, and multi-slide LinkedIn PDF carousels in seconds.
+                Design agency-grade social graphics, X/Twitter quote shots, big stat highlights, neo-brutalist drops, and multi-slide LinkedIn PDF carousels in seconds.
               </p>
             </div>
 

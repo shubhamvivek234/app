@@ -2,23 +2,23 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v6.5 shipped
+Stage: v6.6 shipped
 Branch: main
-Focus: Postpeer Capabilities (P1–P4) — MCP Server, Failure Diagnostics & Retry, Webhooks, Google Business Profile
+Focus: Social Graphic Studio Archetypes & Modern UI Overhaul
 
 ## Last Session Completed
 Date: 2026-09-04
 Completed:
-- P1 (Unravler MCP Server for AI Agents): Public API `/campaigns` and `/calendar`, MCP tools `campaigns.list`, `campaigns.get`, `calendar.get` (19 total tools), interactive client tabs (Cursor, Claude, Windsurf) in `Developers.js`.
-- P2 ("Retry Failed Platforms Only" + Granular Error Diagnostics): `publishFailures.js` error parser (Meta, X, LinkedIn, YouTube, TikTok), `PostDeliveryInspector.js` with isolated platform retries & error banners, integrated into `ContentLibrary.js`, `DayAgendaPanel.js`, `CalendarView.js`, `Campaigns.js`, with notification deep linking (`highlightPost`).
-- P3 (Webhook Triggers Suite): `post.partial_failed` webhook event, enriched diagnostic payloads with `failed_platforms`, 1-click Slack/Discord/Zapier quick presets in `Developers.js`.
-- P4 (Google Business Profile Integration): `GoogleBusinessAdapter` with Call-To-Action buttons, photo attachments, direct connect `/social-accounts/google-business/connect` + OAuth, Composer CTA controls in `PlatformEditor.js` & `CreatePostForm.js`, badge chips in `CalendarPostChip.js`, `ContentLibrary.js`, `ConnectedAccounts.js`.
-- Test Suite: 5/5 passing in `tests/test_p1_p4_features.py`; 318/318 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.f18d7934.js`).
+- Social Graphic Studio 12 Archetypes: `glassmorphic`, `bento_glow`, `tweet_card`, `editorial_paper`, `metric_stat`, `brutalist_mono`, `code_snippet`, `testimonial`, `minimal_swiss`, `chat_bubble`, `versus_comparison`, `split_contrast`.
+- Card Placement & Sizing: 4 placement modes (Centered, Grounded Bottom, Top Anchored, Edge-to-Edge), 3 width ratios (Compact 78%, Balanced 86%, Wide 94%), live corner radius slider (0-48px).
+- Modern 4-Tab Inspector: Layout & Archetype, Canvas & Style, Content & Copy, Archetype Extras with contextual settings (Versus comparison, Chat dialogue, Swiss index, KPI delta, Code lines).
+- 12 Curated 1-Click Templates & AI Magic Writer integration.
+- Test Suite: 318/318 backend tests passing; 14/14 Jest tests passing; frontend production build clean (`main.5f7a4329.js`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor live MCP server and Google Business Profile usage.
+- User testing and feedback on visual exports and LinkedIn PDF carousels.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
