@@ -19,12 +19,16 @@ Completed:
   - Created `star-button.tsx`, `star-button.jsx`, and `demo.tsx` in `frontend/src/components/ui/`.
   - Integrated 6-star cubic-bezier particle hover burst into the "Create New Post" buttons in `DashboardLayout.js` and `Dashboard.js`.
   - Deployed live to production on Vercel (`https://www.unravler.com`, bundle `main.c15f2785.js`).
+- Collapsible Sidebar Toggle Arrow Button Shipped & Deployed:
+  - Added floating boundary toggle arrow (`FaChevronLeft`/`FaChevronRight`) & bottom menu action in `DashboardLayout.js`.
+  - Added `⌘B` / `Ctrl+B` hotkey and `localStorage` persistence (`unravler_sidebar_collapsed`).
+  - Production deployed to Vercel (`https://www.unravler.com`, bundle `main.ee252ace.js`).
   - Synced with EC2 repository (`ubuntu@51.20.210.184`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor live user interactions on Create New Post button and Campaigns Hub.
+- Monitor live user interactions on collapsible sidebar, Create New Post button, and Campaigns Hub.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
