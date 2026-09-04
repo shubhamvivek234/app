@@ -92,6 +92,7 @@ const PlatformBadges = ({ platforms = [], compact = true }) => {
 
 const CalendarPostChip = ({
   post,
+  campaign = null,
   accounts = [],
   compact = true,
   expandedVariant = 'week',
@@ -188,6 +189,15 @@ const CalendarPostChip = ({
           </div>
 
           <div className={cn('flex flex-wrap items-center text-[10px] font-medium text-slate-500 dark:text-slate-400', isAgenda ? 'gap-2.5' : 'gap-2')}>
+            {campaign ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold text-white shadow-2xs truncate max-w-[120px]"
+                style={{ backgroundColor: campaign.color || '#6366f1' }}
+                title={`Campaign: ${campaign.name}`}
+              >
+                🏷️ {campaign.name}
+              </span>
+            ) : null}
             <span className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5">
               {media.label}
             </span>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { FaChevronLeft, FaChevronRight, FaShare, FaPlus, FaCalendarDay } from 'react-icons/fa';
+import { FaChevronLeft, FaChevronRight, FaShare, FaPlus, FaCalendarDay, FaBullhorn, FaTimes } from 'react-icons/fa';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +23,9 @@ const CalendarToolbar = ({
   visibleNoteCount,
   selectedPlatform = 'all',
   onPlatformChange,
+  campaigns = [],
+  selectedCampaign = 'all',
+  onCampaignChange,
   onToday,
   onPrev,
   onNext,
@@ -169,33 +172,67 @@ const CalendarToolbar = ({
 
       </div>
 
-      {/* Bottom Platform Filter Chips */}
-      {onPlatformChange && (
-        <div className="px-5 py-2.5 bg-white dark:bg-gray-900 flex items-center gap-1.5 overflow-x-auto">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400 mr-1.5 flex-shrink-0">
-            Network:
-          </span>
-          {PLATFORM_CHIPS.map((chip) => {
-            const isSelected = selectedPlatform === chip.id;
-            return (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => onPlatformChange(chip.id)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition-all flex-shrink-0',
-                  isSelected
-                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold shadow-2xs'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent',
-                )}
+      {/* Bottom Platform Filter Chips & Campaign Selector */}
+      <div className="px-5 py-2.5 bg-white dark:bg-gray-900 flex flex-wrap items-center justify-between gap-3">
+        {onPlatformChange && (
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400 mr-1.5 flex-shrink-0">
+              Network:
+            </span>
+            {PLATFORM_CHIPS.map((chip) => {
+              const isSelected = selectedPlatform === chip.id;
+              return (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => onPlatformChange(chip.id)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition-all flex-shrink-0',
+                    isSelected
+                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold shadow-2xs'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent',
+                  )}
+                >
+                  <span className={cn('w-2 h-2 rounded-full flex-shrink-0', chip.dot)} />
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {campaigns && campaigns.length > 0 && onCampaignChange && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400 flex items-center gap-1">
+              <FaBullhorn className="text-[10px] text-indigo-500" /> Campaign:
+            </span>
+            <div className="relative">
+              <select
+                value={selectedCampaign}
+                onChange={(e) => onCampaignChange(e.target.value)}
+                className="text-xs font-semibold rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 py-1 pl-2.5 pr-7 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
               >
-                <span className={cn('w-2 h-2 rounded-full flex-shrink-0', chip.dot)} />
-                {chip.label}
+                <option value="all">All Campaigns</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedCampaign !== 'all' && (
+              <button
+                type="button"
+                onClick={() => onCampaignChange('all')}
+                className="p-1 rounded-lg text-gray-400 hover:text-rose-500 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs"
+                title="Clear Campaign Filter"
+              >
+                <FaTimes />
               </button>
-            );
-          })}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
 
     </div>
   );

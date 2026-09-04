@@ -1430,7 +1430,8 @@ export const createShortLink = async (data) => {
 };
 
 export const getShortLinks = async (params = {}) => {
-  const response = await axios.get(`${API}/short-links`, { headers: getAuthHeaders(), params });
+  const queryParams = typeof params === 'string' ? { campaign_id: params } : params;
+  const response = await axios.get(`${API}/short-links`, { headers: getAuthHeaders(), params: queryParams });
   return response.data;
 };
 
@@ -1638,5 +1639,7 @@ export const deleteCampaign = async (campaignId) => {
   return response.data;
 };
 
-
-
+export const generateCampaignBlueprint = async (campaignId, payload = {}) => {
+  const response = await axios.post(`${API}/campaigns/${campaignId}/blueprint`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};

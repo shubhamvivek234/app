@@ -17,6 +17,7 @@ const CalendarDayCell = ({
   viewMode = 'month',
   visiblePostsPerDay = 2,
   getPostDisplayAccounts,
+  campaignMap = {},
   onOpenAgenda,
 }) => {
   const isWeek = viewMode === 'week';
@@ -68,6 +69,7 @@ const CalendarDayCell = ({
           <CalendarPostChip
             key={post.id}
             post={post}
+            campaign={post.campaign_id ? campaignMap[post.campaign_id] : null}
             accounts={getPostDisplayAccounts(post)}
             compact={!isWeek}
             today={today}

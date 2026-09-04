@@ -36,6 +36,7 @@ import {
 import BrandMarkLoader from '@/components/BrandMarkLoader';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useSearchParams } from 'react-router-dom';
 import {
   createCalendarNote,
   createCalendarShare,
@@ -44,6 +45,7 @@ import {
   getCalendarNotes,
   getPosts,
   getSocialAccounts,
+  getCampaigns,
 } from '@/lib/api';
 import { getPostScheduledTimeZone, getScheduledDateKey } from '@/lib/scheduledTime';
 import { toast } from 'sonner';
@@ -55,7 +57,10 @@ const CalendarView = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('month');
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedPlatform, setSelectedPlatform] = useState('all');
+  const [campaigns, setCampaigns] = useState([]);
+  const [selectedCampaign, setSelectedCampaign] = useState(() => searchParams.get('campaign') || searchParams.get('campaign_id') || 'all');
 
   const [notes, setNotes] = useState([]);
   const [agendaDay, setAgendaDay] = useState(null);
@@ -84,7 +89,43 @@ const CalendarView = () => {
   useEffect(() => {
     fetchPosts();
     loadAccounts();
+    loadCampaigns();
   }, []);
+
+  const loadCampaigns = async () => {
+    try {
+      const data = await getCampaigns();
+      setCampaigns(data || []);
+    } catch {
+      // Non-blocking
+    }
+  };
+
+  const campaignMap = useMemo(() => {
+    const map = {};
+    (campaigns || []).forEach((c) => {
+      if (c && c.id) map[c.id] = c;
+    });
+    return map;
+  }, [campaigns]);
+
+  const handleCampaignChange = (cmpId) => {
+    setSelectedCampaign(cmpId);
+    if (cmpId && cmpId !== 'all') {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('campaign', cmpId);
+        return next;
+      });
+    } else {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('campaign');
+        next.delete('campaign_id');
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     const loadNotes = async () => {
@@ -178,9 +219,14 @@ const CalendarView = () => {
       .filter((post) => {
         const matchesDay = getScheduledDateKey(post.scheduled_time, getPostScheduledTimeZone(post)) === dayKey;
         if (!matchesDay) return false;
-        if (selectedPlatform === 'all') return true;
-        const postPlatforms = (post.platforms || []).map((p) => String(p).toLowerCase());
-        return postPlatforms.includes(selectedPlatform.toLowerCase());
+        if (selectedPlatform !== 'all') {
+          const postPlatforms = (post.platforms || []).map((p) => String(p).toLowerCase());
+          if (!postPlatforms.includes(selectedPlatform.toLowerCase())) return false;
+        }
+        if (selectedCampaign !== 'all') {
+          if (post.campaign_id !== selectedCampaign) return false;
+        }
+        return true;
       })
       .sort((a, b) => new Date(a.scheduled_time) - new Date(b.scheduled_time));
   };
@@ -314,6 +360,9 @@ const CalendarView = () => {
           visibleNoteCount={visibleNotesCount}
           selectedPlatform={selectedPlatform}
           onPlatformChange={setSelectedPlatform}
+          campaigns={campaigns}
+          selectedCampaign={selectedCampaign}
+          onCampaignChange={handleCampaignChange}
           onToday={goToToday}
           onPrev={goToPrevious}
           onNext={goToNext}
@@ -346,6 +395,7 @@ const CalendarView = () => {
                 viewMode={viewMode}
                 visiblePostsPerDay={visiblePostsPerDay}
                 getPostDisplayAccounts={getPostDisplayAccounts}
+                campaignMap={campaignMap}
                 onOpenAgenda={openAgenda}
               />
             ))}

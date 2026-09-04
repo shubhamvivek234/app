@@ -73,6 +73,7 @@ class ShortLinkCreate(BaseModel):
     utm_campaign: str | None = None
     utm_term: str | None = None
     utm_content: str | None = None
+    campaign_id: str | None = None
 
 
 class ShortLinkItem(BaseModel):
@@ -85,6 +86,7 @@ class ShortLinkItem(BaseModel):
     utm_params: dict[str, str] = {}
     clicks_count: int = 0
     created_at: str
+    campaign_id: str | None = None
 
 
 # ── REST API Endpoints ────────────────────────────────────────────────────────
@@ -138,9 +140,13 @@ async def create_short_link(
     doc_id = hashlib.sha256(f"{user_id}:{slug}:{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()[:24]
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
     doc = {
         "id": doc_id,
         "user_id": user_id,
+        "workspace_id": workspace_id,
+        "campaign_id": payload.campaign_id,
         "code": slug,
         "original_url": raw_url,
         "final_url": final_url,
@@ -162,6 +168,7 @@ async def create_short_link(
         utm_params=utm_map,
         clicks_count=0,
         created_at=now_iso,
+        campaign_id=payload.campaign_id,
     )
 
 
@@ -169,12 +176,20 @@ async def create_short_link(
 async def list_short_links(
     current_user: CurrentUser,
     db: DB,
+    campaign_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=100),
     skip: int = Query(0, ge=0),
 ):
     """List shortened links for current user."""
     user_id = current_user.get("user_id") or current_user.get("id")
-    cursor = db.short_links.find({"user_id": user_id}).sort("created_at", -1).skip(skip).limit(limit)
+    workspace_id = current_user.get("default_workspace_id") or user_id
+    query: dict[str, Any] = {"$or": [{"user_id": user_id}, {"workspace_id": workspace_id}]}
+    if campaign_id:
+        query["campaign_id"] = campaign_id
+
+    limit_val = getattr(limit, "default", limit) if hasattr(limit, "default") else limit
+    skip_val = getattr(skip, "default", skip) if hasattr(skip, "default") else skip
+    cursor = db.short_links.find(query).sort("created_at", -1).skip(int(skip_val)).limit(int(limit_val))
     items = []
     async for doc in cursor:
         items.append(
@@ -186,8 +201,9 @@ async def list_short_links(
                 final_url=doc.get("final_url", doc["original_url"]),
                 title=doc.get("title"),
                 utm_params=doc.get("utm_params", {}),
-                clicks_count=doc.get("clicks_count", 0),
+                clicks_count=doc.get("clicks_count", doc.get("clicks", 0)),
                 created_at=doc.get("created_at", ""),
+                campaign_id=doc.get("campaign_id"),
             )
         )
     return items
