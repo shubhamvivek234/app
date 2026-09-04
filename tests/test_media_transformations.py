@@ -190,3 +190,119 @@ async def test_auto_fit_vertical_route(monkeypatch, tmp_path):
     assert resp.height == 1920
     assert resp.media_url == "https://pub.r2.dev/media/user-456/job-123_v.jpg"
 
+
+@pytest.mark.asyncio
+async def test_auto_compress_route(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from api.routes.upload import auto_compress
+    from api.models.media import MediaAutoCompressRequest
+
+    class _FakeMediaDocAssets:
+        def __init__(self, doc):
+            self.doc = dict(doc)
+
+        async def find_one(self, query, projection=None):
+            if query.get("media_id") == self.doc.get("media_id"):
+                return dict(self.doc)
+            return None
+
+        async def update_one(self, query, update):
+            if "$set" in update:
+                self.doc.update(update["$set"])
+            return SimpleNamespace(modified_count=1)
+
+    class _FakeUploadDB:
+        def __init__(self, doc):
+            self.media_assets = _FakeMediaDocAssets(doc)
+
+    fake_doc = {
+        "media_id": "job-compress-1",
+        "user_id": "user-456",
+        "mime_type": "image/jpeg",
+        "asset_kind": "image",
+        "url": "https://pub.r2.dev/uploads/test_large.jpg",
+        "storage_key": "uploads/test_large.jpg",
+        "status": "ready",
+        "file_size_bytes": 10 * 1024 * 1024,
+        "created_at": datetime.now(timezone.utc),
+    }
+    db = _FakeUploadDB(fake_doc)
+    current_user = {"user_id": "user-456", "plan": "pro"}
+
+    sample_file = str(tmp_path / "sample_compress.jpg")
+    img = Image.new("RGB", (600, 600), color=(50, 100, 150))
+    img.save(sample_file, "JPEG")
+
+    monkeypatch.setattr("api.routes.upload._resolve_media_local_file", AsyncMock(return_value=(sample_file, False)))
+    monkeypatch.setattr("utils.storage.upload_file_from_path_async", AsyncMock(return_value="https://pub.r2.dev/media/user-456/job-compress-1_c.jpg"))
+
+    resp = await auto_compress(
+        media_job_id="job-compress-1",
+        payload=MediaAutoCompressRequest(platform="twitter"),
+        current_user=current_user,
+        db=db,
+    )
+    assert resp.media_id == "job-compress-1"
+    assert resp.media_url == "https://pub.r2.dev/media/user-456/job-compress-1_c.jpg"
+
+
+@pytest.mark.asyncio
+async def test_add_silent_audio_route(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from api.routes.upload import add_silent_audio
+
+    class _FakeMediaDocAssets:
+        def __init__(self, doc):
+            self.doc = dict(doc)
+
+        async def find_one(self, query, projection=None):
+            if query.get("media_id") == self.doc.get("media_id"):
+                return dict(self.doc)
+            return None
+
+        async def update_one(self, query, update):
+            if "$set" in update:
+                self.doc.update(update["$set"])
+            return SimpleNamespace(modified_count=1)
+
+    class _FakeUploadDB:
+        def __init__(self, doc):
+            self.media_assets = _FakeMediaDocAssets(doc)
+
+    fake_doc = {
+        "media_id": "job-audio-1",
+        "user_id": "user-456",
+        "mime_type": "video/mp4",
+        "asset_kind": "video",
+        "url": "https://pub.r2.dev/uploads/test_silent.mp4",
+        "storage_key": "uploads/test_silent.mp4",
+        "status": "ready",
+        "file_size_bytes": 5000000,
+        "has_audio": False,
+        "video_metadata": {"width": 1080, "height": 1920, "has_audio": False},
+        "created_at": datetime.now(timezone.utc),
+    }
+    db = _FakeUploadDB(fake_doc)
+    current_user = {"user_id": "user-456", "plan": "pro"}
+
+    sample_file = str(tmp_path / "silent.mp4")
+    Path(sample_file).touch()
+    out_with_audio = str(tmp_path / "silent_with_audio.mp4")
+    Path(out_with_audio).touch()
+
+    monkeypatch.setattr("api.routes.upload._resolve_media_local_file", AsyncMock(return_value=(sample_file, False)))
+    monkeypatch.setattr("media_pipeline.ffmpeg_worker.add_silent_audio_track", AsyncMock(return_value=out_with_audio))
+    monkeypatch.setattr("utils.storage.upload_file_from_path_async", AsyncMock(return_value="https://pub.r2.dev/media/user-456/job-audio-1_aud.mp4"))
+
+    resp = await add_silent_audio(
+        media_job_id="job-audio-1",
+        current_user=current_user,
+        db=db,
+    )
+    assert resp.media_id == "job-audio-1"
+    assert resp.has_audio is True
+    assert resp.media_url == "https://pub.r2.dev/media/user-456/job-audio-1_aud.mp4"
+
+
