@@ -64,6 +64,20 @@ class YouTubeAdapter(PlatformAdapter):
 
         async with httpx.AsyncClient(timeout=120) as client:
             if not resume_uri:
+                if redis:
+                    from utils.youtube_quota_tracker import (
+                        COST_VIDEO_INSERT,
+                        check_quota_available,
+                        record_quota_consumption,
+                    )
+                    quota_ok, quota_status = await check_quota_available(redis, COST_VIDEO_INSERT)
+                    if not quota_ok:
+                        raise PlatformAPIError(
+                            f"YouTube daily API quota limit reached ({quota_status['used']}/{quota_status['limit']} units). Scheduled uploads will resume at midnight Pacific.",
+                            code=429,
+                            retry_after=quota_status["resets_in_seconds"],
+                        )
+
                 # Initiate resumable upload session
                 effective_content = post.get("effective_content", post.get("content", ""))
                 effective_title = (
@@ -86,14 +100,14 @@ class YouTubeAdapter(PlatformAdapter):
                     json=metadata,
                 )
                 if init_resp.status_code not in (200, 201):
-                    if init_resp.status_code not in (200, 201):
-                        if redis:
-                            await record_failure(redis, self.platform)
-                        raise PlatformHTTPError(init_resp.status_code, init_resp.text)
+                    if redis:
+                        await record_failure(redis, self.platform)
+                    raise PlatformHTTPError(init_resp.status_code, init_resp.text)
                 resume_uri = init_resp.headers.get("Location", "")
                 if not resume_uri:
                     raise PlatformResponseError("YouTube did not return a resumable upload URI")
                 if redis:
+                    await record_quota_consumption(redis, COST_VIDEO_INSERT)
                     await redis.setex(_resume_redis_key(post_id), RESUME_KEY_TTL, resume_uri)
 
             # EC11 — Chunked resumable upload: stream from media_url, upload in CHUNK_SIZE chunks.
@@ -254,6 +268,8 @@ class YouTubeAdapter(PlatformAdapter):
         self._check_response_for_error(resp_json, self.platform)
 
         if redis:
+            from utils.youtube_quota_tracker import COST_VIDEO_UPDATE, record_quota_consumption
+            await record_quota_consumption(redis, COST_VIDEO_UPDATE)
             await record_success(redis, self.platform)
 
         return {

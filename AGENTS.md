@@ -2,24 +2,24 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v6.8 shipped
+Stage: v6.9 shipped
 Branch: main
-Focus: Adaptive Multi-Network Master Composer & Platform-Aware Common Post
+Focus: High-Scale Low-Cost Multi-Platform Video Architecture & YouTube Quota
 
 ## Last Session Completed
 Date: 2026-09-05
 Completed:
-- Adaptive Visibility (`CreatePostForm.js`): Automatically hides Common Post when 1 account is selected to avoid duplicate boxes; renders Common Post as Master Composer when 2+ accounts are selected.
-- Real-Time Multi-Network Limit Badges (`PlatformEditor.js`, `mediaValidation.js`): Live per-platform character pills (`[X: 180/280]`, `[IG: 180/2200]`, etc.) with amber/red limit alerts and dynamic strictest remaining countdown.
-- 1-Click Optimization in Master Composer: Surfaced 9:16 auto-fit, auto-compress, and silent audio track fixes directly in Common Post, updating assets once for all destinations.
-- Universal First Comment & Alt Text Preservation: First comments in Common Post auto-propagate to Instagram & LinkedIn; image alt texts are preserved on submission.
-- Non-Destructive Override Sync: Safe reordering/removing preserves platform-specific crops and custom media.
-- Test Suite: 327/327 backend tests passing; 26/26 Jest tests passing; frontend production build clean.
+- Zero-Download Remote Media Probing & Fast-Path (`media.py`, `validation.py`, `storage.py`, `thumbnail.py`): Uses HTTP Range probing to validate 15 GB videos directly in Cloudflare R2; avoids downloading compliant H.264 videos to `/tmp`, eliminating VPS disk crashes (`ENOSPC`).
+- Serverless Transcoding Dispatcher (`transcode_dispatcher.py`): Pluggable ephemeral container execution (AWS ECS Fargate / Modal) with local Celery FFmpeg fallback.
+- YouTube Quota Tracker & Pacing (`youtube_quota_tracker.py`, `youtube.py`): Daily atomic tracking with midnight-Pacific rollover; prevents 403 quota exhaustion with retry pacing. Created `docs/YOUTUBE_API_QUOTA_GUIDE.md`.
+- LinkedIn Video Publishing (`platform_adapters/linkedin.py`): Added native video upload registration (`feedshare-video`) and chunked streaming support.
+- Adaptive Pre-Upload Window (`publish.py`): Multi-tiered lookahead (up to 4h) for 15 GB uploads so multi-resolution transcoding finishes before go-live.
+- Test Suite: 342/342 backend tests passing (15 new tests); 26/26 Jest tests passing; frontend production build clean.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Real-world validation with multi-network scheduled publishing.
+- Submit official Google Cloud YouTube Data API quota increase form (1M units/day).
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

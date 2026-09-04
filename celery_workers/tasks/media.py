@@ -429,13 +429,15 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
     processed_path: str | None = None
     completed_successfully = False
     try:
-        from media_pipeline.validation import validate_media
+        from media_pipeline.validation import validate_media, validate_remote_media
         from media_pipeline.ffmpeg_worker import extract_audio_waveform_peaks, process_video
         from media_pipeline.thumbnail import generate_thumbnail
         from utils.storage import (
             copy_storage_object_async,
             delete_file_async,
             download_file_to_path_async,
+            get_signed_url,
+            read_storage_byte_range_async,
             upload_file_async,
             upload_file_from_path_async,
         )
@@ -454,45 +456,117 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
             {"$set": {"status": "processing"}},
         )
 
+        source_local_path = None
+        input_path = None
+        validation_result = None
+        used_remote_passthrough = False
+        remote_url = None
+
         if source_storage_key:
-            suffix = pathlib.Path(
-                asset.get("original_filename")
-                or source_storage_key
-                or media_job_id
-            ).suffix or pathlib.Path(source_storage_key).suffix or ".bin"
-            fd, source_local_path = tempfile.mkstemp(
-                prefix=f"media-src-{media_job_id}-",
-                suffix=suffix,
-            )
-            os.close(fd)
-            await download_file_to_path_async(source_storage_key, source_local_path)
-            input_path = source_local_path
-        else:
-            input_path = quarantine_path
+            # Phase 1: Try Zero-Download Remote Probing & Fast-Path Promotion
+            try:
+                header_bytes = None
+                try:
+                    header_bytes = await read_storage_byte_range_async(source_storage_key, 0, 16384)
+                except Exception as hdr_err:
+                    logger.debug("Could not read remote header bytes for %s: %s", media_job_id, hdr_err)
 
-        if not input_path:
-            raise ValueError("No media source path available for processing")
+                remote_url = get_signed_url(source_storage_key, expires_in=3600)
+                file_size = int(asset.get("file_size_bytes") or 0)
+                validation_result = await validate_remote_media(
+                    remote_url,
+                    claimed_mime=mime_type,
+                    file_size_bytes=file_size,
+                    header_bytes=header_bytes,
+                )
+                logger.info(
+                    "Remote media probe succeeded for %s: codec=%s, dims=%sx%s, dur=%.2fs",
+                    media_job_id,
+                    validation_result.get("codec"),
+                    validation_result.get("width"),
+                    validation_result.get("height"),
+                    validation_result.get("duration", 0),
+                )
+            except Exception as probe_err:
+                logger.warning(
+                    "Remote media probe failed for %s (%s); will fall back to local download: %s",
+                    media_job_id,
+                    source_storage_key,
+                    probe_err,
+                )
+                validation_result = None
 
-        # Step 1: Validate
-        validation_result = await validate_media(input_path, mime_type)
+            # Check if video qualifies for Zero-Download Passthrough Fast-Path
+            if validation_result:
+                is_video = validation_result.get("is_video", False)
+                needs_transcode = False
+                if is_video:
+                    needs_transcode = (
+                        validation_result.get("needs_hdr_conversion")
+                        or validation_result.get("is_animated_gif")
+                        or validation_result.get("codec") not in ("h264", "avc1")
+                        or max(int(validation_result.get("width") or 0), int(validation_result.get("height") or 0)) > 1920
+                    )
+
+                if is_video and not needs_transcode:
+                    used_remote_passthrough = True
+                    logger.info(
+                        "Media %s is compliant H.264 video. Using Zero-Download Passthrough Fast-Path (0 bytes on VPS disk).",
+                        media_job_id,
+                    )
+
+        if not used_remote_passthrough:
+            if source_storage_key:
+                suffix = pathlib.Path(
+                    asset.get("original_filename")
+                    or source_storage_key
+                    or media_job_id
+                ).suffix or pathlib.Path(source_storage_key).suffix or ".bin"
+                fd, source_local_path = tempfile.mkstemp(
+                    prefix=f"media-src-{media_job_id}-",
+                    suffix=suffix,
+                )
+                os.close(fd)
+                await download_file_to_path_async(source_storage_key, source_local_path)
+                input_path = source_local_path
+            else:
+                input_path = quarantine_path
+
+            if not input_path:
+                raise ValueError("No media source path available for processing")
+
+            # Step 1: Validate locally if not probed remotely
+            if not validation_result:
+                validation_result = await validate_media(input_path, mime_type)
 
         asset_kind = "video" if mime_type and mime_type.startswith("video/") else (
             "audio" if mime_type and mime_type.startswith("audio/") else "image"
         )
+        if validation_result and validation_result.get("is_video"):
+            asset_kind = "video"
+        elif validation_result and validation_result.get("is_audio"):
+            asset_kind = "audio"
+        elif validation_result and validation_result.get("is_image"):
+            asset_kind = "image"
 
         # Step 2: Transcode if video
-        if asset_kind == "video":
+        if used_remote_passthrough:
+            processed_path = None
+            used_passthrough = True
+        elif asset_kind == "video":
             processed_path = await process_video(input_path, validation_result)
+            used_passthrough = processed_path == input_path
         else:
             processed_path = input_path
+            used_passthrough = True
 
-        used_passthrough = processed_path == input_path
         if used_passthrough:
             logger.info(
-                "Media %s passed validation without transcode (mime_type=%s, source_storage_key=%s)",
+                "Media %s passed validation without transcode (mime_type=%s, source_storage_key=%s, remote_passthrough=%s)",
                 media_job_id,
                 mime_type,
                 bool(source_storage_key),
+                used_remote_passthrough,
             )
         else:
             logger.info(
@@ -505,9 +579,10 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         # rendering, so they intentionally do not get image thumbnails.
         thumbnail_path = None
         if asset_kind != "audio":
-            thumbnail_path = await generate_thumbnail(processed_path, mime_type, media_job_id, user_id)
+            thumb_source = remote_url if used_remote_passthrough else processed_path
+            thumbnail_path = await generate_thumbnail(thumb_source, mime_type, media_job_id, user_id)
         waveform_peaks = None
-        if asset_kind == "audio":
+        if asset_kind == "audio" and processed_path:
             try:
                 waveform_peaks = await extract_audio_waveform_peaks(processed_path)
             except Exception as waveform_exc:
@@ -518,14 +593,19 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 )
 
         # Step 4: Upload media to permanent storage (R2 or Firebase)
-        ext = pathlib.Path(processed_path).suffix or ""
+        ext = pathlib.Path(
+            asset.get("original_filename")
+            or source_storage_key
+            or (processed_path or "")
+            or media_job_id
+        ).suffix or ".mp4"
         media_filename = f"{media_job_id}{ext}"
         media_folder = f"media/{user_id}"
         media_storage_key = f"{media_folder}/{media_filename}"
         can_promote_source_object = bool(
             source_storage_key
             and source_storage_key != media_storage_key
-            and processed_path == source_local_path
+            and (used_remote_passthrough or processed_path == source_local_path)
         )
         if can_promote_source_object:
             media_url = await copy_storage_object_async(
@@ -534,10 +614,11 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
                 content_type=mime_type,
             )
             logger.info(
-                "Media promoted via storage-side copy: media_id=%s source_key=%s dest_key=%s",
+                "Media promoted via storage-side copy: media_id=%s source_key=%s dest_key=%s (remote_passthrough=%s)",
                 media_job_id,
                 source_storage_key,
                 media_storage_key,
+                used_remote_passthrough,
             )
         else:
             media_url = await upload_file_from_path_async(
@@ -626,7 +707,7 @@ async def _async_process_media(task, media_job_id: str, user_id: str) -> dict:
         raise task.retry(countdown=30, exc=exc)
 
     finally:
-        transient_paths = {source_local_path}
+        transient_paths = {source_local_path, thumbnail_path}
         if processed_path and processed_path not in {quarantine_path, source_local_path}:
             transient_paths.add(processed_path)
         for path in transient_paths:

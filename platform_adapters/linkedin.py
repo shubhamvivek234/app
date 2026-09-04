@@ -90,6 +90,12 @@ class LinkedInAdapter(PlatformAdapter):
                 asset_urn = await self._register_and_upload_image(
                     client, auth_headers, author_urn, media_url
                 )
+            elif media_url and post_type in {"video", "reel"}:
+                assert_safe_url(media_url)
+                logger.info("LinkedIn registering video upload for post %s from %s", post_id, media_url)
+                asset_urn = await self._register_and_upload_video(
+                    client, auth_headers, author_urn, media_url
+                )
             elif post_type == "document" and media_url:
                 # TODO: implement LinkedIn document (PDF) upload flow
                 logger.warning("LinkedIn document upload not yet implemented for post %s", post_id)
@@ -245,6 +251,62 @@ class LinkedInAdapter(PlatformAdapter):
 
         return asset_urn
 
+    async def _register_and_upload_video(
+        self,
+        client: httpx.AsyncClient,
+        auth_headers: dict,
+        author_urn: str,
+        video_url: str,
+    ) -> str:
+        """Register a video upload slot, stream video bytes to LinkedIn, return asset URN."""
+        register_body = {
+            "registerUploadRequest": {
+                "owner": author_urn,
+                "recipes": ["urn:li:digitalmediaRecipe:feedshare-video"],
+                "serviceRelationships": [
+                    {"relationshipType": "OWNER", "identifier": "urn:li:userGeneratedContent"}
+                ],
+            }
+        }
+        reg_resp = await client.post(
+            f"{LINKEDIN_API_BASE}/assets",
+            params={"action": "registerUpload"},
+            headers=auth_headers,
+            json=register_body,
+        )
+        if reg_resp.status_code != 200:
+            raise PlatformHTTPError(reg_resp.status_code, f"LinkedIn video registerUpload failed: {reg_resp.text}")
+        reg_json = reg_resp.json()
+        self._check_response_for_error(reg_json, self.platform)
+
+        value = reg_json.get("value", {})
+        upload_url = value.get("uploadMechanism", {}).get(
+            "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest", {}
+        ).get("uploadUrl", "")
+        asset_urn = value.get("asset", "")
+
+        if not upload_url or not asset_urn:
+            raise PlatformResponseError("LinkedIn video registerUpload missing uploadUrl or asset URN")
+
+        async with client.stream("GET", video_url, follow_redirects=True) as vid_resp:
+            if vid_resp.status_code not in (200, 206):
+                raise PlatformHTTPError(vid_resp.status_code, "Could not fetch video for LinkedIn upload")
+
+            content_bytes = await vid_resp.aread()
+            upload_resp = await client.put(
+                upload_url,
+                content=content_bytes,
+                headers={
+                    "Authorization": auth_headers.get("Authorization", ""),
+                    "Content-Type": "application/octet-stream",
+                },
+                timeout=300,
+            )
+            if upload_resp.status_code not in (200, 201):
+                raise PlatformHTTPError(upload_resp.status_code, f"LinkedIn video upload failed: {upload_resp.text}")
+
+        return asset_urn
+
     def _build_ugc_body(
         self,
         author_urn: str,
@@ -254,7 +316,7 @@ class LinkedInAdapter(PlatformAdapter):
     ) -> dict:
         """Construct the ugcPosts request body."""
         if asset_urn:
-            media_category = "IMAGE"
+            media_category = "VIDEO" if post_type in {"video", "reel"} else "IMAGE"
             media = [{"status": "READY", "media": asset_urn}]
         else:
             media_category = "NONE"

@@ -44,6 +44,104 @@ def _detect_mime(file_path: str) -> str:
         }.get(suffix, "application/octet-stream")
 
 
+def _detect_mime_from_buffer(header_bytes: bytes) -> str:
+    """Detect MIME from header bytes without disk I/O."""
+    detected = None
+    try:
+        import magic
+        detected = magic.from_buffer(header_bytes, mime=True)
+    except Exception:
+        detected = None
+
+    if detected and detected != "application/octet-stream":
+        return detected
+
+    if len(header_bytes) >= 12 and header_bytes[4:8] == b"ftyp":
+        return "video/mp4"
+    if header_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if header_bytes.startswith(b"RIFF") and len(header_bytes) >= 12 and header_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return detected or "application/octet-stream"
+
+
+async def probe_remote_media_stream(url: str, timeout: int = 60) -> dict:
+    """
+    Run ffprobe directly on a remote HTTP/HTTPS URL via HTTP Range requests.
+    Inspects codec, streams, duration, and dimensions without downloading the file.
+    """
+    args = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams", "-show_format",
+        "-analyzeduration", "10000000",
+        "-probesize", "10000000",
+        url,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode != 0:
+            raise ValueError(f"Remote FFprobe failed (exit {proc.returncode}): {stderr.decode()[:300]}")
+        return json.loads(stdout)
+    except asyncio.TimeoutError:
+        raise ValueError("Remote FFprobe timed out — network slow or object inaccessible")
+
+
+async def validate_remote_media(
+    url: str,
+    claimed_mime: str | None = None,
+    file_size_bytes: int = 0,
+    header_bytes: bytes | None = None,
+    timeout: int = 60,
+) -> dict:
+    """
+    Validate remote media stored in cloud storage (R2/S3) without downloading to disk.
+    Uses header_bytes for magic byte detection and ffprobe over HTTP Range for video specs.
+    """
+    detected_mime = claimed_mime or "application/octet-stream"
+    if header_bytes:
+        detected = _detect_mime_from_buffer(header_bytes)
+        if detected and detected != "application/octet-stream":
+            detected_mime = detected
+
+    is_video = detected_mime.startswith("video/") or (
+        claimed_mime and claimed_mime.startswith("video/")
+    )
+    is_image = (
+        detected_mime.startswith("image/")
+        or (claimed_mime and claimed_mime.startswith("image/"))
+    ) and detected_mime != "image/gif"
+    is_audio = detected_mime.startswith("audio/") or (
+        claimed_mime and claimed_mime.startswith("audio/")
+    )
+
+    result: dict = {
+        "mime_type": detected_mime,
+        "file_size_bytes": file_size_bytes,
+        "is_video": is_video,
+        "is_image": is_image,
+        "is_audio": is_audio,
+        "is_animated_gif": False,
+    }
+
+    if is_video or is_audio or detected_mime == "image/gif":
+        probe = await probe_remote_media_stream(url, timeout=timeout)
+        result.update(_parse_ffprobe(probe))
+        if "codec" in result and not result.get("is_video") and not result.get("is_audio"):
+            result["is_video"] = True
+
+    return result
+
+
 async def validate_media(file_path: str, claimed_mime: str | None = None) -> dict:
     """
     Full validation pipeline. Returns metadata dict.

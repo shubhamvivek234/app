@@ -37,8 +37,10 @@ async def _video_thumbnail(video_path: str, output_path: str) -> None:
         f"scale={THUMB_SIZE[0]}:{THUMB_SIZE[1]}:force_original_aspect_ratio=increase,"
         f"crop={THUMB_SIZE[0]}:{THUMB_SIZE[1]}"
     )
-    args = [
-        "ffmpeg", "-y",
+    args = ["ffmpeg", "-y"]
+    if video_path.startswith(("http://", "https://")):
+        args.extend(["-analyzeduration", "10000000", "-probesize", "10000000"])
+    args.extend([
         "-ss", "1",
         "-i", video_path,
         "-vframes", "1",
@@ -47,7 +49,7 @@ async def _video_thumbnail(video_path: str, output_path: str) -> None:
         "-vcodec", "libwebp",
         "-quality", str(THUMB_QUALITY),
         output_path,
-    ]
+    ])
     await _run_subprocess(args)
 
 

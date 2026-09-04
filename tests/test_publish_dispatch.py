@@ -1045,3 +1045,21 @@ async def test_publish_to_platform_refreshes_token_when_pre_upload_auth_fails(mo
     assert "pre_upload_results.youtube-account-1.status" in reset_update["$unset"]
     assert "pre_upload_results.youtube-account-1.started_at" in reset_update["$unset"]
     assert "pre_upload_results.youtube-account-1.next_retry_at" in reset_update["$unset"]
+
+
+def test_calculate_pre_upload_start_large_video_scaling():
+    from celery_workers.tasks.publish import calculate_pre_upload_start
+
+    sched = datetime(2026, 9, 10, 18, 0, 0, tzinfo=timezone.utc)
+
+    # 1. Small video (50 MB) on YouTube
+    start_small, est_small = calculate_pre_upload_start(sched, 50.0, ["youtube"])
+    # 50 * 0.5 + 300 + 300 = 625 seconds (~10.4 minutes)
+    assert est_small == 625
+    assert start_small == sched - timedelta(seconds=625)
+
+    # 2. Massive video (15 GB = 15360 MB) on YouTube
+    start_large, est_large = calculate_pre_upload_start(sched, 15360.0, ["youtube"])
+    # 15360 * 0.5 + 7200 (2h processing) + 900 (safety) = 15780, capped at 14400 (4h)
+    assert est_large == 14400
+    assert start_large == sched - timedelta(seconds=14400)

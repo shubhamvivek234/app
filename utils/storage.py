@@ -254,6 +254,21 @@ async def head_storage_object_async(reference: str) -> dict[str, str | int | Non
     return await loop.run_in_executor(None, lambda: head_storage_object(reference))
 
 
+def read_storage_byte_range(reference: str, start: int = 0, length: int = 16384) -> bytes:
+    """Read a specific byte range from object storage without downloading full file."""
+    if _STORAGE_BACKEND == "r2":
+        return _r2_read_byte_range(reference, start, length)
+    return _firebase_read_byte_range(reference, start, length)
+
+
+async def read_storage_byte_range_async(reference: str, start: int = 0, length: int = 16384) -> bytes:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: read_storage_byte_range(reference, start, length),
+    )
+
+
 def download_file_to_path(reference: str, destination_path: str) -> str:
     if _STORAGE_BACKEND == "r2":
         return _r2_download_to_path(reference, destination_path)
@@ -628,6 +643,14 @@ def _r2_copy_object(source_reference: str, destination_key: str) -> str:
     return public_url
 
 
+def _r2_read_byte_range(reference: str, start: int = 0, length: int = 16384) -> bytes:
+    key = _reference_to_r2_key(reference)
+    client = _get_r2_client()
+    end = start + length - 1
+    resp = client.get_object(Bucket=_R2_BUCKET, Key=key, Range=f"bytes={start}-{end}")
+    return resp["Body"].read()
+
+
 # ── Firebase backend (existing behaviour wrapped) ─────────────────────────────
 
 def _firebase_upload(
@@ -688,6 +711,14 @@ def _firebase_copy_object(source_reference: str, destination_key: str, *, conten
     copied_blob.make_public()
     logger.info("Firebase copy complete: source=%s dest=%s url=%s", source_blob_name, destination_key, copied_blob.public_url)
     return copied_blob.public_url
+
+
+def _firebase_read_byte_range(reference: str, start: int = 0, length: int = 16384) -> bytes:
+    bucket = _get_firebase_bucket()
+    blob_name = urlparse(reference).path.lstrip("/") if reference.startswith("http") else reference
+    blob = bucket.blob(blob_name)
+    end = start + length - 1
+    return blob.download_as_bytes(start=start, end=end)
 
 
 def _firebase_delete(url: str) -> None:

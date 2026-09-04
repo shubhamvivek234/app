@@ -2512,6 +2512,19 @@ _SAFETY_BUFFER_SECS = 300  # 5-minute safety margin
 _DEFAULT_PRE_UPLOAD_SECS = 1800  # 30-minute fallback when file_size unknown
 
 
+def _platform_processing_secs(platform: str, file_size_mb: float) -> int:
+    base = _PROCESSING_SECS.get(platform, 180)
+    if platform == "youtube":
+        # Adaptive processing curve for YouTube multi-resolution encoding (4K/1080p)
+        if file_size_mb > 10000:       # > 10 GB
+            return max(base, 7200)     # 2 hours
+        elif file_size_mb > 4000:      # 4 - 10 GB
+            return max(base, 3600)     # 1 hour
+        elif file_size_mb > 1000:      # 1 - 4 GB
+            return max(base, 1800)     # 30 minutes
+    return base
+
+
 def calculate_pre_upload_start(
     scheduled_time: datetime,
     file_size_mb: float,
@@ -2522,21 +2535,22 @@ def calculate_pre_upload_start(
 
     Returns (pre_upload_start_time: datetime, estimated_duration_secs: int).
 
-    The upload should FINISH at scheduled_time, not START.  This calculates
+    The upload should FINISH at scheduled_time, not START. This calculates
     when uploading must BEGIN so that processing completes before the deadline.
-
-    Over time: collect actual_upload_duration from each job and replace
-    _UPLOAD_RATE_SECS_PER_MB with per-user averages from slow connections.
+    Dynamically scales for massive files (15 GB) so multi-tier transcoding finishes.
     """
     relevant = [p for p in platforms if p in _UPLOAD_RATE_SECS_PER_MB]
     if not relevant or file_size_mb <= 0:
         estimated = _DEFAULT_PRE_UPLOAD_SECS
     else:
+        safety = 900 if file_size_mb > 5000 else _SAFETY_BUFFER_SECS
         estimated = int(max(
-            (file_size_mb * _UPLOAD_RATE_SECS_PER_MB[p]) + _PROCESSING_SECS.get(p, 180)
+            (file_size_mb * _UPLOAD_RATE_SECS_PER_MB[p]) + _platform_processing_secs(p, file_size_mb)
             for p in relevant
-        )) + _SAFETY_BUFFER_SECS
+        )) + safety
 
+    # Cap maximum lookahead at 4 hours to remain within lock TTL bounds
+    estimated = min(estimated, 14400)
     return scheduled_time - timedelta(seconds=estimated), estimated
 
 
