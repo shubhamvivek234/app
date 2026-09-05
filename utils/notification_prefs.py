@@ -135,6 +135,9 @@ async def should_notify(
     Returns True if the user has enabled `channel` for `event`.
     If channel is not in the user's preference for this event, returns False.
     """
+    if event == "user.welcome":
+        return True
+
     prefs = await get_user_prefs(db, user_id)
     event_pref = prefs.get(event, {})
     if channel in event_pref.get("channels", []):

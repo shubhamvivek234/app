@@ -15,6 +15,7 @@ import logging
 import os
 from typing import Any
 
+from utils.email_service import get_email_service_status, send_email_async
 from utils.frontend_urls import DEFAULT_FRONTEND_URL, build_frontend_url, resolve_frontend_base_url
 
 logger = logging.getLogger(__name__)
@@ -25,24 +26,25 @@ def _clean_env(name: str, default: str = "") -> str:
 
 
 def get_notification_email_config() -> dict[str, Any]:
-    resend_api_key = _clean_env("RESEND_API_KEY")
-    sender_email = _clean_env("SENDER_EMAIL")
-    sender_name = _clean_env("SENDER_NAME", "Unravler") or "Unravler"
+    svc = get_email_service_status()
     frontend_url = resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
     logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/favicon-256.png"
 
     return {
-        "configured": bool(resend_api_key and sender_email),
-        "resend_api_key": resend_api_key,
-        "sender_email": sender_email or "notifications@unravler.com",
-        "sender_name": sender_name,
+        "configured": svc["configured"],
+        "provider": svc["provider"],
+        "resend_api_key": _clean_env("RESEND_API_KEY"),
+        "sender_email": svc["sender_email"] or "notifications@unravler.com",
+        "sender_name": svc["sender_name"],
         "frontend_url": frontend_url,
         "logo_url": logo_url,
-        "support_email": _clean_env("SUPPORT_EMAIL", "contact@unravler.com"),
+        "support_email": svc["support_email"],
     }
 
 
 def _button_label_for_event(event: str) -> str:
+    if event == "user.welcome":
+        return "Get Started & Connect Accounts"
     if event in {"post.failed", "post.dlq"}:
         return "View in Content Library"
     if event == "account.reconnect_required":
@@ -57,6 +59,8 @@ def _button_label_for_event(event: str) -> str:
 def _build_notification_subject(event: str, title: str) -> str:
     if title:
         return f"[Unravler] {title}"
+    if event == "user.welcome":
+        return "[Unravler] Welcome to Unravler! Let's get started"
     if event == "post.failed":
         return "[Unravler] Social post publish failed"
     if event == "post.dlq":
@@ -96,7 +100,12 @@ def _build_notification_html(
     badge_text = "#4338ca"
     badge_label = "Update"
 
-    if event in {"post.failed", "post.dlq", "billing.failed"}:
+    if event == "user.welcome":
+        accent_color = "#2563eb"  # Blue
+        badge_bg = "#eff6ff"
+        badge_text = "#1d4ed8"
+        badge_label = "Welcome"
+    elif event in {"post.failed", "post.dlq", "billing.failed"}:
         accent_color = "#dc2626"  # Red
         badge_bg = "#fef2f2"
         badge_text = "#991b1b"
@@ -241,33 +250,12 @@ async def send_notification_email_async(
         display_name=display_name,
     )
 
-    if not config["configured"]:
-        logger.info(
-            "Notification email dispatched (mock/unconfigured): to=%s subject=%s event=%s",
-            email,
-            subject,
-            event,
-        )
-        return True
-
-    try:
-        import resend  # noqa: PLC0415
-
-        resend.api_key = config["resend_api_key"]
-        sender_header = f"{config['sender_name']} <{config['sender_email']}>"
-
-        params = {
-            "from": sender_header,
-            "to": [email],
-            "reply_to": [config["sender_email"]],
-            "subject": subject,
-            "html": html_content,
-            "text": text_content,
-        }
-
-        await asyncio.to_thread(resend.Emails.send, params)
-        logger.info("Notification email delivered successfully via Resend to %s for event %s", email, event)
-        return True
-    except Exception as exc:
-        logger.error("Failed to deliver notification email via Resend to %s: %s", email, exc)
-        return False
+    return await send_email_async(
+        to=email,
+        subject=subject,
+        html=html_content,
+        text=text_content,
+        reply_to=config["sender_email"],
+        sender_email=config["sender_email"],
+        sender_name=config["sender_name"],
+    )

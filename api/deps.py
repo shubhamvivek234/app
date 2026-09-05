@@ -139,6 +139,24 @@ async def _bootstrap_user_from_claims(
             firebase_uid=uid,
             outcome="created",
         )
+
+        try:
+            from celery_workers.tasks.notifications import send_notification_email_task  # noqa: PLC0415
+
+            send_notification_email_task.delay(
+                user_id=user_doc["user_id"],
+                event="user.welcome",
+                title="Welcome to Unravler! Let's get started",
+                message=(
+                    "Welcome to Unravler! Your all-in-one command center for scheduling, "
+                    "multi-platform publishing, and analytics. Connect your social channels "
+                    "in Settings to start scheduling and publishing your content."
+                ),
+                target_path="/dashboard",
+            )
+        except Exception as welcome_exc:
+            logger.warning("auth.user.welcome_email.enqueue_failed: %s", welcome_exc)
+
         return user_doc
     except DuplicateKeyError:
         # Another request likely created the user concurrently. Re-read to keep

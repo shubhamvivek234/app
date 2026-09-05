@@ -7,6 +7,7 @@ from typing import Literal
 from firebase_admin import auth as firebase_auth
 
 from api.deps import get_firebase_app
+from utils.email_service import get_email_provider, send_email_or_raise_async
 from utils.frontend_urls import DEFAULT_FRONTEND_URL, build_frontend_url, resolve_frontend_base_url
 from utils.observability import event_log, shorten_provider_error
 
@@ -49,6 +50,7 @@ def _normalize_return_to(value: str | None) -> str | None:
 
 
 def get_auth_email_config_status() -> dict[str, object]:
+    provider = get_email_provider()
     resend_api_key = _clean_env("RESEND_API_KEY")
     sender_email = _clean_env("SENDER_EMAIL")
     sender_name = _clean_env("SENDER_NAME", "Unravler") or "Unravler"
@@ -57,10 +59,21 @@ def get_auth_email_config_status() -> dict[str, object]:
     link_domain = _clean_env("FIREBASE_AUTH_EMAIL_LINK_DOMAIN")
 
     missing: list[str] = []
-    if not resend_api_key:
-        missing.append("RESEND_API_KEY")
-    if not sender_email:
-        missing.append("SENDER_EMAIL")
+    if provider == "ses":
+        if not sender_email:
+            missing.append("SENDER_EMAIL")
+        has_id = bool(_clean_env("AWS_SES_ACCESS_KEY_ID") or _clean_env("AWS_ACCESS_KEY_ID"))
+        has_secret = bool(_clean_env("AWS_SES_SECRET_ACCESS_KEY") or _clean_env("AWS_SECRET_ACCESS_KEY"))
+        if has_id and not has_secret:
+            missing.append("AWS_SES_SECRET_ACCESS_KEY")
+        elif has_secret and not has_id:
+            missing.append("AWS_SES_ACCESS_KEY_ID")
+    elif provider == "resend":
+        if not resend_api_key:
+            missing.append("RESEND_API_KEY")
+        if not sender_email:
+            missing.append("SENDER_EMAIL")
+
     if not frontend_url:
         missing.append("FRONTEND_URL")
 
@@ -68,6 +81,7 @@ def get_auth_email_config_status() -> dict[str, object]:
     sender_name_ok = bool(sender_name)
 
     return {
+        "provider": provider,
         "configured": not missing,
         "missing": missing,
         "sender_email": sender_email or None,
@@ -216,26 +230,20 @@ def _sender_header() -> str:
 
 
 async def _send_email(kind: AuthEmailKind, email: str, action_url: str, display_name: str | None) -> None:
-    _require_auth_email_config()
-    resend_api_key = _clean_env("RESEND_API_KEY")
+    status = _require_auth_email_config()
+    sender_email = str(status.get("sender_email") or "")
+    sender_name = str(status.get("sender_name") or "Unravler")
 
     try:
-        import resend  # noqa: PLC0415
-    except Exception as exc:  # pragma: no cover - import failure is environment-specific
-        raise AuthEmailDeliveryError(f"Resend SDK unavailable: {exc}") from exc
-
-    resend.api_key = resend_api_key
-    params = {
-        "from": _sender_header(),
-        "to": [email],
-        "reply_to": [get_auth_email_config_status()["sender_email"]],
-        "subject": _build_subject(kind),
-        "html": _build_email_html(kind, action_url, display_name),
-        "text": _build_email_text(kind, action_url, display_name),
-    }
-
-    try:
-        await asyncio.to_thread(resend.Emails.send, params)
+        await send_email_or_raise_async(
+            to=email,
+            subject=_build_subject(kind),
+            html=_build_email_html(kind, action_url, display_name),
+            text=_build_email_text(kind, action_url, display_name),
+            reply_to=sender_email,
+            sender_email=sender_email,
+            sender_name=sender_name,
+        )
     except Exception as exc:
         raise AuthEmailDeliveryError(str(exc)) from exc
 
@@ -353,16 +361,11 @@ async def send_verification_email(email: str, *, display_name: str | None = None
 
 async def send_magic_link_email(email: str, token: str, display_name: str | None = None) -> None:
     status = _require_auth_email_config()
-    frontend_url = status["frontend_url"]
+    frontend_url = str(status.get("frontend_url") or "")
     action_url = f"{frontend_url.rstrip('/')}/magic-login/{token}"
-    resend_api_key = _clean_env("RESEND_API_KEY")
+    sender_email = str(status.get("sender_email") or "")
+    sender_name = str(status.get("sender_name") or "Unravler")
 
-    try:
-        import resend
-    except Exception as exc:
-        raise AuthEmailDeliveryError(f"Resend SDK unavailable: {exc}") from exc
-
-    resend.api_key = resend_api_key
     subject = "Your Unravler Magic Login Link"
     greeting = f"Hi {display_name}," if display_name else "Hi,"
     
@@ -387,31 +390,25 @@ async def send_magic_link_email(email: str, token: str, display_name: str | None
 
     text_body = f"{greeting}\n\nClick the link below to log in to Unravler:\n{action_url}\n\nThis link is valid for 24 hours and can only be used once."
 
-    params = {
-        "from": _sender_header(),
-        "to": [email],
-        "reply_to": [status["sender_email"]],
-        "subject": subject,
-        "html": html_body,
-        "text": text_body,
-    }
-
     try:
-        await asyncio.to_thread(resend.Emails.send, params)
+        await send_email_or_raise_async(
+            to=email,
+            subject=subject,
+            html=html_body,
+            text=text_body,
+            reply_to=sender_email,
+            sender_email=sender_email,
+            sender_name=sender_name,
+        )
     except Exception as exc:
         raise AuthEmailDeliveryError(str(exc)) from exc
 
 
 async def send_approval_notification_email(email: str, name: str | None, post_title: str, action_url: str) -> None:
     status = _require_auth_email_config()
-    resend_api_key = _clean_env("RESEND_API_KEY")
+    sender_email = str(status.get("sender_email") or "")
+    sender_name = str(status.get("sender_name") or "Unravler")
 
-    try:
-        import resend
-    except Exception as exc:
-        raise AuthEmailDeliveryError(f"Resend SDK unavailable: {exc}") from exc
-
-    resend.api_key = resend_api_key
     subject = f"Approval Required: {post_title}"
     greeting = f"Hi {name}," if name else "Hi,"
     
@@ -436,17 +433,16 @@ async def send_approval_notification_email(email: str, name: str | None, post_ti
 
     text_body = f"{greeting}\n\nA new post, \"{post_title}\", requires your approval. Review it here:\n{action_url}\n\nThis link is valid for 7 days."
 
-    params = {
-        "from": _sender_header(),
-        "to": [email],
-        "reply_to": [status["sender_email"]],
-        "subject": subject,
-        "html": html_body,
-        "text": text_body,
-    }
-
     try:
-        await asyncio.to_thread(resend.Emails.send, params)
+        await send_email_or_raise_async(
+            to=email,
+            subject=subject,
+            html=html_body,
+            text=text_body,
+            reply_to=sender_email,
+            sender_email=sender_email,
+            sender_name=sender_name,
+        )
     except Exception as exc:
         raise AuthEmailDeliveryError(str(exc)) from exc
 
