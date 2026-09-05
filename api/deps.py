@@ -148,9 +148,9 @@ async def _bootstrap_user_from_claims(
                 event="user.welcome",
                 title="Welcome to Unravler! Let's get started",
                 message=(
-                    "Welcome to Unravler! Your all-in-one command center for scheduling, "
-                    "multi-platform publishing, and analytics. Connect your social channels "
-                    "in Settings to start scheduling and publishing your content."
+                    "Your workspace is ready. Unravler is engineered to be your complete growth command center—"
+                    "streamlining multi-platform publishing, AI-powered repurposing, and audience expansion "
+                    "across every major network."
                 ),
                 target_path="/dashboard",
             )
@@ -167,9 +167,9 @@ async def _bootstrap_user_from_claims(
                             event="user.welcome",
                             title="Welcome to Unravler! Let's get started",
                             message=(
-                                "Welcome to Unravler! Your all-in-one command center for scheduling, "
-                                "multi-platform publishing, and analytics. Connect your social channels "
-                                "in Settings to start scheduling and publishing your content."
+                                "Your workspace is ready. Unravler is engineered to be your complete growth command center—"
+                                "streamlining multi-platform publishing, AI-powered repurposing, and audience expansion "
+                                "across every major network."
                             ),
                             target_path="/dashboard",
                             display_name=display_name,

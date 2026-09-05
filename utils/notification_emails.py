@@ -28,7 +28,7 @@ def _clean_env(name: str, default: str = "") -> str:
 def get_notification_email_config() -> dict[str, Any]:
     svc = get_email_service_status()
     frontend_url = resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
-    logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/unravler-logo-white.png"
+    logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/unravler-logo-dark.png"
 
     return {
         "configured": svc["configured"],
@@ -91,153 +91,161 @@ def _build_welcome_email_html(
     settings_url = f"{frontend_url}/settings"
     bio_url = f"{frontend_url}/link-in-bio"
     button_label = html.escape(_button_label_for_event("user.welcome"))
-    safe_message = html.escape(message or "").replace("\n", "<br />")
-    intro_paragraph = (
-        f'<p style="margin: 0 0 16px 0; font-size: 15px; color: #475569; line-height: 1.6;">{safe_message}</p>'
-        if safe_message
-        else ""
-    )
+    
+    default_intro = "Your workspace is ready. Unravler is engineered to be your complete growth command center—streamlining multi-platform publishing, AI-powered repurposing, and audience expansion across every major network."
+    safe_intro = html.escape(message).replace("\n", "<br />") if message else default_intro
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Welcome to Unravler!</title>
+  <title>Welcome to Unravler</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; line-height: 1.5;">
-  <div style="max-width: 620px; margin: 36px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.06);">
+<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #09090b; -webkit-font-smoothing: antialiased; line-height: 1.5;">
+  <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border: 1px solid #e4e4e7; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);">
     
-    <!-- Top Header Bar with Logo -->
-    <div style="background: linear-gradient(135deg, #090d16 0%, #111827 100%); padding: 26px 36px; border-bottom: 1px solid #1e293b;">
+    <!-- Top Brand Accent Strip -->
+    <div style="height: 3px; background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 50%, #2563eb 100%);"></div>
+
+    <!-- Header Bar with Single Brand Logo & Status Pill -->
+    <div style="padding: 24px 32px 20px 32px; border-bottom: 1px solid #f1f5f9; background-color: #ffffff;">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td valign="middle">
-            <table cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td style="vertical-align: middle; padding-right: 12px;">
-                  <img src="{logo_url}" alt="Unravler" height="28" style="display: block; max-height: 28px; border: 0;" />
-                </td>
-                <td style="vertical-align: middle;">
-                  <span style="font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: -0.02em;">Unravler</span>
-                </td>
-              </tr>
-            </table>
+          <td valign="middle" align="left">
+            <img src="{logo_url}" alt="Unravler" height="24" style="display: block; height: 24px; border: 0; outline: none;" />
           </td>
           <td align="right" valign="middle">
-            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; background-color: rgba(99, 102, 241, 0.18); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.35); padding: 5px 14px; border-radius: 9999px;">Workspace Ready</span>
+            <span style="display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; background-color: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; padding: 4px 12px; border-radius: 9999px;">
+              ● Workspace Active
+            </span>
           </td>
         </tr>
       </table>
     </div>
 
     <!-- Main Content Body -->
-    <div style="padding: 36px 36px 32px 36px;">
-      <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #4f46e5; text-transform: uppercase; letter-spacing: 0.08em;">Welcome Aboard</p>
+    <div style="padding: 36px 32px 32px 32px;">
+      <!-- Eyebrow -->
+      <p style="margin: 0 0 8px 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #4f46e5;">Welcome Aboard</p>
       
-      <h1 style="margin: 0 0 14px 0; font-size: 24px; font-weight: 800; color: #0f172a; line-height: 1.25; letter-spacing: -0.02em;">
-        Welcome to Unravler, {safe_name}! 🚀
+      <!-- Headline -->
+      <h1 style="margin: 0 0 14px 0; font-size: 24px; font-weight: 800; color: #09090b; line-height: 1.25; letter-spacing: -0.02em;">
+        Welcome to Unravler, {safe_name}
       </h1>
 
-      {intro_paragraph}
-      
-      <p style="margin: 0 0 28px 0; font-size: 15px; color: #475569; line-height: 1.6;">
-        Unravler goes far beyond simple scheduling—it is your complete growth command center engineered to create, repurpose, and amplify your content across every major channel.
+      <!-- Intro Copy -->
+      <p style="margin: 0 0 32px 0; font-size: 14.5px; color: #52525b; line-height: 1.6; letter-spacing: -0.01em;">
+        {safe_intro}
       </p>
 
       <!-- Feature Grid Showcase -->
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px;">
         <tr>
-          <!-- Feature 1 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">🌐</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Multi-Platform Publishing</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Publish to YouTube (up to 15 GB), Instagram, LinkedIn, TikTok, X, Threads, Pinterest &amp; Facebook simultaneously.</p>
+          <!-- Feature 1: Multi-Platform Publishing -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #eff6ff; color: #2563eb; font-size: 13px; font-weight: 700; margin-bottom: 10px;">✦</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">Multi-Platform Publishing</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Schedule and publish simultaneously to YouTube, Instagram, LinkedIn, TikTok, X, Threads, Pinterest, and Facebook.</p>
           </td>
           <td width="4%">&nbsp;</td>
-          <!-- Feature 2 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">💼</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">LinkedIn Growth Suite</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Generate viral PDF document carousels, style text hooks, preview mobile/desktop layouts, and stream native HD video.</p>
+          <!-- Feature 2: LinkedIn Growth Suite -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #f0fdf4; color: #16a34a; font-size: 13px; font-weight: 700; margin-bottom: 10px;">◆</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">LinkedIn Growth Suite</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Generate viral PDF carousels, craft engaging text hooks, preview mobile/desktop layouts, and upload HD video.</p>
           </td>
         </tr>
-        <tr><td height="14" colspan="3"></td></tr>
+        <tr><td height="12" colspan="3"></td></tr>
         <tr>
-          <!-- Feature 3 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">🤖</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">AI Content Repurposer</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Turn any YouTube video, article, or draft into platform-tailored threads, hooks, and hashtags in seconds.</p>
+          <!-- Feature 3: AI Repurposer -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #faf5ff; color: #9333ea; font-size: 13px; font-weight: 700; margin-bottom: 10px;">⚡</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">AI Content Repurposer</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Turn any YouTube video, article, or raw draft into platform-tailored threads, carousels, and captions instantly.</p>
           </td>
           <td width="4%">&nbsp;</td>
-          <!-- Feature 4 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">📈</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Campaigns &amp; Recycling</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Organize content into structured campaigns, track collective momentum, and automatically recycle top evergreen posts.</p>
+          <!-- Feature 4: Campaigns & Recycling -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #fff7ed; color: #ea580c; font-size: 13px; font-weight: 700; margin-bottom: 10px;">◈</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">Campaigns &amp; Recycling</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Organize content into strategic campaigns, track collective momentum, and automatically recycle top evergreen posts.</p>
           </td>
         </tr>
-        <tr><td height="14" colspan="3"></td></tr>
+        <tr><td height="12" colspan="3"></td></tr>
         <tr>
-          <!-- Feature 5 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">🔗</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Smart Bio Studio</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Build an aesthetic link-in-bio page with custom themes, rich media widgets, newsletter capture, and deep click analytics.</p>
+          <!-- Feature 5: Smart Bio Studio -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #fdf2f8; color: #db2777; font-size: 13px; font-weight: 700; margin-bottom: 10px;">↗</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">Smart Bio Studio</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Build an aesthetic link-in-bio page with custom themes, rich media widgets, email capture, and click analytics.</p>
           </td>
           <td width="4%">&nbsp;</td>
-          <!-- Feature 6 -->
-          <td width="48%" valign="top" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 16px;">
-            <div style="font-size: 20px; margin-bottom: 8px;">👥</div>
-            <h3 style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #0f172a;">Team Governance &amp; Approvals</h3>
-            <p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;">Collaborate with teammates and clients using review queues, audit trails, and automated email approvals.</p>
+          <!-- Feature 6: Team Governance -->
+          <td width="48%" valign="top" style="background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 12px; padding: 18px 16px;">
+            <div style="display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 6px; background-color: #f1f5f9; color: #475569; font-size: 13px; font-weight: 700; margin-bottom: 10px;">❖</div>
+            <h3 style="margin: 0 0 6px 0; font-size: 13.5px; font-weight: 700; color: #09090b; letter-spacing: -0.01em;">Team Governance &amp; Approvals</h3>
+            <p style="margin: 0; font-size: 12.5px; color: #71717a; line-height: 1.5;">Collaborate with teammates and clients using role-based permissions, review queues, and one-click email approvals.</p>
           </td>
         </tr>
       </table>
 
-      <!-- 3-Step Quick Start Checklist -->
-      <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 12px; padding: 20px 24px; margin: 28px 0 32px 0;">
-        <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #3730a3; text-transform: uppercase; letter-spacing: 0.05em;">3 Steps to Get Started:</h3>
+      <!-- 3-Step Quick Start Card -->
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 22px 24px; margin: 28px 0 32px 0;">
+        <p style="margin: 0 0 16px 0; font-size: 11.5px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.08em;">
+          Three Steps to Get Started
+        </p>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td width="26" valign="top" style="font-size: 15px; font-weight: 800; color: #4f46e5;">1.</td>
-            <td style="font-size: 14px; color: #1e1b4b; line-height: 1.5; padding-bottom: 8px;"><strong>Connect your social channels</strong> in Settings (YouTube, LinkedIn, Instagram, etc.).</td>
+            <td width="28" valign="top" style="padding-bottom: 12px;">
+              <span style="display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 9999px; background-color: #09090b; color: #ffffff; font-size: 10.5px; font-weight: 700;">1</span>
+            </td>
+            <td style="font-size: 13.5px; color: #18181b; line-height: 1.5; padding-bottom: 12px;">
+              <strong>Connect your social channels</strong> in Settings (YouTube, LinkedIn, Instagram, etc.).
+            </td>
           </tr>
           <tr>
-            <td width="26" valign="top" style="font-size: 15px; font-weight: 800; color: #4f46e5;">2.</td>
-            <td style="font-size: 14px; color: #1e1b4b; line-height: 1.5; padding-bottom: 8px;"><strong>Craft your first post</strong> using the multi-platform composer or AI repurposer.</td>
+            <td width="28" valign="top" style="padding-bottom: 12px;">
+              <span style="display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 9999px; background-color: #09090b; color: #ffffff; font-size: 10.5px; font-weight: 700;">2</span>
+            </td>
+            <td style="font-size: 13.5px; color: #18181b; line-height: 1.5; padding-bottom: 12px;">
+              <strong>Craft your first post</strong> using the multi-platform composer or AI repurposer.
+            </td>
           </tr>
           <tr>
-            <td width="26" valign="top" style="font-size: 15px; font-weight: 800; color: #4f46e5;">3.</td>
-            <td style="font-size: 14px; color: #1e1b4b; line-height: 1.5;"><strong>Schedule or launch</strong> and let Unravler optimize peak engagement delivery.</td>
+            <td width="28" valign="top">
+              <span style="display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 9999px; background-color: #09090b; color: #ffffff; font-size: 10.5px; font-weight: 700;">3</span>
+            </td>
+            <td style="font-size: 13.5px; color: #18181b; line-height: 1.5;">
+              <strong>Schedule or publish</strong> and let Unravler optimize peak engagement delivery.
+            </td>
           </tr>
         </table>
       </div>
 
       <!-- Primary Action Button -->
-      <div style="margin: 28px 0 24px 0; text-align: center;">
-        <a href="{safe_action_url}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 700; padding: 14px 36px; border-radius: 12px; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3); letter-spacing: -0.01em;">
+      <div style="margin: 32px 0 24px 0; text-align: center;">
+        <a href="{safe_action_url}" target="_blank" style="display: inline-block; background-color: #09090b; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 600; padding: 14px 36px; border-radius: 10px; letter-spacing: -0.01em; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);">
           {button_label} &rarr;
         </a>
       </div>
 
       <!-- Quick Links -->
-      <p style="margin: 20px 0 0 0; font-size: 13px; color: #64748b; text-align: center;">
+      <p style="margin: 20px 0 0 0; font-size: 12.5px; color: #71717a; text-align: center;">
         Quick links: 
-        <a href="{safe_action_url}" style="color: #4f46e5; text-decoration: underline; font-weight: 600;">Dashboard</a> &bull; 
-        <a href="{settings_url}" style="color: #4f46e5; text-decoration: underline; font-weight: 600;">Connect Accounts</a> &bull; 
-        <a href="{bio_url}" style="color: #4f46e5; text-decoration: underline; font-weight: 600;">Smart Bio Studio</a>
+        <a href="{safe_action_url}" style="color: #09090b; text-decoration: underline; font-weight: 600;">Dashboard</a> &bull; 
+        <a href="{settings_url}" style="color: #09090b; text-decoration: underline; font-weight: 600;">Connect Accounts</a> &bull; 
+        <a href="{bio_url}" style="color: #09090b; text-decoration: underline; font-weight: 600;">Smart Bio Studio</a>
       </p>
     </div>
 
     <!-- Footer -->
-    <div style="padding: 24px 36px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; line-height: 1.6;">
+    <div style="padding: 24px 32px; background-color: #fafafa; border-top: 1px solid #f4f4f5; font-size: 12px; color: #a1a1aa; text-align: center; line-height: 1.6;">
       <p style="margin: 0 0 6px 0;">You received this welcome email because you registered an account on Unravler.</p>
       <p style="margin: 0;">
-        <a href="{settings_url}" style="color: #64748b; text-decoration: underline;">Notification Preferences</a> &bull; 
-        <a href="mailto:{support_email}" style="color: #64748b; text-decoration: underline;">Contact Support</a> &bull; 
-        <a href="{frontend_url}" style="color: #64748b; text-decoration: underline;">unravler.com</a>
+        <a href="{settings_url}" style="color: #71717a; text-decoration: underline;">Notification Preferences</a> &bull; 
+        <a href="mailto:{support_email}" style="color: #71717a; text-decoration: underline;">Contact Support</a> &bull; 
+        <a href="{frontend_url}" style="color: #71717a; text-decoration: underline;">unravler.com</a>
       </p>
     </div>
   </div>
@@ -255,15 +263,16 @@ def _build_welcome_email_text(
     safe_name = display_name or "there"
     frontend_url = config["frontend_url"].rstrip("/")
     support_email = config["support_email"]
-    intro = f"{message}\n\n" if message else ""
+    intro = f"{message}\n\n" if message else (
+        "Your workspace is ready. Unravler is engineered to be your complete growth command center—streamlining multi-platform publishing, AI-powered repurposing, and audience expansion across every major network.\n\n"
+    )
 
     return (
         f"Hi {safe_name},\n\n"
-        f"Welcome to Unravler! 🚀\n\n"
+        f"Welcome to Unravler!\n\n"
         f"{intro}"
-        f"Your workspace is ready. Unravler is your complete growth command center engineered to create, repurpose, and amplify your content across every major channel.\n\n"
         f"WHAT YOU CAN DO WITH UNRAVLER:\n"
-        f"• Multi-Platform Publishing: Publish to YouTube (up to 15 GB), Instagram, LinkedIn, TikTok, X, Threads, Pinterest & Facebook.\n"
+        f"• Multi-Platform Publishing: Schedule and publish simultaneously to YouTube, Instagram, LinkedIn, TikTok, X, Threads, Pinterest & Facebook.\n"
         f"• LinkedIn Growth Suite: Generate PDF document carousels, format hooks, preview mobile/desktop feeds, and stream native HD video.\n"
         f"• AI Content Repurposer: Turn YouTube videos, blogs, or drafts into platform-tailored threads, hooks, and hashtags in seconds.\n"
         f"• Smart Campaigns & Evergreen Recycling: Group content into campaigns, track collective momentum, and automatically recycle top posts.\n"
