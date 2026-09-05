@@ -4,23 +4,20 @@
 ## Current Phase
 Stage: v7.0 shipped
 Branch: main
-Focus: Amazon SES Migration & Onboarding Welcome Email
+Focus: Authentication Lifecycle & Bug Fixes (Logout, Login, Signup, Password Reset)
 
 ## Last Session Completed
 Date: 2026-09-06
 Completed:
-- Amazon SES Migration & Production Access: Fully migrated to AWS SES (`boto3`). Production access approved (`Status: GRANTED`, Case `178862046200763`) with 50,000 emails/day quota at 14 emails/sec.
-- Welcome Email Redesign (`utils/notification_emails.py`, `api/deps.py`, `docker/Dockerfile.api`, `celery_workers/tasks/notifications.py`):
-  - Fixed duplicate logo text (removed redundant adjacent text span).
-  - Removed "15 GB" text from multi-platform publishing feature.
-  - Eliminated repetitive copy; elevated visual aesthetic to minimalist, high-end agency standard (Stripe/Linear-style clean card, 4px top jewel accent strip, pastel geometric glyph badges, sleek numbered onboarding timeline, and obsidian CTA button).
-  - Fixed API container build to bundle `celery_workers` & resolved DB name in notification Celery task (`DB_NAME=social_prod`).
-- Test Suite & Live Delivery: All unit tests passing; live delivery verified and delivered to `findbinduprasad@zohomail.in` via Amazon SES.
+- Single-Action Logout & Zero Resurrection: Fixed dropdown unmount bug in `DashboardLayout.js` (`setOpen(false)` unmounted logout button prematurely); added `isLoggingOutRef` latch in `AuthContext.js` to suppress Firebase auth listener events during logout; relaxed `/auth/session/logout` dependency so it clears cookie and returns 204 without throwing 401.
+- Immediate Login & Signup Navigation: Added `resolvePostAuthDestination` redirects with `finally { setLoading(false) }` across `LoginV1..V4.js` and `SignupV1..V4.js`, eliminating double-action delays and race conditions.
+- Resilient Forgot Password: Added 2.5s timeout on IAM link generation with immediate Google Identity Toolkit REST fallback (`sendOobCode`); added client fallback in `authService.js` to guarantee fast delivery without hangs.
+- Deploy & Verification: All 356 unit tests passing; frontend built cleanly; deployed to EC2 production (`socialentagler-api-1` and `socialentagler-worker-1` healthy); verified `/api/auth/session/logout` (204) and `/api/auth/password-reset/request` (200).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify custom link domain in Firebase if desired for 100% white-label auth URLs.
+- Monitor user onboarding and auth telemetry in PostHog.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
