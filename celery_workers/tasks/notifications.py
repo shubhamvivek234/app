@@ -31,7 +31,8 @@ async def _async_send_notification_email(
         return False
 
     client = await get_client()
-    db = client[os.getenv("MONGO_DB_NAME", "social_media_db")]
+    db_name = os.environ.get("DB_NAME") or os.environ.get("MONGO_DB_NAME") or "social_media_db"
+    db = client[db_name]
 
     # 1. Double check user notification preferences (Settings gating)
     if not await should_notify(db, user_id, event, "email"):
