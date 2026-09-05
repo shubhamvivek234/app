@@ -17,8 +17,8 @@ Completed:
 ## Active Work
 Currently implementing: None
 Next:
-- Verify custom domain or email identity in AWS SES Console.
-- Request AWS SES Production Access (exit sandbox).
+- Monitor AWS SES Production Access approval (request submitted, status PENDING).
+- Verify custom link domain in Firebase if desired for 100% white-label auth URLs.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
