@@ -155,7 +155,28 @@ async def _bootstrap_user_from_claims(
                 target_path="/dashboard",
             )
         except Exception as welcome_exc:
-            logger.warning("auth.user.welcome_email.enqueue_failed: %s", welcome_exc)
+            logger.warning("auth.user.welcome_email.enqueue_failed: %s; falling back to direct send", welcome_exc)
+            if email:
+                try:
+                    import asyncio
+                    from utils.notification_emails import send_notification_email_async  # noqa: PLC0415
+
+                    asyncio.create_task(
+                        send_notification_email_async(
+                            email=email,
+                            event="user.welcome",
+                            title="Welcome to Unravler! Let's get started",
+                            message=(
+                                "Welcome to Unravler! Your all-in-one command center for scheduling, "
+                                "multi-platform publishing, and analytics. Connect your social channels "
+                                "in Settings to start scheduling and publishing your content."
+                            ),
+                            target_path="/dashboard",
+                            display_name=display_name,
+                        )
+                    )
+                except Exception as fallback_exc:
+                    logger.error("auth.user.welcome_email.fallback_failed: %s", fallback_exc)
 
         return user_doc
     except DuplicateKeyError:
