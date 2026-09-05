@@ -59,6 +59,8 @@ class _FakeDB:
     def __init__(self):
         self.users = _FakeCollection()
         self.workspace_invites = _FakeCollection()
+        self.workspaces = _FakeCollection()
+        self.workspace_members = _FakeCollection()
 
 
 class _FakeRedis:
@@ -109,6 +111,12 @@ def mock_firebase(monkeypatch):
     monkeypatch.setattr("api.deps.get_firebase_app", lambda: object())
     monkeypatch.setattr("api.routes.auth.get_firebase_app", lambda: object())
     return fake_auth
+
+
+@pytest.fixture(autouse=True)
+def mock_notifications(monkeypatch):
+    monkeypatch.setattr("celery_workers.tasks.notifications.send_notification_email_task.apply_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr("celery_workers.tasks.notifications.send_notification_email_task.delay", lambda *args, **kwargs: None)
 
 
 @pytest.fixture

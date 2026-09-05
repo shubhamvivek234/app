@@ -333,17 +333,29 @@ export const logoutBackendSession = async () => {
 };
 
 export const requestPasswordReset = async (email, cfTurnstileToken = null) => {
-  const response = await axios.post(
-    `${API}/auth/password-reset/request`,
-    {
-      email,
-      cf_turnstile_token: cfTurnstileToken,
-    },
-    {
-      withCredentials: true,
+  try {
+    const response = await axios.post(
+      `${API}/auth/password-reset/request`,
+      {
+        email,
+        cf_turnstile_token: cfTurnstileToken,
+      },
+      {
+        withCredentials: true,
+      }
+    );
+    return response.data;
+  } catch (backendError) {
+    console.warn('[AuthService] Backend password reset request failed, attempting Firebase client fallback:', backendError?.message);
+    try {
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      await sendPasswordResetEmail(auth, email);
+      return { message: 'If the address is eligible, a reset email will arrive shortly.' };
+    } catch (fbError) {
+      console.error('[AuthService] Firebase client fallback failed:', fbError);
+      throw backendError;
     }
-  );
-  return response.data;
+  }
 };
 
 export const resendVerificationEmail = async (user, returnTo = null) => {

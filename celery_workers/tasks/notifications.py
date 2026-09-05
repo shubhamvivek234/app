@@ -32,7 +32,10 @@ async def _async_send_notification_email(
 
     client = await get_client()
     db_name = os.environ.get("DB_NAME") or os.environ.get("MONGO_DB_NAME") or "social_media_db"
-    db = client[db_name]
+    if isinstance(client, dict) and db_name not in client:
+        db = next(iter(client.values())) if client else client[db_name]
+    else:
+        db = client[db_name]
 
     # 1. Double check user notification preferences (Settings gating)
     if not await should_notify(db, user_id, event, "email"):

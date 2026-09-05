@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -29,11 +29,13 @@ const SignupV3 = () => {
     if (loading) return;
     setLoading(true);
     try {
-      await signup(formData.email, formData.password, formData.name);
+      const profile = await signup(formData.email, formData.password, formData.name);
       toast.success('Account created successfully!');
-      navigate('/dashboard');
+      const target = resolvePostAuthDestination(profile) || '/verify-email?sent=1';
+      navigate(target, { replace: true });
     } catch (error) {
       toast.error(error.response?.data?.detail || error.message || 'Signup failed');
+    } finally {
       setLoading(false);
     }
   };

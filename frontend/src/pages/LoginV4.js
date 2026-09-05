@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -194,8 +194,10 @@ const LoginV4 = () => {
     if (loading) return;
     setLoading(true);
     try {
-      await login(formData.email, formData.password);
+      const profile = await login(formData.email, formData.password);
       toast.success('Welcome back!');
+      const target = resolvePostAuthDestination(profile) || '/dashboard';
+      navigate(target, { replace: true });
     } catch (error) {
       let msg = 'Login failed';
       if (error.code) {
@@ -208,6 +210,7 @@ const LoginV4 = () => {
         }
       }
       toast.error(msg);
+    } finally {
       setLoading(false);
     }
   };

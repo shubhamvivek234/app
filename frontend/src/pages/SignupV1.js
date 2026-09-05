@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import TurnstileWidget from '@/components/TurnstileWidget';
@@ -33,8 +33,10 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      await signup(formData.email, formData.password, formData.name, turnstileToken);
+      const profile = await signup(formData.email, formData.password, formData.name, turnstileToken);
       toast.success('Account created! Welcome to Unravler.');
+      const target = resolvePostAuthDestination(profile) || '/verify-email?sent=1';
+      navigate(target, { replace: true });
     } catch (error) {
       let errorMessage = 'Signup failed';
       if (error.code) {
@@ -53,6 +55,7 @@ const Signup = () => {
         }
       }
       toast.error(errorMessage);
+    } finally {
       setLoading(false);
     }
   };

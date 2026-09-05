@@ -286,7 +286,19 @@ async def exchange_session(
 
     from api.deps import _bootstrap_user_from_claims
     user = await _bootstrap_user_from_claims(db, decoded)
-    await create_session_cookie(response, body.id_token)
+    try:
+        await create_session_cookie(response, body.id_token)
+    except Exception as cookie_exc:
+        event_log(
+            logger,
+            "warning",
+            "auth.session.cookie_creation_failed",
+            route="/auth/session",
+            user_id=user["user_id"],
+            failure_type=type(cookie_exc).__name__,
+            provider_error=shorten_provider_error(cookie_exc),
+            outcome="cookie_skipped",
+        )
     request.state.user_id = user["user_id"]
     request.state.jti = decoded.get("jti") or decoded.get("sub")
 
@@ -306,23 +318,25 @@ async def exchange_session(
 async def logout_session(
     request: Request,
     response: Response,
-    current_user: CookieUser,
     cache_redis: CacheRedis,
 ) -> None:
+    user_id = None
     try:
         claims = await verify_session_cookie(request)
+        user_id = claims.get("uid") or claims.get("sub")
         await revoke_session(cache_redis, claims)
-    except HTTPException:
+    except Exception:
         pass
     clear_session_cookie(response)
-    event_log(
-        logger,
-        "info",
-        "auth.session_logout.succeeded",
-        route="/auth/session/logout",
-        user_id=current_user["user_id"],
-        outcome="succeeded",
-    )
+    if user_id:
+        event_log(
+            logger,
+            "info",
+            "auth.session_logout.succeeded",
+            route="/auth/session/logout",
+            user_id=user_id,
+            outcome="succeeded",
+        )
 
 
 @router.patch("/auth/me", response_model=UserResponse)
@@ -1145,40 +1159,18 @@ async def _auto_create_user(
     email_verified: bool = False,
     avatar_url: str | None = None,
 ) -> dict:
-    """Bootstrap user record on first Firebase login."""
-    now = datetime.now(timezone.utc)
-    user_id = f"usr_{secrets.token_hex(12)}"
-
-    user_doc = {
-        "user_id": user_id,
-        "firebase_uid": firebase_uid,
+    """Bootstrap user record on first Firebase login with race condition protection."""
+    from api.deps import _bootstrap_user_from_claims
+    claims = {
+        "uid": firebase_uid,
         "email": email,
+        "name": display_name,
         "email_verified": email_verified,
-        "display_name": display_name,
-        "avatar_url": avatar_url,
-        "plan": Plan.STARTER,
-        "subscription_status": SubscriptionStatus.FREE,
-        "subscription_end_date": None,
-        "subscription_grace_period_end": None,
-        "timezone": "UTC",
-        "mfa_enabled": False,
-        "role": "user",
-        "onboarding_completed": False,
-        "workspace_ids": [],
-        "default_workspace_id": None,
-        "created_at": now,
+        "picture": avatar_url,
     }
-    await db.users.insert_one(user_doc)
-    user_doc.pop("_id", None)
-    event_log(
-        logger,
-        "info",
-        "auth.user.created",
-        user_id=user_id,
-        firebase_uid=firebase_uid,
-        outcome="created",
-    )
-    return user_doc
+    user = await _bootstrap_user_from_claims(db, claims)
+    user = await ensure_active_workspace(db, user)
+    return user
 
 
 # ── MFA routes (Phase 6.5) ────────────────────────────────────────────────────

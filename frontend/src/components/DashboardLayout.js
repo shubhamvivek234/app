@@ -113,7 +113,6 @@ const UserMenu = ({ user, onLogout, isLoggingOut = false }) => {
             type="button"
             onClick={async (e) => {
               e.stopPropagation();
-              setOpen(false);
               await onLogout();
             }}
             disabled={isLoggingOut}

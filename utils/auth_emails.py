@@ -298,11 +298,14 @@ async def send_password_reset_email(email: str) -> None:
     )
 
     try:
-        action_url = await asyncio.to_thread(
-            firebase_auth.generate_password_reset_link,
-            email,
-            settings,
-            get_firebase_app(),
+        action_url = await asyncio.wait_for(
+            asyncio.to_thread(
+                firebase_auth.generate_password_reset_link,
+                email,
+                settings,
+                get_firebase_app(),
+            ),
+            timeout=2.5,
         )
     except (firebase_auth.UserNotFoundError, firebase_auth.EmailNotFoundError) as exc:
         raise AuthEmailUnknownRecipientError(str(exc)) from exc

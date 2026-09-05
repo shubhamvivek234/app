@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import TurnstileWidget from '@/components/TurnstileWidget';
@@ -39,8 +39,10 @@ const LoginV1 = () => {
     setLoading(true);
 
     try {
-      await login(formData.email, formData.password, turnstileToken);
+      const profile = await login(formData.email, formData.password, turnstileToken);
       toast.success('Welcome back!');
+      const target = resolvePostAuthDestination(profile) || '/dashboard';
+      navigate(target, { replace: true });
     } catch (error) {
       let errorMessage = 'Login failed';
       if (error.code) {
@@ -62,6 +64,7 @@ const LoginV1 = () => {
         }
       }
       toast.error(errorMessage);
+    } finally {
       setLoading(false);
     }
   };

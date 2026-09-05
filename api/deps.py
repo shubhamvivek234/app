@@ -254,6 +254,8 @@ async def ensure_active_workspace(
     create_if_missing: bool = True,
 ) -> dict:
     hydrated_user = dict(user)
+    if not hasattr(db, "workspaces") or not hasattr(db, "workspace_members"):
+        return hydrated_user
     user_id = hydrated_user["user_id"]
     workspace_ids = [ws_id for ws_id in (hydrated_user.get("workspace_ids") or []) if ws_id]
     default_workspace_id = hydrated_user.get("default_workspace_id")

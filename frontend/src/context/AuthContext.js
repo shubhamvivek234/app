@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../firebase';
 import { setUserContext } from '../lib/sentry';
@@ -26,7 +26,7 @@ import {
 const AuthContext = createContext();
 const PUBLIC_AUTH_PATHS = new Set(['/login', '/signup', '/forgot-password', '/verify-email', '/auth/callback']);
 
-const resolvePostAuthDestination = (profile) => {
+export const resolvePostAuthDestination = (profile) => {
   if (!profile) return '/login';
   if (typeof window !== 'undefined') {
     const pendingVerification = sessionStorage.getItem('post_signup_verify_email') === '1';
@@ -49,6 +49,7 @@ export const AuthProvider = ({ children }) => {
   const [redirectCheckComplete, setRedirectCheckComplete] = useState(false);
   const [authIssue, setAuthIssue] = useState(null);
   const [cookieBootstrapChecked, setCookieBootstrapChecked] = useState(false);
+  const isLoggingOutRef = useRef(false);
   const [token, setToken] = useState(() => {
     return getSavedToken() || null;
   });
@@ -162,6 +163,10 @@ export const AuthProvider = ({ children }) => {
     }
 
     const unsubscribe = listenToAuthState(async (currentUser) => {
+      if (isLoggingOutRef.current) {
+        console.log('[AuthContext] Suppressing auth state event during active logout');
+        return;
+      }
       // Always set loading=true at the start of an auth state change.
       // This prevents PrivateRoute from seeing (user=null, loading=false)
       // during the async fetchBackendProfile call on a fresh login.
@@ -280,9 +285,9 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password, cfTurnstileToken = null) => {
     try {
-      // Use authService email login which handles Turnstile validation
-      await emailSignIn(email, password, cfTurnstileToken);
-      return true;
+      const credentialUser = await emailSignIn(email, password, cfTurnstileToken);
+      const profile = await syncFirebaseSession(credentialUser);
+      return profile || user;
     } catch (error) {
       console.error('[AuthContext] Email login error:', error.code);
       if (error?.response?.status === 403) {
@@ -296,8 +301,9 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (email, password, name, cfTurnstileToken = null) => {
     try {
-      await emailSignUp(email, password, name, cfTurnstileToken);
-      return true;
+      const credentialUser = await emailSignUp(email, password, name, cfTurnstileToken);
+      const profile = await syncFirebaseSession(credentialUser);
+      return profile || user;
     } catch (error) {
       console.error('[AuthContext] Signup error:', error.code);
       if (error?.response?.status === 403) {
@@ -313,8 +319,8 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       const credential = await signInWithCustomToken(auth, customToken);
-      await syncFirebaseSession(credential.user);
-      return true;
+      const profile = await syncFirebaseSession(credential.user);
+      return profile || true;
     } catch (error) {
       console.error('[AuthContext] Custom token login error:', error);
       toast.error(error.message || 'Magic Link login failed');
@@ -325,9 +331,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    // 1. Immediately and synchronously clear all local auth state & storage
-    // so any component or route guard (PublicRoute, PrivateRoute) instantly
-    // sees the user as logged out without race conditions.
+    isLoggingOutRef.current = true;
     clearAuthData();
     setToken(null);
     setUser(null);
@@ -339,7 +343,6 @@ export const AuthProvider = ({ children }) => {
       sessionStorage.removeItem('google_auth_step');
     }
 
-    // 2. Perform backend session revocation and Firebase signout concurrently
     try {
       await Promise.allSettled([
         logoutBackendSession().catch((sessionError) => {
@@ -352,12 +355,14 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('[AuthContext] Logout error:', error);
     } finally {
-      // 3. Guarantee cleanup is complete
       clearAuthData();
       setToken(null);
       setUser(null);
       setFirebaseUser(null);
       setAuthIssue(null);
+      setTimeout(() => {
+        isLoggingOutRef.current = false;
+      }, 800);
     }
   };
 
