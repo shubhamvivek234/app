@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -34,7 +34,7 @@ const SignupV3 = () => {
       const target = resolvePostAuthDestination(profile) || '/verify-email?sent=1';
       navigate(target, { replace: true });
     } catch (error) {
-      toast.error(error.response?.data?.detail || error.message || 'Signup failed');
+      toast.error(getAuthErrorMessage(error, 'Signup failed. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -217,11 +217,11 @@ const SignupV3 = () => {
               <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
             </div>
 
-            <form onSubmit={handleSubmit} autoComplete="on">
+            <form onSubmit={handleSubmit} method="POST" autoComplete="on">
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '5px' }}>Full Name</label>
                 <input
-                  type="text" autoComplete="name" required
+                  type="text" id="name" name="name" autoComplete="name" required
                   placeholder="John Doe"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -234,7 +234,7 @@ const SignupV3 = () => {
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '5px' }}>Email Address</label>
                 <input
-                  type="email" autoComplete="email" required
+                  type="email" id="email" name="email" autoComplete="username email" required
                   placeholder="you@example.com"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -249,6 +249,7 @@ const SignupV3 = () => {
                 <div style={{ position: 'relative' }}>
                   <input
                     type={showPw ? 'text' : 'password'}
+                    id="password" name="password"
                     autoComplete="new-password" required
                     placeholder="Min. 6 characters"
                     value={formData.password}

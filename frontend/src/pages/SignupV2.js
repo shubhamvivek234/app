@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -95,16 +95,7 @@ const SignupV2 = () => {
       const target = resolvePostAuthDestination(profile) || '/verify-email?sent=1';
       navigate(target, { replace: true });
     } catch (error) {
-      let msg = 'Signup failed';
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/email-already-in-use': msg = 'Email is already in use.'; break;
-          case 'auth/invalid-email':        msg = 'Invalid email address.'; break;
-          case 'auth/weak-password':        msg = 'Password should be at least 6 characters.'; break;
-          default:                          msg = error.message;
-        }
-      }
-      toast.error(msg);
+      toast.error(getAuthErrorMessage(error, 'Signup failed. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -273,27 +264,54 @@ const SignupV2 = () => {
 
           <div className="sv2-divider">or continue with email</div>
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} method="POST" autoComplete="on">
             <div className="sv2-field">
-              <label className="sv2-label">Full Name</label>
+              <label className="sv2-label" htmlFor="sv2-name">Full Name</label>
               <div className="sv2-input-wrap">
-                <input className="sv2-input" type="text" placeholder="John Doe" required
-                  value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+                <input
+                  id="sv2-name"
+                  name="name"
+                  type="text"
+                  autoComplete="name"
+                  className="sv2-input"
+                  placeholder="John Doe"
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
               </div>
             </div>
             <div className="sv2-field">
-              <label className="sv2-label">Email</label>
+              <label className="sv2-label" htmlFor="sv2-email">Email</label>
               <div className="sv2-input-wrap">
-                <input className="sv2-input" type="email" placeholder="you@example.com" required
-                  value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                <input
+                  id="sv2-email"
+                  name="email"
+                  type="email"
+                  autoComplete="username email"
+                  className="sv2-input"
+                  placeholder="you@example.com"
+                  required
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
               </div>
             </div>
             <div className="sv2-field">
-              <label className="sv2-label">Password</label>
+              <label className="sv2-label" htmlFor="sv2-pw">Password</label>
               <div className="sv2-input-wrap">
-                <input className="sv2-input" type={showPw ? 'text' : 'password'} placeholder="Min. 6 characters" required
+                <input
+                  id="sv2-pw"
+                  name="password"
+                  type={showPw ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  className="sv2-input"
+                  placeholder="Min. 6 characters"
+                  required
                   style={{ paddingRight: '36px' }}
-                  value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
                 <button type="button" className="sv2-pw-toggle" onClick={() => setShowPw(v => !v)}>
                   {showPw
                     ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>

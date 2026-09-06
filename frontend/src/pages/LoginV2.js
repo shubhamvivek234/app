@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -148,17 +148,7 @@ const LoginV2 = () => {
       const target = resolvePostAuthDestination(profile) || '/dashboard';
       navigate(target, { replace: true });
     } catch (error) {
-      let msg = 'Login failed';
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/invalid-email':    msg = 'Invalid email address.'; break;
-          case 'auth/user-disabled':    msg = 'User account is disabled.'; break;
-          case 'auth/user-not-found':   msg = 'No account found with this email.'; break;
-          case 'auth/wrong-password':   msg = 'Incorrect password.'; break;
-          default:                      msg = error.message;
-        }
-      }
-      toast.error(msg);
+      toast.error(getAuthErrorMessage(error, 'Incorrect email or password. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -682,13 +672,15 @@ const LoginV2 = () => {
           <div className="lv2-divider" style={{ marginTop: 14, marginBottom: 14 }}>or</div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} method="POST" autoComplete="on">
             <div className="lv2-field">
               <label className="lv2-label" htmlFor="lv2-email">Email*</label>
               <div className="lv2-input-wrap">
                 <input
                   id="lv2-email"
+                  name="email"
                   type="email"
+                  autoComplete="username email"
                   className="lv2-input"
                   placeholder="name@company.com"
                   required
@@ -703,7 +695,9 @@ const LoginV2 = () => {
               <div className="lv2-input-wrap">
                 <input
                   id="lv2-pw"
+                  name="password"
                   type={showPw ? 'text' : 'password'}
+                  autoComplete="current-password"
                   className="lv2-input"
                   placeholder="Enter at least 8 characters"
                   required

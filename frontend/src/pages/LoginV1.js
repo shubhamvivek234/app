@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import TurnstileWidget from '@/components/TurnstileWidget';
@@ -44,26 +44,7 @@ const LoginV1 = () => {
       const target = resolvePostAuthDestination(profile) || '/dashboard';
       navigate(target, { replace: true });
     } catch (error) {
-      let errorMessage = 'Login failed';
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/invalid-email':
-            errorMessage = 'Invalid email address.';
-            break;
-          case 'auth/user-disabled':
-            errorMessage = 'User account is disabled.';
-            break;
-          case 'auth/user-not-found':
-            errorMessage = 'No user found with this email.';
-            break;
-          case 'auth/wrong-password':
-            errorMessage = 'Incorrect password.';
-            break;
-          default:
-            errorMessage = error.message;
-        }
-      }
-      toast.error(errorMessage);
+      toast.error(getAuthErrorMessage(error, 'Incorrect email or password. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -496,12 +477,14 @@ const LoginV1 = () => {
 
           <div className="divider">or continue with email</div>
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} method="POST" autoComplete="on">
             <div className="field">
               <label htmlFor="email">Email</label>
               <input
                 type="email"
                 id="email"
+                name="email"
+                autoComplete="username email"
                 placeholder="you@example.com"
                 required
                 value={formData.email}
@@ -513,6 +496,8 @@ const LoginV1 = () => {
               <input
                 type="password"
                 id="password"
+                name="password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 required
                 value={formData.password}

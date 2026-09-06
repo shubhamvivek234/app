@@ -68,13 +68,14 @@ const ForgotPassword = () => {
                 We will send a reset link if this email can receive password reset messages for an Unravler account.
               </p>
 
-              <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
+              <form className="mt-8 space-y-5" onSubmit={handleSubmit} method="POST">
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700" htmlFor="forgot-email">
                     Email address
                   </label>
                   <input
                     id="forgot-email"
+                    name="email"
                     type="email"
                     autoComplete="email"
                     value={email}

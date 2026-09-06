@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { getWorkspaceInviteDetails, acceptWorkspaceInvite, exchangeMagicLink } from '@/lib/api';
 
@@ -164,7 +164,8 @@ const AcceptInvite = () => {
     try {
       await login(formData.email, formData.password);
       // AuthContext updates `user` → useEffect above fires → handleAccept()
-    } catch {
+    } catch (err) {
+      toast.error(getAuthErrorMessage(err, 'Sign in failed. Please check your credentials.'));
       setSubmitting(false);
     }
   };
@@ -175,7 +176,8 @@ const AcceptInvite = () => {
     try {
       await signup(formData.email, formData.password, formData.name);
       // Same — auth state change → user → handleAccept()
-    } catch {
+    } catch (err) {
+      toast.error(getAuthErrorMessage(err, 'Failed to create account. Please try again.'));
       setSubmitting(false);
     }
   };
@@ -284,14 +286,26 @@ const AcceptInvite = () => {
 
           {/* Login form */}
           {showForm === 'login' && (
-            <form onSubmit={handleLoginSubmit}>
+            <form onSubmit={handleLoginSubmit} method="POST" autoComplete="on">
               <FieldGroup>
                 <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, color: '#6b7280' }} type="email" value={formData.email} readOnly title="Email is pre-filled from the invite" />
+                <input
+                  id="invite-email"
+                  name="email"
+                  autoComplete="username email"
+                  style={{ ...inputStyle, color: '#6b7280' }}
+                  type="email"
+                  value={formData.email}
+                  readOnly
+                  title="Email is pre-filled from the invite"
+                />
               </FieldGroup>
               <FieldGroup>
                 <label style={labelStyle}>Password</label>
                 <input
+                  id="invite-password"
+                  name="password"
+                  autoComplete="current-password"
                   style={inputStyle}
                   type="password"
                   required
@@ -314,10 +328,13 @@ const AcceptInvite = () => {
 
           {/* Signup form */}
           {showForm === 'signup' && (
-            <form onSubmit={handleSignupSubmit}>
+            <form onSubmit={handleSignupSubmit} method="POST" autoComplete="on">
               <FieldGroup>
                 <label style={labelStyle}>Full Name</label>
                 <input
+                  id="invite-signup-name"
+                  name="name"
+                  autoComplete="name"
                   style={inputStyle}
                   type="text"
                   required
@@ -328,11 +345,23 @@ const AcceptInvite = () => {
               </FieldGroup>
               <FieldGroup>
                 <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, color: '#6b7280' }} type="email" value={formData.email} readOnly title="Email is pre-filled from the invite" />
+                <input
+                  id="invite-signup-email"
+                  name="email"
+                  autoComplete="username email"
+                  style={{ ...inputStyle, color: '#6b7280' }}
+                  type="email"
+                  value={formData.email}
+                  readOnly
+                  title="Email is pre-filled from the invite"
+                />
               </FieldGroup>
               <FieldGroup>
                 <label style={labelStyle}>Password</label>
                 <input
+                  id="invite-signup-password"
+                  name="password"
+                  autoComplete="new-password"
                   style={inputStyle}
                   type="password"
                   required

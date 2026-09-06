@@ -21,7 +21,10 @@ import {
   isRetriableBackendError,
   isFatalAuthSyncError,
   isLegacySessionFallbackEligible,
+  getAuthErrorMessage,
 } from '@/services/authService';
+
+export { getAuthErrorMessage };
 
 const AuthContext = createContext();
 const PUBLIC_AUTH_PATHS = new Set(['/login', '/signup', '/forgot-password', '/verify-email', '/auth/callback']);
@@ -289,12 +292,7 @@ export const AuthProvider = ({ children }) => {
       const profile = await syncFirebaseSession(credentialUser);
       return profile || user;
     } catch (error) {
-      console.error('[AuthContext] Email login error:', error.code);
-      if (error?.response?.status === 403) {
-        toast.error("Bot protection check failed. Please refresh and try again.");
-      } else {
-        toast.error("Invalid email or password");
-      }
+      console.error('[AuthContext] Email login error:', error.code || error.message);
       throw error;
     }
   };
@@ -305,12 +303,7 @@ export const AuthProvider = ({ children }) => {
       const profile = await syncFirebaseSession(credentialUser);
       return profile || user;
     } catch (error) {
-      console.error('[AuthContext] Signup error:', error.code);
-      if (error?.response?.status === 403) {
-        toast.error("Bot protection check failed. Please refresh and try again.");
-      } else {
-        toast.error(error.message || 'Signup failed');
-      }
+      console.error('[AuthContext] Signup error:', error.code || error.message);
       throw error;
     }
   };

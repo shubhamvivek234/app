@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -199,17 +199,7 @@ const LoginV4 = () => {
       const target = resolvePostAuthDestination(profile) || '/dashboard';
       navigate(target, { replace: true });
     } catch (error) {
-      let msg = 'Login failed';
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/invalid-email':  msg = 'Invalid email address.'; break;
-          case 'auth/user-disabled':  msg = 'User account is disabled.'; break;
-          case 'auth/user-not-found': msg = 'No account found with this email.'; break;
-          case 'auth/wrong-password': msg = 'Incorrect password.'; break;
-          default:                    msg = error.message;
-        }
-      }
-      toast.error(msg);
+      toast.error(getAuthErrorMessage(error, 'Incorrect email or password. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -451,15 +441,19 @@ const LoginV4 = () => {
             <div style={{ flex: 1, height: '1px', background: '#e5e7eb' }} />
           </div>
 
-          <form onSubmit={handleSubmit} autoComplete="on">
+          <form onSubmit={handleSubmit} method="POST" autoComplete="on">
 
             {/* Email */}
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '6px' }}>
+              <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '6px' }} htmlFor="email">
                 Email Address
               </label>
               <input
-                type="email" autoComplete="email" required
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="username email"
+                required
                 value={formData.email}
                 onChange={handleEmailChange}
                 onFocus={handleEmailFocus}
@@ -470,13 +464,16 @@ const LoginV4 = () => {
 
             {/* Password */}
             <div style={{ marginBottom: '10px' }}>
-              <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '6px' }}>
+              <label style={{ display: 'block', fontSize: '13.5px', fontWeight: '500', color: '#374151', marginBottom: '6px' }} htmlFor="password">
                 Password
               </label>
               <div style={{ position: 'relative' }}>
                 <input
+                  id="password"
+                  name="password"
                   type={showPw ? 'text' : 'password'}
-                  autoComplete="current-password" required
+                  autoComplete="current-password"
+                  required
                   value={formData.password}
                   onChange={(e) => setFormData(f => ({ ...f, password: e.target.value }))}
                   onFocus={handlePasswordFocus}

@@ -57,6 +57,58 @@ export const isFatalAuthSyncError = (error) => {
   return false;
 };
 
+export const getAuthErrorMessage = (error, fallback = 'Authentication failed') => {
+  if (!error) return fallback;
+  const code = error.code || error.response?.data?.code;
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Incorrect email or password. Please double-check and try again.';
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Please contact support@unravler.com.';
+    case 'auth/too-many-requests':
+      return 'Too many failed attempts. Please reset your password or try again in a few minutes.';
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists. Please sign in instead.';
+    case 'auth/weak-password':
+      return 'Password should be at least 6 characters.';
+    case 'auth/popup-closed-by-user':
+      return 'Sign-in popup was closed before completing.';
+    case 'auth/network-request-failed':
+      return 'Network error. Please check your internet connection.';
+    default:
+      if (error?.response?.status === 403) {
+        return 'Bot protection check failed. Please refresh and try again.';
+      }
+      if (typeof error.response?.data?.detail === 'string') {
+        return error.response.data.detail;
+      }
+      if (typeof error.message === 'string' && !error.message.includes('Firebase:')) {
+        return error.message;
+      }
+      return fallback;
+  }
+};
+
+export const saveCredentialsToBrowser = async (email, password, displayName = '') => {
+  if (typeof window === 'undefined' || !window.PasswordCredential || !navigator.credentials?.store) {
+    return;
+  }
+  try {
+    const cred = new window.PasswordCredential({
+      id: email,
+      password: password,
+      name: displayName || email.split('@')[0],
+    });
+    await navigator.credentials.store(cred);
+  } catch (_) {
+    // Silently ignore browser credential store rejections
+  }
+};
+
 /**
  * Configure axios with auth token
  */
@@ -205,6 +257,7 @@ export const emailSignIn = async (email, password, cfTurnstileToken = null) => {
   try {
     console.log('[AuthService] Starting email sign-in...');
     const credential = await signInWithEmailAndPassword(auth, email, password);
+    saveCredentialsToBrowser(email, password, credential.user?.displayName);
 
     try {
       const idToken = await credential.user.getIdToken();
@@ -237,6 +290,7 @@ export const emailSignUp = async (email, password, displayName, cfTurnstileToken
   try {
     console.log('[AuthService] Starting email sign-up...');
     const credential = await createUserWithEmailAndPassword(auth, email, password);
+    saveCredentialsToBrowser(email, password, displayName);
     if (displayName?.trim()) {
       await updateProfile(credential.user, { displayName: displayName.trim() });
     }

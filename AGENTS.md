@@ -9,10 +9,9 @@ Focus: Authentication Lifecycle & Bug Fixes (Logout, Login, Signup, Password Res
 ## Last Session Completed
 Date: 2026-09-06
 Completed:
-- Single-Action Logout & Zero Resurrection: Fixed dropdown unmount bug in `DashboardLayout.js` (`setOpen(false)` unmounted logout button prematurely); added `isLoggingOutRef` latch in `AuthContext.js` to suppress Firebase auth listener events during logout; relaxed `/auth/session/logout` dependency so it clears cookie and returns 204 without throwing 401.
-- Immediate Login & Signup Navigation: Added `resolvePostAuthDestination` redirects with `finally { setLoading(false) }` across `LoginV1..V4.js` and `SignupV1..V4.js`, eliminating double-action delays and race conditions.
-- Resilient Forgot Password: Added 2.5s timeout on IAM link generation with immediate Google Identity Toolkit REST fallback (`sendOobCode`); added client fallback in `authService.js` to guarantee fast delivery without hangs.
-- Deploy & Verification: All 356 unit tests passing; frontend built cleanly; deployed to EC2 production (`socialentagler-api-1` and `socialentagler-worker-1` healthy); verified `/api/auth/session/logout` (204) and `/api/auth/password-reset/request` (200).
+- Standardized Auth Errors: Mapped `auth/invalid-credential`, `auth/wrong-password`, and `auth/user-not-found` to "Incorrect email or password. Please double-check and try again." via `getAuthErrorMessage()`; sanitized bot protection 403s and stripped raw SDK prefixes; removed duplicate toast calls from `AuthContext.js`.
+- Password Manager & Credential Saving: Added semantic `form method="POST" autoComplete="on"`, explicit `name` and standard `autoComplete` attributes (`username email`, `current-password`, `new-password`) across all Login (V1–V4), Signup (V1–V4), AcceptInvite, and ForgotPassword pages; integrated W3C Credential Management API (`window.PasswordCredential` + `navigator.credentials.store()`) into `emailSignIn` and `emailSignUp` to reliably trigger browser/keychain "Save Password" prompts.
+- Build & Verification: Frontend built cleanly (`1.25 MB` gzipped bundle); all 350 unit tests passing (0 failures); Python compiled cleanly.
 
 ## Active Work
 Currently implementing: None

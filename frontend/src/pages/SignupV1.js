@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth, resolvePostAuthDestination } from '@/context/AuthContext';
+import { useAuth, resolvePostAuthDestination, getAuthErrorMessage } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import TurnstileWidget from '@/components/TurnstileWidget';
@@ -38,23 +38,7 @@ const Signup = () => {
       const target = resolvePostAuthDestination(profile) || '/verify-email?sent=1';
       navigate(target, { replace: true });
     } catch (error) {
-      let errorMessage = 'Signup failed';
-      if (error.code) {
-        switch (error.code) {
-          case 'auth/email-already-in-use':
-            errorMessage = 'Email is already in use.';
-            break;
-          case 'auth/invalid-email':
-            errorMessage = 'Invalid email address.';
-            break;
-          case 'auth/weak-password':
-            errorMessage = 'Password should be at least 6 characters.';
-            break;
-          default:
-            errorMessage = error.message;
-        }
-      }
-      toast.error(errorMessage);
+      toast.error(getAuthErrorMessage(error, 'Signup failed. Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -464,12 +448,14 @@ const Signup = () => {
 
           <div className="divider">or continue with email</div>
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} method="POST" autoComplete="on">
             <div className="field">
               <label htmlFor="name">Full Name</label>
               <input
                 type="text"
                 id="name"
+                name="name"
+                autoComplete="name"
                 placeholder="John Doe"
                 required
                 value={formData.name}
@@ -481,6 +467,8 @@ const Signup = () => {
               <input
                 type="email"
                 id="email"
+                name="email"
+                autoComplete="username email"
                 placeholder="you@example.com"
                 required
                 value={formData.email}
@@ -492,6 +480,8 @@ const Signup = () => {
               <input
                 type="password"
                 id="password"
+                name="password"
+                autoComplete="new-password"
                 placeholder="••••••••"
                 required
                 value={formData.password}
