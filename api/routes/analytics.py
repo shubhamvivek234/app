@@ -208,6 +208,34 @@ _PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
             "views": True,
         },
     },
+    "gbp": {
+        "live_feed": False,
+        "message": "Google Business Profile analytics displays updates, offers, and posts published from Unravler.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": True,
+            "likes": False,
+            "comments": False,
+            "shares": False,
+            "views": True,
+        },
+    },
+    "reddit": {
+        "live_feed": False,
+        "message": "Reddit analytics displays submissions, karma, and comments published from Unravler.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": False,
+            "likes": True,
+            "comments": True,
+            "shares": False,
+            "views": True,
+        },
+    },
 }
 _SUPPORTED_ENGAGEMENT_PLATFORMS = {
     platform for platform, capability in _PLATFORM_ANALYTICS_CAPABILITIES.items() if capability.get("live_feed")
@@ -240,7 +268,12 @@ def _published_match(
         else:
             query["platforms"] = platform
     if account_id:
-        query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
+        query["$or"] = [
+            {"social_account_ids": account_id},
+            {"account_ids": account_id},
+            {"platform_account_ids": account_id},
+            {"social_account_id": account_id},
+        ]
     return query
 
 
@@ -259,7 +292,12 @@ def _scheduled_match(
         else:
             query["platforms"] = platform
     if account_id:
-        query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
+        query["$or"] = [
+            {"social_account_ids": account_id},
+            {"account_ids": account_id},
+            {"platform_account_ids": account_id},
+            {"social_account_id": account_id},
+        ]
     return query
 
 
@@ -888,21 +926,34 @@ async def _fetch_db_published_posts(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     platform = account.get("platform")
-    account_identifier = account.get("account_id") or account.get("id")
-    if not platform or not account_identifier:
+    account_identifiers = [
+        str(v)
+        for v in [
+            account.get("account_id"),
+            account.get("id"),
+            account.get("_id"),
+            account.get("platform_user_id"),
+        ]
+        if v
+    ]
+    if not platform or not account_identifiers:
         return []
+
+    or_clauses = []
+    for identifier in account_identifiers:
+        or_clauses.extend([
+            {"social_account_ids": identifier},
+            {"account_ids": identifier},
+            {"platform_account_ids": identifier},
+            {"social_account_id": identifier},
+        ])
 
     platform_match = {"$in": ["google_business", "gbp"]} if platform in ("google_business", "gbp") else platform
     cursor = db.posts.find(
         {
             "user_id": user_id,
             "platforms": platform_match,
-            "$or": [
-                {"social_account_ids": account_identifier},
-                {"account_ids": account_identifier},
-                {"platform_account_ids": account_identifier},
-                {"social_account_id": account_identifier},
-            ],
+            "$or": or_clauses,
             "status": {"$in": ["published", "partial"]},
         },
         {
@@ -937,6 +988,39 @@ async def _fetch_db_published_posts(
         if not permalink and platform in ("google_business", "gbp"):
             permalink = post_urls.get("gbp") or post_urls.get("google_business")
 
+        metrics = platform_result.get("metrics") if isinstance(platform_result.get("metrics"), dict) else {}
+        likes = _metric_int(
+            platform_result.get("likes")
+            or platform_result.get("like_count")
+            or metrics.get("likes")
+            or metrics.get("like_count")
+            or post.get("likes")
+        )
+        comments = _metric_int(
+            platform_result.get("comments")
+            or platform_result.get("comments_count")
+            or platform_result.get("comment_count")
+            or metrics.get("comments")
+            or metrics.get("comments_count")
+            or post.get("comments_count")
+        )
+        shares = _metric_int(
+            platform_result.get("shares")
+            or platform_result.get("share_count")
+            or platform_result.get("reposts")
+            or platform_result.get("retweets")
+            or metrics.get("shares")
+            or post.get("shares")
+        )
+        views = _metric_int(
+            platform_result.get("views")
+            or platform_result.get("view_count")
+            or platform_result.get("impressions")
+            or metrics.get("views")
+            or metrics.get("impressions")
+            or post.get("views")
+        )
+
         feed.append(
             {
                 "id": platform_result.get("platform_post_id") or post.get("id"),
@@ -945,10 +1029,10 @@ async def _fetch_db_published_posts(
                 "media_url": _db_post_media_url(post),
                 "media_type": _db_post_media_type(post),
                 "timestamp": platform_result.get("published_at") or post.get("published_at") or post.get("updated_at"),
-                "likes": 0,
-                "comments_count": 0,
-                "shares": 0,
-                "views": 0,
+                "likes": likes,
+                "comments_count": comments,
+                "shares": shares,
+                "views": views,
                 "permalink": permalink,
                 "platform": platform,
                 "source_mode": "db_fallback",
@@ -1125,13 +1209,20 @@ def _metric_unavailable_message(platform: str | None, metric: str) -> str:
 
 def _feed_metric_support(platform: str | None, post: dict[str, Any], source_mode: str) -> dict[str, dict[str, Any]]:
     if source_mode != "live":
-        return {
-            metric: {
-                "supported": False,
-                "message": "Live engagement metrics are unavailable for fallback posts published from Unravler history.",
-            }
-            for metric in ("likes", "comments", "shares", "views", "quotes")
-        }
+        support_by_metric: dict[str, dict[str, Any]] = {}
+        for metric in ("likes", "comments", "shares", "views", "quotes"):
+            raw_value = _raw_metric_value(post, metric)
+            if raw_value is not None and _metric_int(raw_value) > 0:
+                support_by_metric[metric] = {
+                    "supported": True,
+                    "message": "Engagement recorded from published post history.",
+                }
+            else:
+                support_by_metric[metric] = {
+                    "supported": False,
+                    "message": "Live engagement metrics are unavailable for fallback posts published from Unravler history.",
+                }
+        return support_by_metric
 
     platform_support = _platform_supports(platform)
     support_by_metric: dict[str, dict[str, Any]] = {}
@@ -4145,6 +4236,8 @@ async def analytics_overview(
     ]
     platform_docs = await db.posts.aggregate(platform_pipeline).to_list(None)
     platform_counts = {d["_id"]: d["count"] for d in platform_docs if d.get("_id")}
+    if "gbp" in platform_counts:
+        platform_counts["google_business"] = platform_counts.get("google_business", 0) + platform_counts.pop("gbp")
 
     type_pipeline = [
         {"$match": published_match},
@@ -4307,6 +4400,8 @@ async def analytics_engagement(
 
     for account in accounts:
         plat = account.get("platform")
+        if plat in ("google_business", "gbp"):
+            plat = "google_business"
         feed: list[dict[str, Any]] = []
         engagement: dict[str, Any] = {}
         if plat in _SUPPORTED_ENGAGEMENT_PLATFORMS:

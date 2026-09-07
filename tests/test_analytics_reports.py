@@ -131,3 +131,104 @@ def test_google_business_analytics_capabilities():
     sched_query = _scheduled_match("ws_1", platform="gbp")
     assert sched_query["platforms"] == {"$in": ["google_business", "gbp"]}
 
+
+def test_reddit_and_gbp_capabilities():
+    from api.routes.analytics import _PLATFORM_ANALYTICS_CAPABILITIES, _published_match
+
+    assert "reddit" in _PLATFORM_ANALYTICS_CAPABILITIES
+    reddit_cap = _PLATFORM_ANALYTICS_CAPABILITIES["reddit"]
+    assert reddit_cap["supports"]["likes"] is True
+    assert reddit_cap["supports"]["comments"] is True
+    assert reddit_cap["supports"]["views"] is True
+    assert reddit_cap["supports"]["shares"] is False
+
+    assert "gbp" in _PLATFORM_ANALYTICS_CAPABILITIES
+    assert _PLATFORM_ANALYTICS_CAPABILITIES["gbp"]["supports"]["views"] is True
+
+    pub_match_acc = _published_match("ws_1", "2026-01-01T00:00:00Z", account_id="acc_123")
+    assert {"social_account_ids": "acc_123"} in pub_match_acc["$or"]
+    assert {"account_ids": "acc_123"} in pub_match_acc["$or"]
+    assert {"platform_account_ids": "acc_123"} in pub_match_acc["$or"]
+    assert {"social_account_id": "acc_123"} in pub_match_acc["$or"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_db_published_posts_retains_metrics():
+    from api.routes.analytics import _fetch_db_published_posts, _feed_metric_support
+
+    class _MockFindCursor:
+        def __init__(self, docs):
+            self.docs = docs
+
+        def sort(self, *a, **k):
+            return self
+
+        async def to_list(self, length=None):
+            return self.docs
+
+    class _MockPostsCol:
+        def __init__(self, docs):
+            self.docs = docs
+
+        def find(self, query, projection=None):
+            return _MockFindCursor(self.docs)
+
+    class _MockDB:
+        def __init__(self, docs):
+            self.posts = _MockPostsCol(docs)
+
+    db = _MockDB([
+        {
+            "id": "post_gbp_1",
+            "content": "Special offer today!",
+            "status": "published",
+            "platforms": ["google_business"],
+            "social_account_ids": ["acc_gbp_1"],
+            "platform_results": {
+                "google_business": {
+                    "status": "success",
+                    "views": 450,
+                    "likes": 0,
+                    "comments": 0,
+                    "shares": 0,
+                    "post_url": "https://business.google.com/post/1",
+                }
+            },
+        },
+        {
+            "id": "post_tw_1",
+            "content": "Exciting product update",
+            "status": "published",
+            "platforms": ["twitter"],
+            "social_account_ids": ["acc_tw_1"],
+            "platform_results": {
+                "twitter": {
+                    "status": "success",
+                    "likes": 42,
+                    "comments_count": 8,
+                    "shares": 15,
+                    "views": 1200,
+                }
+            },
+        },
+    ])
+
+    account_gbp = {"platform": "google_business", "account_id": "acc_gbp_1"}
+    posts_gbp = await _fetch_db_published_posts(db, "u1", account_gbp, limit=10)
+    assert len(posts_gbp) == 2  # mock cursor returns all
+    p_gbp = posts_gbp[0]
+    assert p_gbp["views"] == 450
+    assert p_gbp["permalink"] == "https://business.google.com/post/1"
+
+    support_gbp = _feed_metric_support("google_business", p_gbp, source_mode="db_fallback")
+    assert support_gbp["views"]["supported"] is True
+
+    account_tw = {"platform": "twitter", "account_id": "acc_tw_1"}
+    posts_tw = await _fetch_db_published_posts(db, "u1", account_tw, limit=10)
+    p_tw = posts_tw[1]
+    assert p_tw["likes"] == 42
+    assert p_tw["comments_count"] == 8
+    assert p_tw["shares"] == 15
+    assert p_tw["views"] == 1200
+
+

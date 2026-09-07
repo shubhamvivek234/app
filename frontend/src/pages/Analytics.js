@@ -118,14 +118,18 @@ const ALL_PLATFORMS = [
 const PLATFORM_ORDER_STORAGE_KEY_PREFIX = 'analytics_platform_order_v1';
 
 const PLATFORM_NOTICES = {
-  linkedin: 'LinkedIn can show followers, follower growth, and organization impressions when the connected account has the required analytics scopes and page admin access. Post engagement metrics remain limited.',
-  snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
+  instagram: 'Instagram displays published posts, reels, stories, reach, impressions, follower growth, and audience demographics for Business/Creator accounts.',
+  facebook: 'Facebook displays published Page posts, reactions, comments, shares, and follower demographics for connected Pages.',
+  youtube: 'YouTube displays published videos, views, watch time, subscribers gained/lost, and channel demographics.',
   twitter: 'X can show recent posts plus likes, replies, and reposts. View counts are not available from the current API integration.',
-  threads: 'Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.',
-  discord: 'Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.',
+  linkedin: 'LinkedIn can show followers, follower growth, and organization impressions when the connected account has the required analytics scopes and page admin access. Post engagement metrics remain limited.',
   tiktok: 'TikTok post analytics depend on the scopes granted when the account was connected. If video list access is unavailable, Unravler falls back to posts published from the app.',
   pinterest: 'Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.',
+  threads: 'Threads can show recent posts plus likes, replies, reposts, and views when Meta returns them.',
   bluesky: 'Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.',
+  reddit: 'Reddit displays submissions, karma, and comments published from Unravler or retrieved via the Reddit API.',
+  snapchat: "Snapchat's current integration does not expose organic post analytics. Only publishing history can be shown where available.",
+  discord: 'Discord uses incoming webhooks for publishing, so analytics can only show posts published from Unravler.',
   mastodon: 'Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.',
   google_business: 'Google Business Profile displays updates, offers, and posts published to Google Search and Maps from Unravler.',
 };
@@ -205,7 +209,7 @@ const pctLabel = (value) => {
 };
 
 const chartEmptyState = (label = 'No data available currently for this report.') => (
-  <div className="h-40 flex items-center justify-center text-sm text-gray-400 text-center px-6">
+  <div className="h-40 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500 text-center px-6">
     {label}
   </div>
 );
@@ -1863,8 +1867,9 @@ const PlatformSidebar = ({
   onDragEnd,
 }) => {
   const accountsByPlatform = accounts.reduce((acc, a) => {
-    if (!acc[a.platform]) acc[a.platform] = [];
-    acc[a.platform].push(a);
+    const platKey = a.platform === 'gbp' ? 'google_business' : a.platform;
+    if (!acc[platKey]) acc[platKey] = [];
+    acc[platKey].push(a);
     return acc;
   }, {});
 
@@ -1885,6 +1890,11 @@ const PlatformSidebar = ({
           📊
         </span>
         <span className="flex-1 text-left text-[13px]">All Platforms</span>
+        {accounts.length > 0 && (
+          <span className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-slate-800 shrink-0">
+            {accounts.length}
+          </span>
+        )}
       </button>
 
       {/* Each platform row */}
@@ -1926,10 +1936,10 @@ const PlatformSidebar = ({
             <span className="flex-1 text-left text-[13px]">{PLATFORM_LABELS[plat] || plat}</span>
             {isConnected && (
               <span
-                className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap opacity-0 shadow-sm transition-all duration-150 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 group-focus-visible:opacity-100 group-focus-visible:translate-x-0"
+                className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums shrink-0"
                 style={{ background: color + '22', color }}
               >
-                {platAccounts.length} {platAccounts.length === 1 ? 'Account' : 'Accounts'}
+                {platAccounts.length}
               </span>
             )}
           </button>
@@ -2549,7 +2559,7 @@ const Analytics = () => {
 
   // Accounts for the currently selected platform
   const platformAccounts = accounts.filter(
-    (a) => !selectedPlatform || a.platform === selectedPlatform
+    (a) => !selectedPlatform || a.platform === selectedPlatform || (selectedPlatform === 'google_business' && a.platform === 'gbp')
   );
   const selectedConnectedAccount =
     (overview?.connected_accounts || []).find(
@@ -2605,7 +2615,7 @@ const Analytics = () => {
     (overview?.published_in_period || 0) === 0 &&
     (selectedConnectedAccount?.posts_count || 0) > 0;
   const isNotConnected = selectedPlatform &&
-    accounts.filter((a) => a.platform === selectedPlatform).length === 0;
+    accounts.filter((a) => a.platform === selectedPlatform || (selectedPlatform === 'google_business' && a.platform === 'gbp')).length === 0;
   const SelectedIcon = selectedPlatform ? PLATFORM_ICONS[selectedPlatform] : null;
   const selectedColor = selectedPlatform ? (PLATFORM_COLORS[selectedPlatform] || '#6b7280') : null;
   const selectedPlatformMetrics = supportedMetricsFor(selectedPlatform);
@@ -3028,7 +3038,7 @@ const Analytics = () => {
 
         {/* ── Platform analytics notice ───────────────────────────── */}
         {selectedPlatformNotice && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
             <svg className="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
@@ -3037,12 +3047,12 @@ const Analytics = () => {
         )}
 
         {linkedinAnalyticsLimited && (
-          <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+          <div className="mb-4 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/40 px-4 py-4 text-sm text-blue-900 dark:text-blue-200">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="font-semibold">LinkedIn live analytics need additional access</p>
-                <p className="mt-1 text-blue-800">{linkedinAnalyticsMessage}</p>
-                <p className="mt-2 text-xs text-blue-700">
+                <p className="mt-1 text-blue-800 dark:text-blue-300">{linkedinAnalyticsMessage}</p>
+                <p className="mt-2 text-xs text-blue-700 dark:text-blue-400">
                   Unravler can still show LinkedIn posts published from the app. Native follower, growth, reach, and impression cards unlock only after the LinkedIn app has approved organization analytics permissions and the account is reconnected.
                 </p>
               </div>
@@ -3178,7 +3188,7 @@ const Analytics = () => {
           <div className="space-y-6">
 
             {hasContentOutsideWindow && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
                 This {PLATFORM_LABELS[selectedPlatform] || selectedPlatform} account has{' '}
                 <span className="font-semibold">{fmt(selectedConnectedAccount?.posts_count || 0)}</span>{' '}
                 total {selectedPlatform === 'youtube' ? 'videos' : 'posts'}, but none fall within the selected{' '}
@@ -3187,7 +3197,7 @@ const Analytics = () => {
             )}
 
             {!!engagement?.errors?.length && !linkedinAnalyticsLimited && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
                 {engagement.errors.map((item, idx) => (
                   <div key={`${item.account}-${idx}`}>
                     <span className="font-semibold">{item.account}:</span> {item.error}
@@ -3197,7 +3207,7 @@ const Analytics = () => {
             )}
 
             {!!overview?.errors?.length && !linkedinAnalyticsLimited && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
                 {overview.errors.map((item, idx) => (
                   <div key={`${item.account}-${idx}`}>
                     <span className="font-semibold">{item.account}:</span> {item.error}
@@ -3249,20 +3259,42 @@ const Analytics = () => {
             {/* Engagement insights row */}
             {!loadingEngagement && engagement?.totals?.total_posts > 0 && showEngagementInsights && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Average engagement per post */}
+                {/* Average engagement or views per post */}
                 <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
-                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Avg. Engagement / Post</p>
-                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                    {fmt(Math.round(
-                      ((engagement.totals.total_likes || 0) + (engagement.totals.total_comments || 0) + (engagement.totals.total_shares || 0))
-                      / (engagement.totals.total_posts || 1)
-                    ))}
+                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-slate-400 mb-1">
+                    {selectedPlatform === 'google_business' ? 'Avg. Views / Post' : 'Avg. Engagement / Post'}
                   </p>
-                  <p className="text-xs text-gray-400 mt-1">Likes + Comments + Shares per post</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {selectedPlatform === 'google_business'
+                      ? fmt(Math.round((engagement.totals.total_views || 0) / (engagement.totals.total_posts || 1)))
+                      : fmt(Math.round(
+                          ((engagement.totals.total_likes || 0) + (engagement.totals.total_comments || 0) + (engagement.totals.total_shares || 0))
+                          / (engagement.totals.total_posts || 1)
+                        ))
+                    }
+                  </p>
+                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                    {selectedPlatform === 'google_business' ? 'Profile views per update' : 'Likes + Comments + Shares per post'}
+                  </p>
                 </div>
 
-                {/* Best performing platform */}
+                {/* Best performing platform or Single platform interaction summary */}
                 {(() => {
+                  if (selectedPlatform) {
+                    const data = engagement?.platform_breakdown?.[selectedPlatform] || {};
+                    const totalInteractions = (data.likes || 0) + (data.comments || 0) + (data.shares || 0) + (data.views || 0);
+                    return (
+                      <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-slate-400 mb-1">Platform Activity</p>
+                        <div className="flex items-center gap-2">
+                          {SelectedIcon && <SelectedIcon style={{ color: selectedColor }} className="text-xl shrink-0" />}
+                          <span className="text-2xl font-bold text-gray-900 dark:text-white">{data.posts || 0}</span>
+                          <span className="text-sm text-gray-500 dark:text-slate-400 font-medium">published</span>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{fmt(totalInteractions)} total interactions across period</p>
+                      </div>
+                    );
+                  }
                   const breakdown = engagement?.platform_breakdown || {};
                   const best = Object.entries(breakdown).sort((a, b) => {
                     const engA = (a[1].likes || 0) + (a[1].comments || 0) + (a[1].shares || 0);
@@ -3275,18 +3307,32 @@ const Analytics = () => {
                   const totalEng = (data.likes || 0) + (data.comments || 0) + (data.shares || 0);
                   return (
                     <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Best Platform</p>
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-slate-400 mb-1">Best Platform</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
-                        <span className="text-2xl font-bold text-gray-900">{PLATFORM_LABELS[plat] || plat}</span>
+                        <span className="text-2xl font-bold text-gray-900 dark:text-white">{PLATFORM_LABELS[plat] || plat}</span>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1">{fmt(totalEng)} total engagement from {data.posts || 0} posts</p>
+                      <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">{fmt(totalEng)} total engagement from {data.posts || 0} posts</p>
                     </div>
                   );
                 })()}
 
-                {/* Most viewed platform */}
+                {/* Most viewed platform or Total Views for single platform */}
                 {(() => {
+                  if (selectedPlatform) {
+                    const data = engagement?.platform_breakdown?.[selectedPlatform] || {};
+                    const views = data.views || 0;
+                    return (
+                      <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
+                        <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-slate-400 mb-1">Total Views</p>
+                        <div className="flex items-center gap-2">
+                          <FaEye className="text-xl text-purple-500" />
+                          <span className="text-2xl font-bold text-gray-900 dark:text-white">{fmt(views)}</span>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Impressions & views on {PLATFORM_LABELS[selectedPlatform] || selectedPlatform}</p>
+                      </div>
+                    );
+                  }
                   const breakdown = engagement?.platform_breakdown || {};
                   const best = Object.entries(breakdown).filter(([, d]) => (d.views || 0) > 0).sort((a, b) => (b[1].views || 0) - (a[1].views || 0))[0];
                   if (!best) return null;
@@ -3294,12 +3340,12 @@ const Analytics = () => {
                   const Icon = PLATFORM_ICONS[plat] || FaFileAlt;
                   return (
                     <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-4 shadow-xs">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Most Viewed</p>
+                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-slate-400 mb-1">Most Viewed</p>
                       <div className="flex items-center gap-2">
                         <Icon style={{ color: PLATFORM_COLORS[plat] }} className="text-xl" />
-                        <span className="text-2xl font-bold text-gray-900">{fmt(data.views)}</span>
+                        <span className="text-2xl font-bold text-gray-900 dark:text-white">{fmt(data.views)}</span>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1">Views on {PLATFORM_LABELS[plat] || plat}</p>
+                      <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Views on {PLATFORM_LABELS[plat] || plat}</p>
                     </div>
                   );
                 })()}
@@ -3311,7 +3357,7 @@ const Analytics = () => {
 
               {/* Posts Over Time */}
               <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts Published Over Time</h3>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-4">Posts Published Over Time</h3>
                 {loadingOverview ? (
                   <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
                 ) : timeline.length === 0 ? (
@@ -3337,7 +3383,9 @@ const Analytics = () => {
 
               {showEngagementInsights && (
                 <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Engagement by Platform</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-4">
+                    {selectedPlatform ? `${PLATFORM_LABELS[selectedPlatform] || selectedPlatform} Engagement Breakdown` : 'Engagement by Platform'}
+                  </h3>
                   {loadingEngagement ? (
                     <div className="h-48 bg-gray-100 animate-pulse rounded-lg" />
                   ) : platformEngData.length === 0 ? (
@@ -3381,7 +3429,7 @@ const Analytics = () => {
             {/* Post type breakdown */}
             {overview && (
               <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Posts by Type</h3>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-4">Posts by Type</h3>
                 {loadingOverview ? (
                   <div className="h-10 bg-gray-100 animate-pulse rounded-lg" />
                 ) : (
@@ -3396,14 +3444,14 @@ const Analytics = () => {
                       const pct = Math.round((count / total) * 100);
                       return (
                         <div key={key} className="flex items-center gap-3">
-                          <span className="text-sm text-gray-600 w-12">{label}</span>
-                          <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                          <span className="text-sm text-gray-600 dark:text-slate-300 w-12">{label}</span>
+                          <div className="flex-1 h-2.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden">
                             <div
                               className="h-full rounded-full transition-all"
                               style={{ width: `${pct}%`, background: color }}
                             />
                           </div>
-                          <span className="text-sm text-gray-500 w-16 text-right">{count} ({pct}%)</span>
+                          <span className="text-sm text-gray-500 dark:text-slate-400 w-16 text-right">{count} ({pct}%)</span>
                         </div>
                       );
                     })}
@@ -3414,7 +3462,7 @@ const Analytics = () => {
 
             {showEngagementInsights && (
               <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Top Performing Posts</h3>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-4">Top Performing Posts</h3>
                 {loadingEngagement ? (
                   <div className="space-y-3">
                     {[1, 2, 3].map((i) => (
@@ -3435,7 +3483,7 @@ const Analytics = () => {
                       const dt = parseDate(post.published_at);
                       const support = PLATFORM_METRICS[plat] || {};
                       return (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                        <div key={i} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800/60 transition-colors">
                           <span className="w-5 text-center text-xs font-bold text-gray-400">{i + 1}</span>
                           <Icon style={{ color, flexShrink: 0 }} className="text-base" />
                           {post.media_url && (
@@ -3446,10 +3494,10 @@ const Analytics = () => {
                               onError={(e) => { e.target.style.display = 'none'; }}
                             />
                           )}
-                          <p className="flex-1 text-sm text-gray-700 truncate min-w-0">
+                          <p className="flex-1 text-sm text-gray-700 dark:text-slate-200 truncate min-w-0">
                             {post.content || '(no caption)'}
                           </p>
-                          <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500">
+                          <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500 dark:text-slate-400">
                             {support.likes && <span className="flex items-center gap-1"><FaHeart className="text-rose-400" />{fmt(m.likes)}</span>}
                             {support.comments && <span className="flex items-center gap-1"><FaComment className="text-blue-400" />{fmt(m.comments)}</span>}
                             {support.shares && <span className="flex items-center gap-1"><FaShare className="text-green-400" />{fmt(m.shares)}</span>}
@@ -3472,11 +3520,11 @@ const Analytics = () => {
             {/* Platform summary table */}
             {overview?.platform_counts && Object.keys(overview.platform_counts).length > 0 && (
               <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 p-5 shadow-xs">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Platform Summary</h3>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-slate-200 mb-4">Platform Summary</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                      <tr className="text-xs font-semibold text-gray-400 dark:text-slate-400 uppercase tracking-wide border-b border-gray-100 dark:border-slate-800">
                         <th className="text-left py-2 pr-4">Platform</th>
                         <th className="text-right py-2 pr-4">Followers</th>
                         <th className="text-right py-2 pr-4">Growth</th>
@@ -3510,26 +3558,26 @@ const Analytics = () => {
                               : null);
                           const sup = PLATFORM_METRICS[plat] || {};
                           return (
-                            <tr key={plat} className="border-b border-gray-50 hover:bg-gray-50">
+                            <tr key={plat} className="border-b border-gray-50 dark:border-slate-800/80 hover:bg-gray-50 dark:hover:bg-slate-800/60">
                               <td className="py-2.5 pr-4">
                                 <div className="flex items-center gap-2">
                                   <Icon style={{ color }} className="text-base" />
-                                  <span className="font-medium text-gray-700">{PLATFORM_LABELS[plat] || plat}</span>
+                                  <span className="font-medium text-gray-700 dark:text-slate-200">{PLATFORM_LABELS[plat] || plat}</span>
                                 </div>
                               </td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerTotal)}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(followerGrowth)}</td>
-                              <td className="text-right py-2.5 pr-4 text-gray-600">{fmt(reachOrImpressions)}</td>
-                              <td className="text-right py-2.5 pr-4 font-semibold text-gray-900">{count}</td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600 dark:text-slate-300">{fmt(followerTotal)}</td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600 dark:text-slate-300">{fmt(followerGrowth)}</td>
+                              <td className="text-right py-2.5 pr-4 text-gray-600 dark:text-slate-300">{fmt(reachOrImpressions)}</td>
+                              <td className="text-right py-2.5 pr-4 font-semibold text-gray-900 dark:text-white">{count}</td>
                               {summaryMetricColumns.map(({ key }) => (
-                                <td key={key} className="text-right py-2.5 pr-4 text-gray-600">
+                                <td key={key} className="text-right py-2.5 pr-4 text-gray-600 dark:text-slate-300">
                                   {sup[key] ? fmt(pd[key] ?? 0) : '—'}
                                 </td>
                               ))}
                               {showEngRateColumn && (
-                                <td className="text-right py-2.5 text-gray-600">
-                                  {pd.posts > 0 && (sup.likes || sup.comments || sup.shares)
-                                    ? (((pd.likes || 0) + (pd.comments || 0) + (pd.shares || 0)) / pd.posts).toFixed(1)
+                                <td className="text-right py-2.5 text-gray-600 dark:text-slate-300">
+                                  {pd.posts > 0 && (sup.likes || sup.comments || sup.shares || sup.views)
+                                    ? (((pd.likes || 0) + (pd.comments || 0) + (pd.shares || 0) + (sup.views && !sup.likes && !sup.comments ? (pd.views || 0) : 0)) / pd.posts).toFixed(1)
                                     : '—'
                                   }
                                 </td>
@@ -4931,7 +4979,7 @@ const Analytics = () => {
                   {tiktokTopPosts.length > 0 ? (
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       {tiktokTopPosts.slice(0, 8).map((post) => (
-                        <div key={post.id} className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
+                        <div key={post.id} className="rounded-xl border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/60 p-4 space-y-3">
                           {post.thumbnail_url ? (
                             <img
                               src={post.thumbnail_url}
@@ -4940,16 +4988,16 @@ const Analytics = () => {
                               onError={(e) => { e.target.style.display = 'none'; }}
                             />
                           ) : (
-                            <div className="w-full h-40 rounded-xl bg-gray-100 flex items-center justify-center text-sm text-gray-400">
+                            <div className="w-full h-40 rounded-xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-sm text-gray-400 dark:text-gray-500">
                               No media preview
                             </div>
                           )}
-                          <div className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                          <div className="flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-slate-400">
                             <span className="font-semibold">{post.source_mode === 'db_fallback' ? 'Unravler fallback' : 'TikTok feed'}</span>
                             {post.timestamp && <span>{formatAnalyticsDate(post.timestamp)}</span>}
                           </div>
-                          <p className="text-sm text-gray-700 line-clamp-3">{post.title || post.content || '(no caption)'}</p>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600">
+                          <p className="text-sm text-gray-700 dark:text-slate-200 line-clamp-3">{post.title || post.content || '(no caption)'}</p>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-gray-600 dark:text-slate-300">
                             <span>Views</span><span className="text-right font-semibold">{fmt(post.views)}</span>
                             <span>Likes</span><span className="text-right font-semibold">{fmt(post.likes)}</span>
                             <span>Comments</span><span className="text-right font-semibold">{fmt(post.comments)}</span>
@@ -4961,7 +5009,7 @@ const Analytics = () => {
                               href={post.permalink}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                              className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
                             >
                               View on TikTok <FaExternalLinkAlt className="text-xs" />
                             </a>
