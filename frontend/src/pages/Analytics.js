@@ -26,6 +26,7 @@ import {
   FaFilePdf, FaFileCsv,
 } from 'react-icons/fa';
 import ExportReportModal from '@/components/ExportReportModal';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 import { SiThreads, SiBluesky, SiMastodon } from 'react-icons/si';
 import worldGeo from 'world-atlas/countries-110m.json';
 import {
@@ -62,6 +63,7 @@ const PLATFORM_COLORS = {
   snapchat:  '#FFFC00',
   discord:   '#5865F2',
   mastodon:  '#6364FF',
+  google_business: '#4285F4',
 };
 
 const PLATFORM_LABELS = {
@@ -69,6 +71,7 @@ const PLATFORM_LABELS = {
   linkedin: 'LinkedIn', youtube: 'YouTube', tiktok: 'TikTok',
   pinterest: 'Pinterest', threads: 'Threads', bluesky: 'Bluesky',
   reddit: 'Reddit', snapchat: 'Snapchat', discord: 'Discord', mastodon: 'Mastodon',
+  google_business: 'Google Business Profile',
 };
 
 const PLATFORM_ICONS = {
@@ -85,6 +88,7 @@ const PLATFORM_ICONS = {
   snapchat:  FaSnapchat,
   discord:   FaDiscord,
   mastodon:  SiMastodon,
+  google_business: GoogleBusinessIcon,
 };
 
 // Metrics that each platform supports (false = not available from API)
@@ -102,11 +106,13 @@ const PLATFORM_METRICS = {
   snapchat:  { likes: false, comments: false, shares: false, views: false },
   discord:   { likes: false, comments: false, shares: false, views: false },
   mastodon:  { likes: true,  comments: true,  shares: true,  views: false },
+  google_business: { likes: false, comments: false, shares: false, views: true },
 };
 
 const ALL_PLATFORMS = [
   'instagram', 'facebook', 'twitter', 'linkedin', 'youtube',
   'tiktok', 'pinterest', 'threads', 'bluesky', 'snapchat', 'reddit', 'discord', 'mastodon',
+  'google_business',
 ];
 
 const PLATFORM_ORDER_STORAGE_KEY_PREFIX = 'analytics_platform_order_v1';
@@ -121,6 +127,7 @@ const PLATFORM_NOTICES = {
   pinterest: 'Pinterest can show pins with saves, comments, and impressions when the API returns them. Share counts are not available.',
   bluesky: 'Bluesky can show recent posts plus likes, replies, and reposts. View counts are not available from the API.',
   mastodon: 'Mastodon can show recent statuses plus favourites, replies, and boosts. View counts are not available.',
+  google_business: 'Google Business Profile displays updates, offers, and posts published to Google Search and Maps from Unravler.',
 };
 
 const DAYS_OPTIONS = [

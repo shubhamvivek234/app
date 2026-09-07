@@ -39,7 +39,8 @@ import {
   FaYoutube,
   FaPaperPlane,
 } from 'react-icons/fa';
-import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads, SiTelegram, SiGoogle } from 'react-icons/si';
+import { SiBluesky, SiMastodon, SiReddit, SiSnapchat, SiThreads, SiTelegram } from 'react-icons/si';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 import {
   Dialog,
   DialogContent,
@@ -76,7 +77,7 @@ const PLATFORMS = [
   { id: 'facebook', name: 'Facebook', icon: FaFacebook, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700' },
   { id: 'twitter', name: 'X (Twitter)', icon: FaTwitter, color: 'text-sky-400', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-gray-900 hover:bg-black' },
   { id: 'linkedin', name: 'LinkedIn', icon: FaLinkedin, color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-300', btn: 'bg-blue-700 hover:bg-blue-800' },
-  { id: 'google_business', name: 'Google Business Profile', icon: SiGoogle, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700', badge: 'Local SEO & Maps' },
+  { id: 'google_business', name: 'Google Business Profile', icon: GoogleBusinessIcon, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', btn: 'bg-blue-600 hover:bg-blue-700', badge: 'Local SEO & Maps' },
   { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
   { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
   { id: 'threads', name: 'Threads', icon: SiThreads, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
@@ -1334,7 +1335,7 @@ const ConnectedAccounts = () => {
           open={manualModal.platformId === 'google_business'}
           onOpenChange={(open) => { if (!open) closeManualModal(); }}
           color="blue"
-          icon={<SiGoogle className="text-xl text-blue-600" />}
+          icon={<GoogleBusinessIcon className="w-6 h-6" />}
           title={`${manualModal.mode === 'reconnect' ? 'Reconnect' : 'Connect'} Google Business Profile`}
           description={manualModal.mode === 'reconnect'
             ? 'Update your Google Business Profile location credentials or re-authorize with Google.'

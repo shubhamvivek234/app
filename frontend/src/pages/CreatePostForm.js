@@ -43,7 +43,8 @@ import {
   FaMicrophone, FaStop, FaLink, FaMagic, FaPen, FaBolt,
   FaShieldAlt, FaBullhorn,
 } from 'react-icons/fa';
-import { SiBluesky, SiThreads, SiGoogle } from 'react-icons/si';
+import { SiBluesky, SiThreads } from 'react-icons/si';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 
 import AccountSelector from '@/components/composer/AccountSelector';
 import PlatformEditor from '@/components/composer/PlatformEditor';
@@ -345,8 +346,8 @@ const platformIcons = {
   bluesky:   { icon: SiBluesky,   color: 'text-blue-500' },
   threads:   { icon: SiThreads,   color: 'text-gray-900' },
   discord:   { icon: FaDiscord,   color: 'text-indigo-500' },
-  google_business: { icon: SiGoogle, color: 'text-blue-600' },
-  gbp:       { icon: SiGoogle, color: 'text-blue-600' },
+  google_business: { icon: GoogleBusinessIcon, color: 'text-blue-600' },
+  gbp:       { icon: GoogleBusinessIcon, color: 'text-blue-600' },
 };
 
 const TIMESLOT_CATEGORIES = ['Category 1', 'Category 2', 'Category 3', 'Custom'];

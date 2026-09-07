@@ -194,6 +194,20 @@ _PLATFORM_ANALYTICS_CAPABILITIES: dict[str, dict[str, Any]] = {
             "views": False,
         },
     },
+    "google_business": {
+        "live_feed": False,
+        "message": "Google Business Profile analytics displays updates, offers, and posts published from Unravler.",
+        "supports": {
+            "followers_total": False,
+            "followers_growth": False,
+            "reach": False,
+            "impressions": True,
+            "likes": False,
+            "comments": False,
+            "shares": False,
+            "views": True,
+        },
+    },
 }
 _SUPPORTED_ENGAGEMENT_PLATFORMS = {
     platform for platform, capability in _PLATFORM_ANALYTICS_CAPABILITIES.items() if capability.get("live_feed")
@@ -221,7 +235,10 @@ def _published_match(
         "updated_at": {"$gte": since_iso},
     }
     if platform:
-        query["platforms"] = platform
+        if platform in ("google_business", "gbp"):
+            query["platforms"] = {"$in": ["google_business", "gbp"]}
+        else:
+            query["platforms"] = platform
     if account_id:
         query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
     return query
@@ -237,7 +254,10 @@ def _scheduled_match(
         "status": "scheduled",
     }
     if platform:
-        query["platforms"] = platform
+        if platform in ("google_business", "gbp"):
+            query["platforms"] = {"$in": ["google_business", "gbp"]}
+        else:
+            query["platforms"] = platform
     if account_id:
         query["$or"] = [{"social_account_ids": account_id}, {"account_ids": account_id}]
     return query
@@ -280,6 +300,8 @@ def _platform_label(platform: str | None) -> str:
         "mastodon": "Mastodon",
         "discord": "Discord",
         "snapchat": "Snapchat",
+        "google_business": "Google Business Profile",
+        "gbp": "Google Business Profile",
     }
     return labels.get(platform or "", (platform or "This platform").title())
 
@@ -542,7 +564,10 @@ async def _load_social_accounts(
 
     query: dict[str, Any] = {"user_id": user_id, "is_active": True}
     if platform:
-        query["platform"] = platform
+        if platform in ("google_business", "gbp"):
+            query["platform"] = {"$in": ["google_business", "gbp"]}
+        else:
+            query["platform"] = platform
     if account_id:
         query["$or"] = [{"account_id": account_id}, {"id": account_id}]
     cursor = db.social_accounts.find(query, {"_id": 0})
@@ -571,7 +596,10 @@ async def _load_social_accounts_by_ids(
         ],
     }
     if platform:
-        query["platform"] = platform
+        if platform in ("google_business", "gbp"):
+            query["platform"] = {"$in": ["google_business", "gbp"]}
+        else:
+            query["platform"] = platform
 
     cursor = db.social_accounts.find(query, {"_id": 0})
     docs = await cursor.to_list(length=max(50, len(normalized_ids)))
@@ -864,10 +892,11 @@ async def _fetch_db_published_posts(
     if not platform or not account_identifier:
         return []
 
+    platform_match = {"$in": ["google_business", "gbp"]} if platform in ("google_business", "gbp") else platform
     cursor = db.posts.find(
         {
             "user_id": user_id,
-            "platforms": platform,
+            "platforms": platform_match,
             "$or": [
                 {"social_account_ids": account_identifier},
                 {"account_ids": account_identifier},
@@ -894,9 +923,20 @@ async def _fetch_db_published_posts(
     docs = await cursor.to_list(length=limit)
     feed: list[dict[str, Any]] = []
     for post in docs:
-        platform_result = (post.get("platform_results") or {}).get(platform, {})
+        platform_results = post.get("platform_results") or {}
+        platform_result = platform_results.get(platform)
+        if not platform_result and platform in ("google_business", "gbp"):
+            platform_result = platform_results.get("gbp") or platform_results.get("google_business")
+        platform_result = platform_result or {}
+
         if post.get("status") == "partial" and platform_result.get("status") not in {"success", "published"}:
             continue
+
+        post_urls = post.get("platform_post_urls") or {}
+        permalink = platform_result.get("post_url") or post_urls.get(platform)
+        if not permalink and platform in ("google_business", "gbp"):
+            permalink = post_urls.get("gbp") or post_urls.get("google_business")
+
         feed.append(
             {
                 "id": platform_result.get("platform_post_id") or post.get("id"),
@@ -909,7 +949,7 @@ async def _fetch_db_published_posts(
                 "comments_count": 0,
                 "shares": 0,
                 "views": 0,
-                "permalink": platform_result.get("post_url") or (post.get("platform_post_urls") or {}).get(platform),
+                "permalink": permalink,
                 "platform": platform,
                 "source_mode": "db_fallback",
                 "post_type": post.get("post_type"),

@@ -17,7 +17,7 @@ import {
   FaTools,
 } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
-import { SiGoogle } from 'react-icons/si';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 
 import { retryFailedPost } from '@/lib/api';
 import { parsePlatformError } from '@/lib/publishFailures';
@@ -30,8 +30,8 @@ const PLATFORM_ICONS = {
   twitter: <FaXTwitter className="text-black dark:text-white" />,
   x: <FaXTwitter className="text-black dark:text-white" />,
   linkedin: <FaLinkedin className="text-blue-700" />,
-  google_business: <SiGoogle className="text-blue-500" />,
-  google: <SiGoogle className="text-blue-500" />,
+  google_business: <GoogleBusinessIcon className="w-4 h-4" />,
+  google: <GoogleBusinessIcon className="w-4 h-4" />,
   threads: <span className="font-bold text-xs">@</span>,
 };
 

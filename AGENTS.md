@@ -9,14 +9,14 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-08
 Completed:
-- Transactional & Notification Email Branding: Configured high-resolution official Unravler logos (`unravler-logo-dark.png` and `unravler-logo-white.png`) with public HTTPS fallback (`https://www.unravler.com/...`) across all email generators (`utils/auth_emails.py`, `utils/notification_emails.py`, `backend/celery_tasks.py`, `backend/server.py`).
-- Email Robustness: Prevented broken `localhost` images in customer inboxes when `FRONTEND_URL` is set to local dev; wrapped headers in clickable links with explicit retina dimensions and alt text; updated magic link and approval notification templates to full branded card layouts.
-- Test Coverage: Added unit tests in `tests/test_auth_security.py` and `tests/test_email_service.py` verifying logo URL resolution and HTML rendering.
+- Google Business Profile Branding: Created official vector Google Business Profile logo (`frontend/src/components/icons/GoogleBusinessIcon.js`) and replaced generic Google search icon across Connected Accounts, Composer/PlatformEditor, Calendar chips, Content Library, and PostDeliveryInspector.
+- Analytics & Reports Integration: Integrated Google Business Profile into Analytics (`Analytics.js`), Channel Navigation, and Platform filters (`ALL_PLATFORMS`, `PLATFORM_COLORS`, `PLATFORM_LABELS`, `PLATFORM_ICONS`, `PLATFORM_METRICS`, `PLATFORM_NOTICES`); enabled backend analytics query matching and capabilities for `google_business` and `gbp` (`api/routes/analytics.py`); formatted platform names in executive PDF and CSV reports (`ExportReportModal.js`).
+- Test Coverage: Verified with automated unit tests in `tests/test_analytics_reports.py` and clean frontend production build (`CI=true npm run build --prefix frontend`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor email delivery, logo rendering across email clients (Gmail/Apple Mail/Outlook), and verification conversions.
+- Monitor Google Business Profile post metrics, reviews/locations integration, and user feedback on analytics reports.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

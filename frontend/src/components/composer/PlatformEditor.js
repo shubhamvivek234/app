@@ -18,8 +18,9 @@ import {
 } from 'react-icons/fa';
 import {
   SiBluesky, SiThreads, SiGiphy,
-  SiCanva, SiDropbox, SiGoogledrive, SiUnsplash, SiGoogle,
+  SiCanva, SiDropbox, SiGoogledrive, SiUnsplash,
 } from 'react-icons/si';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 import { MdPhotoLibrary } from 'react-icons/md';
 import { toast } from 'sonner';
 import env from '@/env';
@@ -47,8 +48,8 @@ const PLATFORM_ICONS = {
   pinterest: { icon: FaPinterest, color: '#E60023' },
   bluesky:   { icon: SiBluesky,   color: '#0085FF' },
   threads:   { icon: SiThreads,   color: '#101010' },
-  google_business: { icon: SiGoogle, color: '#4285F4' },
-  gbp:       { icon: SiGoogle, color: '#4285F4' },
+  google_business: { icon: GoogleBusinessIcon, color: '#4285F4' },
+  gbp:       { icon: GoogleBusinessIcon, color: '#4285F4' },
 };
 
 const CHAR_LIMITS = {

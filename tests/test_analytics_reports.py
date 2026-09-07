@@ -111,3 +111,23 @@ async def test_export_analytics_csv():
     assert res["ok"] is True
     assert res["count"] == 1
     assert res["rows"][0]["post_id"] == "p1"
+
+
+def test_google_business_analytics_capabilities():
+    from api.routes.analytics import _PLATFORM_ANALYTICS_CAPABILITIES, _platform_label, _published_match, _scheduled_match
+
+    assert "google_business" in _PLATFORM_ANALYTICS_CAPABILITIES
+    cap = _PLATFORM_ANALYTICS_CAPABILITIES["google_business"]
+    assert cap["supports"]["views"] is True
+    assert cap["supports"]["likes"] is False
+
+    assert _platform_label("google_business") == "Google Business Profile"
+    assert _platform_label("gbp") == "Google Business Profile"
+
+    # Test query matching both google_business and gbp
+    pub_query = _published_match("ws_1", "2026-01-01T00:00:00Z", platform="google_business")
+    assert pub_query["platforms"] == {"$in": ["google_business", "gbp"]}
+
+    sched_query = _scheduled_match("ws_1", platform="gbp")
+    assert sched_query["platforms"] == {"$in": ["google_business", "gbp"]}
+

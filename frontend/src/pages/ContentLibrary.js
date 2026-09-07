@@ -8,7 +8,8 @@ import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
 import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup, FaCommentDots } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
-import { SiBluesky, SiThreads, SiGoogle } from 'react-icons/si';
+import { SiBluesky, SiThreads } from 'react-icons/si';
+import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
 import PreUploadTimeline from '@/components/PreUploadTimeline'; // 17.6
 import PostCommentsDrawer from '@/components/PostCommentsDrawer';
 import { formatScheduledCompactDateTime, getPostScheduledTimeZone } from '@/lib/scheduledTime';
@@ -25,8 +26,8 @@ const PLATFORM_ICON_MAP = {
   linkedin: <FaLinkedin className="text-blue-700" />,
   bluesky: <SiBluesky className="text-blue-500" />,
   threads: <SiThreads className="text-gray-900" />,
-  google_business: <SiGoogle className="text-blue-600" />,
-  gbp: <SiGoogle className="text-blue-600" />,
+  google_business: <GoogleBusinessIcon className="w-4 h-4" />,
+  gbp: <GoogleBusinessIcon className="w-4 h-4" />,
 };
 
 const PLATFORM_STATUS_STYLE = {
@@ -195,8 +196,8 @@ const platformIcons = {
   facebook: <FaFacebook className="text-blue-500" />,
   tiktok: <FaTiktok className="text-black" />,
   twitter: <FaXTwitter className="text-black" />,
-  google_business: <SiGoogle className="text-blue-600" />,
-  gbp: <SiGoogle className="text-blue-600" />,
+  google_business: <GoogleBusinessIcon className="w-4 h-4" />,
+  gbp: <GoogleBusinessIcon className="w-4 h-4" />,
 };
 
 const PUBLISHED_MEDIA_KIND_META = {

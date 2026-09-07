@@ -3,6 +3,30 @@ import { exportBrandedReport, exportAnalyticsCSV, scheduleReport } from '@/lib/a
 import { toast } from 'sonner';
 import { FaFilePdf, FaFileCsv, FaTimes, FaDownload, FaCalendarCheck, FaChartBar, FaTable } from 'react-icons/fa';
 
+const formatPlatformName = (p) => {
+  if (!p) return '';
+  const key = String(p).toLowerCase().trim();
+  const map = {
+    google_business: 'Google Business Profile',
+    gbp: 'Google Business Profile',
+    twitter: 'Twitter / X',
+    linkedin: 'LinkedIn',
+    youtube: 'YouTube',
+    tiktok: 'TikTok',
+    facebook: 'Facebook',
+    instagram: 'Instagram',
+    pinterest: 'Pinterest',
+    threads: 'Threads',
+    bluesky: 'Bluesky',
+    reddit: 'Reddit',
+    snapchat: 'Snapchat',
+    discord: 'Discord',
+    mastodon: 'Mastodon',
+    telegram: 'Telegram',
+  };
+  return map[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+};
+
 export default function ExportReportModal({ isOpen, onClose, defaultTab = 'csv' }) {
   const [agencyName, setAgencyName] = useState('Premier Social Agency');
   const [clientName, setClientName] = useState('Acme Corp');
@@ -30,10 +54,14 @@ export default function ExportReportModal({ isOpen, onClose, defaultTab = 'csv' 
 
       data.rows.forEach((r) => {
         const cleanContent = (r.content || '').replace(/"/g, '""').replace(/\r?\n/g, ' ');
+        const formattedPlatforms = (Array.isArray(r.platforms) ? r.platforms : String(r.platforms || '').split(','))
+          .map((p) => formatPlatformName(p.trim()))
+          .filter(Boolean)
+          .join(', ');
         csvLines.push([
           `"${r.post_id || ''}"`,
           `"${r.published_at || ''}"`,
-          `"${r.platforms || ''}"`,
+          `"${formattedPlatforms}"`,
           `"${cleanContent}"`,
           r.likes ?? 0,
           r.comments ?? 0,
@@ -136,7 +164,7 @@ export default function ExportReportModal({ isOpen, onClose, defaultTab = 'csv' 
               <div class="section-title">Active Publishing Channels</div>
               <div class="channels-row">
                 ${channels.map(c => `
-                  <div class="channel-chip">${c.platform?.toUpperCase()}: @${c.account_name || 'connected'}</div>
+                  <div class="channel-chip">${formatPlatformName(c.platform)}: @${c.account_name || 'connected'}</div>
                 `).join('')}
               </div>
             ` : ''}
@@ -150,7 +178,7 @@ export default function ExportReportModal({ isOpen, onClose, defaultTab = 'csv' 
             <div class="section-title">Top Performing Content</div>
             ${topPosts.length > 0 ? topPosts.map(p => `
               <div class="post-card">
-                <div><span class="badge">${(p.platforms || []).join(', ') || 'Social'}</span> <span style="margin-left: 8px;">${p.content || '(no caption)'}</span></div>
+                <div><span class="badge">${(p.platforms || []).map(formatPlatformName).join(', ') || 'Social'}</span> <span style="margin-left: 8px;">${p.content || '(no caption)'}</span></div>
                 <div class="post-meta">
                   <span>❤️ ${p.metrics?.likes ?? 0} Likes</span>
                   <span>💬 ${p.metrics?.comments ?? 0} Comments</span>
