@@ -21,6 +21,10 @@ from utils.frontend_urls import DEFAULT_FRONTEND_URL, build_frontend_url, resolv
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_LOGO_URL = "https://www.unravler.com/unravler-logo-dark.png"
+DEFAULT_WHITE_LOGO_URL = "https://www.unravler.com/unravler-logo-white.png"
+
+
 def _clean_env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
@@ -28,7 +32,21 @@ def _clean_env(name: str, default: str = "") -> str:
 def get_notification_email_config() -> dict[str, Any]:
     svc = get_email_service_status()
     frontend_url = resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
-    logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/unravler-logo-dark.png"
+    raw_logo = _clean_env("AUTH_EMAIL_LOGO_URL")
+    if raw_logo:
+        logo_url = raw_logo
+    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+        logo_url = DEFAULT_LOGO_URL
+    else:
+        logo_url = f"{frontend_url.rstrip('/')}/unravler-logo-dark.png"
+
+    raw_white_logo = _clean_env("AUTH_EMAIL_WHITE_LOGO_URL")
+    if raw_white_logo:
+        white_logo_url = raw_white_logo
+    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+        white_logo_url = DEFAULT_WHITE_LOGO_URL
+    else:
+        white_logo_url = f"{frontend_url.rstrip('/')}/unravler-logo-white.png"
 
     return {
         "configured": svc["configured"],
@@ -38,6 +56,7 @@ def get_notification_email_config() -> dict[str, Any]:
         "sender_name": svc["sender_name"],
         "frontend_url": frontend_url,
         "logo_url": logo_url,
+        "white_logo_url": white_logo_url,
         "support_email": svc["support_email"],
     }
 
@@ -310,6 +329,8 @@ def _build_notification_html(
     safe_message = html.escape(message or "").replace("\n", "<br />")
     safe_action_url = html.escape(action_url)
     button_label = html.escape(_button_label_for_event(event))
+    frontend_url = html.escape(config["frontend_url"].rstrip("/"))
+    white_logo_url = html.escape(config.get("white_logo_url") or DEFAULT_WHITE_LOGO_URL)
     settings_url = html.escape(f"{config['frontend_url'].rstrip('/')}/settings")
     support_email = html.escape(config["support_email"])
 
@@ -359,7 +380,11 @@ def _build_notification_html(
     <div style="background-color: #090d16; padding: 24px 32px; border-bottom: 1px solid #1e293b;">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td><span style="font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em;">Unravler</span></td>
+          <td>
+            <a href="{frontend_url}" target="_blank" style="text-decoration:none;display:inline-block;">
+              <img src="{white_logo_url}" alt="Unravler" width="128" height="32" style="display:block;height:32px;width:128px;border:0;outline:none;font-size:20px;font-weight:700;color:#ffffff;" />
+            </a>
+          </td>
           <td align="right"><span style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; background-color: {badge_bg}; color: {badge_text}; padding: 4px 10px; border-radius: 9999px;">{badge_label}</span></td>
         </tr>
       </table>

@@ -55,20 +55,18 @@ async def _video_thumbnail(video_path: str, output_path: str) -> None:
 
 async def _image_thumbnail(image_path: str, output_path: str) -> None:
     """Centre-crop image to 400x400, strip EXIF, save as WebP using Pillow."""
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     loop = asyncio.get_event_loop()
 
     def _process():
-        with Image.open(image_path) as img:
-            # Strip EXIF by rebuilding pixel data
-            clean = Image.new(img.mode, img.size)
-            clean.putdata(list(img.getdata()))
-            w, h = clean.size
+        with Image.open(image_path) as raw_img:
+            img = ImageOps.exif_transpose(raw_img) or raw_img
+            w, h = img.size
             side = min(w, h)
             left = (w - side) // 2
             top = (h - side) // 2
-            cropped = clean.crop((left, top, left + side, top + side))
+            cropped = img.crop((left, top, left + side, top + side))
             resized = cropped.resize(THUMB_SIZE, Image.LANCZOS)
             resized.save(output_path, format="WEBP", quality=THUMB_QUALITY, optimize=True)
 
@@ -109,6 +107,10 @@ async def _run_subprocess(args: list[str]) -> None:
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=PROCESS_TIMEOUT)
     except asyncio.TimeoutError:
         proc.kill()
+        try:
+            await proc.wait()
+        except Exception:
+            pass
         raise RuntimeError("Thumbnail process timed out")
 
     if proc.returncode != 0:

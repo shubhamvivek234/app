@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class DiscordAdapter(PlatformAdapter):
     platform = "discord"
 
-    async def publish(self, post: dict) -> dict:
+    async def publish(self, post: dict, *, redis=None, **kwargs) -> dict:
         access_token = post.get("access_token")
         if not access_token:
             raise PlatformAPIError("Discord account missing webhook access_token")

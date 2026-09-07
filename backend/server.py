@@ -669,6 +669,11 @@ async def send_verification_email(email: str, verification_token: str):
     </head>
     <body>
         <div class="container">
+            <div style="margin-bottom: 20px;">
+                <a href="{FRONTEND_URL}" target="_blank" style="text-decoration:none;">
+                    <img src="https://www.unravler.com/unravler-logo-dark.png" alt="Unravler" width="140" height="35" style="display:block;height:35px;width:140px;border:0;outline:none;font-size:20px;font-weight:700;color:#0f172a;" />
+                </a>
+            </div>
             <h2>Verify Your Email</h2>
             <p>Thank you for signing up! Please click the button below to verify your email address:</p>
             <p><a href="{verification_url}" class="button">Verify Email</a></p>
@@ -682,7 +687,7 @@ async def send_verification_email(email: str, verification_token: str):
     params = {
         "from": SENDER_EMAIL,
         "to": [email],
-        "subject": "Verify your email - SocialSync",
+        "subject": "Verify your email - Unravler",
         "html": html_content
     }
     
@@ -3647,6 +3652,11 @@ async def send_dlq_notification(user_doc: dict, post_doc: dict, failed_platforms
     </head>
     <body>
         <div class="container">
+            <div style="margin-bottom: 20px;">
+                <a href="{FRONTEND_URL}" target="_blank" style="text-decoration:none;">
+                    <img src="https://www.unravler.com/unravler-logo-dark.png" alt="Unravler" width="140" height="35" style="display:block;height:35px;width:140px;border:0;outline:none;font-size:20px;font-weight:700;color:#0f172a;" />
+                </a>
+            </div>
             <h2>Publishing Report</h2>
             <p>Hi {name},</p>
             <p>Your post was published to <strong>{succeeded_count}/{total_count}</strong> platforms.

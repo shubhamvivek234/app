@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class GoogleBusinessAdapter(PlatformAdapter):
     platform = "google_business"
 
-    async def publish(self, post: dict, account: dict | None = None) -> dict:
+    async def publish(self, post: dict, account: dict | None = None, *, redis=None, **kwargs) -> dict:
         account = account or post.get("account") or {}
         access_token = post.get("access_token") or account.get("access_token")
         location_id = (

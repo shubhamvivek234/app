@@ -1316,7 +1316,7 @@ export const capturePaypal = async (data) => {
   return response.data;
 };
 
-export const completeOnboarding = async (data) => {
+export const completeOnboarding = async (data = {}) => {
   const response = await axios.post(`${API}/onboarding/complete`, data, { headers: getAuthHeaders() });
   return response.data;
 };

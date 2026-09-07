@@ -1,4 +1,5 @@
 import asyncio
+import html
 import inspect
 import logging
 import os
@@ -15,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 AuthEmailKind = Literal["password_reset", "verify_email"]
 _SUPPORTS_LINK_DOMAIN = "link_domain" in inspect.signature(firebase_auth.ActionCodeSettings.__init__).parameters
+
+DEFAULT_LOGO_URL = "https://www.unravler.com/unravler-logo-dark.png"
+DEFAULT_WHITE_LOGO_URL = "https://www.unravler.com/unravler-logo-white.png"
 
 
 class AuthEmailConfigError(RuntimeError):
@@ -49,13 +53,25 @@ def _normalize_return_to(value: str | None) -> str | None:
     return None
 
 
+def resolve_auth_email_logo_url(raw_logo: str | None = None, *, frontend_url: str | None = None) -> str:
+    cleaned = (raw_logo if raw_logo is not None else _clean_env("AUTH_EMAIL_LOGO_URL")).strip()
+    if cleaned:
+        return cleaned
+
+    base = (frontend_url or resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))).rstrip("/")
+    if not base or any(local in base.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+        return DEFAULT_LOGO_URL
+
+    return f"{base}/unravler-logo-dark.png"
+
+
 def get_auth_email_config_status() -> dict[str, object]:
     provider = get_email_provider()
     resend_api_key = _clean_env("RESEND_API_KEY")
     sender_email = _clean_env("SENDER_EMAIL")
     sender_name = _clean_env("SENDER_NAME", "Unravler") or "Unravler"
     frontend_url = resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))
-    logo_url = _clean_env("AUTH_EMAIL_LOGO_URL") or f"{frontend_url.rstrip('/')}/favicon-256.png"
+    logo_url = resolve_auth_email_logo_url(frontend_url=frontend_url)
     link_domain = _clean_env("FIREBASE_AUTH_EMAIL_LINK_DOMAIN")
 
     missing: list[str] = []
@@ -147,16 +163,17 @@ def _build_body_copy(kind: AuthEmailKind, display_name: str | None) -> tuple[str
 
 def _build_email_html(kind: AuthEmailKind, action_url: str, display_name: str | None) -> str:
     status = get_auth_email_config_status()
-    logo_url = status["logo_url"]
+    logo_url = str(status.get("logo_url") or DEFAULT_LOGO_URL)
+    frontend_url = str(status.get("frontend_url") or DEFAULT_FRONTEND_URL).rstrip("/")
     support_email = status["sender_email"] or "contact@unravler.com"
     greeting, title, intro, outro = _build_body_copy(kind, display_name)
     button_label = _build_button_label(kind)
 
     header = (
-        f'<img src="{logo_url}" alt="Unravler" width="156" '
-        'style="display:block;height:auto;max-width:156px;border:0;outline:none;text-decoration:none;">'
-        if logo_url
-        else '<div style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#0f172a;">Unravler</div>'
+        f'<a href="{frontend_url}" target="_blank" style="text-decoration:none;display:inline-block;">'
+        f'<img src="{logo_url}" alt="Unravler" width="156" height="39" '
+        'style="display:block;height:39px;width:156px;max-width:156px;border:0;outline:none;text-decoration:none;font-size:24px;font-weight:700;color:#0f172a;">'
+        '</a>'
     )
 
     return f"""\
@@ -364,30 +381,70 @@ async def send_verification_email(email: str, *, display_name: str | None = None
 
 async def send_magic_link_email(email: str, token: str, display_name: str | None = None) -> None:
     status = _require_auth_email_config()
-    frontend_url = str(status.get("frontend_url") or "")
-    action_url = f"{frontend_url.rstrip('/')}/magic-login/{token}"
+    frontend_url = str(status.get("frontend_url") or DEFAULT_FRONTEND_URL).rstrip("/")
+    logo_url = str(status.get("logo_url") or DEFAULT_LOGO_URL)
+    action_url = f"{frontend_url}/magic-login/{token}"
     sender_email = str(status.get("sender_email") or "")
     sender_name = str(status.get("sender_name") or "Unravler")
+    support_email = sender_email or "contact@unravler.com"
 
     subject = "Your Unravler Magic Login Link"
     greeting = f"Hi {display_name}," if display_name else "Hi,"
-    
+    title = "Log in to Unravler"
+    intro = "Click the button below to log in to your Unravler account instantly. No password required."
+    outro = "This link is valid for 24 hours and can only be used once. If you did not request this login link, you can safely ignore this email."
+
+    header = (
+        f'<a href="{frontend_url}" target="_blank" style="text-decoration:none;display:inline-block;">'
+        f'<img src="{logo_url}" alt="Unravler" width="156" height="39" '
+        'style="display:block;height:39px;width:156px;max-width:156px;border:0;outline:none;text-decoration:none;font-size:24px;font-weight:700;color:#0f172a;">'
+        '</a>'
+    )
+
     html_body = f"""\
 <!DOCTYPE html>
-<html>
-<body style="font-family: sans-serif; padding: 20px;">
-  <h2>{subject}</h2>
-  <p>{greeting}</p>
-  <p>Click the button below to log in to your Unravler account instantly. No password required.</p>
-  <p>
-    <a href="{action_url}" style="display: inline-block; padding: 12px 20px; background-color: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
-      Log In Instantly
-    </a>
-  </p>
-  <p>Or copy and paste this link in your browser:</p>
-  <p style="word-break: break-all;"><a href="{action_url}">{action_url}</a></p>
-  <p style="color: #666; font-size: 13px;">This link is valid for 24 hours and can only be used once.</p>
-</body>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f5f7fb;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Log in to your Unravler account instantly.
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e8f0;border-radius:20px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 20px 32px;">
+                {header}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 12px 32px;font-size:16px;line-height:1.7;color:#334155;">
+                <p style="margin:0 0 12px 0;">{greeting}</p>
+                <h1 style="margin:0 0 16px 0;font-size:28px;line-height:1.2;letter-spacing:-0.02em;color:#0f172a;">{title}</h1>
+                <p style="margin:0 0 22px 0;">{intro}</p>
+                <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px 0;">
+                  <tr>
+                    <td align="center" bgcolor="#4f46e5" style="border-radius:12px;">
+                      <a href="{action_url}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:12px;">Log In Instantly</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 12px 0;">{outro}</p>
+                <p style="margin:0 0 8px 0;font-size:13px;color:#64748b;">If the button does not work, copy this link into your browser:</p>
+                <p style="margin:0;font-size:13px;line-height:1.6;word-break:break-word;color:#4f46e5;">{action_url}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px 28px 32px;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.7;color:#64748b;">
+                <p style="margin:0 0 6px 0;">Need help? Reply to <a href="mailto:{support_email}" style="color:#4f46e5;text-decoration:none;">{support_email}</a>.</p>
+                <p style="margin:0;">Unravler</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
 </html>
 """
 
@@ -409,28 +466,69 @@ async def send_magic_link_email(email: str, token: str, display_name: str | None
 
 async def send_approval_notification_email(email: str, name: str | None, post_title: str, action_url: str) -> None:
     status = _require_auth_email_config()
+    frontend_url = str(status.get("frontend_url") or DEFAULT_FRONTEND_URL).rstrip("/")
+    logo_url = str(status.get("logo_url") or DEFAULT_LOGO_URL)
     sender_email = str(status.get("sender_email") or "")
     sender_name = str(status.get("sender_name") or "Unravler")
+    support_email = sender_email or "contact@unravler.com"
 
     subject = f"Approval Required: {post_title}"
     greeting = f"Hi {name}," if name else "Hi,"
-    
+    title = "Approval Required"
+    intro = f'A new social media post, <strong>"{html.escape(post_title)}"</strong>, has been submitted and requires your approval before it can go live.'
+    outro = "This login link is valid for 7 days."
+
+    header = (
+        f'<a href="{frontend_url}" target="_blank" style="text-decoration:none;display:inline-block;">'
+        f'<img src="{logo_url}" alt="Unravler" width="156" height="39" '
+        'style="display:block;height:39px;width:156px;max-width:156px;border:0;outline:none;text-decoration:none;font-size:24px;font-weight:700;color:#0f172a;">'
+        '</a>'
+    )
+
     html_body = f"""\
 <!DOCTYPE html>
-<html>
-<body style="font-family: sans-serif; padding: 20px;">
-  <h2>Approval Required</h2>
-  <p>{greeting}</p>
-  <p>A new social media post, <strong>"{post_title}"</strong>, has been submitted and requires your approval before it can go live.</p>
-  <p>
-    <a href="{action_url}" style="display: inline-block; padding: 12px 20px; background-color: #10b981; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
-      Review & Approve Post
-    </a>
-  </p>
-  <p>Or copy and paste this link in your browser:</p>
-  <p style="word-break: break-all;"><a href="{action_url}">{action_url}</a></p>
-  <p style="color: #666; font-size: 13px;">This login link is valid for 7 days.</p>
-</body>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f5f7fb;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Review and approve post: {html.escape(post_title)}
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7fb;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e8f0;border-radius:20px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 20px 32px;">
+                {header}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 12px 32px;font-size:16px;line-height:1.7;color:#334155;">
+                <p style="margin:0 0 12px 0;">{greeting}</p>
+                <h1 style="margin:0 0 16px 0;font-size:28px;line-height:1.2;letter-spacing:-0.02em;color:#0f172a;">{title}</h1>
+                <p style="margin:0 0 22px 0;">{intro}</p>
+                <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px 0;">
+                  <tr>
+                    <td align="center" bgcolor="#10b981" style="border-radius:12px;">
+                      <a href="{action_url}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:12px;">Review & Approve Post</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 12px 0;">{outro}</p>
+                <p style="margin:0 0 8px 0;font-size:13px;color:#64748b;">If the button does not work, copy this link into your browser:</p>
+                <p style="margin:0;font-size:13px;line-height:1.6;word-break:break-word;color:#10b981;">{action_url}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px 28px 32px;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.7;color:#64748b;">
+                <p style="margin:0 0 6px 0;">Need help? Reply to <a href="mailto:{support_email}" style="color:#4f46e5;text-decoration:none;">{support_email}</a>.</p>
+                <p style="margin:0;">Unravler</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
 </html>
 """
 

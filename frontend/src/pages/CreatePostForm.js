@@ -734,6 +734,15 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     }
   }, [showViralHooksModal, quickHooksCategory, quickHooksSearch]);
 
+  useEffect(() => {
+    return () => {
+      if (voiceTimerRef.current) clearInterval(voiceTimerRef.current);
+      if (mediaRecorderRef.current?.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
   const startVoiceRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

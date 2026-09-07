@@ -426,6 +426,10 @@ async def _run_process(args: list[str], *, timeout: int | None = None) -> None:
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=effective_timeout)
     except asyncio.TimeoutError:
         proc.kill()
+        try:
+            await proc.wait()
+        except Exception:
+            pass
         raise RuntimeError(f"FFmpeg/FFprobe process timed out after {effective_timeout}s")
 
     if proc.returncode != 0:

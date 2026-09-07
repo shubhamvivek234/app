@@ -435,6 +435,33 @@ def test_auth_email_config_canonicalizes_preview_or_apex_frontend_url(monkeypatc
     assert status["frontend_url"] == "https://www.unravler.com"
 
 
+def test_auth_email_logo_url_resolution_and_template(monkeypatch):
+    monkeypatch.setenv("RESEND_API_KEY", "resend_test")
+    monkeypatch.setenv("SENDER_EMAIL", "contact@unravler.com")
+
+    # Localhost fallback should use default public HTTPS logo URL
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:3000")
+    monkeypatch.delenv("AUTH_EMAIL_LOGO_URL", raising=False)
+    status = auth_emails_utils.get_auth_email_config_status()
+    assert status["logo_url"] == "https://www.unravler.com/unravler-logo-dark.png"
+
+    # HTML verification email contains the Unravler logo img and wrapper link
+    html = auth_emails_utils._build_email_html("verify_email", "https://www.unravler.com/verify-email?code=123", "Alice")
+    assert 'src="https://www.unravler.com/unravler-logo-dark.png"' in html
+    assert 'width="156"' in html
+    assert 'height="39"' in html
+    assert 'alt="Unravler"' in html
+    assert 'href="http://localhost:3000"' in html
+
+    # Explicit AUTH_EMAIL_LOGO_URL takes precedence
+    monkeypatch.setenv("AUTH_EMAIL_LOGO_URL", "https://custom.cdn/logo.png")
+    status_custom = auth_emails_utils.get_auth_email_config_status()
+    assert status_custom["logo_url"] == "https://custom.cdn/logo.png"
+
+    html_custom = auth_emails_utils._build_email_html("password_reset", "https://www.unravler.com/reset", "Bob")
+    assert 'src="https://custom.cdn/logo.png"' in html_custom
+
+
 @pytest.mark.asyncio
 async def test_send_password_reset_email_raises_when_branded_and_fallback_both_fail(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "resend_test")

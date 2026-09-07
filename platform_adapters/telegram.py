@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class TelegramAdapter(PlatformAdapter):
     platform = "telegram"
 
-    async def publish(self, post: dict) -> dict:
+    async def publish(self, post: dict, *, redis=None, **kwargs) -> dict:
         access_token = post.get("access_token")
         if not access_token:
             raise PlatformAPIError("Telegram account missing access_token credentials")

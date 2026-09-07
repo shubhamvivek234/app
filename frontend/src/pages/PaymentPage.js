@@ -28,6 +28,24 @@ const PaymentPage = () => {
   const [showPromo, setShowPromo] = useState(false);
 
   const plans = {
+    starter: {
+      name: 'Starter',
+      price: 500,
+      currency: '₹',
+      trialDays: 7,
+    },
+    creator: {
+      name: 'Creator',
+      price: 1999,
+      currency: '₹',
+      trialDays: 7,
+    },
+    business: {
+      name: 'Business',
+      price: 3999,
+      currency: '₹',
+      trialDays: 7,
+    },
     monthly: {
       name: 'Monthly',
       price: 500,
@@ -40,12 +58,24 @@ const PaymentPage = () => {
       currency: '₹',
       trialDays: 7,
     },
+    pro: {
+      name: 'Pro',
+      price: 999,
+      currency: '₹',
+      trialDays: 7,
+    },
+    agency: {
+      name: 'Agency',
+      price: 2999,
+      currency: '₹',
+      trialDays: 7,
+    },
   };
 
-  const selectedPlan = plans[plan];
-  const tax = (selectedPlan.price * 0.1).toFixed(2);
-  const total = (selectedPlan.price + parseFloat(tax)).toFixed(2);
-  const trialEndDate = new Date(Date.now() + selectedPlan.trialDays * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const selectedPlan = plans[plan] || plans.starter || plans.monthly;
+  const tax = ((selectedPlan?.price || 0) * 0.1).toFixed(2);
+  const total = ((selectedPlan?.price || 0) + parseFloat(tax)).toFixed(2);
+  const trialEndDate = new Date(Date.now() + (selectedPlan?.trialDays || 7) * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
   useEffect(() => {
     if (!token) {
@@ -74,12 +104,13 @@ const PaymentPage = () => {
         }
       );
 
-      if (response.data.checkout_url) {
-        window.location.href = response.data.checkout_url;
+      const redirectUrl = response.data.url || response.data.checkout_url;
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
       }
     } catch (error) {
       console.error('Payment error:', error);
-      toast.error('Failed to initiate payment');
+      toast.error(error?.response?.data?.detail || 'Failed to initiate payment');
     } finally {
       setLoading(false);
     }
@@ -103,14 +134,19 @@ const PaymentPage = () => {
         }
       );
 
-      if (response.data.order_id) {
+      const orderId = response.data.session_id || response.data.order_id;
+      if (response.data.url && !window.Razorpay) {
+        window.location.href = response.data.url;
+        return;
+      }
+      if (orderId) {
         const options = {
-          key: response.data.razorpay_key,
-          amount: selectedPlan.price * 100,
+          key: response.data.razorpay_key || process.env.REACT_APP_RAZORPAY_KEY_ID,
+          amount: (selectedPlan?.price || 0) * 100,
           currency: 'INR',
           name: 'Unravler',
-          description: `${selectedPlan.name} Plan`,
-          order_id: response.data.order_id,
+          description: `${selectedPlan?.name || 'Pro'} Plan`,
+          order_id: orderId,
           handler: async function (response) {
             try {
               setLoading(true);
@@ -212,12 +248,13 @@ const PaymentPage = () => {
         }
       );
 
-      if (response.data.approval_url) {
-        window.location.href = response.data.approval_url;
+      const approvalUrl = response.data.url || response.data.approval_url;
+      if (approvalUrl) {
+        window.location.href = approvalUrl;
       }
     } catch (error) {
       console.error('Payment error:', error);
-      toast.error('Failed to initiate payment');
+      toast.error(error?.response?.data?.detail || 'Failed to initiate payment');
     } finally {
       setLoading(false);
     }

@@ -162,6 +162,16 @@ def test_user_welcome_email_template_rendering():
     assert "Jordan" in html
     assert "Your multi-platform workspace is ready." in html
     assert "Get Started &amp; Connect Accounts" in html or "Get Started & Connect Accounts" in html
+    assert 'src="https://www.unravler.com/unravler-logo-dark.png"' in html
+
+    system_html = _build_notification_html(
+        event="account.reconnect_required",
+        title="Account Reconnect Required",
+        message="Please reconnect your account",
+        action_url="https://www.unravler.com/accounts",
+        display_name="Jordan",
+    )
+    assert 'src="https://www.unravler.com/unravler-logo-white.png"' in system_html
 
 
 @pytest.mark.asyncio

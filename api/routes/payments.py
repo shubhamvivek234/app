@@ -22,8 +22,38 @@ router = APIRouter(tags=["payments"])
 # ── Plan pricing ──────────────────────────────────────────────────────────────
 
 _PRICING: dict[str, dict] = {
-    "pro": {
+    "starter": {
         "amount": 999,        # in paise / cents (₹999 or $9.99)
+        "currency": "INR",
+        "duration_days": 30,
+        "label": "Starter Monthly",
+    },
+    "creator": {
+        "amount": 1999,
+        "currency": "INR",
+        "duration_days": 30,
+        "label": "Creator Monthly",
+    },
+    "business": {
+        "amount": 3999,
+        "currency": "INR",
+        "duration_days": 30,
+        "label": "Business Monthly",
+    },
+    "monthly": {
+        "amount": 500,
+        "currency": "INR",
+        "duration_days": 30,
+        "label": "Monthly",
+    },
+    "yearly": {
+        "amount": 3000,
+        "currency": "INR",
+        "duration_days": 365,
+        "label": "Yearly",
+    },
+    "pro": {
+        "amount": 999,
         "currency": "INR",
         "duration_days": 30,
         "label": "Pro Monthly",
@@ -41,7 +71,7 @@ _PRICING: dict[str, dict] = {
 
 class CheckoutRequest(BaseModel):
     plan: str
-    payment_method: Literal["stripe", "razorpay"] = "stripe"
+    payment_method: Literal["stripe", "razorpay", "paypal"] = "stripe"
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -89,6 +119,12 @@ async def create_checkout(
 
     if body.payment_method == "razorpay":
         return await _razorpay_checkout(db, user_id, body.plan, plan_info)
+
+    if body.payment_method == "paypal":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PayPal checkout is temporarily unavailable. Please pay with Stripe or Razorpay.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

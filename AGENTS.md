@@ -4,19 +4,19 @@
 ## Current Phase
 Stage: v7.0 shipped
 Branch: main
-Focus: Authentication Lifecycle & Bug Fixes (Logout, Login, Signup, Password Reset)
+Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
 
 ## Last Session Completed
-Date: 2026-09-06
+Date: 2026-09-08
 Completed:
-- Standardized Auth Errors: Mapped `auth/invalid-credential`, `auth/wrong-password`, and `auth/user-not-found` to "Incorrect email or password. Please double-check and try again." via `getAuthErrorMessage()`; sanitized bot protection 403s and stripped raw SDK prefixes; removed duplicate toast calls from `AuthContext.js`.
-- Password Manager & Credential Saving: Added semantic `form method="POST" autoComplete="on"`, explicit `name` and standard `autoComplete` attributes (`username email`, `current-password`, `new-password`) across all Login (V1–V4), Signup (V1–V4), AcceptInvite, and ForgotPassword pages; integrated W3C Credential Management API (`window.PasswordCredential` + `navigator.credentials.store()`) into `emailSignIn` and `emailSignUp` to reliably trigger browser/keychain "Save Password" prompts.
-- Build & Verification: Frontend built cleanly (`1.25 MB` gzipped bundle); all 350 unit tests passing (0 failures); Python compiled cleanly.
+- Transactional & Notification Email Branding: Configured high-resolution official Unravler logos (`unravler-logo-dark.png` and `unravler-logo-white.png`) with public HTTPS fallback (`https://www.unravler.com/...`) across all email generators (`utils/auth_emails.py`, `utils/notification_emails.py`, `backend/celery_tasks.py`, `backend/server.py`).
+- Email Robustness: Prevented broken `localhost` images in customer inboxes when `FRONTEND_URL` is set to local dev; wrapped headers in clickable links with explicit retina dimensions and alt text; updated magic link and approval notification templates to full branded card layouts.
+- Test Coverage: Added unit tests in `tests/test_auth_security.py` and `tests/test_email_service.py` verifying logo URL resolution and HTML rendering.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor user onboarding and auth telemetry in PostHog.
+- Monitor email delivery, logo rendering across email clients (Gmail/Apple Mail/Outlook), and verification conversions.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -2295,7 +2295,7 @@ async def _async_publish_to_platform(
                 }, account_id=resolved_account_id)
                 return {"status": "container_expired_requeued", "platform": platform, "account_id": resolved_account_id}
 
-            error_class = classify_error(exc)
+            error_class = classify_error(exc, platform=platform)
 
             if error_class == ErrorClass.PERMANENT:
                 event_log(

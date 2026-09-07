@@ -4,6 +4,7 @@ Content Posting API v2: /v2/post/publish/video/init/
 Feature flag: TIKTOK_ENABLED env var must be "true" to allow publishing.
 """
 import logging
+import math
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -104,6 +105,14 @@ class TikTokAdapter(PlatformAdapter):
             raw_privacy = post.get("tiktok_privacy", "PUBLIC_TO_EVERYONE")
             privacy_level = _PRIVACY_MAP.get(str(raw_privacy).lower(), raw_privacy)
 
+            CHUNK_MAX = 64 * 1024 * 1024
+            if total_bytes <= CHUNK_MAX:
+                chunk_size = total_bytes
+                total_chunks = 1
+            else:
+                chunk_size = CHUNK_MAX
+                total_chunks = math.ceil(total_bytes / CHUNK_MAX)
+
             init_body = {
                 "post_info": {
                     "title": (post.get("effective_title") or post.get("effective_content", post.get("content", "")))[:150],  # TikTok title max 150 chars
@@ -115,8 +124,8 @@ class TikTokAdapter(PlatformAdapter):
                 "source_info": {
                     "source": "FILE_UPLOAD",
                     "video_size": total_bytes,
-                    "chunk_size": total_bytes,
-                    "total_chunk_count": 1,
+                    "chunk_size": chunk_size,
+                    "total_chunk_count": total_chunks,
                 },
             }
 
@@ -142,26 +151,49 @@ class TikTokAdapter(PlatformAdapter):
         if not publish_id or not upload_url:
             raise PlatformResponseError("TikTok init response missing publish_id or upload_url")
 
-        # Step 3: Upload video by STREAMING from media_url → upload_url.
-        # This avoids loading the entire file into worker memory.
+        # Step 3: Upload video by streaming from media_url → upload_url.
         async with httpx.AsyncClient(timeout=300) as client:
-            async with client.stream("GET", media_url, follow_redirects=True) as media_stream:
-                if media_stream.status_code != 200:
-                    raise PlatformHTTPError(media_stream.status_code, "Could not stream video for TikTok upload")
-                upload_resp = await client.put(
-                    upload_url,
-                    content=media_stream.aiter_bytes(),
-                    headers={
-                        "Content-Type": "video/mp4",
-                        "Content-Length": str(total_bytes),
-                        "Content-Range": f"bytes 0-{total_bytes - 1}/{total_bytes}",
-                    },
-                )
-
-        if upload_resp.status_code not in (200, 201, 206):
-            if redis:
-                await record_failure(redis, self.platform)
-            raise PlatformHTTPError(upload_resp.status_code, f"TikTok video upload failed: {upload_resp.text}")
+            if total_chunks == 1:
+                async with client.stream("GET", media_url, follow_redirects=True) as media_stream:
+                    if media_stream.status_code != 200:
+                        raise PlatformHTTPError(media_stream.status_code, "Could not stream video for TikTok upload")
+                    upload_resp = await client.put(
+                        upload_url,
+                        content=media_stream.aiter_bytes(),
+                        headers={
+                            "Content-Type": "video/mp4",
+                            "Content-Length": str(total_bytes),
+                            "Content-Range": f"bytes 0-{total_bytes - 1}/{total_bytes}",
+                        },
+                    )
+                if upload_resp.status_code not in (200, 201, 206):
+                    if redis:
+                        await record_failure(redis, self.platform)
+                    raise PlatformHTTPError(upload_resp.status_code, f"TikTok video upload failed: {upload_resp.text}")
+            else:
+                for chunk_idx in range(total_chunks):
+                    start = chunk_idx * chunk_size
+                    end = min(start + chunk_size, total_bytes)
+                    chunk_resp = await client.get(
+                        media_url,
+                        headers={"Range": f"bytes={start}-{end - 1}"},
+                        follow_redirects=True,
+                    )
+                    if chunk_resp.status_code not in (200, 206):
+                        raise PlatformHTTPError(chunk_resp.status_code, f"Could not stream chunk {chunk_idx} for TikTok")
+                    upload_resp = await client.put(
+                        upload_url,
+                        content=chunk_resp.content,
+                        headers={
+                            "Content-Type": "video/mp4",
+                            "Content-Length": str(len(chunk_resp.content)),
+                            "Content-Range": f"bytes {start}-{end - 1}/{total_bytes}",
+                        },
+                    )
+                    if upload_resp.status_code not in (200, 201, 206):
+                        if redis:
+                            await record_failure(redis, self.platform)
+                        raise PlatformHTTPError(upload_resp.status_code, f"TikTok video chunk upload failed: {upload_resp.text}")
 
         if redis:
             await record_success(redis, self.platform)

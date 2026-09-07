@@ -81,11 +81,11 @@ const TwitterPreview = ({ content = '', media, account, poll }) => {
   // Circular progress ring for character count (like real Twitter/X)
   const radius  = 10;
   const circumf = 2 * Math.PI * radius;
-  const filled  = Math.min(content.length / LIMIT, 1);
+  const filled  = Math.min(safeContent.length / LIMIT, 1);
   const strokeDashoffset = circumf * (1 - filled);
   const ringColor =
-    content.length >= LIMIT    ? '#f4212e' :
-    content.length >= LIMIT * 0.8 ? '#ffd400' :
+    safeContent.length >= LIMIT    ? '#f4212e' :
+    safeContent.length >= LIMIT * 0.8 ? '#ffd400' :
     '#1d9bf0';
 
   const mediaArray = Array.isArray(media) ? media : (media ? [media] : []);

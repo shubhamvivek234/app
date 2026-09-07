@@ -1480,11 +1480,22 @@ async def list_posts(
     user_id = current_user["user_id"]
     ws_id = workspace_id or _post_workspace_id(current_user)
 
-    query: dict = {
-        "workspace_id": ws_id,
-        "user_id": user_id,
-        "deleted_at": {"$exists": False},
-    }
+    # Verify workspace access if explicitly querying a different workspace
+    if ws_id != user_id and ws_id != current_user.get("default_workspace_id") and ws_id != current_user.get("workspace_id"):
+        member = await db.workspace_members.find_one({"workspace_id": ws_id, "user_id": user_id})
+        if not member:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if ws_id == user_id:
+        query: dict = {
+            "$or": [{"workspace_id": ws_id}, {"user_id": user_id, "workspace_id": {"$exists": False}}],
+            "deleted_at": {"$exists": False},
+        }
+    else:
+        query: dict = {
+            "workspace_id": ws_id,
+            "deleted_at": {"$exists": False},
+        }
     if campaign_id:
         query["campaign_id"] = campaign_id
     if status_filter:
@@ -1686,19 +1697,21 @@ async def get_post(
     ws_id = _post_workspace_id(current_user)
 
     doc = await db.posts.find_one(
-        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"id": post_id, "deleted_at": {"$exists": False}},
         {"_id": 0},
     )
     if doc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
 
-    # Verify via workspace_id when present
-    if doc.get("workspace_id") and doc["workspace_id"] != ws_id:
-        member = await db.workspace_members.find_one(
-            {"workspace_id": doc["workspace_id"], "user_id": user_id}
-        )
-        if not member:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # Access check: author or member of post's workspace
+    if doc.get("user_id") != user_id:
+        doc_ws = doc.get("workspace_id")
+        if not doc_ws or (doc_ws != ws_id and doc_ws != current_user.get("default_workspace_id") and doc_ws != current_user.get("workspace_id")):
+            member = await db.workspace_members.find_one(
+                {"workspace_id": doc_ws, "user_id": user_id}
+            ) if doc_ws else None
+            if not member:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return _doc_to_response(await _hydrate_post_card_fields(db, doc))
 
@@ -1718,7 +1731,7 @@ async def update_post(
     user_id = current_user["user_id"]
 
     existing = await db.posts.find_one(
-        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"id": post_id, "deleted_at": {"$exists": False}},
         {
             "_id": 0,
             "id": 1,
@@ -1740,6 +1753,18 @@ async def update_post(
     )
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    # Verify authorization: creator, or editor/admin/owner of post's workspace
+    if existing.get("user_id") != user_id:
+        doc_ws = existing.get("workspace_id")
+        member = await db.workspace_members.find_one(
+            {"workspace_id": doc_ws, "user_id": user_id}
+        ) if doc_ws else None
+        role = (member or {}).get("role") or current_user.get("role")
+        if not member and doc_ws != current_user.get("default_workspace_id"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if role in ("viewer", "client"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Viewers cannot edit posts")
 
     if existing.get("status") in _BLOCKED_STATUSES:
         raise HTTPException(
@@ -1913,7 +1938,6 @@ async def update_post(
     result = await db.posts.update_one(
         {
             "id": post_id,
-            "user_id": user_id,
             "version": body.version,
             "deleted_at": {"$exists": False},
         },
@@ -1926,7 +1950,7 @@ async def update_post(
             detail="Version conflict — fetch the latest version and retry",
         )
 
-    updated = await db.posts.find_one({"id": post_id, "user_id": user_id}, {"_id": 0})
+    updated = await db.posts.find_one({"id": post_id}, {"_id": 0})
 
     if (
         "scheduled_time" in body.model_fields_set
@@ -1965,9 +1989,11 @@ async def delete_post(
     user_id = current_user["user_id"]
 
     existing = await db.posts.find_one(
-        {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
+        {"id": post_id, "deleted_at": {"$exists": False}},
         {
             "_id": 0,
+            "id": 1,
+            "user_id": 1,
             "status": 1,
             "queue_job_id": 1,
             "media_ids": 1,
@@ -1978,6 +2004,18 @@ async def delete_post(
     )
     if existing is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    # Verify authorization: author, or admin/owner of post's workspace
+    if existing.get("user_id") != user_id:
+        doc_ws = existing.get("workspace_id")
+        member = await db.workspace_members.find_one(
+            {"workspace_id": doc_ws, "user_id": user_id}
+        ) if doc_ws else None
+        role = (member or {}).get("role") or current_user.get("role")
+        if not member and doc_ws != current_user.get("default_workspace_id"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if role not in ("owner", "admin"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only workspace admins or owners can delete team posts")
 
     now = datetime.now(timezone.utc)
     set_updates = {"deleted_at": now, "updated_at": now, "status": PostStatus.CANCELLED}
@@ -1994,7 +2032,7 @@ async def delete_post(
                 set_updates[f"account_results.{account_id}.error"] = "Cancelled by user"
 
     await db.posts.update_one(
-        {"id": post_id, "user_id": user_id},
+        {"id": post_id},
         {"$set": set_updates},
     )
 
@@ -2589,7 +2627,7 @@ async def duplicate_post(post_id: str, current_user: CurrentUser, db: DB):
 # ── Onboarding complete ───────────────────────────────────────────────────────
 
 @router.post("/onboarding/complete")
-async def complete_onboarding(body: dict, current_user: CurrentUser, db: DB):
+async def complete_onboarding(current_user: CurrentUser, db: DB, body: dict | None = None):
     """Mark user onboarding as completed."""
     user_id = current_user["user_id"]
     await db.users.update_one(
