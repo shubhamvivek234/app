@@ -9,7 +9,7 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-08
 Completed:
-- Collapsed Sidebar Unravler Logo: In `DashboardLayout.js`, replaced legacy placeholder star (`✦`) with official `<UnravlerLogo size="small" showText={false} color="white" />` centered inside a circular (`rounded-full`) brand gradient button (`from-indigo-600 to-purple-600`). Extended `UnravlerLogo.js` to support `color="white"` / `forceWhite`. Also updated `PublicCalendar.js`.
+- Collapsed Sidebar Unravler Logo: In `DashboardLayout.js`, replaced legacy placeholder star (`✦`) with official `<UnravlerLogo size="small" showText={false} color="white" />` centered inside a circular (`rounded-full`) solid black button (`bg-black text-white`). Extended `UnravlerLogo.js` to support `color="white"` / `forceWhite`. Also updated `PublicCalendar.js`.
 - Verification: Frontend production build passed (`CI=true npm run build --prefix frontend`) and backend test suite passed.
 
 ## Active Work

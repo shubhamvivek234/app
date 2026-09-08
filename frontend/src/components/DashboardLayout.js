@@ -263,7 +263,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
-                className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xs hover:opacity-95 hover:scale-105 active:scale-95 transition-all p-1.5 focus:outline-none"
+                className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center shadow-xs border border-black/10 dark:border-white/15 hover:opacity-90 hover:scale-105 active:scale-95 transition-all p-1.5 focus:outline-none"
                 title="Unravler - Go to dashboard"
                 aria-label="Unravler - Go to dashboard"
               >
@@ -271,7 +271,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
               </button>
             ) : (
               <div
-                className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xs p-1.5"
+                className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center shadow-xs border border-black/10 dark:border-white/15 p-1.5"
                 title="Unravler"
               >
                 <UnravlerLogo size="small" showText={false} color="white" />

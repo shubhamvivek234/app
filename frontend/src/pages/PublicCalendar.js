@@ -154,7 +154,7 @@ const PublicCalendar = () => {
       <header className="sticky top-0 z-30 bg-white/85 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3.5 shadow-2xs">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xs flex-shrink-0 p-1.5">
+            <div className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center shadow-xs flex-shrink-0 p-1.5">
               <UnravlerLogo size="small" showText={false} color="white" />
             </div>
             <div>
