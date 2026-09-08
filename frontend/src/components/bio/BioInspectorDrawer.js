@@ -1,198 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FaUndo,
   FaRedo,
   FaCheck,
-  FaLayerGroup,
-  FaPalette,
-  FaSlidersH,
-  FaFont,
+  FaSearch,
   FaTimes,
+  FaExternalLinkAlt,
+  FaClock,
+  FaTrashAlt,
+  FaCalendarAlt,
+  FaExclamationTriangle,
 } from 'react-icons/fa';
 import {
-  TACTILE_CARD_STYLES,
+  THEME_PRESETS,
   HEADER_LAYOUTS,
+  BUTTON_STYLES,
+  BUTTON_SHAPES,
+  FONTS_LIST,
+  loadGoogleFont,
 } from '@/lib/bioThemeUtils';
-
-export const MODERN_THEME_PRESETS = [
-  {
-    id: 'cosmic',
-    name: 'Cosmic Indigo',
-    subtitle: 'Deep Space',
-    bg: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)',
-    textColor: '#FFFFFF',
-    accentColor: '#818CF8',
-    cardBg: 'rgba(255, 255, 255, 0.12)',
-    cardBorder: 'rgba(255, 255, 255, 0.20)',
-    cardTextColor: '#FFFFFF',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'titanium',
-    name: 'Natural Titanium',
-    subtitle: 'Brushed Metal',
-    bg: 'linear-gradient(135deg, #27272a 0%, #18181b 100%)',
-    textColor: '#F5F5F7',
-    accentColor: '#E2DDD6',
-    cardBg: 'rgba(255, 255, 255, 0.08)',
-    cardBorder: 'rgba(255, 255, 255, 0.14)',
-    cardTextColor: '#FFFFFF',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'alpine',
-    name: 'Alpine Pine',
-    subtitle: 'Forest Glass',
-    bg: 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)',
-    textColor: '#FFFFFF',
-    accentColor: '#34D399',
-    cardBg: 'rgba(255, 255, 255, 0.12)',
-    cardBorder: 'rgba(52, 211, 153, 0.25)',
-    cardTextColor: '#FFFFFF',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'desert',
-    name: 'Desert Gold',
-    subtitle: 'Warm Amber',
-    bg: 'linear-gradient(135deg, #451a03 0%, #78350f 50%, #b45309 100%)',
-    textColor: '#FFFFFF',
-    accentColor: '#FBBF24',
-    cardBg: 'rgba(255, 255, 255, 0.12)',
-    cardBorder: 'rgba(251, 191, 36, 0.25)',
-    cardTextColor: '#FFFFFF',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'cashmere',
-    name: 'Editorial Cashmere',
-    subtitle: 'Luxury Cream',
-    bg: 'linear-gradient(135deg, #FAF8F5 0%, #F3EDE2 100%)',
-    textColor: '#1D1D1F',
-    accentColor: '#0071E3',
-    cardBg: '#FFFFFF',
-    cardBorder: 'rgba(0, 0, 0, 0.08)',
-    cardTextColor: '#1D1D1F',
-    cardStyle: 'solid_flat',
-  },
-  {
-    id: 'obsidian',
-    name: 'Pure Obsidian',
-    subtitle: 'Midnight Noir',
-    bg: 'linear-gradient(180deg, #000000 0%, #09090B 100%)',
-    textColor: '#FAFAFA',
-    accentColor: '#FFFFFF',
-    cardBg: 'rgba(255, 255, 255, 0.08)',
-    cardBorder: 'rgba(255, 255, 255, 0.14)',
-    cardTextColor: '#FAFAFA',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'lavender',
-    name: 'Lavender Silk',
-    subtitle: 'Pastel Violet',
-    bg: 'linear-gradient(135deg, #F5F3FF 0%, #EDE9FE 50%, #DDD6FE 100%)',
-    textColor: '#4C1D95',
-    accentColor: '#7C3AED',
-    cardBg: 'rgba(255, 255, 255, 0.90)',
-    cardBorder: 'rgba(124, 58, 237, 0.15)',
-    cardTextColor: '#4C1D95',
-    cardStyle: 'soft_pill',
-  },
-  {
-    id: 'sunset',
-    name: 'Sunset Aura',
-    subtitle: 'Coral Peach',
-    bg: 'linear-gradient(135deg, #FFE4E6 0%, #EDE9FE 50%, #FEF3C7 100%)',
-    textColor: '#4C0519',
-    accentColor: '#E11D48',
-    cardBg: 'rgba(255, 255, 255, 0.85)',
-    cardBorder: 'rgba(225, 29, 72, 0.15)',
-    cardTextColor: '#4C0519',
-    cardStyle: 'tactile_convex',
-  },
-  {
-    id: 'cyber',
-    name: 'Tokyo Cyber',
-    subtitle: 'Neon Midnight',
-    bg: 'linear-gradient(135deg, #05050A 0%, #0D081E 50%, #15002A 100%)',
-    textColor: '#00F0FF',
-    accentColor: '#EC4899',
-    cardBg: 'rgba(255, 255, 255, 0.06)',
-    cardBorder: 'rgba(0, 240, 255, 0.3)',
-    cardTextColor: '#00F0FF',
-    cardStyle: 'neon_glow',
-  },
-  {
-    id: 'champagne',
-    name: 'Champagne Luxe',
-    subtitle: 'Ivory Gold',
-    bg: 'linear-gradient(135deg, #FBF9F4 0%, #F5EDE0 100%)',
-    textColor: '#451A03',
-    accentColor: '#D97706',
-    cardBg: 'rgba(255, 255, 255, 0.95)',
-    cardBorder: 'rgba(217, 119, 6, 0.2)',
-    cardTextColor: '#451A03',
-    cardStyle: 'tactile_convex',
-  },
-  {
-    id: 'arctic',
-    name: 'Nordic Arctic',
-    subtitle: 'Glacier Slate',
-    bg: 'linear-gradient(135deg, #030D1A 0%, #0F172A 60%, #1E293B 100%)',
-    textColor: '#E0F2FE',
-    accentColor: '#38BDF8',
-    cardBg: 'rgba(255, 255, 255, 0.08)',
-    cardBorder: 'rgba(56, 189, 248, 0.25)',
-    cardTextColor: '#E0F2FE',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'matcha',
-    name: 'Matcha Botanical',
-    subtitle: 'Zen Sage',
-    bg: 'linear-gradient(135deg, #F4F7F4 0%, #E8EFE8 100%)',
-    textColor: '#1E3A2F',
-    accentColor: '#059669',
-    cardBg: 'rgba(255, 255, 255, 0.92)',
-    cardBorder: 'rgba(5, 150, 105, 0.2)',
-    cardTextColor: '#1E3A2F',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'espresso',
-    name: 'Velvet Espresso',
-    subtitle: 'Dark Caramel',
-    bg: 'linear-gradient(135deg, #1C120C 0%, #2A1B12 100%)',
-    textColor: '#FED7AA',
-    accentColor: '#F97316',
-    cardBg: 'rgba(255, 255, 255, 0.08)',
-    cardBorder: 'rgba(249, 115, 22, 0.25)',
-    cardTextColor: '#FED7AA',
-    cardStyle: 'glass_double_bezel',
-  },
-  {
-    id: 'rosequartz',
-    name: 'Rose Quartz',
-    subtitle: 'Blush Pearl',
-    bg: 'linear-gradient(135deg, #FFF1F2 0%, #FFE4E6 100%)',
-    textColor: '#881337',
-    accentColor: '#F43F5E',
-    cardBg: 'rgba(255, 255, 255, 0.90)',
-    cardBorder: 'rgba(244, 63, 94, 0.2)',
-    cardTextColor: '#881337',
-    cardStyle: 'soft_pill',
-  },
-];
-
-const FONTS_LIST = [
-  { id: 'Plus Jakarta Sans', label: 'Plus Jakarta Sans', sample: 'Modern Luxury' },
-  { id: 'Geist', label: 'Geist', sample: 'Minimal Tech' },
-  { id: 'Outfit', label: 'Outfit', sample: 'Geometric Chic' },
-  { id: 'Playfair Display', label: 'Playfair Display', sample: 'Editorial Serif' },
-  { id: 'Space Grotesk', label: 'Space Grotesk', sample: 'Monospace Edge' },
-  { id: 'Inter', label: 'Inter', sample: 'Classic Clean' },
-];
 
 const ACCENT_SWATCHES = [
   '#0071E3', '#34C759', '#5856D6', '#AF52DE', '#FF2D55',
@@ -239,70 +65,94 @@ export default function BioInspectorDrawer({
   setTheme,
   socialLinks = {},
   setSocialLinks,
+  pageSchedule = { enabled: false, start_at: '', end_at: '' },
+  setPageSchedule,
+  isPublished = true,
+  setIsPublished,
+  onDeletePage,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
   onResetTheme,
 }) {
-  const [activeTab, setActiveTab] = useState('style'); // 'style' | 'cards' | 'settings'
+  const [activeTab, setActiveTab] = useState('themes'); // 'themes' | 'styles' | 'fonts' | 'settings'
+  const [fontSearch, setFontSearch] = useState('');
+
+  // Filter fonts
+  const filteredFonts = useMemo(() => {
+    if (!fontSearch.trim()) return FONTS_LIST;
+    const q = fontSearch.toLowerCase();
+    return FONTS_LIST.filter(
+      (f) => f.label.toLowerCase().includes(q) || f.sample.toLowerCase().includes(q)
+    );
+  }, [fontSearch]);
 
   const applyThemePreset = (preset) => {
+    loadGoogleFont(preset.font_family);
     setTheme((prev) => ({
       ...prev,
       preset: preset.id,
-      background_type: 'gradient',
-      background_gradient: preset.bg,
-      background_color: preset.bg.includes('#') ? preset.bg.slice(preset.bg.indexOf('#'), preset.bg.indexOf('#') + 7) : '#000000',
-      text_color: preset.textColor,
-      accent_color: preset.accentColor,
-      card_bg: preset.cardBg,
-      card_border: preset.cardBorder,
-      card_text_color: preset.cardTextColor,
-      card_style: preset.cardStyle,
+      background_type: preset.background_type || 'gradient',
+      background_gradient: preset.background_gradient || preset.bg,
+      background_color: preset.background_color || (preset.bg?.includes('#') ? preset.bg.slice(preset.bg.indexOf('#'), preset.bg.indexOf('#') + 7) : '#000000'),
+      text_color: preset.text_color || preset.textColor || '#18181B',
+      accent_color: preset.accent_color || preset.accentColor || '#0071E3',
+      card_bg: preset.card_bg || preset.cardBg || '#FFFFFF',
+      card_border: preset.card_border || preset.cardBorder || 'rgba(0,0,0,0.08)',
+      card_text_color: preset.card_text_color || preset.cardTextColor || '#18181B',
+      card_style: preset.card_style || 'solid_flat',
+      font_family: preset.font_family || prev.font_family || 'Plus Jakarta Sans',
       card_corner_radius: prev.card_corner_radius ?? 16,
       card_spacing: prev.card_spacing ?? 12,
+      button_style: prev.button_style || 'solid',
+      button_shape: prev.button_shape || 'standard',
     }));
   };
 
-  const handleCardShape = (shape) => {
-    if (shape === 'sharp') {
-      setTheme((prev) => ({ ...prev, card_corner_radius: 0 }));
-    } else if (shape === 'squircle') {
-      setTheme((prev) => ({ ...prev, card_corner_radius: 16 }));
-    } else if (shape === 'pill') {
-      setTheme((prev) => ({ ...prev, card_corner_radius: 9999 }));
-    }
+  const handleSelectFont = (fontId) => {
+    loadGoogleFont(fontId);
+    setTheme((prev) => ({ ...prev, font_family: fontId }));
   };
 
-  const currentShape =
+  const currentShape = theme.button_shape || (
     (theme.card_corner_radius ?? 16) >= 40
       ? 'pill'
       : (theme.card_corner_radius ?? 16) <= 4
       ? 'sharp'
-      : 'squircle';
+      : 'standard'
+  );
+
+  const currentButtonStyle = theme.button_style || 'solid';
+  const currentHeaderLayout = theme.header_layout || 'centered';
 
   return (
     <div className="flex flex-col h-full bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl border-l border-black/[0.06] dark:border-white/[0.08] text-gray-800 dark:text-gray-200 select-none overflow-hidden">
       
       {/* ── TOP HEADER WITH APPLE SEGMENTED CONTROL & UNDO/REDO ── */}
       <div className="p-3 border-b border-black/[0.04] dark:border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
-        <div className="apple-segment-wrapper flex-1 justify-between">
+        <div className="apple-segment-wrapper flex-1 justify-between text-xs">
           <button
-            onClick={() => setActiveTab('style')}
-            className={`apple-segment-btn flex-1 text-center ${activeTab === 'style' ? 'active' : ''}`}
+            onClick={() => setActiveTab('themes')}
+            className={`apple-segment-btn flex-1 text-center py-1.5 text-xs ${activeTab === 'themes' ? 'active' : ''}`}
           >
-            Style
+            Themes
           </button>
           <button
-            onClick={() => setActiveTab('cards')}
-            className={`apple-segment-btn flex-1 text-center ${activeTab === 'cards' ? 'active' : ''}`}
+            onClick={() => setActiveTab('styles')}
+            className={`apple-segment-btn flex-1 text-center py-1.5 text-xs ${activeTab === 'styles' ? 'active' : ''}`}
           >
-            Cards
+            Styles
+          </button>
+          <button
+            onClick={() => setActiveTab('fonts')}
+            className={`apple-segment-btn flex-1 text-center py-1.5 text-xs ${activeTab === 'fonts' ? 'active' : ''}`}
+          >
+            Fonts
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={`apple-segment-btn flex-1 text-center ${activeTab === 'settings' ? 'active' : ''}`}
+            className={`apple-segment-btn flex-1 text-center py-1.5 text-xs ${activeTab === 'settings' ? 'active' : ''}`}
           >
             Settings
           </button>
@@ -332,321 +182,291 @@ export default function BioInspectorDrawer({
       {/* ── TAB CONTENT SCROLLABLE BODY ── */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
         
-        {/* ══════════ 1. STYLE TAB ══════════ */}
-        {activeTab === 'style' && (
-          <div className="space-y-5 animate-in fade-in duration-200">
-            
-            {/* Modern & Elegant Theme Presets */}
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-                  Modern & Elegant Themes
-                </label>
-                <span className="text-[10px] font-semibold text-[#0071E3] dark:text-blue-400">14 Presets</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {MODERN_THEME_PRESETS.map((preset) => {
-                  const isSelected = theme.background_gradient === preset.bg || theme.preset === preset.id;
-                  return (
-                    <button
-                      key={preset.id}
-                      onClick={() => applyThemePreset(preset)}
-                      className={`p-2.5 rounded-xl border text-left transition-all relative ${
-                        isSelected
-                          ? 'border-[#0071E3] ring-2 ring-[#0071E3]/20 bg-blue-50/20 dark:bg-blue-950/20'
-                          : 'border-black/[0.08] dark:border-white/[0.12] bg-black/[0.02] dark:bg-white/[0.04] hover:border-[#0071E3]/50'
-                      }`}
-                    >
-                      <div
-                        className="h-10 rounded-lg mb-1.5 shadow-inner relative overflow-hidden"
-                        style={{ background: preset.bg }}
-                      >
-                        {isSelected && (
-                          <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-[#0071E3] text-white flex items-center justify-center text-[9px] shadow-sm">
-                            <FaCheck />
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-xs font-semibold text-gray-900 dark:text-white truncate">
-                        {preset.name}
-                      </div>
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
-                        {preset.subtitle}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Sliders: Glass Blur & Corner Radius */}
-            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3.5">
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-gray-700 dark:text-gray-300">Glass Blur Intensity</span>
-                  <span className="font-mono text-[11px] text-gray-500">{theme.glass_blur ?? 16}px</span>
-                </div>
-                <input
-                  type="range"
-                  className="apple-slider"
-                  min="0"
-                  max="40"
-                  value={theme.glass_blur ?? 16}
-                  onChange={(e) => setTheme((prev) => ({ ...prev, glass_blur: Number(e.target.value) }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-gray-700 dark:text-gray-300">Squircle Corner Radius</span>
-                  <span className="font-mono text-[11px] text-gray-500">{theme.card_corner_radius ?? 16}px</span>
-                </div>
-                <input
-                  type="range"
-                  className="apple-slider"
-                  min="0"
-                  max="32"
-                  value={theme.card_corner_radius ?? 16}
-                  onChange={(e) => setTheme((prev) => ({ ...prev, card_corner_radius: Number(e.target.value) }))}
-                />
-              </div>
-            </div>
-
-            {/* Accent Tint Color Swatches + Custom Picker */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-                  Accent Tint Color
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-gray-400 font-mono">{theme.accent_color || '#0071E3'}</span>
-                  <input
-                    type="color"
-                    value={theme.accent_color || '#0071E3'}
-                    onChange={(e) => setTheme((prev) => ({ ...prev, accent_color: e.target.value }))}
-                    className="w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent p-0"
-                    title="Custom Accent Color"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {ACCENT_SWATCHES.map((hex) => {
-                  const isMatch = (theme.accent_color || '').toLowerCase() === hex.toLowerCase();
-                  return (
-                    <button
-                      key={hex}
-                      onClick={() => setTheme((prev) => ({ ...prev, accent_color: hex }))}
-                      style={{ background: hex }}
-                      className={`w-7 h-7 rounded-full transition-transform border border-black/10 dark:border-white/15 flex items-center justify-center ${
-                        isMatch ? 'scale-110 ring-2 ring-[#0071E3] ring-offset-2' : 'hover:scale-105'
-                      }`}
-                    >
-                      {isMatch && <FaCheck className={`text-[10px] ${hex === '#FFFFFF' || hex === '#FAFAFA' || hex === '#FFCC00' ? 'text-black' : 'text-white'}`} />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Custom Background Color Picker */}
-            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between">
+        {/* ══════════ 1. THEMES TAB (Screenshot 1 Reference) ══════════ */}
+        {activeTab === 'themes' && (
+          <div className="space-y-4 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between mb-1">
               <div>
-                <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">Custom Solid Background</span>
-                <p className="text-[10px] text-gray-400">Override background with exact hex color</p>
+                <h3 className="text-xs font-bold text-gray-900 dark:text-white">Default themes</h3>
+                <p className="text-[11px] text-gray-500">Pick a handcrafted palette for your bio</p>
               </div>
-              <input
-                type="color"
-                value={theme.background_color && theme.background_color.startsWith('#') ? theme.background_color : '#0f172a'}
-                onChange={(e) =>
-                  setTheme((prev) => ({
-                    ...prev,
-                    background_type: 'solid',
-                    background_color: e.target.value,
-                    background_gradient: '',
-                  }))
-                }
-                className="w-8 h-8 rounded-xl cursor-pointer border border-black/10 dark:border-white/15 p-0 bg-transparent"
-              />
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#0071E3]/10 text-[#0071E3]">
+                {THEME_PRESETS.length} Themes
+              </span>
             </div>
 
-            {/* Fonts & Typography */}
-            <div>
-              <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block mb-2">
-                Font Family
-              </label>
-              <div className="space-y-1.5">
-                {FONTS_LIST.map((f) => {
-                  const isCurrent = (theme.font_family || 'Plus Jakarta Sans').includes(f.id);
-                  return (
-                    <button
-                      key={f.id}
-                      onClick={() => setTheme((prev) => ({ ...prev, font_family: `${f.id}, sans-serif` }))}
-                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
-                        isCurrent
-                          ? 'border-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30 font-bold'
-                          : 'border-black/[0.06] dark:border-white/[0.08] hover:bg-black/[0.02] dark:hover:bg-white/[0.04]'
-                      }`}
-                      style={{ fontFamily: `${f.id}, sans-serif` }}
+            {/* Themes Grid */}
+            <div className="grid grid-cols-2 gap-3">
+              {THEME_PRESETS.map((preset) => {
+                const isSelected = theme.preset === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => applyThemePreset(preset)}
+                    className={`group relative flex flex-col p-2.5 rounded-2xl border transition-all text-left overflow-hidden ${
+                      isSelected
+                        ? 'border-[#0071E3] ring-2 ring-[#0071E3]/30 bg-blue-50/20 dark:bg-blue-950/20 shadow-md scale-[1.02]'
+                        : 'border-black/[0.07] dark:border-white/[0.08] hover:border-black/[0.2] dark:hover:border-white/[0.2] bg-white/70 dark:bg-zinc-900/70 hover:shadow-sm'
+                    }`}
+                  >
+                    {/* Mini Visual Preview Card (Inspired by Screenshot 1) */}
+                    <div
+                      className="w-full h-24 rounded-xl p-2 flex flex-col items-center justify-between relative overflow-hidden shadow-inner mb-2 border border-black/5"
+                      style={{
+                        background: preset.background_gradient || preset.background_color,
+                      }}
                     >
-                      <div>
-                        <div className="text-xs font-semibold text-gray-900 dark:text-white">{f.label}</div>
-                        <div className="text-[10px] text-gray-400">{f.sample}</div>
+                      {/* Avatar Circle */}
+                      <div
+                        className="w-5 h-5 rounded-full bg-white/80 shadow-xs flex items-center justify-center text-[9px] font-black"
+                        style={{ color: preset.accent_color || preset.text_color }}
+                      >
+                        ●
                       </div>
-                      {isCurrent && <FaCheck className="text-xs text-[#0071E3]" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
 
+                      {/* Title Line */}
+                      <div
+                        className="w-10 h-1 rounded-full opacity-70"
+                        style={{ backgroundColor: preset.text_color || '#FFFFFF' }}
+                      />
+
+                      {/* Card Preview Bar */}
+                      <div
+                        className="w-full h-7 rounded-lg shadow-sm border border-black/5 flex items-center justify-center px-1.5"
+                        style={{
+                          backgroundColor: preset.card_bg || '#FFFFFF',
+                          borderColor: preset.card_border || 'transparent',
+                        }}
+                      >
+                        <div
+                          className="w-8 h-1 rounded-full opacity-60"
+                          style={{ backgroundColor: preset.card_text_color || preset.accent_color }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Theme Label */}
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-[11px] font-bold text-gray-900 dark:text-gray-100 truncate">
+                        {preset.name}
+                      </span>
+                      {isSelected && (
+                        <span className="w-3.5 h-3.5 rounded-full bg-[#0071E3] text-white flex items-center justify-center text-[8px]">
+                          <FaCheck />
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {/* ══════════ 2. CARDS TAB ══════════ */}
-        {activeTab === 'cards' && (
-          <div className="space-y-5 animate-in fade-in duration-200">
+        {/* ══════════ 2. STYLES TAB (Screenshot 2 Reference) ══════════ */}
+        {activeTab === 'styles' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
             
-            {/* Button Shape Style */}
+            {/* Header Layout (5 Layouts as shown in Screenshot 2) */}
             <div>
-              <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block mb-2">
-                Card Geometry
+              <div className="flex items-center justify-between mb-2.5">
+                <label className="text-xs font-bold text-gray-900 dark:text-white">
+                  Header Layout
+                </label>
+                <span className="text-[10px] text-gray-400 capitalize">{currentHeaderLayout.replace('_', ' ')}</span>
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                
+                {/* 1. Centered */}
+                <button
+                  onClick={() => setTheme((prev) => ({ ...prev, header_layout: 'centered' }))}
+                  className={`p-2 rounded-xl border flex flex-col items-center justify-center h-16 transition-all ${
+                    currentHeaderLayout === 'centered'
+                      ? 'border-[#0071E3] bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-[#0071E3]'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Centered (Classic)"
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 mb-1.5" />
+                  <div className="w-6 h-1 rounded-full bg-gray-300 dark:bg-gray-600 mb-1" />
+                  <div className="w-4 h-0.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                </button>
+
+                {/* 2. Top-Left Stacked */}
+                <button
+                  onClick={() => setTheme((prev) => ({ ...prev, header_layout: 'left_stacked' }))}
+                  className={`p-2 rounded-xl border flex flex-col items-start justify-center h-16 pl-2.5 transition-all ${
+                    currentHeaderLayout === 'left_stacked'
+                      ? 'border-[#0071E3] bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-[#0071E3]'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Top-Left Stacked"
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 mb-1.5" />
+                  <div className="w-6 h-1 rounded-full bg-gray-300 dark:bg-gray-600 mb-1" />
+                  <div className="w-4 h-0.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                </button>
+
+                {/* 3. Left Row (Inline) */}
+                <button
+                  onClick={() => setTheme((prev) => ({ ...prev, header_layout: 'left_row' }))}
+                  className={`p-2 rounded-xl border flex items-center gap-1.5 justify-center h-16 transition-all ${
+                    currentHeaderLayout === 'left_row'
+                      ? 'border-[#0071E3] bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-[#0071E3]'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Left Row Inline"
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
+                  <div className="flex flex-col gap-1">
+                    <div className="w-5 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                    <div className="w-3.5 h-0.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                  </div>
+                </button>
+
+                {/* 4. Top-Right Stacked */}
+                <button
+                  onClick={() => setTheme((prev) => ({ ...prev, header_layout: 'right_stacked' }))}
+                  className={`p-2 rounded-xl border flex flex-col items-end justify-center h-16 pr-2.5 transition-all ${
+                    currentHeaderLayout === 'right_stacked'
+                      ? 'border-[#0071E3] bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-[#0071E3]'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Top-Right Stacked"
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 mb-1.5" />
+                  <div className="w-6 h-1 rounded-full bg-gray-300 dark:bg-gray-600 mb-1" />
+                  <div className="w-4 h-0.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                </button>
+
+                {/* 5. Right Row (Inline) */}
+                <button
+                  onClick={() => setTheme((prev) => ({ ...prev, header_layout: 'right_row' }))}
+                  className={`p-2 rounded-xl border flex items-center gap-1.5 justify-center h-16 transition-all ${
+                    currentHeaderLayout === 'right_row'
+                      ? 'border-[#0071E3] bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-[#0071E3]'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Right Row Inline"
+                >
+                  <div className="flex flex-col gap-1 items-end">
+                    <div className="w-5 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                    <div className="w-3.5 h-0.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                  </div>
+                  <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
+                </button>
+
+              </div>
+            </div>
+
+            {/* Button Style (Solid vs Outline as shown in Screenshot 2) */}
+            <div>
+              <label className="text-xs font-bold text-gray-900 dark:text-white block mb-2.5">
+                Button Style
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2.5">
                 <button
-                  onClick={() => handleCardShape('sharp')}
-                  className={`py-2 text-xs font-semibold rounded-lg border transition-all ${
-                    currentShape === 'sharp'
-                      ? 'border-[#0071E3] bg-blue-50/50 dark:bg-blue-950/40 text-[#0071E3] ring-1 ring-[#0071E3]'
-                      : 'border-black/[0.08] dark:border-white/[0.12] hover:border-[#0071E3]'
+                  onClick={() => setTheme((prev) => ({ ...prev, button_style: 'solid' }))}
+                  className={`p-3 rounded-xl border flex items-center justify-center transition-all ${
+                    currentButtonStyle === 'solid'
+                      ? 'border-[#0071E3] ring-1 ring-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
                   }`}
                 >
-                  Sharp
+                  <div className="w-20 py-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 text-center text-xs font-bold text-gray-800 dark:text-gray-200">
+                    Aa
+                  </div>
                 </button>
+
                 <button
-                  onClick={() => handleCardShape('squircle')}
-                  className={`py-2 text-xs font-semibold rounded-2xl border transition-all ${
-                    currentShape === 'squircle'
-                      ? 'border-[#0071E3] bg-blue-50/50 dark:bg-blue-950/40 text-[#0071E3] ring-1 ring-[#0071E3]'
-                      : 'border-black/[0.08] dark:border-white/[0.12] hover:border-[#0071E3]'
+                  onClick={() => setTheme((prev) => ({ ...prev, button_style: 'outline' }))}
+                  className={`p-3 rounded-xl border flex items-center justify-center transition-all ${
+                    currentButtonStyle === 'outline'
+                      ? 'border-[#0071E3] ring-1 ring-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
                   }`}
                 >
-                  Squircle
+                  <div className="w-20 py-1.5 rounded-lg border border-gray-400 dark:border-gray-500 bg-transparent text-center text-xs font-bold text-gray-800 dark:text-gray-200">
+                    Aa
+                  </div>
                 </button>
+              </div>
+            </div>
+
+            {/* Button Shape (Standard, Pill, Sharp as shown in Screenshot 2) */}
+            <div>
+              <label className="text-xs font-bold text-gray-900 dark:text-white block mb-2.5">
+                Button Shape
+              </label>
+              <div className="grid grid-cols-3 gap-2.5">
+                {/* Standard (Squircle / Rounded) */}
                 <button
-                  onClick={() => handleCardShape('pill')}
-                  className={`py-2 text-xs font-semibold rounded-full border transition-all ${
+                  onClick={() =>
+                    setTheme((prev) => ({ ...prev, button_shape: 'standard', card_corner_radius: 16 }))
+                  }
+                  className={`p-3 rounded-xl border flex items-center justify-center transition-all ${
+                    currentShape === 'standard'
+                      ? 'border-[#0071E3] ring-1 ring-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Standard Squircle"
+                >
+                  <div className="w-14 h-5 rounded-lg bg-gray-200 dark:bg-gray-700" />
+                </button>
+
+                {/* Pill (Full Rounded) */}
+                <button
+                  onClick={() =>
+                    setTheme((prev) => ({ ...prev, button_shape: 'pill', card_corner_radius: 9999 }))
+                  }
+                  className={`p-3 rounded-xl border flex items-center justify-center transition-all ${
                     currentShape === 'pill'
-                      ? 'border-[#0071E3] bg-blue-50/50 dark:bg-blue-950/40 text-[#0071E3] ring-1 ring-[#0071E3]'
-                      : 'border-black/[0.08] dark:border-white/[0.12] hover:border-[#0071E3]'
+                      ? 'border-[#0071E3] ring-1 ring-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
                   }`}
+                  title="Full Pill"
                 >
-                  Pill
+                  <div className="w-14 h-5 rounded-full bg-gray-200 dark:bg-gray-700" />
+                </button>
+
+                {/* Sharp (Rectangle) */}
+                <button
+                  onClick={() =>
+                    setTheme((prev) => ({ ...prev, button_shape: 'sharp', card_corner_radius: 0 }))
+                  }
+                  className={`p-3 rounded-xl border flex items-center justify-center transition-all ${
+                    currentShape === 'sharp'
+                      ? 'border-[#0071E3] ring-1 ring-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30'
+                      : 'border-black/[0.08] dark:border-white/[0.08] hover:border-gray-400 bg-white/50 dark:bg-zinc-900/50'
+                  }`}
+                  title="Sharp Rectangle"
+                >
+                  <div className="w-14 h-5 rounded-none bg-gray-200 dark:bg-gray-700" />
                 </button>
               </div>
             </div>
 
-            {/* Tactile 3D Card Style Presets */}
+            {/* Accent Color Swatches */}
             <div>
-              <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block mb-2">
-                Tactile Card Physics
+              <label className="text-xs font-bold text-gray-900 dark:text-white block mb-2.5">
+                Accent Brand Color
               </label>
-              <div className="grid grid-cols-2 gap-2">
-                {TACTILE_CARD_STYLES.map((st) => {
-                  const isCurrent = (theme.card_style || 'glass_double_bezel') === st.id;
-                  return (
-                    <button
-                      key={st.id}
-                      onClick={() => setTheme((prev) => ({ ...prev, card_style: st.id }))}
-                      className={`p-2.5 rounded-xl border text-left transition-all ${
-                        isCurrent
-                          ? 'border-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30 text-[#0071E3]'
-                          : 'border-black/[0.06] dark:border-white/[0.08] hover:border-[#0071E3]'
-                      }`}
-                    >
-                      <div className="text-xs font-bold truncate text-gray-900 dark:text-white">{st.label}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{st.description}</div>
-                    </button>
-                  );
-                })}
+              <div className="flex flex-wrap gap-2">
+                {ACCENT_SWATCHES.map((hex) => (
+                  <button
+                    key={hex}
+                    onClick={() => setTheme((prev) => ({ ...prev, accent_color: hex }))}
+                    className={`w-6 h-6 rounded-full border border-black/10 transition-transform ${
+                      theme.accent_color === hex ? 'scale-125 ring-2 ring-[#0071E3]' : 'hover:scale-110'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                  />
+                ))}
               </div>
             </div>
 
-            {/* Card Background Swatches + Custom Hex */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-                  Card Backdrop Tint
-                </label>
-                <input
-                  type="color"
-                  value={theme.card_bg && theme.card_bg.startsWith('#') ? theme.card_bg : '#FFFFFF'}
-                  onChange={(e) => setTheme((prev) => ({ ...prev, card_bg: e.target.value }))}
-                  className="w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent p-0"
-                  title="Custom Card Background"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {CARD_BG_SWATCHES.map((sw) => {
-                  const isCurrent = theme.card_bg === sw.val;
-                  return (
-                    <button
-                      key={sw.label}
-                      onClick={() => setTheme((prev) => ({ ...prev, card_bg: sw.val }))}
-                      className={`p-2 rounded-xl border flex items-center gap-2 text-left transition-all ${
-                        isCurrent
-                          ? 'border-[#0071E3] ring-1 ring-[#0071E3]'
-                          : 'border-black/[0.08] dark:border-white/[0.12] hover:border-[#0071E3]'
-                      }`}
-                    >
-                      <span
-                        className="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner"
-                        style={{ background: sw.bg }}
-                      />
-                      <span className="text-[11px] font-medium truncate text-gray-800 dark:text-gray-200">
-                        {sw.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Card Text Color */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-                  Card Text Color
-                </label>
-                <input
-                  type="color"
-                  value={theme.card_text_color || '#FFFFFF'}
-                  onChange={(e) => setTheme((prev) => ({ ...prev, card_text_color: e.target.value }))}
-                  className="w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent p-0"
-                  title="Custom Card Text Color"
-                />
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {CARD_TEXT_SWATCHES.map((tx) => {
-                  const isCurrent = (theme.card_text_color || '') === tx.val;
-                  return (
-                    <button
-                      key={tx.label}
-                      onClick={() => setTheme((prev) => ({ ...prev, card_text_color: tx.val }))}
-                      className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
-                        isCurrent
-                          ? 'border-[#0071E3] bg-blue-50/50 dark:bg-blue-950/40 text-[#0071E3]'
-                          : 'border-black/[0.08] dark:border-white/[0.12] hover:border-[#0071E3]'
-                      }`}
-                    >
-                      {tx.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Card Spacing, Shadow Depth & Border Width Sliders */}
-            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3.5">
+            {/* Fine-Tuning Sliders */}
+            <div className="space-y-4 p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-gray-700 dark:text-gray-300">Card Vertical Gap</span>
@@ -696,37 +516,71 @@ export default function BioInspectorDrawer({
           </div>
         )}
 
-        {/* ══════════ 3. SETTINGS TAB ══════════ */}
+        {/* ══════════ 3. FONTS TAB (Screenshot 3 Reference) ══════════ */}
+        {activeTab === 'fonts' && (
+          <div className="space-y-4 animate-in fade-in duration-200">
+            <div>
+              <h3 className="text-xs font-bold text-gray-900 dark:text-white">Choose a font</h3>
+              <p className="text-[11px] text-gray-500">Pick typography that matches your brand voice</p>
+            </div>
+
+            {/* Search for a Font Input */}
+            <div className="relative">
+              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs" />
+              <input
+                type="text"
+                value={fontSearch}
+                onChange={(e) => setFontSearch(e.target.value)}
+                placeholder="Search for a font..."
+                className="w-full pl-8 pr-8 py-2 text-xs rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white placeholder-gray-400 outline-none focus:border-[#0071E3] transition"
+              />
+              {fontSearch && (
+                <button
+                  onClick={() => setFontSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs"
+                >
+                  <FaTimes />
+                </button>
+              )}
+            </div>
+
+            {/* Font Cards Grid */}
+            <div className="grid grid-cols-2 gap-2.5">
+              {filteredFonts.map((font) => {
+                const isSelected = (theme.font_family || 'Plus Jakarta Sans') === font.id;
+                return (
+                  <button
+                    key={font.id}
+                    onClick={() => handleSelectFont(font.id)}
+                    className={`p-3.5 rounded-2xl border text-center flex flex-col items-center justify-between min-h-[82px] transition-all ${
+                      isSelected
+                        ? 'border-[#0071E3] ring-2 ring-[#0071E3]/30 bg-blue-50/40 dark:bg-blue-950/40 scale-[1.02] shadow-sm'
+                        : 'border-black/[0.07] dark:border-white/[0.08] hover:border-gray-400 bg-white/70 dark:bg-zinc-900/70 hover:shadow-xs'
+                    }`}
+                  >
+                    {/* Font Preview Specimen */}
+                    <div
+                      className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white mb-1"
+                      style={{ fontFamily: font.id }}
+                    >
+                      AaBb
+                    </div>
+                    {/* Font Name */}
+                    <div className="text-[11px] font-medium text-gray-600 dark:text-gray-400 truncate w-full">
+                      {font.label}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════ 4. SETTINGS TAB ══════════ */}
         {activeTab === 'settings' && (
           <div className="space-y-5 animate-in fade-in duration-200">
             
-            {/* Header Layout */}
-            <div>
-              <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block mb-2">
-                Header Layout
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {HEADER_LAYOUTS.map((hl) => {
-                  const isCurrent = (theme.header_layout || 'classic') === hl.id;
-                  return (
-                    <button
-                      key={hl.id}
-                      onClick={() => setTheme((prev) => ({ ...prev, header_layout: hl.id }))}
-                      className={`p-2.5 rounded-xl border text-left transition-all ${
-                        isCurrent
-                          ? 'border-[#0071E3] bg-blue-50/30 dark:bg-blue-950/30 text-[#0071E3] font-bold'
-                          : 'border-black/[0.06] dark:border-white/[0.08] hover:border-[#0071E3]'
-                      }`}
-                    >
-                      <div className="text-xs font-semibold text-gray-900 dark:text-white truncate">{hl.label}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{hl.description}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Profile Avatar Sizing */}
+            {/* Profile Avatar Diameter */}
             <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-1.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-gray-700 dark:text-gray-300">Avatar Diameter</span>
@@ -744,7 +598,7 @@ export default function BioInspectorDrawer({
 
             {/* Connected Social Dock Toggles */}
             <div>
-              <label className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block mb-2">
+              <label className="text-xs font-bold text-gray-900 dark:text-white block mb-2">
                 Connected Social Dock
               </label>
               <div className="space-y-2">
@@ -802,13 +656,126 @@ export default function BioInspectorDrawer({
               )}
             </div>
 
+            {/* Page Visibility & Scheduling Window */}
+            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[#0071E3] flex items-center justify-center text-xs">
+                    <FaClock />
+                  </div>
+                  <div>
+                    <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 block">
+                      Scheduled Live Window
+                    </span>
+                    <span className="text-[10px] text-gray-500 block">
+                      Optional start & expiry times
+                    </span>
+                  </div>
+                </div>
+                <label className="apple-switch">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(pageSchedule?.enabled)}
+                    onChange={(e) =>
+                      setPageSchedule?.((prev) => ({ ...prev, enabled: e.target.checked }))
+                    }
+                  />
+                  <span className="apple-switch-slider"></span>
+                </label>
+              </div>
+
+              {pageSchedule?.enabled && (
+                <div className="space-y-2.5 pt-1 animate-in fade-in duration-150 border-t border-black/[0.05] dark:border-white/[0.05]">
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Your Smart Bio URL will only be live during this window. Before start or after expiry, visitors see a scheduled card.
+                  </p>
+                  <div>
+                    <label className="text-[11px] font-medium text-gray-600 dark:text-gray-400 block mb-1">
+                      Start Time (Go-Live)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={pageSchedule?.start_at || ''}
+                      onChange={(e) =>
+                        setPageSchedule?.((prev) => ({ ...prev, start_at: e.target.value }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white outline-none focus:border-[#0071E3] transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-gray-600 dark:text-gray-400 block mb-1">
+                      End Time (Expiry)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={pageSchedule?.end_at || ''}
+                      onChange={(e) =>
+                        setPageSchedule?.((prev) => ({ ...prev, end_at: e.target.value }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white outline-none focus:border-[#0071E3] transition"
+                    />
+                  </div>
+                  {(pageSchedule?.start_at || pageSchedule?.end_at) && (
+                    <button
+                      type="button"
+                      onClick={() => setPageSchedule?.((prev) => ({ ...prev, start_at: '', end_at: '' }))}
+                      className="text-[10px] text-rose-500 hover:text-rose-600 underline font-medium"
+                    >
+                      Clear schedule times
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Public Availability Toggle */}
+            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-200 block">
+                    Page Published
+                  </span>
+                  <span className="text-[10px] text-gray-500 block">
+                    {isPublished ? 'Public URL is active & reachable' : 'Page is in private draft mode'}
+                  </span>
+                </div>
+                <label className="apple-switch">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(isPublished)}
+                    onChange={(e) => setIsPublished?.(e.target.checked)}
+                  />
+                  <span className="apple-switch-slider"></span>
+                </label>
+              </div>
+            </div>
+
             {/* Reset Theme Button */}
             <button
               onClick={onResetTheme}
-              className="w-full py-2 rounded-xl border border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 text-xs font-semibold transition-colors"
+              className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.1] text-gray-700 dark:text-gray-300 hover:bg-black/[0.02] dark:hover:bg-white/[0.05] text-xs font-semibold transition-colors"
             >
               Reset Theme to Default
             </button>
+
+            {/* Danger Zone: Permanent Deletion */}
+            <div className="p-3.5 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 space-y-2.5 mt-4">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <FaExclamationTriangle className="text-xs" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Danger Zone</span>
+              </div>
+              <p className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed">
+                Permanently delete your Smart Bio page, release your handle, and erase all blocks, visitor analytics, and subscriber leads.
+              </p>
+              <button
+                type="button"
+                onClick={onDeletePage}
+                className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-xs flex items-center justify-center gap-2 transition-colors active:scale-[0.99]"
+              >
+                <FaTrashAlt className="text-[11px]" />
+                Delete Published Page Permanently
+              </button>
+            </div>
 
           </div>
         )}

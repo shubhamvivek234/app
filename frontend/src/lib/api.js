@@ -1528,6 +1528,11 @@ export const saveMyBioPage = async (data) => {
   return response.data;
 };
 
+export const deleteMyBioPage = async () => {
+  const response = await axios.delete(`${API}/bio-pages/mine`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 export const getPublicBioPage = async (handle) => {
   const response = await axios.get(`${API}/bio-pages/public/${handle}`);
   return response.data;

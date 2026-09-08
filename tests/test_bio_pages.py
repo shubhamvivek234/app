@@ -1,17 +1,20 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+from fastapi import HTTPException
 
 from api.routes.bio_pages import (
     _is_block_active,
     BioPageConfig,
     BioBlockItem,
     BioTheme,
+    PageSchedule,
     get_my_bio_page,
     save_my_bio_page,
     get_public_bio_page,
     track_bio_link_click,
     subscribe_to_bio_newsletter,
+    delete_my_bio_page,
 )
 
 
@@ -99,6 +102,22 @@ class _FakeCollection:
             return type("Result", (), {"matched_count": 0, "upserted_id": ObjectId()})()
         return type("Result", (), {"matched_count": 0, "modified_count": 0})()
 
+    async def delete_one(self, query):
+        doc = await self.find_one(query)
+        if doc and doc in self.items:
+            self.items.remove(doc)
+            return type("Result", (), {"deleted_count": 1})()
+        return type("Result", (), {"deleted_count": 0})()
+
+    async def delete_many(self, query):
+        initial_len = len(self.items)
+        if not query:
+            self.items.clear()
+            return type("Result", (), {"deleted_count": initial_len})()
+        k, v = list(query.items())[0]
+        self.items = [item for item in self.items if item.get(k) != v]
+        return type("Result", (), {"deleted_count": initial_len - len(self.items)})()
+
     async def aggregate(self, pipeline):
         return _FakeCursor([])
 
@@ -185,3 +204,96 @@ async def test_bio_page_crud_and_public_view():
     assert lead_res["ok"] is True
     assert len(db.workspace_leads.items) == 1
     assert db.workspace_leads.items[0]["email"] == "fan@gmail.com"
+
+
+@pytest.mark.asyncio
+async def test_bio_page_scheduling_window():
+    db = _FakeDB()
+    user = {"user_id": "usr_sched1", "default_workspace_id": "ws_sched1", "name": "Scheduled Creator"}
+    now = datetime.now(timezone.utc)
+
+    # 1. Config with future start_at -> 404 scheduled
+    future_config = BioPageConfig(
+        handle="future_launch",
+        title="Upcoming Bio",
+        page_schedule=PageSchedule(
+            enabled=True,
+            start_at=now + timedelta(days=2),
+            end_at=now + timedelta(days=5),
+        ),
+    )
+    await save_my_bio_page(future_config, current_user=user, db=db)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_public_bio_page(handle="future_launch", db=db)
+    assert exc_info.value.status_code == 404
+    assert "scheduled to go live" in exc_info.value.detail.lower()
+
+    # 2. Config with past end_at -> 404 expired
+    expired_config = BioPageConfig(
+        handle="future_launch",
+        title="Expired Bio",
+        page_schedule=PageSchedule(
+            enabled=True,
+            start_at=now - timedelta(days=5),
+            end_at=now - timedelta(days=1),
+        ),
+    )
+    await save_my_bio_page(expired_config, current_user=user, db=db)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_public_bio_page(handle="future_launch", db=db)
+    assert exc_info.value.status_code == 404
+    assert "expired on" in exc_info.value.detail.lower()
+
+    # 3. Config with valid current window -> 200 OK
+    live_config = BioPageConfig(
+        handle="future_launch",
+        title="Live Timed Bio",
+        page_schedule=PageSchedule(
+            enabled=True,
+            start_at=now - timedelta(hours=2),
+            end_at=now + timedelta(hours=2),
+        ),
+    )
+    await save_my_bio_page(live_config, current_user=user, db=db)
+    pub = await get_public_bio_page(handle="future_launch", db=db)
+    assert pub["title"] == "Live Timed Bio"
+
+
+@pytest.mark.asyncio
+async def test_bio_page_permanent_deletion():
+    db = _FakeDB()
+    user = {"user_id": "usr_del1", "default_workspace_id": "ws_del1", "name": "Deleting Creator"}
+
+    # 1. Setup page with lead
+    config = BioPageConfig(
+        handle="to_delete_page",
+        title="To Be Erased",
+    )
+    await save_my_bio_page(config, current_user=user, db=db)
+    page_doc = await db.bio_pages.find_one({"handle": "to_delete_page"})
+    page_id = page_doc["_id"]
+
+    # Insert lead and analytics record
+    await db.workspace_leads.insert_one({"page_id": page_id, "email": "lead@test.com"})
+    await db.bio_analytics.insert_one({"page_id": page_id, "event_type": "click"})
+
+    assert len(db.bio_pages.items) == 1
+    assert len(db.workspace_leads.items) == 1
+    assert len(db.bio_analytics.items) == 1
+
+    # 2. Call delete_my_bio_page
+    del_res = await delete_my_bio_page(current_user=user, db=db)
+    assert del_res["success"] is True
+    assert "permanently deleted" in del_res["message"]
+
+    # 3. Verify clean deletion
+    assert len(db.bio_pages.items) == 0
+    assert len(db.workspace_leads.items) == 0
+    assert len(db.bio_analytics.items) == 0
+
+    # 4. Public access now returns 404
+    with pytest.raises(HTTPException) as exc_info:
+        await get_public_bio_page(handle="to_delete_page", db=db)
+    assert exc_info.value.status_code == 404

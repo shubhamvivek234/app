@@ -7,10 +7,11 @@ Branch: main
 Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
 
 ## Last Session Completed
-Date: 2026-09-08
+Date: 2026-09-09
 Completed:
-- Collapsed Sidebar Unravler Logo: In `DashboardLayout.js`, replaced legacy placeholder star (`✦`) with official `<UnravlerLogo size="small" showText={false} color="white" />` centered inside a circular (`rounded-full`) solid black button (`bg-black text-white`). Extended `UnravlerLogo.js` to support `color="white"` / `forceWhite`. Also updated `PublicCalendar.js`.
-- Verification: Frontend production build passed (`CI=true npm run build --prefix frontend`) and backend test suite passed.
+- Smart Bio Scheduled Visibility Window: Added optional `page_schedule` (`enabled`, `start_at`, `end_at`) to bio backend and frontend. Pages outside window safely return 404 with friendly Apple-styled "Coming Soon" or "Page Expired" status cards. Studio top header shows live schedule status pill.
+- Smart Bio Permanent Deletion: Added `DELETE /bio-pages/mine` and `DELETE /bio/me` to erase MongoDB page record, release handle, and wipe analytics & leads. Implemented Apple-styled confirmation modal requiring handle typing before permanent deletion.
+- Verification: Frontend production build (`CI=true npm run build --prefix frontend`) passed (exit code 0); 358 backend unit tests passed (including new schedule & deletion tests).
 
 ## Active Work
 Currently implementing: None

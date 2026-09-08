@@ -8,6 +8,13 @@ class BlockSchedule(BaseModel):
     end_at: datetime | None = None
 
 
+class PageSchedule(BaseModel):
+    model_config = {"extra": "allow"}
+    enabled: bool = False
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+
+
 class BioBlockItem(BaseModel):
     id: str
     type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group"]
@@ -107,6 +114,7 @@ class BioPageUpdate(BaseModel):
     custom_domain: str = ""
     seo: SeoConfig | None = None
     published: bool = True
+    page_schedule: PageSchedule = Field(default_factory=PageSchedule)
 
 
 class BioPageResponse(BaseModel):
@@ -123,6 +131,7 @@ class BioPageResponse(BaseModel):
     custom_domain: str
     seo: SeoConfig
     published: bool
+    page_schedule: PageSchedule = Field(default_factory=PageSchedule)
     total_views: int = 0
     total_clicks: int = 0
     created_at: datetime

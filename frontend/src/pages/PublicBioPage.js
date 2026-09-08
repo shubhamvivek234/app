@@ -27,8 +27,10 @@ import {
   FaFolder,
   FaChevronUp,
   FaChevronDown,
+  FaClock,
 } from 'react-icons/fa';
 import {
+  loadGoogleFont,
   getTactileCardStyles,
   getProfileAvatarStyles,
   getBlockSpacingPx,
@@ -87,6 +89,13 @@ export default function PublicBioPage() {
     if (cleanHandle) fetchPage();
   }, [cleanHandle]);
 
+  // Load Google Font dynamically
+  useEffect(() => {
+    if (data?.theme?.font_family) {
+      loadGoogleFont(data.theme.font_family);
+    }
+  }, [data?.theme?.font_family]);
+
   const handleLinkClick = async (block) => {
     try {
       trackBioLinkClick(cleanHandle, block.id);
@@ -131,12 +140,77 @@ export default function PublicBioPage() {
   }
 
   if (error || !data) {
+    const errorStr = String(error || '');
+    const isScheduled = errorStr.toLowerCase().includes('scheduled') || errorStr.toLowerCase().includes('go live');
+    const isExpired = errorStr.toLowerCase().includes('expired');
+
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4 text-white text-center">
-        <div className="max-w-sm w-full bg-zinc-900 rounded-3xl p-8 border border-zinc-800 space-y-3">
-          <FaExclamationTriangle className="text-3xl text-amber-400 mx-auto" />
-          <h2 className="text-lg font-bold">Page Not Found</h2>
-          <p className="text-xs text-zinc-400">@{cleanHandle} does not exist or has been made private.</p>
+      <div className="min-h-screen bg-[#F5F5F7] dark:bg-[#000000] flex items-center justify-center p-4 text-center font-sans">
+        <div className="max-w-md w-full bg-white/90 dark:bg-[#1C1C1E]/90 backdrop-blur-2xl rounded-[32px] p-8 border border-black/[0.08] dark:border-white/[0.12] shadow-2xl space-y-5 text-gray-900 dark:text-white animate-in fade-in zoom-in-95 duration-200">
+          {isScheduled ? (
+            <>
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/50 flex items-center justify-center text-[#0071E3] text-2xl mx-auto shadow-sm">
+                <FaClock />
+              </div>
+              <div className="space-y-1.5">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-[#0071E3] border border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800/40">
+                  Scheduled Launch
+                </span>
+                <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white pt-1">
+                  Coming Soon
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 max-w-xs mx-auto leading-relaxed">
+                  {errorStr || `@${cleanHandle}'s Smart Bio is scheduled to go live soon.`}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.05] dark:border-white/[0.06] text-[11px] text-gray-500 dark:text-gray-400">
+                Please check back later or contact the creator directly.
+              </div>
+            </>
+          ) : isExpired ? (
+            <>
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 flex items-center justify-center text-amber-600 dark:text-amber-400 text-2xl mx-auto shadow-sm">
+                <FaClock />
+              </div>
+              <div className="space-y-1.5">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800/40">
+                  Visibility Concluded
+                </span>
+                <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white pt-1">
+                  Page Expired
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 max-w-xs mx-auto leading-relaxed">
+                  {errorStr || `The scheduled live window for @${cleanHandle} has ended.`}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-14 h-14 rounded-2xl bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/60 flex items-center justify-center text-zinc-500 text-2xl mx-auto shadow-sm">
+                <FaExclamationTriangle className="text-amber-500" />
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white">
+                  Page Not Found
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 max-w-xs mx-auto leading-relaxed">
+                  @{cleanHandle} does not exist, has been unpublished, or was permanently deleted.
+                </p>
+              </div>
+            </>
+          )}
+
+          <div className="pt-2 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-center gap-1 text-[11px] text-gray-400">
+            <span>Powered by</span>
+            <a
+              href="https://unravler.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-gray-700 dark:text-gray-300 hover:text-[#0071E3] transition-colors"
+            >
+              Unravler Smart Bio
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -228,11 +302,11 @@ export default function PublicBioPage() {
       <div className={`max-w-md w-full relative z-10 flex flex-col items-center px-4 space-y-5 ${headerLayout === 'banner' ? '-mt-14' : 'pt-12'}`}>
         
         {/* HEADER ARCHITECTURE 1: Classic Centered */}
-        {headerLayout === 'classic' && (
+        {(!headerLayout || headerLayout === 'centered' || headerLayout === 'classic') && (
           <div className="flex flex-col items-center text-center space-y-3.5">
             <div
               style={avatarStyles}
-              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5"
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
                 <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
@@ -254,6 +328,134 @@ export default function PublicBioPage() {
                 <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
                   {data.bio}
                 </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 2: Top-Left Stacked */}
+        {headerLayout === 'left_stacked' && (
+          <div className="w-full flex flex-col items-start text-left space-y-3 px-1">
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
+            >
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1 w-full">
+              <h1 className="text-xl font-black tracking-tight flex items-center gap-1.5" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-1 leading-relaxed" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 3: Left Row (Inline) */}
+        {(headerLayout === 'left_row' || headerLayout === 'minimal_left') && (
+          <div className="w-full flex items-center gap-4 text-left px-1">
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
+            >
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1 flex-1 min-w-0">
+              <h1 className="text-lg font-black tracking-tight flex items-center gap-1.5 truncate" style={{ color: theme.text_color }}>
+                {data.title}
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 4: Top-Right Stacked */}
+        {headerLayout === 'right_stacked' && (
+          <div className="w-full flex flex-col items-end text-right space-y-3 px-1">
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
+            >
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
+              )}
+            </div>
+            <div className="space-y-1 w-full">
+              <h1 className="text-xl font-black tracking-tight flex items-center justify-end gap-1.5" style={{ color: theme.text_color }}>
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
+                {data.title}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-1 leading-relaxed" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* HEADER ARCHITECTURE 5: Right Row (Inline) */}
+        {headerLayout === 'right_row' && (
+          <div className="w-full flex items-center justify-between gap-4 text-right px-1">
+            <div className="space-y-1 flex-1 min-w-0">
+              <h1 className="text-lg font-black tracking-tight flex items-center justify-end gap-1.5 truncate" style={{ color: theme.text_color }}>
+                {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
+                {data.title}
+              </h1>
+              <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
+                @{data.handle}
+              </p>
+              {data.bio && (
+                <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
+                  {data.bio}
+                </p>
+              )}
+            </div>
+            <div
+              style={avatarStyles}
+              className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
+            >
+              {data.avatar_url ? (
+                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
+                  {data.title ? data.title[0] : 'U'}
+                </span>
               )}
             </div>
           </div>

@@ -5,6 +5,7 @@ import { useTheme } from '@/context/ThemeContext';
 import {
   getMyBioPage,
   saveMyBioPage,
+  deleteMyBioPage,
 } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -41,14 +42,20 @@ import {
   FaWifi,
   FaBatteryFull,
   FaSignal,
+  FaChartLine,
+  FaClock,
+  FaTrashAlt,
+  FaExclamationTriangle,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky } from 'react-icons/si';
 
 import BioOutlineTree from '@/components/bio/BioOutlineTree';
 import BioInspectorDrawer from '@/components/bio/BioInspectorDrawer';
 import BioBlockEditorModal from '@/components/bio/BioBlockEditorModal';
+import BioAnalyticsModal from '@/components/bio/BioAnalyticsModal';
 import {
   THEME_PRESETS,
+  loadGoogleFont,
   getTactileCardStyles,
   getProfileAvatarStyles,
   getBlockSpacingPx,
@@ -112,6 +119,7 @@ export default function LinkInBio() {
   const [editingBlock, setEditingBlock] = useState(null);
   const [addBlockModalOpen, setAddBlockModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
   const [deletedBlocks, setDeletedBlocks] = useState([]);
   const [activeFolders, setActiveFolders] = useState({});
@@ -123,9 +131,95 @@ export default function LinkInBio() {
   const historyIdxRef = useRef(-1);
   historyIdxRef.current = historyIdx;
 
+  // Scheduling & Visibility state
+  const [pageSchedule, setPageSchedule] = useState({
+    enabled: false,
+    start_at: '',
+    end_at: '',
+  });
+  const [isPublished, setIsPublished] = useState(true);
+
+  // Permanent Delete Modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Format ISO strings to datetime-local input value (YYYY-MM-DDTHH:mm)
+  const formatIsoToLocalInput = (isoStr) => {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch {
+      return '';
+    }
+  };
+
+  // Convert datetime-local input to ISO string for API
+  const formatLocalToIso = (localStr) => {
+    if (!localStr) return null;
+    try {
+      const d = new Date(localStr);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString();
+    } catch {
+      return null;
+    }
+  };
+
+  // Compute live schedule status badge
+  const getScheduleStatus = () => {
+    if (!isPublished) {
+      return {
+        label: 'Unpublished',
+        dot: 'bg-zinc-400',
+        color: 'bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700',
+      };
+    }
+    if (!pageSchedule?.enabled) {
+      return {
+        label: 'Live',
+        dot: 'bg-emerald-500',
+        color: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800/40',
+      };
+    }
+    const now = new Date();
+    const start = pageSchedule.start_at ? new Date(pageSchedule.start_at) : null;
+    const end = pageSchedule.end_at ? new Date(pageSchedule.end_at) : null;
+
+    if (start && !isNaN(start.getTime()) && now < start) {
+      return {
+        label: 'Scheduled',
+        dot: 'bg-blue-500',
+        color: 'bg-blue-50 text-[#0071E3] border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800/40',
+      };
+    }
+    if (end && !isNaN(end.getTime()) && now > end) {
+      return {
+        label: 'Expired',
+        dot: 'bg-amber-500',
+        color: 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800/40',
+      };
+    }
+    return {
+      label: 'Live (Timed)',
+      dot: 'bg-emerald-500',
+      color: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-800/40',
+    };
+  };
+
   const publicUrl = handle
     ? `${window.location.origin}/bio/${handle}${activePageId !== 'home' ? `?page=${pages.find((p) => p.id === activePageId)?.slug || activePageId}` : ''}`
     : '';
+
+  // Dynamically load Google Font
+  useEffect(() => {
+    if (theme?.font_family) {
+      loadGoogleFont(theme.font_family);
+    }
+  }, [theme?.font_family]);
 
   // Initial Load
   useEffect(() => {
@@ -133,8 +227,8 @@ export default function LinkInBio() {
       try {
         setLoading(true);
         const res = await getMyBioPage();
-        if (res && res.data) {
-          const d = res.data;
+        const d = res?.data || res;
+        if (d && (d.handle || d.title || d.blocks)) {
           setHandle(d.handle || '');
           setTitle(d.title || '');
           setBio(d.bio || '');
@@ -145,6 +239,18 @@ export default function LinkInBio() {
           if (d.custom_domain) setCustomDomain(d.custom_domain);
           if (d.seo) setSeo(d.seo);
           if (d.auto_sync_instagram_grid !== undefined) setAutoSyncGrid(d.auto_sync_instagram_grid);
+
+          if (d.page_schedule) {
+            setPageSchedule({
+              enabled: Boolean(d.page_schedule.enabled),
+              start_at: formatIsoToLocalInput(d.page_schedule.start_at),
+              end_at: formatIsoToLocalInput(d.page_schedule.end_at),
+            });
+          }
+
+          if (d.is_published !== undefined) {
+            setIsPublished(Boolean(d.is_published));
+          }
 
           if (d.theme) {
             setTheme((prev) => ({ ...prev, ...d.theme }));
@@ -260,24 +366,73 @@ export default function LinkInBio() {
           meta_image_url: seo?.meta_image_url || seo?.og_image || avatarUrl || '',
         },
         auto_sync_instagram_grid: autoSyncGrid,
-        is_published: true,
+        is_published: Boolean(isPublished),
+        page_schedule: {
+          enabled: Boolean(pageSchedule?.enabled),
+          start_at: formatLocalToIso(pageSchedule?.start_at),
+          end_at: formatLocalToIso(pageSchedule?.end_at),
+        },
       };
       const res = await saveMyBioPage(payload);
       const savedHandle = res?.handle || safeHandle;
       if (res && res.handle) {
         setHandle(res.handle);
       }
-      toast.success('✨ Smart Bio published live! Opening in new tab…');
+      toast.success(isPublished ? '✨ Smart Bio saved live!' : 'Smart Bio saved in draft mode.');
 
-      // Automatically open the published public bio in a new tab
-      const targetUrl = `${window.location.origin}/bio/${savedHandle}`;
-      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      // If published, open the public bio in a new tab
+      if (isPublished) {
+        const targetUrl = `${window.location.origin}/bio/${savedHandle}`;
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      }
     } catch (err) {
       console.error('Save bio error:', err);
       const errMsg = err?.response?.data?.detail || err?.message || 'Failed to save Smart Bio';
       toast.error(errMsg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Permanent Deletion Handler
+  const handlePermanentDelete = async () => {
+    if (deleteConfirmText.trim().toLowerCase() !== handle.trim().toLowerCase()) {
+      toast.error(`Please type "${handle}" exactly to confirm deletion.`);
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      await deleteMyBioPage();
+      toast.success('Your Smart Bio page has been permanently deleted.');
+      setDeleteModalOpen(false);
+      setDeleteConfirmText('');
+      // Reset state to initial defaults
+      const freshHandle = `user_${Math.random().toString(36).slice(2, 7)}`;
+      setHandle(freshHandle);
+      setTitle('My Bio');
+      setBio('');
+      setAvatarUrl('');
+      setBannerUrl('');
+      setBlocks([]);
+      setPages([{ id: 'home', title: 'Home', slug: 'home', blocks: [] }]);
+      setPageSchedule({ enabled: false, start_at: '', end_at: '' });
+      setIsPublished(false);
+      setSocialLinks({
+        instagram: '',
+        twitter: '',
+        youtube: '',
+        linkedin: '',
+        tiktok: '',
+        spotify: '',
+        github: '',
+        discord: '',
+      });
+    } catch (err) {
+      console.error('Delete bio error:', err);
+      const errMsg = err?.response?.data?.detail || err?.message || 'Failed to delete Smart Bio page';
+      toast.error(errMsg);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -413,8 +568,19 @@ export default function LinkInBio() {
                 <UnravlerLogo size="small" showText={false} darkText={isDarkMode} />
               </div>
               <div className="min-w-0">
-                <div className="font-bold text-xs text-gray-900 dark:text-white tracking-tight">
-                  Smart Bio Studio
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-xs text-gray-900 dark:text-white tracking-tight">
+                    Smart Bio Studio
+                  </span>
+                  {(() => {
+                    const st = getScheduleStatus();
+                    return (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1.5 ${st.color}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+                        <span>{st.label}</span>
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="flex items-center text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate">
                   <span>unravler.com/bio/</span>
@@ -488,6 +654,16 @@ export default function LinkInBio() {
                 +
               </button>
             </div>
+
+            {/* Live Analytics Modal Trigger */}
+            <button
+              onClick={() => setAnalyticsModalOpen(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C] shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              title="View Live Analytics"
+            >
+              <FaChartLine className="text-[#0071E3] text-xs" />
+              <span>Analytics</span>
+            </button>
 
             {publicUrl && (
               <button
@@ -639,36 +815,9 @@ export default function LinkInBio() {
                       </div>
                     )}
 
-                    {/* Profile & Avatar Header Layout */}
-                    {theme.header_layout === 'minimal_left' ? (
-                      <div className="w-full flex items-center gap-3.5 text-left mb-2 px-1">
-                        <div
-                          style={avatarStyles}
-                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
-                        >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
-                              {title ? title[0] : 'U'}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
-                            </h2>
-                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
-                          </div>
-                          {bio && (
-                            <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
+                    {/* Profile & Avatar Header Layout (5 Layout Architectures) */}
+                    {/* 1. Centered */}
+                    {(!theme.header_layout || theme.header_layout === 'centered' || theme.header_layout === 'classic') && (
                       <div className="space-y-2.5 text-center mb-2 flex flex-col items-center">
                         <div
                           style={avatarStyles}
@@ -698,7 +847,131 @@ export default function LinkInBio() {
                       </div>
                     )}
 
-                    {/* Social Dock Pills */}
+                    {/* 2. Left Stacked */}
+                    {theme.header_layout === 'left_stacked' && (
+                      <div className="w-full flex flex-col items-start text-left mb-2 px-1 space-y-2">
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 w-full">
+                          <div className="flex items-center gap-1.5">
+                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
+                          </div>
+                          {bio && (
+                            <p className="text-xs leading-relaxed opacity-80 mt-0.5" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3. Left Row (Inline) */}
+                    {(theme.header_layout === 'left_row' || theme.header_layout === 'minimal_left') && (
+                      <div className="w-full flex items-center gap-3.5 text-left mb-2 px-1">
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
+                          </div>
+                          {bio && (
+                            <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4. Right Stacked */}
+                    {theme.header_layout === 'right_stacked' && (
+                      <div className="w-full flex flex-col items-end text-right mb-2 px-1 space-y-2">
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 w-full">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
+                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                          </div>
+                          {bio && (
+                            <p className="text-xs leading-relaxed opacity-80 mt-0.5" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 5. Right Row (Inline) */}
+                    {theme.header_layout === 'right_row' && (
+                      <div className="w-full flex items-center justify-between gap-3.5 text-right mb-2 px-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
+                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                          </div>
+                          {bio && (
+                            <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+{/* Social Dock Pills */}
                     {socialLinks && Object.values(socialLinks).some(Boolean) && (
                       <div className="flex items-center justify-center gap-3 py-1.5 px-4 rounded-full bg-white/10 backdrop-blur-xl border border-white/15 text-xs text-white">
                         {Object.entries(socialLinks).map(([plat, url]) => {
@@ -908,6 +1181,14 @@ export default function LinkInBio() {
               setTheme={setTheme}
               socialLinks={socialLinks}
               setSocialLinks={setSocialLinks}
+              pageSchedule={pageSchedule}
+              setPageSchedule={setPageSchedule}
+              isPublished={isPublished}
+              setIsPublished={setIsPublished}
+              onDeletePage={() => {
+                setDeleteConfirmText('');
+                setDeleteModalOpen(true);
+              }}
               onUndo={handleUndo}
               onRedo={handleRedo}
               canUndo={historyIdx > 0}
@@ -985,6 +1266,14 @@ export default function LinkInBio() {
           </div>
         )}
 
+        {/* 4. Live Analytics Modal */}
+        <BioAnalyticsModal
+          isOpen={analyticsModalOpen}
+          onClose={() => setAnalyticsModalOpen(false)}
+          handle={handle}
+          publicUrl={publicUrl}
+        />
+
         {/* 3. QR Code Live Testing Modal (Apple Style) */}
         {qrModalOpen && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
@@ -1007,6 +1296,89 @@ export default function LinkInBio() {
               </div>
               <div className="p-2.5 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] font-mono text-xs text-blue-600 dark:text-blue-400 truncate border border-black/[0.06] dark:border-white/[0.08]">
                 {publicUrl}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. Apple-Inspired Permanent Delete Confirmation Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-rose-200 dark:border-rose-900/40 rounded-[28px] max-w-md w-full p-6 shadow-2xl space-y-4 text-gray-900 dark:text-white">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 flex items-center justify-center text-rose-600 dark:text-rose-400 text-lg shadow-sm">
+                    <FaTrashAlt />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                      Delete Smart Bio Page?
+                    </h3>
+                    <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                      This action cannot be undone
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDeleteModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-2 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 text-xs text-gray-700 dark:text-gray-300 leading-relaxed space-y-2">
+                <p>
+                  You are about to permanently delete your public page <strong className="font-mono text-gray-900 dark:text-white">unravler.com/bio/{handle}</strong>.
+                </p>
+                <ul className="list-disc list-inside text-[11px] text-gray-600 dark:text-gray-400 space-y-1">
+                  <li>Your custom blocks, design presets, and themes will be wiped</li>
+                  <li>Visitor clicks and impression analytics will be deleted</li>
+                  <li>All captured subscriber email leads will be permanently erased</li>
+                  <li>The handle <span className="font-mono font-semibold text-gray-900 dark:text-white">@{handle}</span> will be released immediately</li>
+                </ul>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-700 dark:text-gray-300 block">
+                  To confirm deletion, type your handle <span className="font-mono font-bold text-rose-600 dark:text-rose-400">"{handle}"</span> below:
+                </label>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder={`Type "${handle}" to confirm`}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-white dark:bg-[#2C2C2E] border border-black/[0.1] dark:border-white/[0.12] text-gray-900 dark:text-white outline-none focus:border-rose-500 transition font-mono"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteConfirmText.trim().toLowerCase() !== handle.trim().toLowerCase() || isDeleting}
+                  onClick={handlePermanentDelete}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm transition-all flex items-center gap-2 cursor-pointer active:scale-[0.98]"
+                >
+                  {isDeleting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Deleting…</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaTrashAlt className="text-[11px]" />
+                      <span>Permanently Delete Page</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>

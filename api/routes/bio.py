@@ -9,6 +9,7 @@ from api.deps import CurrentUser, DB, require_permission
 from api.models.bio import (
     BioPageResponse,
     BioPageUpdate,
+    PageSchedule,
     SeoConfig,
     ThemeConfig,
 )
@@ -120,6 +121,7 @@ async def get_my_bio_page(
         custom_domain=page.get("custom_domain", ""),
         seo=SeoConfig(**(page.get("seo") or {})),
         published=page.get("published", True),
+        page_schedule=PageSchedule(**(page.get("page_schedule") or {})),
         total_views=page.get("total_views", 0),
         total_clicks=page.get("total_clicks", 0),
         created_at=page.get("created_at", now),
@@ -160,6 +162,7 @@ async def update_my_bio_page(
         "custom_domain": body.custom_domain.strip().lower(),
         "seo": (body.seo or SeoConfig()).model_dump(),
         "published": body.published,
+        "page_schedule": body.page_schedule.model_dump() if body.page_schedule else {"enabled": False, "start_at": None, "end_at": None},
         "updated_at": now,
     }
 
@@ -197,6 +200,7 @@ async def update_my_bio_page(
         custom_domain=result.get("custom_domain", ""),
         seo=SeoConfig(**(result.get("seo") or {})),
         published=result.get("published", True),
+        page_schedule=PageSchedule(**(result.get("page_schedule") or {})),
         total_views=result.get("total_views", 0),
         total_clicks=result.get("total_clicks", 0),
         created_at=result.get("created_at", now),
@@ -287,3 +291,29 @@ async def export_bio_leads_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=unravler_bio_leads_{int(datetime.now().timestamp())}.csv"},
     )
+
+
+@router.delete("/me")
+async def delete_my_bio_page(
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Permanently delete the current workspace's Smart Bio page and associated analytics."""
+    user_id = current_user["user_id"]
+    workspace_id = current_user.get("default_workspace_id") or user_id
+
+    page = await db.bio_pages.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+    if not page:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Smart Bio page found to delete.")
+
+    page_id = page["_id"]
+    handle = page.get("handle", "")
+
+    await db.bio_pages.delete_one({"_id": page_id})
+    await db.bio_analytics.delete_many({"page_id": page_id})
+    await db.workspace_leads.delete_many({"page_id": page_id})
+
+    return {
+        "success": True,
+        "message": f"Smart Bio page '@{handle}' and all associated data have been permanently deleted.",
+    }
