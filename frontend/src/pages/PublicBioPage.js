@@ -229,6 +229,10 @@ export default function PublicBioPage() {
   const avatarStyles = getProfileAvatarStyles(theme);
   const blockGapPx = getBlockSpacingPx(theme);
   const socialIconPx = getSocialIconSizePx(theme);
+  const headerAvatarSizePx = (theme.profile_picture_size !== undefined && Number(theme.profile_picture_size) >= 48)
+    ? Number(theme.profile_picture_size)
+    : 96;
+  const headerTitleClass = headerAvatarSizePx <= 64 ? 'text-lg' : headerAvatarSizePx <= 100 ? 'text-xl' : 'text-2xl';
 
   const toggleFolder = (blockId) => {
     setExpandedFolders((prev) => ({ ...prev, [blockId]: !prev[blockId] }));
@@ -317,7 +321,7 @@ export default function PublicBioPage() {
               )}
             </div>
             <div className="space-y-1.5 max-w-sm">
-              <h1 className="text-xl font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
+              <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-center gap-1.5`} style={{ color: theme.text_color }}>
                 {data.title}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
               </h1>
@@ -349,7 +353,7 @@ export default function PublicBioPage() {
               )}
             </div>
             <div className="space-y-1 w-full">
-              <h1 className="text-xl font-black tracking-tight flex items-center gap-1.5" style={{ color: theme.text_color }}>
+              <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center gap-1.5`} style={{ color: theme.text_color }}>
                 {data.title}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
               </h1>
@@ -381,7 +385,7 @@ export default function PublicBioPage() {
               )}
             </div>
             <div className="space-y-1 flex-1 min-w-0">
-              <h1 className="text-lg font-black tracking-tight flex items-center gap-1.5 truncate" style={{ color: theme.text_color }}>
+              <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center gap-1.5 truncate`} style={{ color: theme.text_color }}>
                 {data.title}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
               </h1>
@@ -413,7 +417,7 @@ export default function PublicBioPage() {
               )}
             </div>
             <div className="space-y-1 w-full">
-              <h1 className="text-xl font-black tracking-tight flex items-center justify-end gap-1.5" style={{ color: theme.text_color }}>
+              <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-end gap-1.5`} style={{ color: theme.text_color }}>
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
                 {data.title}
               </h1>
@@ -433,7 +437,7 @@ export default function PublicBioPage() {
         {headerLayout === 'right_row' && (
           <div className="w-full flex items-center justify-between gap-4 text-right px-1">
             <div className="space-y-1 flex-1 min-w-0">
-              <h1 className="text-lg font-black tracking-tight flex items-center justify-end gap-1.5 truncate" style={{ color: theme.text_color }}>
+              <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-end gap-1.5 truncate`} style={{ color: theme.text_color }}>
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
                 {data.title}
               </h1>

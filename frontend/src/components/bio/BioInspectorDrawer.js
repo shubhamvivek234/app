@@ -69,6 +69,7 @@ export default function BioInspectorDrawer({
   setPageSchedule,
   isPublished = true,
   setIsPublished,
+  onOpenScheduleModal,
   onDeletePage,
   onUndo,
   onRedo,
@@ -355,7 +356,58 @@ export default function BioInspectorDrawer({
                   </div>
                   <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
                 </button>
+              </div>
 
+              {/* Header & Avatar Size Slider */}
+              <div className="mt-3.5 p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-gray-800 dark:text-gray-200">
+                    Header & Avatar Size
+                  </span>
+                  <span className="font-mono text-[11px] font-bold text-[#0071E3]">
+                    {theme.profile_picture_size ?? 96}px
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  className="apple-slider w-full"
+                  min="48"
+                  max="140"
+                  step="4"
+                  value={theme.profile_picture_size ?? 96}
+                  onChange={(e) =>
+                    setTheme((prev) => ({ ...prev, profile_picture_size: Number(e.target.value) }))
+                  }
+                />
+                <div className="flex justify-between items-center text-[10px] text-gray-400 font-medium pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, profile_picture_size: 64 }))}
+                    className={`px-1.5 py-0.5 rounded hover:text-gray-700 dark:hover:text-gray-300 transition ${
+                      (theme.profile_picture_size ?? 96) === 64 ? 'font-bold text-[#0071E3]' : ''
+                    }`}
+                  >
+                    Compact (64px)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, profile_picture_size: 96 }))}
+                    className={`px-1.5 py-0.5 rounded hover:text-gray-700 dark:hover:text-gray-300 transition ${
+                      (theme.profile_picture_size ?? 96) === 96 ? 'font-bold text-[#0071E3]' : ''
+                    }`}
+                  >
+                    Standard (96px)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => ({ ...prev, profile_picture_size: 128 }))}
+                    className={`px-1.5 py-0.5 rounded hover:text-gray-700 dark:hover:text-gray-300 transition ${
+                      (theme.profile_picture_size ?? 96) === 128 ? 'font-bold text-[#0071E3]' : ''
+                    }`}
+                  >
+                    Large (128px)
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -719,11 +771,20 @@ export default function BioInspectorDrawer({
                     <button
                       type="button"
                       onClick={() => setPageSchedule?.((prev) => ({ ...prev, start_at: '', end_at: '' }))}
-                      className="text-[10px] text-rose-500 hover:text-rose-600 underline font-medium"
+                      className="text-[10px] text-rose-500 hover:text-rose-600 underline font-medium block"
                     >
                       Clear schedule times
                     </button>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => onOpenScheduleModal?.()}
+                    className="w-full py-1.5 px-3 rounded-xl border border-black/[0.08] dark:border-white/[0.1] bg-white dark:bg-[#2C2C2E] text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer active:scale-98"
+                  >
+                    <FaCalendarAlt className="text-[10px] text-[#0071E3]" />
+                    <span>Open Schedule Window Manager</span>
+                  </button>
                 </div>
               )}
             </div>

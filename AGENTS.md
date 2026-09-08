@@ -9,9 +9,10 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-09
 Completed:
-- Smart Bio Scheduled Visibility Window: Added optional `page_schedule` (`enabled`, `start_at`, `end_at`) to bio backend and frontend. Pages outside window safely return 404 with friendly Apple-styled "Coming Soon" or "Page Expired" status cards. Studio top header shows live schedule status pill.
-- Smart Bio Permanent Deletion: Added `DELETE /bio-pages/mine` and `DELETE /bio/me` to erase MongoDB page record, release handle, and wipe analytics & leads. Implemented Apple-styled confirmation modal requiring handle typing before permanent deletion.
-- Verification: Frontend production build (`CI=true npm run build --prefix frontend`) passed (exit code 0); 358 backend unit tests passed (including new schedule & deletion tests).
+- Smart Bio Scheduled Visibility Window & Modal: Added optional `page_schedule` (`enabled`, `start_at`, `end_at`) to bio backend and frontend. Added prominent `[ 🕒 Schedule ]` button in Studio top bar, made top status badge clickable, and created Apple-styled `BioScheduleModal.js` with 1-click presets (24h, 3d, 7d) and live status preview.
+- Smart Bio Header Size Slider: Added slide bar directly under Header Layout choices in Styles tab (48px to 140px with Compact, Standard, Hero presets) with proportional avatar and typography scaling in studio & public view.
+- Smart Bio Analytics Modal Overhaul: Redesigned with Double-Bezel Apple architecture, segmented tabs (Overview, Top Links, Traffic Sources), 7-day trend bars, hardware split, and Esc / backdrop dismissal.
+- Verification: Frontend production build passed (exit code 0); 356 pytest unit tests passed.
 
 ## Active Work
 Currently implementing: None

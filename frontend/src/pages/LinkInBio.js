@@ -53,6 +53,7 @@ import BioOutlineTree from '@/components/bio/BioOutlineTree';
 import BioInspectorDrawer from '@/components/bio/BioInspectorDrawer';
 import BioBlockEditorModal from '@/components/bio/BioBlockEditorModal';
 import BioAnalyticsModal from '@/components/bio/BioAnalyticsModal';
+import BioScheduleModal from '@/components/bio/BioScheduleModal';
 import {
   THEME_PRESETS,
   loadGoogleFont,
@@ -120,6 +121,7 @@ export default function LinkInBio() {
   const [addBlockModalOpen, setAddBlockModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
   const [deletedBlocks, setDeletedBlocks] = useState([]);
   const [activeFolders, setActiveFolders] = useState({});
@@ -554,6 +556,10 @@ export default function LinkInBio() {
   const avatarStyles = getProfileAvatarStyles(theme);
   const blockGapPx = getBlockSpacingPx(theme);
   const socialIconPx = getSocialIconSizePx(theme);
+  const headerAvatarSizePx = (theme.profile_picture_size !== undefined && Number(theme.profile_picture_size) >= 48)
+    ? Number(theme.profile_picture_size)
+    : 96;
+  const headerTitleClass = headerAvatarSizePx <= 64 ? 'text-lg' : headerAvatarSizePx <= 100 ? 'text-xl' : 'text-2xl';
 
   return (
     <DashboardLayout noPadding={true}>
@@ -575,10 +581,15 @@ export default function LinkInBio() {
                   {(() => {
                     const st = getScheduleStatus();
                     return (
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1.5 ${st.color}`}>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleModalOpen(true)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border flex items-center gap-1.5 cursor-pointer hover:opacity-85 transition active:scale-95 ${st.color}`}
+                        title="Click to configure Scheduled Live Window"
+                      >
                         <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
                         <span>{st.label}</span>
-                      </span>
+                      </button>
                     );
                   })()}
                 </div>
@@ -658,11 +669,25 @@ export default function LinkInBio() {
             {/* Live Analytics Modal Trigger */}
             <button
               onClick={() => setAnalyticsModalOpen(true)}
-              className="px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C] shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C] shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95"
               title="View Live Analytics"
             >
               <FaChartLine className="text-[#0071E3] text-xs" />
               <span>Analytics</span>
+            </button>
+
+            {/* Scheduled Live Window Modal Trigger */}
+            <button
+              onClick={() => setScheduleModalOpen(true)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                pageSchedule?.enabled
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 font-semibold'
+                  : 'text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C]'
+              }`}
+              title="Set Start Time & End Time (Scheduled Live Window)"
+            >
+              <FaClock className={`text-xs ${pageSchedule?.enabled ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'}`} />
+              <span>{pageSchedule?.enabled ? 'Scheduled' : 'Schedule'}</span>
             </button>
 
             {publicUrl && (
@@ -833,7 +858,7 @@ export default function LinkInBio() {
                         </div>
                         <div className="space-y-1 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            <h2 className="text-xl font-bold tracking-tight" style={{ color: theme.text_color || '#FFFFFF' }}>
+                            <h2 className={`${headerTitleClass} font-bold tracking-tight`} style={{ color: theme.text_color || '#FFFFFF' }}>
                               {title || 'Your Name'}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
@@ -864,7 +889,7 @@ export default function LinkInBio() {
                         </div>
                         <div className="min-w-0 w-full">
                           <div className="flex items-center gap-1.5">
-                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                            <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
                               {title || 'Your Name'}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
@@ -895,7 +920,7 @@ export default function LinkInBio() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                            <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
                               {title || 'Your Name'}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
@@ -927,7 +952,7 @@ export default function LinkInBio() {
                         <div className="min-w-0 w-full">
                           <div className="flex items-center justify-end gap-1.5">
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
-                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                            <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
                               {title || 'Your Name'}
                             </h2>
                           </div>
@@ -946,7 +971,7 @@ export default function LinkInBio() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-end gap-1.5">
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
-                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                            <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
                               {title || 'Your Name'}
                             </h2>
                           </div>
@@ -1185,6 +1210,7 @@ export default function LinkInBio() {
               setPageSchedule={setPageSchedule}
               isPublished={isPublished}
               setIsPublished={setIsPublished}
+              onOpenScheduleModal={() => setScheduleModalOpen(true)}
               onDeletePage={() => {
                 setDeleteConfirmText('');
                 setDeleteModalOpen(true);
@@ -1272,6 +1298,15 @@ export default function LinkInBio() {
           onClose={() => setAnalyticsModalOpen(false)}
           handle={handle}
           publicUrl={publicUrl}
+        />
+
+        {/* 5. Scheduled Live Window Modal */}
+        <BioScheduleModal
+          isOpen={scheduleModalOpen}
+          onClose={() => setScheduleModalOpen(false)}
+          pageSchedule={pageSchedule}
+          setPageSchedule={setPageSchedule}
+          handle={handle}
         />
 
         {/* 3. QR Code Live Testing Modal (Apple Style) */}
