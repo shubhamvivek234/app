@@ -405,3 +405,145 @@ code {
     filter: blur(16px);
 }
 
+/* ── Apple macOS Sequoia & iOS 18 Design System ── */
+:root {
+  --apple-blue: #0071E3;
+  --apple-green: #34C759;
+  --apple-gray-bg: #F5F5F7;
+  --apple-panel-bg: rgba(255, 255, 255, 0.82);
+  --apple-card-bg: rgba(255, 255, 255, 0.65);
+  --apple-border: rgba(0, 0, 0, 0.08);
+  --apple-text-primary: #1D1D1F;
+  --apple-text-secondary: #86868B;
+}
+
+.dark {
+  --apple-gray-bg: #000000;
+  --apple-panel-bg: rgba(28, 28, 30, 0.85);
+  --apple-card-bg: rgba(44, 44, 46, 0.65);
+  --apple-border: rgba(255, 255, 255, 0.12);
+  --apple-text-primary: #F5F5F7;
+  --apple-text-secondary: #A1A1A6;
+}
+
+.apple-glass-panel {
+  background: var(--apple-panel-bg);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--apple-border);
+}
+
+.apple-segment-wrapper {
+  background: rgba(118, 118, 128, 0.12);
+  border-radius: 12px;
+  padding: 3px;
+  display: inline-flex;
+}
+.apple-segment-btn {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 9px;
+  color: var(--apple-text-secondary);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.apple-segment-btn.active {
+  background: #FFFFFF;
+  color: var(--apple-text-primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-weight: 600;
+}
+.dark .apple-segment-btn.active {
+  background: #636366;
+  color: #FFFFFF;
+}
+
+input[type=range].apple-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(120, 120, 128, 0.2);
+  outline: none;
+}
+input[type=range].apple-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  cursor: pointer;
+  border: 0.5px solid rgba(0,0,0,0.04);
+}
+
+.apple-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 24px;
+}
+.apple-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.apple-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(120, 120, 128, 0.24);
+  transition: .24s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 999px;
+}
+.apple-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .24s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 50%;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.22);
+}
+input:checked + .apple-switch-slider {
+  background-color: var(--apple-green);
+}
+input:checked + .apple-switch-slider:before {
+  transform: translateX(16px);
+}
+
+.iphone-chassis {
+  box-shadow:
+    0 0 0 1.5px rgba(210, 205, 195, 0.8),
+    0 0 0 4px #1c1b18,
+    0 25px 60px -12px rgba(0, 0, 0, 0.25),
+    0 12px 24px -8px rgba(0, 0, 0, 0.15);
+  border-radius: 52px;
+  position: relative;
+  background: #000;
+  padding: 11px;
+}
+
+.iphone-screen {
+  border-radius: 42px;
+  overflow: hidden;
+  position: relative;
+  background-size: cover;
+  background-position: center;
+}
+
+.ambient-mesh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle 480px at 50% 45%, rgba(0, 113, 227, 0.08), transparent 70%),
+              radial-gradient(circle 380px at 35% 30%, rgba(168, 85, 247, 0.06), transparent 60%);
+  filter: blur(60px);
+  z-index: 0;
+}
+
+

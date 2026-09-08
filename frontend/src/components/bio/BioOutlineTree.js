@@ -5,23 +5,19 @@ import {
   FaEye,
   FaEyeSlash,
   FaCopy,
-  FaChartLine,
-  FaEllipsisV,
+  FaEdit,
   FaChevronDown,
   FaChevronUp,
-  FaBell,
   FaLink,
-  FaShareAlt,
   FaUser,
-  FaPlay,
-  FaEnvelope,
-  FaThLarge,
-  FaFolder,
-  FaFolderOpen,
   FaPlus,
   FaTimes,
   FaCheck,
   FaSitemap,
+  FaFolder,
+  FaBolt,
+  FaPlay,
+  FaEnvelope,
 } from 'react-icons/fa';
 
 export default function BioOutlineTree({
@@ -31,11 +27,15 @@ export default function BioOutlineTree({
   setBio,
   avatarUrl,
   setAvatarUrl,
-  socialLinks,
+  handle = 'user',
+  setHandle,
+  verifiedBadge = false,
+  setVerifiedBadge,
+  socialLinks = {},
   setSocialLinks,
   theme,
   setTheme,
-  blocks,
+  blocks = [],
   setBlocks,
   pages = [],
   activePageId = 'home',
@@ -48,7 +48,7 @@ export default function BioOutlineTree({
   onDuplicateBlock,
   onToggleBlockActive,
   onDeleteBlock,
-  deletedBlocks,
+  deletedBlocks = [],
   onRestoreBlock,
   onClearDeletedBlocks,
   onReorderBlocks,
@@ -57,12 +57,8 @@ export default function BioOutlineTree({
   const [addPageModalOpen, setAddPageModalOpen] = useState(false);
   const [newPageTitle, setNewPageTitle] = useState('');
   const [newPageSlug, setNewPageSlug] = useState('');
-
-  const [headerOpen, setHeaderOpen] = useState(false);
-  const [socialsOpen, setSocialsOpen] = useState(false);
-  const [announceOpen, setAnnounceOpen] = useState(false);
-  const [trashOpen, setTrashOpen] = useState(false);
   const [quickLinkInput, setQuickLinkInput] = useState('');
+  const [trashOpen, setTrashOpen] = useState(false);
   const [draggedIdx, setDraggedIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
 
@@ -71,21 +67,20 @@ export default function BioOutlineTree({
   const handleQuickAddSubmit = (e) => {
     e.preventDefault();
     if (!quickLinkInput.trim()) return;
-    onQuickAddLink(quickLinkInput.trim());
+    onQuickAddLink?.(quickLinkInput.trim());
     setQuickLinkInput('');
   };
 
   const handleCreatePageSubmit = (e) => {
     e.preventDefault();
     if (!newPageTitle.trim()) return;
-    const cleanSlug = (newPageSlug.trim() || newPageTitle.trim().toLowerCase().replace(/[^a-z0-9]/g, '-'));
+    const cleanSlug = newPageSlug.trim() || newPageTitle.trim().toLowerCase().replace(/[^a-z0-9]/g, '-');
     onAddPage?.(newPageTitle.trim(), cleanSlug);
     setNewPageTitle('');
     setNewPageSlug('');
     setAddPageModalOpen(false);
   };
 
-  // Drag and drop handlers
   const handleDragStart = (e, index) => {
     setDraggedIdx(index);
     e.dataTransfer.effectAllowed = 'move';
@@ -102,523 +97,315 @@ export default function BioOutlineTree({
       const updated = [...blocks];
       const [moved] = updated.splice(draggedIdx, 1);
       updated.splice(dragOverIdx, 0, moved);
-      onReorderBlocks(updated);
+      onReorderBlocks?.(updated);
     }
     setDraggedIdx(null);
     setDragOverIdx(null);
   };
 
-  const toggleFolderExpanded = (blockId) => {
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === blockId ? { ...b, is_expanded: !b.is_expanded } : b))
-    );
+  const getBlockGlyph = (blk) => {
+    if (blk.is_featured) return '⚡';
+    if (blk.type === 'video' || blk.media_url?.includes('youtube') || blk.media_url?.includes('vimeo')) return '▶';
+    if (blk.type === 'newsletter' || blk.type === 'email_capture') return '✉️';
+    if (blk.type === 'folder' || blk.type === 'tab_group') return '📁';
+    return '🔗';
   };
 
   return (
     <div className="flex flex-col h-full bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl border-r border-black/[0.06] dark:border-white/[0.08] text-gray-800 dark:text-gray-200 select-none overflow-y-auto custom-scrollbar">
       
-      {/* ── 1. Page Switcher Dropdown (Multi-Page Mini Sites) ── */}
-      <div className="p-3.5 border-b border-black/[0.04] dark:border-white/[0.06] flex items-center justify-between gap-2 relative">
-        <div
-          onClick={() => setPageDropdownOpen(!pageDropdownOpen)}
-          className="flex items-center gap-2 bg-black/[0.03] dark:bg-white/[0.05] hover:bg-black/[0.06] dark:hover:bg-white/[0.08] border border-black/[0.06] dark:border-white/[0.08] rounded-full px-3 py-1.5 cursor-pointer flex-1 transition-all"
-        >
-          <span className="text-[11px] font-semibold text-gray-400 dark:text-gray-500">Page:</span>
-          <span className="text-xs font-bold text-gray-900 dark:text-white truncate">
-            {activePage.title}
+      {/* ── 1. WORKSPACE BIO LIVE PROFILE CARD ── */}
+      <div className="p-4 border-b border-black/[0.04] dark:border-white/[0.06] shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
+            Workspace Bio
           </span>
-          <FaChevronDown className="text-[9px] text-gray-400 dark:text-gray-500 ml-auto" />
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40">
+            Live
+          </span>
         </div>
-
-        <button
-          onClick={() => setAddPageModalOpen(true)}
-          className="px-3 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all whitespace-nowrap flex items-center gap-1.5"
-        >
-          <FaPlus className="text-[9px]" /> Add page
-        </button>
-
-        {/* Page Switcher Popover Menu */}
-        {pageDropdownOpen && (
-          <div className="absolute top-14 left-3.5 right-3.5 z-40 bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] rounded-2xl shadow-xl p-2 space-y-1 animate-in fade-in zoom-in-95 duration-100">
-            <div className="p-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-              Your Site Pages ({pages.length || 1})
-            </div>
-            
-            {/* Default Home Page */}
-            <div
-              onClick={() => { onSelectPage?.('home'); setPageDropdownOpen(false); }}
-              className={`flex items-center justify-between p-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
-                activePageId === 'home'
-                  ? 'bg-blue-50 dark:bg-blue-950/50 text-[#0071E3] dark:text-blue-400'
-                  : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06] text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <FaSitemap className="text-xs text-[#0071E3] dark:text-blue-400" />
-                <span>Home</span>
-                <span className="text-[10px] font-mono opacity-50">(/)</span>
+        <div className="flex items-center gap-3 p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/[0.06]">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 p-[1.5px] shrink-0">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
+            ) : (
+              <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 to-indigo-600 flex items-center justify-center text-xs font-black text-white">
+                {title ? title[0] : 'U'}
               </div>
-              {activePageId === 'home' && <FaCheck className="text-xs" />}
-            </div>
-
-            {/* Custom Sub-Pages */}
-            {pages.filter((p) => p.id !== 'home').map((pg) => (
-              <div
-                key={pg.id}
-                onClick={() => { onSelectPage?.(pg.id); setPageDropdownOpen(false); }}
-                className={`flex items-center justify-between p-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors group ${
-                  activePageId === pg.id
-                    ? 'bg-blue-50 dark:bg-blue-950/50 text-[#0071E3] dark:text-blue-400'
-                    : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06] text-gray-700 dark:text-gray-300'
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <FaFolder className="text-xs text-amber-500 flex-shrink-0" />
-                  <span className="truncate">{pg.title}</span>
-                  <span className="text-[10px] font-mono opacity-50 truncate">
-                    (/{pg.slug})
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {activePageId === pg.id && <FaCheck className="text-xs" />}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onDeletePage?.(pg.id); }}
-                    className="text-gray-500 hover:text-rose-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Delete Page"
-                  >
-                    <FaTrash className="text-[10px]" />
-                  </button>
-                </div>
-              </div>
-            ))}
+            )}
           </div>
-        )}
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold text-gray-900 dark:text-white truncate">
+              {title || 'Your Name'}
+            </div>
+            <div className="text-[11px] text-gray-400 dark:text-gray-500 font-mono truncate">
+              @{handle || 'handle'}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="p-3.5 space-y-2.5 flex-1">
-        
-        {/* ── 2. Collapsible Header Card ── */}
-        <div className="border border-black/[0.06] dark:border-white/[0.08] rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] overflow-hidden transition-all shadow-xs">
-          <button
-            onClick={() => setHeaderOpen(!headerOpen)}
-            className="w-full flex items-center justify-between p-3 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-amber-400 to-rose-500 p-[1px] flex items-center justify-center text-xs font-bold overflow-hidden flex-shrink-0">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
-                ) : (
-                  <FaUser className="text-white text-xs" />
-                )}
-              </div>
-              <span className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate">
-                Profile Identity
-              </span>
-            </div>
-            {headerOpen ? <FaChevronUp className="text-xs text-gray-400" /> : <FaChevronDown className="text-xs text-gray-400" />}
-          </button>
-
-          {headerOpen && (
-            <div className="p-3 pt-0 space-y-2.5 border-t border-black/[0.04] dark:border-white/[0.06] mt-1">
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
-                  Profile Title / Name
-                </label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Your Name or Brand"
-                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl outline-none focus:border-blue-500 font-semibold text-gray-900 dark:text-white transition"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
-                  Bio Description
-                </label>
-                <textarea
-                  rows={2}
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  placeholder="Artist, founder & content creator based in..."
-                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl outline-none focus:border-blue-500 text-gray-800 dark:text-gray-200 resize-none transition"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
-                  Avatar Photo URL
-                </label>
-                <input
-                  type="url"
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  placeholder="https://.../avatar.jpg"
-                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl outline-none focus:border-blue-500 text-gray-800 dark:text-gray-200 font-mono transition"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── 3. Collapsible Socials Strip ── */}
-        <div className="border border-black/[0.06] dark:border-white/[0.08] rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] overflow-hidden transition-all shadow-xs">
-          <button
-            onClick={() => setSocialsOpen(!socialsOpen)}
-            className="w-full flex items-center justify-between p-3 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <FaShareAlt className="text-xs text-blue-500 flex-shrink-0" />
-              <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
-                Connected Socials
-              </span>
-              <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono">
-                ({Object.keys(socialLinks || {}).filter((k) => socialLinks[k]).length})
-              </span>
-            </div>
-            {socialsOpen ? <FaChevronUp className="text-xs text-gray-400" /> : <FaChevronDown className="text-xs text-gray-400" />}
-          </button>
-
-          {socialsOpen && (
-            <div className="p-3 pt-0 space-y-2 border-t border-black/[0.04] dark:border-white/[0.06] mt-1">
-              {['instagram', 'tiktok', 'youtube', 'twitter', 'linkedin', 'spotify', 'github', 'discord'].map((plat) => (
-                <div key={plat} className="flex items-center gap-2">
-                  <span className="w-16 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 capitalize">
-                    {plat === 'twitter' ? 'X' : plat}
-                  </span>
-                  <input
-                    type="text"
-                    value={socialLinks?.[plat] || ''}
-                    onChange={(e) => setSocialLinks({ ...socialLinks, [plat]: e.target.value })}
-                    placeholder={`https://${plat}.com/...`}
-                    className="flex-1 px-3 py-1 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-lg outline-none focus:border-blue-500 text-gray-800 dark:text-gray-200 font-mono transition"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ── 4. Collapsible Announcement Banner ── */}
-        <div className="border border-black/[0.06] dark:border-white/[0.08] rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] overflow-hidden transition-all shadow-xs">
-          <button
-            onClick={() => setAnnounceOpen(!announceOpen)}
-            className="w-full flex items-center justify-between p-3 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.04] transition-colors"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <FaBell className="text-xs text-amber-500 flex-shrink-0" />
-              <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
-                Top Announcement
-              </span>
-              {theme?.announcement_active && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              )}
-            </div>
-            <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline">
-              {theme?.announcement_active ? 'Active' : 'Configure'}
-            </span>
-          </button>
-
-          {announceOpen && (
-            <div className="p-3 pt-0 space-y-2.5 border-t border-black/[0.04] dark:border-white/[0.06] mt-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Show Announcement Bar</span>
-                <input
-                  type="checkbox"
-                  checked={theme?.announcement_active || false}
-                  onChange={(e) => setTheme({ ...theme, announcement_active: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500 accent-blue-600"
-                />
-              </div>
-              <div>
-                <input
-                  type="text"
-                  value={theme?.announcement_banner || ''}
-                  onChange={(e) => setTheme({ ...theme, announcement_banner: e.target.value })}
-                  placeholder="🚀 Summer Drop Live! Free shipping on all orders."
-                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl outline-none focus:border-blue-500 text-gray-900 dark:text-white transition"
-                />
-              </div>
-              <div>
-                <input
-                  type="url"
-                  value={theme?.announcement_url || ''}
-                  onChange={(e) => setTheme({ ...theme, announcement_url: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl outline-none focus:border-blue-500 text-gray-900 dark:text-white font-mono transition"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── 5. Blocks Header & Quick Paste Bar ── */}
-          <div className="pt-2">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-gray-900 dark:text-white">Blocks</span>
-              <span className="text-[10px] font-bold text-gray-500 bg-black/[0.04] dark:bg-white/[0.08] px-2 py-0.5 rounded-full">
-                {blocks.length}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={onOpenAddModal}
-                className="px-3 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-full shadow-xs transition-all flex items-center gap-1 cursor-pointer"
-              >
-                + Add Block
-              </button>
-            </div>
-          </div>
-
-          {/* Quick Paste Input */}
-          <form onSubmit={handleQuickAddSubmit} className="relative mb-3">
-            <input
-              type="text"
-              value={quickLinkInput}
-              onChange={(e) => setQuickLinkInput(e.target.value)}
-              placeholder="Paste a link or search…"
-              className="w-full pl-8 pr-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-full outline-none focus:border-blue-500 text-gray-900 dark:text-white placeholder-gray-400 transition-all shadow-xs"
-            />
-            <FaLink className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-[11px]" />
-          </form>
-
-          {/* Draggable Block Cards List */}
-          <div className="space-y-2">
-            {blocks.map((block, idx) => {
-              const isDragging = draggedIdx === idx;
-              const isOver = dragOverIdx === idx;
-              const isFolder = block.type === 'folder' || block.type === 'tab_group';
-
-              return (
-                <div
-                  key={block.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, idx)}
-                  onDragOver={(e) => handleDragOver(e, idx)}
-                  onDragEnd={handleDragEnd}
-                  className={`group relative rounded-2xl border transition-all duration-200 ${
-                    isDragging
-                      ? 'opacity-40 border-blue-500 bg-blue-50/50 dark:bg-blue-950/40'
-                      : isOver
-                      ? 'border-blue-500 bg-blue-50/40 dark:bg-blue-950/30 translate-y-1'
-                      : isFolder
-                      ? 'border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10'
-                      : block.active !== false
-                      ? 'border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.05] hover:border-blue-500/40 hover:shadow-xs shadow-xs'
-                      : 'border-black/[0.04] dark:border-white/[0.04] bg-black/[0.02] dark:bg-white/[0.02] opacity-50'
-                  }`}
-                >
-                  <div className="p-2.5 flex items-center gap-2.5">
-                    {/* Drag Handle */}
-                    <div className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-0.5">
-                      <FaGripVertical className="text-xs" />
-                    </div>
-
-                    {/* Block Content Info */}
-                    <div
-                      onClick={() => onOpenBlockEditor(block)}
-                      className="flex-1 min-w-0 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        {isFolder ? (
-                          <FaFolder className="text-amber-500 text-xs flex-shrink-0" />
-                        ) : block.type === 'link' ? (
-                          <FaLink className="text-blue-500 text-[10px] flex-shrink-0" />
-                        ) : block.type === 'embed' ? (
-                          <FaPlay className="text-rose-500 text-[10px] flex-shrink-0" />
-                        ) : block.type === 'feed_grid' ? (
-                          <FaThLarge className="text-purple-500 text-[10px] flex-shrink-0" />
-                        ) : (
-                          <FaEnvelope className="text-emerald-500 text-[10px] flex-shrink-0" />
-                        )}
-
-                        <span className="text-xs font-bold text-gray-900 dark:text-white truncate">
-                          {block.title || block.headline || block.url || (isFolder ? 'New Folder' : 'Untitled Link')}
-                        </span>
-
-                        {isFolder && (
-                          <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/50 px-1.5 py-0.2 rounded-md">
-                            Folder
-                          </span>
-                        )}
-                      </div>
-
-                      {block.subtitle && (
-                        <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate mt-0.5">{block.subtitle}</p>
-                      )}
-                      
-                      {/* Sub-actions */}
-                      <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDeleteBlock(block.id); }}
-                          className="hover:text-rose-600 p-0.5 transition"
-                          title="Delete"
-                        >
-                          <FaTrash className="text-[9px]" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onToggleBlockActive(block.id); }}
-                          className="hover:text-gray-700 dark:hover:text-gray-300 p-0.5 transition"
-                          title={block.active !== false ? 'Hide Block' : 'Show Block'}
-                        >
-                          {block.active !== false ? <FaEye className="text-[10px]" /> : <FaEyeSlash className="text-[10px] text-rose-500" />}
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDuplicateBlock(block); }}
-                          className="hover:text-gray-700 dark:hover:text-gray-300 p-0.5 transition"
-                          title="Duplicate"
-                        >
-                          <FaCopy className="text-[9px]" />
-                        </button>
-                        {block.click_count !== undefined && block.click_count > 0 && (
-                          <span className="ml-auto text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
-                            <FaChartLine className="text-[8px]" /> {block.click_count}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Thumbnail or Folder Toggle */}
-                    {isFolder ? (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleFolderExpanded(block.id); }}
-                        className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-500/20 text-amber-600 text-xs transition-colors flex-shrink-0"
-                        title={block.is_expanded ? 'Collapse Folder' : 'Expand Folder'}
-                      >
-                        {block.is_expanded ? <FaChevronUp /> : <FaChevronDown />}
-                      </button>
-                    ) : block.media_url ? (
-                      <div
-                        onClick={() => onOpenBlockEditor(block)}
-                        className="w-10 h-10 rounded-xl overflow-hidden bg-gray-100 border border-gray-200 flex-shrink-0 cursor-pointer"
-                      >
-                        <img
-                          src={block.media_url}
-                          alt=""
-                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => onOpenBlockEditor(block)}
-                        className="w-7 h-7 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors flex-shrink-0"
-                      >
-                        <FaEllipsisV className="text-[10px]" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ── 6. Deleted Blocks Archive ── */}
-        {deletedBlocks?.length > 0 && (
-          <div className="pt-4 border-t border-gray-100">
+      {/* ── 2. IDENTITY & BIO INPUTS (Direct Access) ── */}
+      <div className="p-4 border-b border-black/[0.04] dark:border-white/[0.06] space-y-2.5 shrink-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
+            Identity & Bio
+          </span>
+          {/* Multi-Page Selector Pill */}
+          <div className="relative">
             <button
-              onClick={() => setTrashOpen(!trashOpen)}
-              className="w-full flex items-center justify-between text-xs text-gray-500 hover:text-gray-500 py-1"
+              onClick={() => setPageDropdownOpen(!pageDropdownOpen)}
+              className="text-[10px] font-semibold text-[#0071E3] dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-0.5 rounded-full border border-blue-200/50 dark:border-blue-800/40 flex items-center gap-1"
             >
-              <span className="flex items-center gap-1.5">
-                <FaTrash className="text-[10px]" /> Deleted Blocks ({deletedBlocks.length})
-              </span>
-              {trashOpen ? <FaChevronUp className="text-[10px]" /> : <FaChevronDown className="text-[10px]" />}
+              <span>{activePage.title}</span>
+              <FaChevronDown className="text-[8px]" />
             </button>
 
+            {pageDropdownOpen && (
+              <div className="absolute right-0 top-6 z-40 bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] rounded-xl shadow-xl p-2 w-48 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+                <div className="p-1 text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                  Site Pages ({pages.length || 1})
+                </div>
+                <div
+                  onClick={() => { onSelectPage?.('home'); setPageDropdownOpen(false); }}
+                  className={`flex items-center justify-between p-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                    activePageId === 'home'
+                      ? 'bg-blue-50 dark:bg-blue-950/50 text-[#0071E3]'
+                      : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    <FaSitemap className="text-[10px]" />
+                    <span>Home</span>
+                  </div>
+                  {activePageId === 'home' && <FaCheck className="text-[10px]" />}
+                </div>
+                {pages.filter((p) => p.id !== 'home').map((pg) => (
+                  <div
+                    key={pg.id}
+                    onClick={() => { onSelectPage?.(pg.id); setPageDropdownOpen(false); }}
+                    className={`flex items-center justify-between p-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                      activePageId === pg.id
+                        ? 'bg-blue-50 dark:bg-blue-950/50 text-[#0071E3]'
+                        : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span className="truncate">{pg.title}</span>
+                    {activePageId === pg.id && <FaCheck className="text-[10px]" />}
+                  </div>
+                ))}
+                <button
+                  onClick={() => { setAddPageModalOpen(true); setPageDropdownOpen(false); }}
+                  className="w-full text-left p-1.5 text-xs text-[#0071E3] font-semibold hover:underline flex items-center gap-1 pt-2 border-t border-black/[0.04] dark:border-white/[0.06]"
+                >
+                  <FaPlus className="text-[9px]" /> Add new page
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Display Name</label>
+          <input
+            type="text"
+            value={title || ''}
+            onChange={(e) => setTitle?.(e.target.value)}
+            className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+          />
+        </div>
+
+        <div>
+          <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Bio Tagline</label>
+          <input
+            type="text"
+            value={bio || ''}
+            onChange={(e) => setBio?.(e.target.value)}
+            className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+          />
+        </div>
+
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Apple Verified Badge</span>
+          <label className="apple-switch">
+            <input
+              type="checkbox"
+              checked={Boolean(verifiedBadge)}
+              onChange={(e) => setVerifiedBadge?.(e.target.checked)}
+            />
+            <span className="apple-switch-slider" />
+          </label>
+        </div>
+      </div>
+
+      {/* ── 3. CONTENT BLOCKS TREE ── */}
+      <div className="p-4 flex-1 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
+            Content Blocks ({blocks.length})
+          </span>
+          <button
+            onClick={onOpenAddModal}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 transition shadow-xs"
+          >
+            <FaPlus className="text-[9px]" /> Block
+          </button>
+        </div>
+
+        {/* Quick Add Link Bar */}
+        <form onSubmit={handleQuickAddSubmit} className="mb-3">
+          <div className="flex items-center gap-1.5 p-1 rounded-full bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08]">
+            <FaLink className="text-gray-400 ml-2 text-xs" />
+            <input
+              type="url"
+              value={quickLinkInput}
+              onChange={(e) => setQuickLinkInput(e.target.value)}
+              placeholder="Paste URL to add..."
+              className="flex-1 bg-transparent text-xs text-gray-900 dark:text-white placeholder-gray-400 outline-none px-1"
+            />
+            <button
+              type="submit"
+              className="px-2.5 py-1 rounded-full bg-white dark:bg-[#2C2C2E] text-gray-800 dark:text-gray-200 text-[10px] font-bold shadow-xs hover:bg-gray-100 dark:hover:bg-[#3A3A3C] transition"
+            >
+              Add
+            </button>
+          </div>
+        </form>
+
+        {/* Draggable Blocks List */}
+        <div className="space-y-2 flex-1 overflow-y-auto custom-scrollbar pr-0.5">
+          {blocks.length === 0 ? (
+            <div className="py-10 text-center text-xs text-gray-400 dark:text-gray-500 border border-dashed border-black/[0.08] dark:border-white/[0.1] rounded-2xl p-4">
+              No blocks yet. Click <span className="font-semibold text-[#0071E3]">+ Block</span> to add links, media, or captures.
+            </div>
+          ) : (
+            blocks.map((block, idx) => (
+              <div
+                key={block.id || idx}
+                draggable
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={(e) => handleDragOver(e, idx)}
+                onDragEnd={handleDragEnd}
+                onClick={() => onOpenBlockEditor?.(block)}
+                className={`p-3 rounded-xl bg-white dark:bg-[#2C2C2E] border transition-all cursor-pointer group shadow-xs ${
+                  dragOverIdx === idx
+                    ? 'border-[#0071E3] ring-2 ring-[#0071E3]/20'
+                    : 'border-black/[0.06] dark:border-white/[0.08] hover:border-[#0071E3]/60'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-gray-400 dark:text-gray-500 cursor-grab text-xs">⋮⋮</span>
+                    <span className="text-xs shrink-0">{getBlockGlyph(block)}</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold truncate text-gray-900 dark:text-white">
+                        {block.title || block.headline || 'Untitled Link'}
+                      </div>
+                      <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                        {block.subtitle || block.url || block.type || 'Custom block'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {block.clicks ? (
+                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                        {block.clicks} clicks
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 px-1.5 py-0.5">
+                        Active
+                      </span>
+                    )}
+
+                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleBlockActive?.(block.id); }}
+                        className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                        title={block.is_hidden ? 'Show' : 'Hide'}
+                      >
+                        {block.is_hidden ? <FaEyeSlash className="text-[10px]" /> : <FaEye className="text-[10px]" />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDuplicateBlock?.(block.id); }}
+                        className="p-1 text-gray-400 hover:text-[#0071E3]"
+                        title="Duplicate"
+                      >
+                        <FaCopy className="text-[10px]" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteBlock?.(block.id); }}
+                        className="p-1 text-gray-400 hover:text-rose-600"
+                        title="Delete"
+                      >
+                        <FaTrash className="text-[10px]" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Deleted Items / Trash Drawer Trigger */}
+        {deletedBlocks?.length > 0 && (
+          <div className="pt-2 border-t border-black/[0.04] dark:border-white/[0.06] mt-2">
+            <button
+              onClick={() => setTrashOpen(!trashOpen)}
+              className="text-[11px] font-semibold text-gray-500 hover:text-rose-600 flex items-center justify-between w-full"
+            >
+              <span>Recently Deleted ({deletedBlocks.length})</span>
+              {trashOpen ? <FaChevronUp className="text-[9px]" /> : <FaChevronDown className="text-[9px]" />}
+            </button>
             {trashOpen && (
-              <div className="space-y-1.5 mt-2 bg-black/[0.02] dark:bg-white/[0.04] p-2.5 rounded-2xl border border-black/[0.06] dark:border-white/[0.08]">
-                {deletedBlocks.map((del) => (
-                  <div key={del.id} className="flex items-center justify-between text-xs p-2 bg-white dark:bg-[#2C2C2E] rounded-xl border border-black/[0.06] dark:border-white/[0.08] shadow-2xs">
-                    <span className="truncate font-medium text-gray-700 dark:text-gray-300 text-[11px]">
-                      {del.title || del.url || 'Deleted Block'}
-                    </span>
+              <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
+                {deletedBlocks.map((b) => (
+                  <div key={b.id} className="p-2 rounded-lg bg-rose-50/50 dark:bg-rose-950/20 flex items-center justify-between text-xs">
+                    <span className="truncate text-gray-700 dark:text-gray-300">{b.title || 'Deleted Block'}</span>
                     <button
-                      onClick={() => onRestoreBlock(del)}
-                      className="text-[#0071E3] dark:text-blue-400 font-semibold hover:underline text-[10px]"
+                      onClick={() => onRestoreBlock?.(b.id)}
+                      className="text-[10px] text-[#0071E3] font-bold hover:underline"
                     >
                       Restore
                     </button>
                   </div>
                 ))}
-                <button
-                  onClick={onClearDeletedBlocks}
-                  className="w-full text-center text-[10px] text-rose-500 hover:text-rose-600 font-semibold hover:underline pt-1.5 transition-colors"
-                >
-                  Clear Deleted Blocks Permanently
-                </button>
               </div>
             )}
           </div>
         )}
-
       </div>
 
-      {/* ── 7. Add Sub-Page Modal (Apple Sheet Style) ── */}
+      {/* ── Add Page Modal ── */}
       {addPageModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] rounded-[28px] max-w-sm w-full p-6 shadow-[0_25px_70px_rgba(0,0,0,0.35)] space-y-4 text-gray-900 dark:text-white">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
-                <FaSitemap className="text-[#0071E3] dark:text-blue-400 text-xs" /> Add New Sub-Page
-              </h3>
-              <button onClick={() => setAddPageModalOpen(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-2 rounded-full hover:bg-black/[0.04] dark:hover:bg-white/[0.08] transition-colors">
-                <FaTimes className="text-xs" />
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/[0.12] rounded-[24px] max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white">Create Mini-Site Sub Page</h3>
+            <div>
+              <label className="text-[11px] font-medium text-gray-500">Page Title</label>
+              <input
+                type="text"
+                value={newPageTitle}
+                onChange={(e) => setNewPageTitle(e.target.value)}
+                placeholder="e.g. Portfolio, Shop, Press Kit"
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white outline-none focus:border-[#0071E3]"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setAddPageModalOpen(false)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold text-gray-600 dark:text-gray-400 hover:bg-black/[0.05]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreatePageSubmit}
+                className="px-4 py-1.5 rounded-full text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 shadow-xs"
+              >
+                Create Page
               </button>
             </div>
-
-            <form onSubmit={handleCreatePageSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                  Page Title
-                </label>
-                <input
-                  type="text"
-                  value={newPageTitle}
-                  onChange={(e) => {
-                    setNewPageTitle(e.target.value);
-                    if (!newPageSlug) setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-'));
-                  }}
-                  placeholder="e.g. Music & Tour, Merch Shop"
-                  className="w-full px-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl outline-none focus:ring-2 focus:ring-[#0071E3] font-medium text-gray-900 dark:text-white"
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                  URL Path Slug
-                </label>
-                <div className="flex items-center gap-1 bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono">
-                  <span className="text-gray-400">/</span>
-                  <input
-                    type="text"
-                    value={newPageSlug}
-                    onChange={(e) => setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                    placeholder="music"
-                    className="bg-transparent outline-none flex-1 text-gray-900 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setAddPageModalOpen(false)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.08] rounded-full transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!newPageTitle.trim()}
-                  className="px-4 py-1.5 text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white rounded-full shadow-[0_2px_8px_rgba(0,113,227,0.3)] transition-all disabled:opacity-50"
-                >
-                  Create Page
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

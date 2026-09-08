@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useTheme } from '@/context/ThemeContext';
 import {
   getMyBioPage,
   saveMyBioPage,
@@ -71,6 +72,7 @@ const SOCIAL_ICON_MAP = {
 export default function LinkInBio() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { isDarkMode, toggleDarkMode } = useTheme();
 
   // Core Bio Identity
   const [handle, setHandle] = useState('');
@@ -399,149 +401,136 @@ export default function LinkInBio() {
 
   return (
     <DashboardLayout noPadding={true}>
-      <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-[#F5F5F4] overflow-hidden font-sans select-none">
+      <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-[#F5F5F7] dark:bg-[#000000] overflow-hidden font-sans select-none transition-colors duration-300">
         
         {/* ── TOP STUDIO CONTROL HEADER (Apple macOS Sequoia Glass Bar) ── */}
-        <div className="h-13 bg-white/80 dark:bg-[#1C1C1E]/80 border-b border-black/[0.06] dark:border-white/[0.08] px-3 sm:px-6 flex items-center justify-between z-30 shrink-0 backdrop-blur-2xl">
-          {/* Left: macOS Window Dots, Branding & Handle Pill */}
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="hidden sm:flex items-center gap-2 mr-1">
+        <header className="relative z-30 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] apple-glass-panel flex items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+            {/* macOS Window Traffic Lights */}
+            <div className="flex items-center gap-2 mr-1">
               <span className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50 cursor-pointer hover:opacity-80" />
               <span className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50 cursor-pointer hover:opacity-80" />
               <span className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50 cursor-pointer hover:opacity-80" />
             </div>
-            <div className="h-4 w-[1px] bg-black/[0.08] dark:bg-white/[0.1] hidden sm:block" />
 
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold tracking-tight text-gray-900 dark:text-white hidden lg:inline-block">
-                Smart Bio Studio
-              </span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 hidden xl:inline-block">
-                Pro
-              </span>
-            </div>
+            <div className="h-4 w-px bg-black/[0.08] dark:bg-white/[0.1] hidden sm:block" />
 
-            <div className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-200 font-mono bg-black/[0.04] dark:bg-white/[0.06] px-3 py-1 rounded-full border border-black/[0.06] dark:border-white/[0.08] shadow-xs truncate">
-              <span className="text-gray-400 font-normal">bio/</span>
-              <input
-                type="text"
-                value={handle}
-                onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-                placeholder="handle"
-                className="bg-transparent font-bold text-gray-900 dark:text-white outline-none w-20 sm:w-28 focus:text-blue-600 dark:focus:text-blue-400 transition-colors"
-              />
+            {/* Apple Logo + Studio Branding & Bio Link */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-[8px] bg-gradient-to-br from-[#090D16] to-[#1E293B] text-white flex items-center justify-center font-bold text-xs shadow-sm shrink-0">
+                
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-xs text-gray-800 dark:text-gray-100 hidden md:inline-block">
+                    Smart Bio Studio
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-[#0071E3] dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 hidden lg:inline-block">
+                    Apple Edition
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate">
+                  <span>unravler.com/bio/</span>
+                  <input
+                    type="text"
+                    value={handle}
+                    onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                    className="font-bold text-gray-900 dark:text-white bg-transparent outline-none w-20 sm:w-28 focus:text-[#0071E3] transition-colors"
+                  />
+                  <button onClick={copyPublicUrl} className="p-0.5 hover:text-[#0071E3] transition" title="Copy Bio Link">
+                    📋
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Center: Apple Segmented Device Mode Switcher */}
-          <div className="flex items-center p-1 rounded-full bg-black/[0.05] dark:bg-white/[0.08] border border-black/[0.04] dark:border-white/[0.06] shadow-xs">
-            <button
-              onClick={() => { setDeviceMode('mobile'); setZoomScale(1); }}
-              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                deviceMode === 'mobile'
-                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-              }`}
-              title="Mobile"
-            >
-              <FaMobileAlt className="text-xs" />
-              <span className="hidden md:inline">Mobile</span>
-            </button>
-            <button
-              onClick={() => { setDeviceMode('tablet'); setZoomScale(0.95); }}
-              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                deviceMode === 'tablet'
-                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-              }`}
-              title="Tablet"
-            >
-              <FaTabletAlt className="text-xs" />
-              <span className="hidden md:inline">Tablet</span>
-            </button>
-            <button
-              onClick={() => { setDeviceMode('desktop'); setZoomScale(0.9); }}
-              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                deviceMode === 'desktop'
-                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
-              }`}
-              title="Desktop"
-            >
-              <FaDesktop className="text-xs" />
-              <span className="hidden md:inline">Desktop</span>
-            </button>
-          </div>
-
-          {/* Right: Actions, QR, Zoom & Apple Obsidian Publish CTA */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Zoom Controls */}
-            <div className="hidden xl:flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-mono">
+          {/* Center: Apple Segmented Device Switcher (Preserved exact labels: Mobile, Tablet, Desktop) */}
+          <div className="hidden md:flex items-center justify-center">
+            <div className="apple-segment-wrapper">
               <button
-                onClick={() => setZoomScale((z) => Math.max(0.75, +(z - 0.05).toFixed(2)))}
-                className="p-1 hover:text-blue-600 rounded-full transition-colors"
+                onClick={() => { setDeviceMode('mobile'); setZoomScale(1); }}
+                className={`apple-segment-btn flex items-center gap-1.5 ${deviceMode === 'mobile' ? 'active' : ''}`}
+                title="Mobile"
+              >
+                <FaMobileAlt className="text-xs" />
+                <span>Mobile</span>
+              </button>
+              <button
+                onClick={() => { setDeviceMode('tablet'); setZoomScale(0.95); }}
+                className={`apple-segment-btn flex items-center gap-1.5 ${deviceMode === 'tablet' ? 'active' : ''}`}
+                title="Tablet"
+              >
+                <FaTabletAlt className="text-xs" />
+                <span>Tablet</span>
+              </button>
+              <button
+                onClick={() => { setDeviceMode('desktop'); setZoomScale(0.9); }}
+                className={`apple-segment-btn flex items-center gap-1.5 ${deviceMode === 'desktop' ? 'active' : ''}`}
+                title="Desktop"
+              >
+                <FaDesktop className="text-xs" />
+                <span>Desktop</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Right: Actions, Dark Mode, QR, Zoom & Apple Obsidian CTA */}
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            {/* Dark Mode Toggle */}
+            <button
+              onClick={toggleDarkMode}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white bg-black/[0.04] dark:bg-white/[0.08] hover:bg-black/[0.08] transition"
+              title="Toggle Light/Dark Theme"
+            >
+              🌓
+            </button>
+
+            {/* Zoom Controls */}
+            <div className="hidden lg:flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.06] rounded-full px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-mono">
+              <button
+                onClick={() => setZoomScale((z) => Math.max(0.7, +(z - 0.05).toFixed(2)))}
+                className="hover:text-blue-600 font-bold px-1"
                 title="Zoom Out"
               >
-                <FaSearchMinus />
+                −
               </button>
-              <span className="w-10 text-center font-bold text-gray-700 dark:text-gray-200 text-[11px]">{Math.round(zoomScale * 100)}%</span>
+              <span className="px-1 text-[11px]">{Math.round(zoomScale * 100)}%</span>
               <button
-                onClick={() => setZoomScale((z) => Math.min(1.15, +(z + 0.05).toFixed(2)))}
-                className="p-1 hover:text-blue-600 rounded-full transition-colors"
+                onClick={() => setZoomScale((z) => Math.min(1.3, +(z + 0.05).toFixed(2)))}
+                className="hover:text-blue-600 font-bold px-1"
                 title="Zoom In"
               >
-                <FaSearchPlus />
+                +
               </button>
             </div>
 
             {publicUrl && (
               <button
                 onClick={() => setQrModalOpen(true)}
-                className="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all"
-                title="Scan QR Code on Phone"
+                className="px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C] shadow-xs transition hidden sm:inline-block"
               >
-                <FaQrcode className="text-xs" />
+                Share QR
               </button>
             )}
 
-            {publicUrl && (
-              <button
-                onClick={copyPublicUrl}
-                className="px-3.5 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all hidden sm:flex items-center gap-1.5"
-                title="Copy Public Link"
-              >
-                <FaCopy className="text-gray-400 text-[10px]" /> Copy
-              </button>
-            )}
-
-            {publicUrl && (
-              <a
-                href={publicUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3.5 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all hidden sm:flex items-center gap-1.5"
-                title="View Live Public Page"
-              >
-                <FaExternalLinkAlt className="text-gray-400 text-[9px]" /> Live
-              </a>
-            )}
-
+            {/* Publish Changes CTA (Apple Obsidian Pill) */}
             <button
               onClick={() => handleSaveAll()}
               disabled={saving}
-              className="px-5 py-1.5 text-xs font-semibold text-white bg-black dark:bg-white dark:text-black rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.4)] dark:shadow-[0_2px_8px_rgba(255,255,255,0.15)] hover:opacity-90 active:scale-[0.98] transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+              className="px-5 py-1.5 rounded-full text-xs font-semibold text-white bg-[#000000] dark:bg-[#FFFFFF] dark:text-[#000000] shadow-[0_2px_8px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:opacity-90 active:scale-[0.98] transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
             >
               <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
-              <span>{saving ? 'Publishing…' : 'Publish Bio'}</span>
+              <span>{saving ? 'Publishing…' : 'Publish Changes'}</span>
             </button>
           </div>
-        </div>
+        </header>
 
         {/* ── 3-COLUMN STUDIO WORKSPACE ── */}
         <div className="flex-1 flex overflow-hidden">
           
           {/* 1. LEFT COLUMN: Outline & Content Tree (~320px) */}
-          <div className="w-72 md:w-80 lg:w-84 xl:w-88 shrink-0 h-full overflow-hidden flex flex-col border-r border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl relative z-20 shadow-xs">
+          <div className="w-72 md:w-80 lg:w-84 shrink-0 h-full overflow-hidden flex flex-col border-r border-black/[0.06] dark:border-white/[0.08] apple-glass-panel relative z-20 shadow-xs">
             <BioOutlineTree
               title={title}
               setTitle={setTitle}
@@ -549,6 +538,10 @@ export default function LinkInBio() {
               setBio={setBio}
               avatarUrl={avatarUrl}
               setAvatarUrl={setAvatarUrl}
+              handle={handle}
+              setHandle={setHandle}
+              verifiedBadge={verifiedBadge}
+              setVerifiedBadge={setVerifiedBadge}
               socialLinks={socialLinks}
               setSocialLinks={setSocialLinks}
               theme={theme}
@@ -573,15 +566,14 @@ export default function LinkInBio() {
             />
           </div>
 
-          {/* 2. CENTER CANVAS: Contained & Responsive Machined Hardware Viewport */}
-          <div className="flex-1 min-w-0 h-full bg-[#F5F5F7] dark:bg-[#000000] flex flex-col items-center justify-start p-3 sm:p-4 md:p-6 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10 transition-colors">
+          {/* 2. CENTER CANVAS: Ambient Mesh Stage & iPhone 16 Pro Viewport */}
+          <div className="flex-1 min-w-0 h-full bg-[#F5F5F7] dark:bg-[#000000] flex flex-col items-center justify-start p-4 md:p-8 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10 transition-colors">
             
-            {/* Background Studio Ambient Glow & Grid */}
-            <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_520px_at_50%_45%,rgba(0,113,227,0.08),transparent_70%)]" />
-            <div className="pointer-events-none absolute inset-0 z-0 opacity-40 bg-[radial-gradient(#d4d4d4_1px,transparent_1px)] dark:bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px]" />
+            {/* Ambient Mesh Glow */}
+            <div className="ambient-mesh pointer-events-none" />
 
             {/* Stage Quick Replay Pill */}
-            <div className="relative z-20 mb-2 flex items-center justify-center">
+            <div className="relative z-20 mb-3 flex items-center justify-center">
               <button
                 onClick={() => setPreviewKey((k) => k + 1)}
                 className="px-3.5 py-1 rounded-full bg-white/80 dark:bg-[#2C2C2E]/80 backdrop-blur-md hover:bg-white dark:hover:bg-[#3A3A3C] border border-black/[0.06] dark:border-white/[0.08] text-[11px] font-semibold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-all flex items-center gap-1.5 shadow-xs"
@@ -591,70 +583,47 @@ export default function LinkInBio() {
               </button>
             </div>
 
-            {/* ── THE MACHINED HARDWARE DEVICE CHASSIS (Apple Titanium Engineering) ── */}
+            {/* ── THE IPHONE 16 PRO / HARDWARE CHASSIS ── */}
             <div
               style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}
               className="transition-transform duration-300 flex items-center justify-center my-auto relative z-20 max-w-full"
             >
-              {/* Outer Metallic Titanium Chassis */}
               <div
-                className={`relative transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                  deviceMode === 'mobile'
-                    ? 'w-[365px] sm:w-[385px] h-[755px] sm:h-[780px] rounded-[52px] p-[11px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
-                    : deviceMode === 'tablet'
-                    ? 'w-[440px] sm:w-[490px] md:w-[520px] h-[680px] sm:h-[730px] rounded-[36px] p-[11px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
-                    : 'w-[480px] sm:w-[560px] md:w-[620px] xl:w-[660px] h-[680px] sm:h-[730px] rounded-[24px] p-[9px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
-                }`}
+                className="iphone-chassis flex flex-col transition-all duration-500 relative"
+                style={{
+                  width: deviceMode === 'mobile' ? '385px' : deviceMode === 'tablet' ? '540px' : '720px',
+                  height: deviceMode === 'mobile' ? '780px' : deviceMode === 'tablet' ? '740px' : '680px',
+                  borderRadius: deviceMode === 'mobile' ? '52px' : deviceMode === 'tablet' ? '36px' : '24px',
+                }}
               >
-                {/* Physical Hardware Buttons (Mobile Mode) */}
-                {deviceMode === 'mobile' && (
-                  <>
-                    <div className="absolute -left-[4px] top-28 w-[4px] h-7 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
-                    <div className="absolute -left-[4px] top-40 w-[4px] h-12 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
-                    <div className="absolute -left-[4px] top-56 w-[4px] h-12 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
-                    <div className="absolute -right-[4px] top-44 w-[4px] h-16 bg-[#9E988F] dark:bg-[#48484A] rounded-r-md shadow-inner" />
-                  </>
-                )}
-
-                {/* Inner Display Enclosure */}
+                {/* Hardware Screen */}
                 <div
-                  className={`w-full h-full bg-black overflow-hidden relative flex flex-col shadow-inner ${
-                    deviceMode === 'mobile'
-                      ? 'rounded-[42px]'
-                      : deviceMode === 'tablet'
-                      ? 'rounded-[26px]'
-                      : 'rounded-[16px]'
-                  }`}
+                  className="iphone-screen flex-1 flex flex-col overflow-y-auto relative text-white"
+                  style={{
+                    background: theme.background_gradient || theme.background_color || 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)',
+                    borderRadius: deviceMode === 'mobile' ? '42px' : deviceMode === 'tablet' ? '26px' : '16px',
+                    fontFamily: theme.font_family || 'Plus Jakarta Sans, sans-serif',
+                  }}
                 >
-                  {/* Specular Diagonal Glass Gloss Reflection */}
-                  <div className="pointer-events-none absolute inset-0 z-40 bg-gradient-to-tr from-transparent via-white/[0.02] to-white/[0.06]" />
-
-                  {/* Top iOS Status Bar + Dynamic Island (Mobile Mode) */}
+                  {/* Top Dynamic Island Status Bar (Mobile Mode) */}
                   {deviceMode === 'mobile' && (
-                    <div className="relative w-full h-10 shrink-0 px-7 pt-1.5 flex items-center justify-between z-30 select-none bg-transparent">
-                      <span className="text-[12px] font-semibold tracking-tight text-white/90">9:41</span>
-
-                      {/* Centered Dynamic Island Pill */}
-                      <div className="absolute left-1/2 -translate-x-1/2 top-2 w-28 h-6 bg-black rounded-full flex items-center justify-between px-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.18)] z-40 group cursor-pointer hover:w-32 transition-all duration-300">
-                        <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 ring-1 ring-zinc-800 flex items-center justify-center">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                        </div>
+                    <div className="sticky top-0 z-30 pt-3 px-7 pb-2 flex items-center justify-between text-[11px] font-semibold tracking-tight text-white/90 backdrop-blur-md bg-black/10 select-none">
+                      <span>9:41</span>
+                      <div className="w-24 h-6 rounded-full bg-black flex items-center justify-between px-2.5 shadow-md">
+                        <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
                         <div className="flex items-center gap-1">
                           <span className="w-2 h-2 rounded-full bg-[#34C759]" />
-                          <span className="w-2.5 h-2.5 rounded-full bg-zinc-800 border border-zinc-700" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-1.5 text-white/90 text-[10px]">
-                        <FaSignal className="text-[9px]" />
-                        <span className="text-[8px] font-bold">5G</span>
-                        <FaWifi className="text-[10px]" />
-                        <FaBatteryFull className="text-xs text-emerald-400" />
+                      <div className="flex items-center gap-1">
+                        <span>5G</span>
+                        <span>100%</span>
                       </div>
                     </div>
                   )}
 
-                  {/* Desktop / Browser Header (Desktop & Tablet Mode - Apple Safari Style) */}
+                  {/* Safari Window Header (Tablet & Desktop Mode) */}
                   {deviceMode !== 'mobile' && (
                     <div className="bg-[#2C2C2E] border-b border-white/[0.08] px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 z-30 select-none">
                       <div className="flex items-center gap-1.5">
@@ -671,144 +640,97 @@ export default function LinkInBio() {
                     </div>
                   )}
 
-                  {/* ── LIVE BIO CANVAS VIEWPORT ── */}
-                  <div
-                    key={previewKey}
-                    style={{
-                      background: theme.background_gradient || theme.background_color || '#FDFBF7',
-                      color: theme.text_color || '#18181B',
-                      fontFamily: theme.font_family || 'Plus Jakarta Sans, sans-serif',
-                    }}
-                    className="flex-1 overflow-y-auto p-4 sm:p-5 flex flex-col items-center relative custom-scrollbar select-none"
-                  >
-                    {/* Procedural Film Grain Overlay */}
-                    {(theme.background_effect === 'grain' || theme.preset === 'matcha_washi' || theme.preset === 'editorial_cream') && (
-                      <div
-                        className="pointer-events-none absolute inset-0 z-0 opacity-[0.04] mix-blend-overlay"
-                        style={{
-                          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
-                        }}
-                      />
-                    )}
-
-                    {/* Radiant Defocused Ambient Mesh Orbs */}
-                    {(theme.background_effect === 'ambient_orbs' || theme.background_effect === 'mesh_glow' || theme.preset === 'liquid_aura' || theme.preset === 'tokyo_cyber') && (
-                      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-                        <div
-                          className="absolute -top-16 -left-16 w-52 h-52 rounded-full blur-3xl opacity-40 animate-pulse"
-                          style={{ background: theme.accent_color || '#6366F1' }}
-                        />
-                        <div
-                          className="absolute top-1/2 -right-16 w-48 h-48 rounded-full blur-3xl opacity-35"
-                          style={{ background: theme.card_text_color || '#EC4899' }}
-                        />
-                      </div>
-                    )}
-
-                    {/* Announcement Top Banner */}
+                  {/* Bio Page Body */}
+                  <div className="px-5 pt-8 pb-12 flex flex-col items-center text-center space-y-5 flex-1 relative z-10 custom-scrollbar">
+                    
+                    {/* Announcement Banner */}
                     {theme.announcement_active && theme.announcement_banner && (
-                      <div
-                        className="w-full -mx-4 -mt-4 mb-4 py-2 px-3 text-center text-[11px] font-bold bg-indigo-600 text-white flex items-center justify-center gap-1.5 shadow-md relative z-20 animate-fade-in"
-                      >
+                      <div className="w-full py-2 px-3 text-center text-[11px] font-bold bg-[#0071E3] text-white rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         <span className="truncate">{theme.announcement_banner}</span>
                         <FaExternalLinkAlt className="text-[9px]" />
                       </div>
                     )}
 
-                    {/* Header Layout & Profile Hero */}
-                    <div className="w-full flex flex-col items-center text-center mb-4 relative z-10">
-                      {/* Avatar with Custom Styling */}
-                      <div
-                        style={avatarStyles}
-                        className="rounded-full overflow-hidden flex items-center justify-center mb-2.5 bg-black/10 shrink-0 ring-4 ring-black/5 dark:ring-white/10 shadow-lg relative group transition-transform hover:scale-105"
-                      >
+                    {/* Avatar */}
+                    <div className="relative">
+                      <div className="w-24 h-24 rounded-full p-[2px] bg-white/25 backdrop-blur-xl shadow-lg flex items-center justify-center overflow-hidden">
                         {avatarUrl ? (
-                          <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
                         ) : (
-                          <span className="text-2xl font-black uppercase tracking-wider" style={{ color: theme.text_color }}>
+                          <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-2xl font-black text-white">
                             {title ? title[0] : 'U'}
-                          </span>
+                          </div>
                         )}
                       </div>
+                    </div>
 
-                      {/* Display Name with Verified Badge */}
-                      <h2 className="text-base font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
-                        {title || 'Your Name'}
-                        {verifiedBadge && (
-                          <span className="inline-flex items-center justify-center text-indigo-500 bg-indigo-500/10 rounded-full p-0.5" title="Verified Creator">
-                            <FaCheckCircle className="text-xs text-indigo-500" />
-                          </span>
-                        )}
-                      </h2>
-
-                      {/* Handle / Slug */}
-                      <p className="text-[11px] font-mono opacity-60 tracking-tight" style={{ color: theme.text_color }}>
-                        @{handle || 'handle'}
-                      </p>
-
-                      {/* Bio Copy */}
+                    {/* Display Name & Verified Badge */}
+                    <div className="space-y-1 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <h2 className="text-xl font-bold tracking-tight text-white">
+                          {title || 'Your Name'}
+                        </h2>
+                        {verifiedBadge && <span className="text-blue-400 font-bold">✓</span>}
+                      </div>
                       {bio && (
-                        <p className="text-xs opacity-85 pt-1.5 leading-relaxed max-w-xs font-normal" style={{ color: theme.text_color }}>
+                        <p className="text-xs text-white/80 max-w-[260px] leading-relaxed mx-auto">
                           {bio}
                         </p>
                       )}
                     </div>
 
-                    {/* Social Dock Bar */}
-                    {socialLinks && Object.keys(socialLinks).some((k) => socialLinks[k]) && (
-                      <div className="flex items-center justify-center gap-2 mb-4 flex-wrap relative z-10">
+                    {/* Social Dock Pills */}
+                    {socialLinks && Object.values(socialLinks).some(Boolean) && (
+                      <div className="flex items-center justify-center gap-3 py-1.5 px-4 rounded-full bg-white/10 backdrop-blur-xl border border-white/15 text-xs text-white">
                         {Object.entries(socialLinks).map(([plat, url]) => {
                           if (!url) return null;
                           const Icon = SOCIAL_ICON_MAP[plat] || SOCIAL_ICON_MAP.default;
                           return (
-                            <div
+                            <a
                               key={plat}
-                              style={{
-                                color: theme.text_color,
-                                width: `${socialIconPx + 14}px`,
-                                height: `${socialIconPx + 14}px`,
-                              }}
-                              className="rounded-full bg-black/5 dark:bg-white/10 border border-black/5 dark:border-white/10 backdrop-blur-md flex items-center justify-center shadow-xs transition-transform hover:scale-110 active:scale-95 cursor-pointer"
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:opacity-80 transition cursor-pointer"
                             >
-                              <Icon style={{ fontSize: `${socialIconPx}px` }} />
-                            </div>
+                              <Icon className="text-sm" />
+                            </a>
                           );
                         })}
                       </div>
                     )}
 
-                    {/* Multi-Page Sub-Navigation Pill Strip */}
-                    {pages.length > 1 && (theme.navigation_style || 'pills') === 'pills' && (
-                      <div className="flex items-center justify-center gap-1.5 mb-5 p-1 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/5 dark:border-white/10 relative z-10 shadow-xs">
-                        {pages.map((pg) => {
-                          const isActive = pg.id === activePageId;
-                          return (
-                            <button
-                              key={pg.id}
-                              onClick={() => handleSelectPage(pg.id)}
-                              className={`px-4 py-1 text-xs font-bold rounded-full transition-all duration-200 ${
-                                isActive
-                                  ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-sm scale-100'
-                                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
-                              }`}
-                            >
-                              {pg.title}
-                            </button>
-                          );
-                        })}
+                    {/* Multi-Page Navigation Pills */}
+                    {pages.length > 1 && (
+                      <div className="flex items-center justify-center gap-1.5 p-1 rounded-full bg-white/10 backdrop-blur-xl border border-white/15">
+                        {pages.map((pg) => (
+                          <button
+                            key={pg.id}
+                            onClick={() => handleSelectPage(pg.id)}
+                            className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+                              activePageId === pg.id
+                                ? 'bg-white text-black shadow-sm'
+                                : 'text-white/70 hover:text-white'
+                            }`}
+                          >
+                            {pg.title}
+                          </button>
+                        ))}
                       </div>
                     )}
 
-                    {/* ── Content Blocks Stack in Live Preview ── */}
+                    {/* Cards Stack */}
                     <div
-                      className="w-full relative z-10"
-                      style={{ display: 'flex', flexDirection: 'column', gap: `${blockGapPx}px` }}
+                      className="w-full pt-1"
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: `${theme.card_spacing ?? 12}px`,
+                      }}
                     >
                       {activeBlocks.length === 0 ? (
-                        <div className="py-14 text-center text-xs opacity-50 border-2 border-dashed border-black/10 dark:border-white/10 rounded-3xl p-6 flex flex-col items-center gap-2">
-                          <FaPlus className="text-lg opacity-40" />
-                          <span>No blocks on this page.</span>
-                          <span className="text-[10px] opacity-70">Add custom links, hero cards, or media from the left outline tree.</span>
+                        <div className="py-10 text-center text-xs text-white/50 border border-dashed border-white/20 rounded-2xl p-4">
+                          No blocks on this page. Add links from the left panel.
                         </div>
                       ) : (
                         activeBlocks.map((block) => {
@@ -822,134 +744,51 @@ export default function LinkInBio() {
                             card_text_color: block.card_text_color,
                           });
 
-                          const isFolder = block.type === 'folder' || block.type === 'tab_group';
-                          const isBannerTop = block.layout === 'card_banner_top';
-                          const isFolderOpen = Boolean(activeFolders[block.id]);
-
-                          if (isFolder) {
-                            return (
-                              <div
-                                key={block.id}
-                                style={cardObj.style}
-                                className={`w-full font-bold text-xs overflow-hidden transition-all shadow-sm ${cardObj.className}`}
-                              >
-                                <div
-                                  onClick={() => toggleFolderPreview(block.id)}
-                                  className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                                >
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
-                                      <FaFolder className="text-sm" />
-                                    </div>
-                                    <div>
-                                      <p className="text-xs font-bold leading-tight" style={{ color: cardObj.style.color }}>
-                                        {block.title || 'Folder / Group'}
-                                      </p>
-                                      {block.folder_items?.length > 0 && (
-                                        <p className="text-[10px] opacity-60 font-normal mt-0.5" style={{ color: cardObj.style.color }}>
-                                          {block.folder_items.length} sub-links
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="p-1 rounded-full text-zinc-400">
-                                    {isFolderOpen ? <FaChevronUp className="text-xs" /> : <FaChevronDown className="text-xs" />}
-                                  </div>
-                                </div>
-
-                                {/* Expandable Folder Nested Sub-Links */}
-                                {isFolderOpen && (
-                                  <div className="p-3 pt-0 space-y-2 border-t border-black/5 dark:border-white/5 mt-1 animate-fade-in">
-                                    {(block.folder_items || []).length === 0 ? (
-                                      <p className="text-[10px] opacity-60 text-center py-2" style={{ color: cardObj.style.color }}>
-                                        Folder is empty. Click edit on left tree to add sub-links.
-                                      </p>
-                                    ) : (
-                                      block.folder_items.map((subItem, sIdx) => (
-                                        <div
-                                          key={subItem.id || sIdx}
-                                          className="py-2.5 px-3 rounded-xl bg-black/5 dark:bg-white/5 flex items-center justify-between text-xs font-semibold hover:bg-black/10 transition-colors"
-                                          style={{ color: cardObj.style.color }}
-                                        >
-                                          <div className="flex items-center gap-2 truncate">
-                                            <FaExternalLinkAlt className="text-[9px] opacity-50 flex-shrink-0" />
-                                            <span className="truncate">{subItem.title || subItem.url}</span>
-                                          </div>
-                                        </div>
-                                      ))
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          }
-
                           return (
                             <div
                               key={block.id}
                               onClick={() => setEditingBlock(block)}
                               style={cardObj.style}
-                              className={`w-full font-bold text-xs cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] overflow-hidden group shadow-sm ${cardObj.className} ${
-                                isBannerTop ? 'flex flex-col text-left' : 'py-3 px-3.5 flex items-center justify-between text-left'
-                              }`}
+                              className={`w-full p-4 rounded-2xl bg-white/15 backdrop-blur-xl border border-white/20 shadow-lg text-left flex items-center justify-between cursor-pointer hover:bg-white/25 transition group ${cardObj.className}`}
                             >
-                              {isBannerTop && block.media_url && (
-                                <div className="w-full h-32 overflow-hidden bg-black/10 relative">
+                              <div className="flex items-center gap-3 min-w-0">
+                                {block.media_url ? (
                                   <img
                                     src={block.media_url}
                                     alt=""
-                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                    className="w-10 h-10 rounded-xl object-cover shrink-0 shadow-xs"
                                   />
-                                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
-                                </div>
-                              )}
-
-                              <div className={`flex items-center gap-3 w-full ${isBannerTop ? 'p-3.5' : ''}`}>
-                                {!isBannerTop && block.media_url && (
-                                  <img
-                                    src={block.media_url}
-                                    alt=""
-                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                    className="w-10 h-10 rounded-xl object-cover flex-shrink-0 shadow-xs"
-                                  />
-                                )}
-
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    {block.is_featured && <FaBolt className="text-amber-400 text-xs shrink-0 animate-pulse" />}
-                                    <span className="truncate font-black" style={{ color: cardObj.style.color }}>
-                                      {block.title || block.headline || 'View Link'}
-                                    </span>
-                                    {block.badge && (
-                                      <span className="px-2 py-0.5 text-[8px] font-black uppercase tracking-wider rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-xs">
-                                        {block.badge}
-                                      </span>
-                                    )}
+                                ) : (
+                                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-lg shrink-0">
+                                    {block.is_featured ? '⚡' : block.type === 'video' ? '▶' : block.type === 'newsletter' ? '✉️' : '🔗'}
                                   </div>
-                                  {block.subtitle && (
-                                    <p className="text-[10px] opacity-75 font-normal truncate mt-0.5" style={{ color: cardObj.style.color }}>
-                                      {block.subtitle}
-                                    </p>
-                                  )}
-                                </div>
-
-                                <div
-                                  className="w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all shrink-0"
-                                  style={{ color: cardObj.style.color }}
-                                >
-                                  <FaExternalLinkAlt className="text-[9px]" />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-white truncate">
+                                    {block.title || block.headline || 'View Link'}
+                                  </div>
+                                  <div className="text-[11px] text-white/70 truncate">
+                                    {block.subtitle || block.url || ''}
+                                  </div>
                                 </div>
                               </div>
+                              <span className="text-white/60 group-hover:text-white group-hover:translate-x-0.5 transition-all text-sm shrink-0 ml-2">
+                                →
+                              </span>
                             </div>
                           );
                         })
                       )}
                     </div>
 
-                    {/* Bottom Floating iOS Home Bar (Mobile Mode) */}
+                    {/* Watermark */}
+                    <div className="pt-6 pb-2 text-[11px] font-medium text-white/50 select-none">
+                      Crafted with <span className="font-bold text-white/80">Unravler</span>
+                    </div>
+
+                    {/* Bottom Home Bar (Mobile Mode) */}
                     {deviceMode === 'mobile' && (
-                      <div className="w-32 h-1 bg-current opacity-25 rounded-full mx-auto mt-6 mb-1 shrink-0" />
+                      <div className="w-32 h-1 bg-white/40 rounded-full mx-auto mb-2 mt-auto shrink-0" />
                     )}
 
                   </div>
@@ -960,10 +799,12 @@ export default function LinkInBio() {
           </div>
 
           {/* 3. RIGHT COLUMN: Inspector Drawer (~340px) */}
-          <div className="w-80 md:w-84 lg:w-88 xl:w-92 shrink-0 h-full overflow-hidden flex flex-col border-l border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl relative z-20 shadow-xs">
+          <div className="w-80 md:w-84 shrink-0 h-full overflow-hidden flex flex-col border-l border-black/[0.06] dark:border-white/[0.08] apple-glass-panel relative z-20 shadow-xs">
             <BioInspectorDrawer
               theme={theme}
               setTheme={setTheme}
+              socialLinks={socialLinks}
+              setSocialLinks={setSocialLinks}
               onUndo={handleUndo}
               onRedo={handleRedo}
               canUndo={historyIdx > 0}
