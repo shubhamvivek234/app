@@ -504,13 +504,76 @@
 
       <!-- Tab Content: Cards -->
       <div id="inspectorTabCards" class="p-4 space-y-4 hidden">
-        <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block">Card Geometry</label>
-        <div class="space-y-2.5">
-          <div class="text-xs font-medium text-gray-600 dark:text-gray-300">Button Shape Style</div>
+        <div>
+          <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block mb-2">Card Geometry</label>
           <div class="grid grid-cols-3 gap-2">
-            <button onclick="setCardShape('sharp')" class="py-2 text-xs font-medium rounded-lg border border-black/[0.08] hover:border-blue-500 transition">Sharp</button>
-            <button onclick="setCardShape('squircle')" class="py-2 text-xs font-medium rounded-2xl border-2 border-blue-500 bg-blue-50/50 text-blue-600 transition">Squircle</button>
-            <button onclick="setCardShape('pill')" class="py-2 text-xs font-medium rounded-full border border-black/[0.08] hover:border-blue-500 transition">Pill</button>
+            <button id="shapeBtnSharp" onclick="setCardShape('sharp')" class="py-2 text-xs font-medium rounded-lg border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Sharp</button>
+            <button id="shapeBtnSquircle" onclick="setCardShape('squircle')" class="py-2 text-xs font-medium rounded-2xl border-2 border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-600 transition">Squircle</button>
+            <button id="shapeBtnPill" onclick="setCardShape('pill')" class="py-2 text-xs font-medium rounded-full border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Pill</button>
+          </div>
+        </div>
+
+        <!-- Card Backdrop Tint -->
+        <div class="space-y-2 pt-2 border-t border-black/[0.04] dark:border-white/[0.06]">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block">Card Backdrop Tint</label>
+            <input type="color" id="cardBgPicker" onchange="setCardBg(this.value)" value="#ffffff" class="w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent p-0" title="Custom Card Background">
+          </div>
+          <div class="grid grid-cols-3 gap-2" id="cardBgSwatchesContainer">
+            <button onclick="setCardBg('#FFFFFF', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #FFFFFF"></span>
+              <span class="text-[11px] font-medium truncate">White</span>
+            </button>
+            <button onclick="setCardBg('#FAF8F5', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #FAF8F5"></span>
+              <span class="text-[11px] font-medium truncate">Cream</span>
+            </button>
+            <button onclick="setCardBg('rgba(255, 255, 255, 0.85)', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: rgba(255, 255, 255, 0.85)"></span>
+              <span class="text-[11px] font-medium truncate">Glass White</span>
+            </button>
+            <button onclick="setCardBg('rgba(24, 24, 27, 0.80)', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: rgba(24, 24, 27, 0.80)"></span>
+              <span class="text-[11px] font-medium truncate">Dark Glass</span>
+            </button>
+            <button onclick="setCardBg('rgba(79, 70, 229, 0.40)', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #4F46E5"></span>
+              <span class="text-[11px] font-medium truncate">Indigo Glass</span>
+            </button>
+            <button onclick="setCardBg('rgba(244, 63, 94, 0.35)', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #F43F5E"></span>
+              <span class="text-[11px] font-medium truncate">Rose Glass</span>
+            </button>
+            <button onclick="setCardBg('rgba(16, 185, 129, 0.35)', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #10B981"></span>
+              <span class="text-[11px] font-medium truncate">Emerald Glass</span>
+            </button>
+            <button onclick="setCardBg('#1E293B', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #1E293B"></span>
+              <span class="text-[11px] font-medium truncate">Dark Slate</span>
+            </button>
+            <button onclick="setCardBg('#09090B', this)" class="p-2 rounded-xl border border-black/[0.08] dark:border-white/[0.12] flex items-center gap-2 text-left hover:border-blue-500 transition">
+              <span class="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-inner" style="background: #09090B"></span>
+              <span class="text-[11px] font-medium truncate">OLED Black</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Card Text Color -->
+        <div class="space-y-2 pt-2 border-t border-black/[0.04] dark:border-white/[0.06]">
+          <div class="flex items-center justify-between">
+            <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block">Card Text Color</label>
+            <input type="color" id="cardTextPicker" onchange="setCardTextColor(this.value)" value="#ffffff" class="w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent p-0" title="Custom Card Text Color">
+          </div>
+          <div class="flex items-center gap-2 flex-wrap" id="cardTextSwatchesContainer">
+            <button onclick="setCardTextColor('', this)" class="px-3 py-1 rounded-lg text-xs font-medium border-2 border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-600 transition">Auto</button>
+            <button onclick="setCardTextColor('#FFFFFF', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">White</button>
+            <button onclick="setCardTextColor('#1D1D1F', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Charcoal</button>
+            <button onclick="setCardTextColor('#64748B', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Slate</button>
+            <button onclick="setCardTextColor('#FBBF24', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Gold</button>
+            <button onclick="setCardTextColor('#F43F5E', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Rose</button>
+            <button onclick="setCardTextColor('#10B981', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Emerald</button>
+            <button onclick="setCardTextColor('#818CF8', this)" class="px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition">Indigo</button>
           </div>
         </div>
       </div>
@@ -633,11 +696,80 @@
     function setCardShape(shape) {
       const cards = document.querySelectorAll("#screenCardsStack > div");
       cards.forEach(c => {
-        if (shape === "sharp") c.style.borderRadius = "6px";
+        if (shape === "sharp") c.style.borderRadius = "0px";
         if (shape === "squircle") c.style.borderRadius = "16px";
         if (shape === "pill") c.style.borderRadius = "9999px";
       });
+
+      const btnSharp = document.getElementById("shapeBtnSharp");
+      const btnSquircle = document.getElementById("shapeBtnSquircle");
+      const btnPill = document.getElementById("shapeBtnPill");
+
+      [btnSharp, btnSquircle, btnPill].forEach(b => {
+        if (!b) return;
+        b.className = "py-2 text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition " + 
+          (b === btnSharp ? "rounded-lg" : b === btnSquircle ? "rounded-2xl" : "rounded-full");
+      });
+
+      const activeBtn = shape === "sharp" ? btnSharp : shape === "squircle" ? btnSquircle : btnPill;
+      if (activeBtn) {
+        activeBtn.className = "py-2 text-xs font-medium border-2 border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-600 transition " + 
+          (shape === "sharp" ? "rounded-lg" : shape === "squircle" ? "rounded-2xl" : "rounded-full");
+      }
+
       showToast("Card geometry set to: " + shape);
+    }
+
+    function setCardBg(color, el) {
+      const cards = document.querySelectorAll("#screenCardsStack > div");
+      cards.forEach(c => {
+        c.style.backgroundColor = color;
+      });
+
+      const picker = document.getElementById("cardBgPicker");
+      if (picker && color && color.startsWith("#")) {
+        picker.value = color;
+      }
+
+      if (el) {
+        document.querySelectorAll("#cardBgSwatchesContainer button").forEach(b => {
+          b.classList.remove("border-blue-500", "ring-1", "ring-blue-500");
+          b.classList.add("border-black/[0.08]", "dark:border-white/[0.12]");
+        });
+        el.classList.remove("border-black/[0.08]", "dark:border-white/[0.12]");
+        el.classList.add("border-blue-500", "ring-1", "ring-blue-500");
+      }
+      showToast("Card backdrop tint updated");
+    }
+
+    function setCardTextColor(color, el) {
+      const cards = document.querySelectorAll("#screenCardsStack > div");
+      cards.forEach(c => {
+        if (!color) {
+          c.style.color = "";
+          c.querySelectorAll("div, span, p, input, button").forEach(child => child.style.color = "");
+        } else {
+          c.style.color = color;
+          c.querySelectorAll("div, span, p, input, button").forEach(child => {
+            if (!child.classList.contains("text-red-600")) {
+              child.style.color = color;
+            }
+          });
+        }
+      });
+
+      const picker = document.getElementById("cardTextPicker");
+      if (picker && color && color.startsWith("#")) {
+        picker.value = color;
+      }
+
+      if (el) {
+        document.querySelectorAll("#cardTextSwatchesContainer button").forEach(b => {
+          b.className = "px-3 py-1 rounded-lg text-xs font-medium border border-black/[0.08] dark:border-white/[0.12] hover:border-blue-500 transition";
+        });
+        el.className = "px-3 py-1 rounded-lg text-xs font-medium border-2 border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-600 transition";
+      }
+      showToast(color ? "Card text color updated" : "Card text color set to Auto");
     }
 
     function switchInspectorTab(tab) {

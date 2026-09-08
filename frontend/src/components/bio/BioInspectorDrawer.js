@@ -205,9 +205,9 @@ const CARD_BG_SWATCHES = [
   { label: 'Cream', val: '#FAF8F5', bg: '#FAF8F5' },
   { label: 'Glass White', val: 'rgba(255, 255, 255, 0.85)', bg: 'rgba(255, 255, 255, 0.85)' },
   { label: 'Dark Glass', val: 'rgba(24, 24, 27, 0.80)', bg: 'rgba(24, 24, 27, 0.80)' },
-  { label: 'Indigo Glass', val: 'rgba(79, 70, 229, 0.15)', bg: '#4F46E5' },
-  { label: 'Rose Glass', val: 'rgba(244, 63, 94, 0.15)', bg: '#F43F5E' },
-  { label: 'Emerald Glass', val: 'rgba(16, 185, 129, 0.15)', bg: '#10B981' },
+  { label: 'Indigo Glass', val: 'rgba(79, 70, 229, 0.40)', bg: '#4F46E5' },
+  { label: 'Rose Glass', val: 'rgba(244, 63, 94, 0.35)', bg: '#F43F5E' },
+  { label: 'Emerald Glass', val: 'rgba(16, 185, 129, 0.35)', bg: '#10B981' },
   { label: 'Dark Slate', val: '#1E293B', bg: '#1E293B' },
   { label: 'OLED Black', val: '#09090B', bg: '#09090B' },
 ];
@@ -219,6 +219,8 @@ const CARD_TEXT_SWATCHES = [
   { label: 'Muted Slate', val: '#64748B' },
   { label: 'Gold', val: '#FBBF24' },
   { label: 'Rose', val: '#F43F5E' },
+  { label: 'Emerald', val: '#10B981' },
+  { label: 'Indigo', val: '#818CF8' },
 ];
 
 const SOCIAL_PLATFORMS = [
@@ -265,7 +267,7 @@ export default function BioInspectorDrawer({
 
   const handleCardShape = (shape) => {
     if (shape === 'sharp') {
-      setTheme((prev) => ({ ...prev, card_corner_radius: 4 }));
+      setTheme((prev) => ({ ...prev, card_corner_radius: 0 }));
     } else if (shape === 'squircle') {
       setTheme((prev) => ({ ...prev, card_corner_radius: 16 }));
     } else if (shape === 'pill') {
@@ -276,7 +278,7 @@ export default function BioInspectorDrawer({
   const currentShape =
     (theme.card_corner_radius ?? 16) >= 40
       ? 'pill'
-      : (theme.card_corner_radius ?? 16) <= 6
+      : (theme.card_corner_radius ?? 16) <= 4
       ? 'sharp'
       : 'squircle';
 

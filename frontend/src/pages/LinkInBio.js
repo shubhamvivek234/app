@@ -749,8 +749,75 @@ export default function LinkInBio() {
                       }}
                     >
                       {activeBlocks.length === 0 ? (
-                        <div className="py-10 text-center text-xs opacity-60 border border-dashed border-white/20 rounded-2xl p-4" style={{ color: theme.text_color }}>
-                          No blocks on this page. Add links from the left panel.
+                        <div className="w-full space-y-3">
+                          {/* Interactive Sample Cards — Always React Live to Geometry, Tint & Text Color */}
+                          {[
+                            {
+                              id: 'sample_suite',
+                              title: 'The Unravler AI Architecture',
+                              subtitle: 'Next-gen multi-channel social engine',
+                              icon: '⚡',
+                              is_featured: true,
+                            },
+                            {
+                              id: 'sample_newsletter',
+                              title: 'VIP Founder Letter & Drops',
+                              subtitle: 'Join 10,000+ top founders & creators',
+                              icon: '✉️',
+                              is_featured: false,
+                            },
+                            {
+                              id: 'sample_consult',
+                              title: 'Book 1:1 Strategy Session',
+                              subtitle: 'Private advisory & roadmap consultation',
+                              icon: '🔗',
+                              is_featured: false,
+                            },
+                          ].map((sample) => {
+                            const cardObj = getTactileCardStyles(theme.card_style, theme, sample.is_featured);
+                            return (
+                              <div
+                                key={sample.id}
+                                style={cardObj.style}
+                                className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group overflow-hidden ${cardObj.className}`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs"
+                                    style={{
+                                      backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                                      color: cardObj.style.color,
+                                    }}
+                                  >
+                                    {sample.icon}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-bold truncate" style={{ color: cardObj.style.color }}>
+                                      {sample.title}
+                                    </div>
+                                    <div className="text-[11px] truncate opacity-70" style={{ color: cardObj.style.color }}>
+                                      {sample.subtitle}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span
+                                  className="text-sm shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform opacity-70 group-hover:opacity-100"
+                                  style={{ color: cardObj.style.color }}
+                                >
+                                  →
+                                </span>
+                              </div>
+                            );
+                          })}
+                          <div
+                            className="py-2.5 px-3 text-center text-[11px] font-medium border border-dashed rounded-xl opacity-75 mt-2"
+                            style={{
+                              borderColor: theme.card_border || 'rgba(255, 255, 255, 0.2)',
+                              color: theme.text_color || '#FFFFFF',
+                            }}
+                          >
+                            Sample preview cards • Add real links from the left panel
+                          </div>
                         </div>
                       ) : (
                         activeBlocks.map((block) => {
@@ -769,7 +836,7 @@ export default function LinkInBio() {
                               key={block.id}
                               onClick={() => setEditingBlock(block)}
                               style={cardObj.style}
-                              className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group ${cardObj.className}`}
+                              className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group overflow-hidden ${cardObj.className}`}
                             >
                               <div className="flex items-center gap-3 min-w-0">
                                 {block.media_url ? (

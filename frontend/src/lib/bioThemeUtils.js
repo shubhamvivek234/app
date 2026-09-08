@@ -382,10 +382,10 @@ export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, 
   let borderRadiusStyle = '16px';
   if (cornerPct >= 40 || cornerPct >= 999) {
     borderRadiusStyle = '9999px';
-  } else if (cornerPct > 0 && cornerPct <= 36) {
-    borderRadiusStyle = `${cornerPct}px`;
   } else if (cornerPct === 0) {
     borderRadiusStyle = '0px';
+  } else if (cornerPct > 0 && cornerPct <= 39) {
+    borderRadiusStyle = `${cornerPct}px`;
   } else {
     borderRadiusStyle = `${Math.round((cornerPct / 100) * 36)}px`;
   }
