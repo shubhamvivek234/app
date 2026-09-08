@@ -378,13 +378,25 @@ export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, 
   const shadowType = theme.card_shadow_type || 'soft'; // 'soft' | 'solid'
   const isTactile = theme.tactile_blocks ?? true;
 
-  // Calculate dynamic border-radius (0% = 0px, 50% = 18px, 100% = 9999px)
-  let borderRadiusStyle = `${Math.round((cornerPct / 100) * 36)}px`;
-  if (cornerPct >= 95) borderRadiusStyle = '9999px';
+  // Calculate dynamic border-radius (supports direct pixel values or percentages)
+  let borderRadiusStyle = '16px';
+  if (cornerPct >= 40 || cornerPct >= 999) {
+    borderRadiusStyle = '9999px';
+  } else if (cornerPct > 0 && cornerPct <= 36) {
+    borderRadiusStyle = `${cornerPct}px`;
+  } else if (cornerPct === 0) {
+    borderRadiusStyle = '0px';
+  } else {
+    borderRadiusStyle = `${Math.round((cornerPct / 100) * 36)}px`;
+  }
 
-  // Calculate dynamic border width (0% = 0px, 100% = 3px)
-  let borderWidthStyle = `${((borderPct / 100) * 3).toFixed(1)}px`;
-  if (borderPct === 0 && !cardStyle?.includes('outline') && !cardStyle?.includes('hard')) {
+  // Calculate dynamic border width (supports direct 0-3px or percentage)
+  let borderWidthStyle = '1px';
+  if (borderPct > 0 && borderPct <= 6) {
+    borderWidthStyle = `${borderPct}px`;
+  } else if (borderPct > 6) {
+    borderWidthStyle = `${((borderPct / 100) * 3).toFixed(1)}px`;
+  } else if (borderPct === 0 && !cardStyle?.includes('outline') && !cardStyle?.includes('hard')) {
     borderWidthStyle = '1px';
   }
 
@@ -392,6 +404,8 @@ export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, 
   let customShadow = '0 4px 12px -2px rgba(0, 0, 0, 0.05)';
   let backdropBlur = 'backdrop-blur-md';
   let extraClasses = '';
+
+  const blurAmount = theme.glass_blur !== undefined ? Number(theme.glass_blur) : 16;
 
   if (shadowPct === 0) {
     customShadow = 'none';
@@ -416,6 +430,7 @@ export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, 
           customShadow = `0 0 ${Math.round((shadowPct / 100) * 24)}px ${accent}45, inset 0 0 10px ${accent}25`;
           break;
         case 'glass_double_bezel':
+        case 'glassmorphic':
           customShadow = `inset 0 1px 0 0 rgba(255, 255, 255, 0.4), 0 ${yOffset}px ${blurDepth}px -4px rgba(0, 0, 0, ${opacity})`;
           backdropBlur = 'backdrop-blur-xl';
           break;
@@ -451,6 +466,8 @@ export const getTactileCardStyles = (cardStyle, theme = {}, isFeatured = false, 
       color: textColor,
       borderRadius: borderRadiusStyle,
       boxShadow: customShadow,
+      backdropFilter: blurAmount > 0 ? `blur(${blurAmount}px)` : undefined,
+      WebkitBackdropFilter: blurAmount > 0 ? `blur(${blurAmount}px)` : undefined,
     },
     className: `${backdropBlur} ${extraClasses}`,
   };
@@ -464,8 +481,8 @@ export const getProfileAvatarStyles = (theme = {}) => {
   const shadowPct = theme.profile_picture_shadow !== undefined ? Number(theme.profile_picture_shadow) : 0;
   const borderPct = theme.profile_picture_border !== undefined ? Number(theme.profile_picture_border) : 0;
 
-  // Size in px: 0% = 52px, 50% = 84px, 100% = 124px
-  const sizePx = Math.round(52 + (sizePct / 100) * 72);
+  // Size in px: direct pixels if >= 48, otherwise percentage scale
+  const sizePx = sizePct >= 48 ? sizePct : Math.round(52 + (sizePct / 100) * 72);
   const borderWidthPx = Math.round((borderPct / 100) * 6);
   const shadowBlur = Math.round((shadowPct / 100) * 24);
   const shadowOpacity = (0.1 + (shadowPct / 100) * 0.25).toFixed(2);

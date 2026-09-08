@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import UnravlerLogo from '@/components/UnravlerLogo';
 import { useTheme } from '@/context/ThemeContext';
 import {
   getMyBioPage,
@@ -403,49 +404,32 @@ export default function LinkInBio() {
     <DashboardLayout noPadding={true}>
       <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-[#F5F5F7] dark:bg-[#000000] overflow-hidden font-sans select-none transition-colors duration-300">
         
-        {/* ── TOP STUDIO CONTROL HEADER (Apple macOS Sequoia Glass Bar) ── */}
+        {/* ── TOP STUDIO CONTROL HEADER ── */}
         <header className="relative z-30 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] apple-glass-panel flex items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            {/* macOS Window Traffic Lights */}
-            <div className="flex items-center gap-2 mr-1">
-              <span className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50 cursor-pointer hover:opacity-80" />
-              <span className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50 cursor-pointer hover:opacity-80" />
-              <span className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50 cursor-pointer hover:opacity-80" />
-            </div>
-
-            <div className="h-4 w-px bg-black/[0.08] dark:bg-white/[0.1] hidden sm:block" />
-
-            {/* Apple Logo + Studio Branding & Bio Link */}
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Unravler Logo + Studio Title & Bio Link */}
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-[8px] bg-gradient-to-br from-[#090D16] to-[#1E293B] text-white flex items-center justify-center font-bold text-xs shadow-sm shrink-0">
-                
+              <div className="w-8 h-8 rounded-[10px] bg-black dark:bg-white flex items-center justify-center p-1.5 shadow-sm shrink-0">
+                <UnravlerLogo size="small" showText={false} darkText={isDarkMode} />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-xs text-gray-800 dark:text-gray-100 hidden md:inline-block">
-                    Smart Bio Studio
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-[#0071E3] dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 hidden lg:inline-block">
-                    Apple Edition
-                  </span>
+                <div className="font-bold text-xs text-gray-900 dark:text-white tracking-tight">
+                  Smart Bio Studio
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate">
+                <div className="flex items-center text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate">
                   <span>unravler.com/bio/</span>
                   <input
                     type="text"
                     value={handle}
                     onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-                    className="font-bold text-gray-900 dark:text-white bg-transparent outline-none w-20 sm:w-28 focus:text-[#0071E3] transition-colors"
+                    className="font-bold text-gray-900 dark:text-white bg-transparent outline-none w-24 sm:w-32 focus:text-[#0071E3] transition-colors ml-0.5"
                   />
-                  <button onClick={copyPublicUrl} className="p-0.5 hover:text-[#0071E3] transition" title="Copy Bio Link">
-                    📋
-                  </button>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Center: Apple Segmented Device Switcher (Preserved exact labels: Mobile, Tablet, Desktop) */}
+          {/* Center: Segmented Device Switcher (Preserved exact labels: Mobile, Tablet, Desktop) */}
           <div className="hidden md:flex items-center justify-center">
             <div className="apple-segment-wrapper">
               <button
@@ -475,7 +459,7 @@ export default function LinkInBio() {
             </div>
           </div>
 
-          {/* Right: Actions, Dark Mode, QR, Zoom & Apple Obsidian CTA */}
+          {/* Right: Actions, Dark Mode, QR, Zoom & Publish CTA */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
             {/* Dark Mode Toggle */}
             <button
@@ -514,7 +498,7 @@ export default function LinkInBio() {
               </button>
             )}
 
-            {/* Publish Changes CTA (Apple Obsidian Pill) */}
+            {/* Publish Changes CTA */}
             <button
               onClick={() => handleSaveAll()}
               disabled={saving}
@@ -529,7 +513,7 @@ export default function LinkInBio() {
         {/* ── 3-COLUMN STUDIO WORKSPACE ── */}
         <div className="flex-1 flex overflow-hidden">
           
-          {/* 1. LEFT COLUMN: Outline & Content Tree (~320px) */}
+          {/* 1. LEFT COLUMN: Content Tree Navigator (~320px) */}
           <div className="w-72 md:w-80 lg:w-84 shrink-0 h-full overflow-hidden flex flex-col border-r border-black/[0.06] dark:border-white/[0.08] apple-glass-panel relative z-20 shadow-xs">
             <BioOutlineTree
               title={title}
@@ -566,7 +550,7 @@ export default function LinkInBio() {
             />
           </div>
 
-          {/* 2. CENTER CANVAS: Ambient Mesh Stage & iPhone 16 Pro Viewport */}
+          {/* 2. CENTER CANVAS: Ambient Mesh Stage & Phone Viewport */}
           <div className="flex-1 min-w-0 h-full bg-[#F5F5F7] dark:bg-[#000000] flex flex-col items-center justify-start p-4 md:p-8 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10 transition-colors">
             
             {/* Ambient Mesh Glow */}
@@ -583,7 +567,7 @@ export default function LinkInBio() {
               </button>
             </div>
 
-            {/* ── THE IPHONE 16 PRO / HARDWARE CHASSIS ── */}
+            {/* ── THE HARDWARE CHASSIS ── */}
             <div
               style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}
               className="transition-transform duration-300 flex items-center justify-center my-auto relative z-20 max-w-full"
@@ -598,25 +582,26 @@ export default function LinkInBio() {
               >
                 {/* Hardware Screen */}
                 <div
-                  className="iphone-screen flex-1 flex flex-col overflow-y-auto relative text-white"
+                  className="iphone-screen flex-1 flex flex-col overflow-y-auto relative transition-colors duration-300"
                   style={{
                     background: theme.background_gradient || theme.background_color || 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)',
                     borderRadius: deviceMode === 'mobile' ? '42px' : deviceMode === 'tablet' ? '26px' : '16px',
                     fontFamily: theme.font_family || 'Plus Jakarta Sans, sans-serif',
+                    color: theme.text_color || '#FFFFFF',
                   }}
                 >
                   {/* Top Dynamic Island Status Bar (Mobile Mode) */}
                   {deviceMode === 'mobile' && (
-                    <div className="sticky top-0 z-30 pt-3 px-7 pb-2 flex items-center justify-between text-[11px] font-semibold tracking-tight text-white/90 backdrop-blur-md bg-black/10 select-none">
+                    <div className="sticky top-0 z-30 pt-3 px-7 pb-2 flex items-center justify-between text-[11px] font-semibold tracking-tight backdrop-blur-md bg-black/10 select-none" style={{ color: theme.text_color || '#FFFFFF' }}>
                       <span>9:41</span>
                       <div className="w-24 h-6 rounded-full bg-black flex items-center justify-between px-2.5 shadow-md">
-                        <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                        <span className="w-2 h-2 rounded-full animate-ping" style={{ backgroundColor: theme.accent_color || '#818CF8' }} />
                         <div className="flex items-center gap-1">
                           <span className="w-2 h-2 rounded-full bg-[#34C759]" />
                           <span className="w-2.5 h-2.5 rounded-full bg-zinc-800" />
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 opacity-90">
                         <span>5G</span>
                         <span>100%</span>
                       </div>
@@ -641,43 +626,77 @@ export default function LinkInBio() {
                   )}
 
                   {/* Bio Page Body */}
-                  <div className="px-5 pt-8 pb-12 flex flex-col items-center text-center space-y-5 flex-1 relative z-10 custom-scrollbar">
+                  <div className="px-5 pt-6 pb-10 flex flex-col items-center text-center space-y-4 flex-1 relative z-10 custom-scrollbar">
                     
                     {/* Announcement Banner */}
                     {theme.announcement_active && theme.announcement_banner && (
-                      <div className="w-full py-2 px-3 text-center text-[11px] font-bold bg-[#0071E3] text-white rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                      <div
+                        className="w-full py-2 px-3 text-center text-[11px] font-bold text-white rounded-xl shadow-md flex items-center justify-center gap-1.5 animate-in fade-in duration-200"
+                        style={{ backgroundColor: theme.accent_color || '#0071E3' }}
+                      >
                         <span className="truncate">{theme.announcement_banner}</span>
                         <FaExternalLinkAlt className="text-[9px]" />
                       </div>
                     )}
 
-                    {/* Avatar */}
-                    <div className="relative">
-                      <div className="w-24 h-24 rounded-full p-[2px] bg-white/25 backdrop-blur-xl shadow-lg flex items-center justify-center overflow-hidden">
-                        {avatarUrl ? (
-                          <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
-                        ) : (
-                          <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-2xl font-black text-white">
-                            {title ? title[0] : 'U'}
+                    {/* Profile & Avatar Header Layout */}
+                    {theme.header_layout === 'minimal_left' ? (
+                      <div className="w-full flex items-center gap-3.5 text-left mb-2 px-1">
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h2 className="text-lg font-bold tracking-tight truncate" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                           </div>
-                        )}
+                          {bio && (
+                            <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-
-                    {/* Display Name & Verified Badge */}
-                    <div className="space-y-1 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <h2 className="text-xl font-bold tracking-tight text-white">
-                          {title || 'Your Name'}
-                        </h2>
-                        {verifiedBadge && <span className="text-blue-400 font-bold">✓</span>}
+                    ) : (
+                      <div className="space-y-2.5 text-center mb-2 flex flex-col items-center">
+                        <div
+                          style={avatarStyles}
+                          className="rounded-full p-[2px] bg-white/25 backdrop-blur-xl shadow-lg flex items-center justify-center overflow-hidden transition-all duration-300 mx-auto"
+                        >
+                          {avatarUrl ? (
+                            <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-2xl font-black text-white">
+                              {title ? title[0] : 'U'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-1 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <h2 className="text-xl font-bold tracking-tight" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {title || 'Your Name'}
+                            </h2>
+                            {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
+                          </div>
+                          {bio && (
+                            <p className="text-xs max-w-[260px] leading-relaxed mx-auto opacity-80" style={{ color: theme.text_color || '#FFFFFF' }}>
+                              {bio}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      {bio && (
-                        <p className="text-xs text-white/80 max-w-[260px] leading-relaxed mx-auto">
-                          {bio}
-                        </p>
-                      )}
-                    </div>
+                    )}
 
                     {/* Social Dock Pills */}
                     {socialLinks && Object.values(socialLinks).some(Boolean) && (
@@ -692,6 +711,7 @@ export default function LinkInBio() {
                               target="_blank"
                               rel="noreferrer"
                               className="hover:opacity-80 transition cursor-pointer"
+                              style={{ color: theme.text_color || '#FFFFFF' }}
                             >
                               <Icon className="text-sm" />
                             </a>
@@ -729,7 +749,7 @@ export default function LinkInBio() {
                       }}
                     >
                       {activeBlocks.length === 0 ? (
-                        <div className="py-10 text-center text-xs text-white/50 border border-dashed border-white/20 rounded-2xl p-4">
+                        <div className="py-10 text-center text-xs opacity-60 border border-dashed border-white/20 rounded-2xl p-4" style={{ color: theme.text_color }}>
                           No blocks on this page. Add links from the left panel.
                         </div>
                       ) : (
@@ -749,7 +769,7 @@ export default function LinkInBio() {
                               key={block.id}
                               onClick={() => setEditingBlock(block)}
                               style={cardObj.style}
-                              className={`w-full p-4 rounded-2xl bg-white/15 backdrop-blur-xl border border-white/20 shadow-lg text-left flex items-center justify-between cursor-pointer hover:bg-white/25 transition group ${cardObj.className}`}
+                              className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group ${cardObj.className}`}
                             >
                               <div className="flex items-center gap-3 min-w-0">
                                 {block.media_url ? (
@@ -759,20 +779,29 @@ export default function LinkInBio() {
                                     className="w-10 h-10 rounded-xl object-cover shrink-0 shadow-xs"
                                   />
                                 ) : (
-                                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-lg shrink-0">
+                                  <div
+                                    className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs"
+                                    style={{
+                                      backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                                      color: cardObj.style.color,
+                                    }}
+                                  >
                                     {block.is_featured ? '⚡' : block.type === 'video' ? '▶' : block.type === 'newsletter' ? '✉️' : '🔗'}
                                   </div>
                                 )}
                                 <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-white truncate">
+                                  <div className="text-sm font-bold truncate" style={{ color: cardObj.style.color }}>
                                     {block.title || block.headline || 'View Link'}
                                   </div>
-                                  <div className="text-[11px] text-white/70 truncate">
+                                  <div className="text-[11px] truncate opacity-70" style={{ color: cardObj.style.color }}>
                                     {block.subtitle || block.url || ''}
                                   </div>
                                 </div>
                               </div>
-                              <span className="text-white/60 group-hover:text-white group-hover:translate-x-0.5 transition-all text-sm shrink-0 ml-2">
+                              <span
+                                className="text-sm shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform opacity-70 group-hover:opacity-100"
+                                style={{ color: cardObj.style.color }}
+                              >
                                 →
                               </span>
                             </div>
@@ -781,9 +810,16 @@ export default function LinkInBio() {
                       )}
                     </div>
 
-                    {/* Watermark */}
-                    <div className="pt-6 pb-2 text-[11px] font-medium text-white/50 select-none">
-                      Crafted with <span className="font-bold text-white/80">Unravler</span>
+                    {/* Watermark: Crafted by Unravler */}
+                    <div className="pt-8 pb-4 text-center text-xs font-medium tracking-wide relative z-10" style={{ color: theme.text_color || '#FFFFFF', opacity: 0.6 }}>
+                      <a
+                        href="https://www.unravler.com"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:opacity-100 transition-opacity"
+                      >
+                        Crafted by <span className="font-bold">Unravler</span>
+                      </a>
                     </div>
 
                     {/* Bottom Home Bar (Mobile Mode) */}
@@ -814,7 +850,6 @@ export default function LinkInBio() {
           </div>
 
         </div>
-
         {/* ── MODALS ── */}
         
         {/* 1. Deep Block Layout & Content Editor Modal */}

@@ -595,16 +595,15 @@ export default function PublicBioPage() {
         </div>
       </div>
 
-      {/* Powered by Unravler footer */}
-      <div className="pt-12 text-center text-xs opacity-50 hover:opacity-100 transition-opacity relative z-10">
+      {/* Crafted by Unravler footer */}
+      <div className="pt-10 pb-6 text-center text-xs font-medium tracking-wide relative z-10" style={{ color: theme.text_color, opacity: 0.6 }}>
         <a
           href="https://www.unravler.com"
           target="_blank"
           rel="noreferrer"
-          style={{ color: theme.text_color }}
-          className="font-bold tracking-wider"
+          className="hover:opacity-100 transition-opacity"
         >
-          ⚡ Powered by Unravler Smart Bio
+          Crafted by <span className="font-bold">Unravler</span>
         </a>
       </div>
     </div>

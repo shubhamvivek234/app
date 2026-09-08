@@ -9,8 +9,8 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-08
 Completed:
-- Smart Bio Studio Apple Design Alignment: Refined `/link-in-bio` Studio (`LinkInBio.js`, `BioOutlineTree.js`, `BioInspectorDrawer.js`, `index.css`) to match the approved Apple preview (`apple_bio_studio_preview.html`). Features pixel-perfect titanium iPhone 16 Pro chassis with authentic specular hairline shadow, Dynamic Island with blue ping & sensors, ambient radial mesh blur, 3-tab Apple Studio Inspector (`Style`, `Cards`, `Settings`) with visual gradient preset cards and sliders, live workspace bio & direct identity inputs, and full dark/light theme parity.
-- Verification: Frontend production build succeeded (`CI=true npm run build --prefix frontend`) and automated backend tests passed (`pytest tests/`).
+- Smart Bio Studio Apple Design Alignment & Refinement: Refined `/link-in-bio` Studio (`LinkInBio.js`, `BioOutlineTree.js`, `BioInspectorDrawer.js`, `PublicBioPage.js`, `bioThemeUtils.js`). Replaced Apple branding with official Unravler logo mark in squircle, removed macOS traffic lights dots and "Apple Edition" pill, cleaned up handle pill without copy button box. Added 14 modern, elegant themes (Cosmic Indigo, Natural Titanium, Alpine Pine, Desert Gold, Pure Obsidian, Lavender Silk, etc.). Restored full live responsiveness across Style/Cards/Settings controls (color pickers, blur, radius, spacing, depth, header layout, announcement banner, social dock). Updated published & preview watermarks to "Crafted by Unravler".
+- Verification: Frontend production build succeeded (`CI=true npm run build --prefix frontend`) and automated backend test suite passed (`pytest tests/`).
 
 ## Active Work
 Currently implementing: None
