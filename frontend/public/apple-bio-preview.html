@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Bio Studio — Apple Design Language Preview</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap");
+
+    :root {
+      --sf-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Plus Jakarta Sans", system-ui, sans-serif;
+      --mono-font: "SF Mono", "JetBrains Mono", Menlo, monospace;
+      --apple-blue: #0071E3;
+      --apple-green: #34C759;
+      --apple-gray-bg: #F5F5F7;
+      --apple-panel-bg: rgba(255, 255, 255, 0.82);
+      --apple-card-bg: rgba(255, 255, 255, 0.65);
+      --apple-border: rgba(0, 0, 0, 0.08);
+      --apple-text-primary: #1D1D1F;
+      --apple-text-secondary: #86868B;
+      --apple-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+      --apple-shadow-md: 0 12px 32px -4px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+      --apple-shadow-glass: 0 20px 40px -15px rgba(0, 0, 0, 0.07), inset 0 1px 1px rgba(255, 255, 255, 0.8);
+    }
+
+    .dark {
+      --apple-gray-bg: #000000;
+      --apple-panel-bg: rgba(28, 28, 30, 0.85);
+      --apple-card-bg: rgba(44, 44, 46, 0.65);
+      --apple-border: rgba(255, 255, 255, 0.12);
+      --apple-text-primary: #F5F5F7;
+      --apple-text-secondary: #A1A1A6;
+      --apple-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+      --apple-shadow-md: 0 16px 40px rgba(0, 0, 0, 0.5);
+      --apple-shadow-glass: 0 20px 40px -15px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+    }
+
+    body {
+      font-family: var(--sf-font);
+      background-color: var(--apple-gray-bg);
+      color: var(--apple-text-primary);
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      overflow-x: hidden;
+    }
+
+    .apple-glass-panel {
+      background: var(--apple-panel-bg);
+      backdrop-filter: blur(28px) saturate(190%);
+      -webkit-backdrop-filter: blur(28px) saturate(190%);
+      border: 1px solid var(--apple-border);
+    }
+
+    .apple-segment-wrapper {
+      background: rgba(118, 118, 128, 0.12);
+      border-radius: 12px;
+      padding: 3px;
+      display: inline-flex;
+    }
+    .apple-segment-btn {
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 9px;
+      color: var(--apple-text-secondary);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+    }
+    .apple-segment-btn.active {
+      background: #FFFFFF;
+      color: var(--apple-text-primary);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+      font-weight: 600;
+    }
+    .dark .apple-segment-btn.active {
+      background: #636366;
+      color: #FFFFFF;
+    }
+
+    input[type=range].apple-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(120, 120, 128, 0.2);
+      outline: none;
+    }
+    input[type=range].apple-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      cursor: pointer;
+      border: 0.5px solid rgba(0,0,0,0.04);
+    }
+
+    .apple-switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 26px;
+    }
+    .apple-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .apple-switch-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(120, 120, 128, 0.24);
+      transition: .24s cubic-bezier(0.16, 1, 0.3, 1);
+      border-radius: 999px;
+    }
+    .apple-switch-slider:before {
+      position: absolute;
+      content: "";
+      height: 22px;
+      width: 22px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .24s cubic-bezier(0.16, 1, 0.3, 1);
+      border-radius: 50%;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.22);
+    }
+    input:checked + .apple-switch-slider {
+      background-color: var(--apple-green);
+    }
+    input:checked + .apple-switch-slider:before {
+      transform: translateX(18px);
+    }
+
+    .iphone-chassis {
+      box-shadow:
+        0 0 0 1.5px rgba(210, 205, 195, 0.8),
+        0 0 0 4px #1c1b18,
+        0 25px 60px -12px rgba(0, 0, 0, 0.25),
+        0 12px 24px -8px rgba(0, 0, 0, 0.15);
+      border-radius: 52px;
+      position: relative;
+      background: #000;
+      padding: 11px;
+    }
+
+    .iphone-screen {
+      border-radius: 42px;
+      overflow: hidden;
+      position: relative;
+      background-size: cover;
+      background-position: center;
+    }
+
+    .ambient-mesh {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(circle 480px at 50% 45%, rgba(0, 113, 227, 0.08), transparent 70%),
+                  radial-gradient(circle 380px at 35% 30%, rgba(168, 85, 247, 0.06), transparent 60%);
+      filter: blur(60px);
+      z-index: 0;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#F5F5F7] dark:bg-[#000000] text-[#1D1D1F] dark:text-[#F5F5F7] transition-colors duration-300">
+
+  <div class="ambient-mesh" id="ambientGlow"></div>
+
+  <!-- Top macOS-Style Floating Studio Header -->
+  <header class="relative z-20 px-6 py-3.5 border-b border-black/[0.06] dark:border-white/[0.08] apple-glass-panel flex items-center justify-between gap-4">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50"></span>
+        <span class="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50"></span>
+        <span class="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50"></span>
+      </div>
+
+      <div class="h-4 w-px bg-black/[0.08] dark:bg-white/[0.1]"></div>
+
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-[8px] bg-gradient-to-br from-[#090D16] to-[#1E293B] text-white flex items-center justify-center font-bold text-xs shadow-sm">
+          
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-xs text-gray-800 dark:text-gray-100">Smart Bio Studio</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40">Apple Edition</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 font-mono">
+            <span>unravler.com/bio/</span><span id="headerHandleDisplay" class="font-semibold text-gray-900 dark:text-white">shubham</span>
+            <button onclick="copyHandleLink()" class="p-0.5 hover:text-blue-600 transition" title="Copy Bio Link">📋</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center: Segmented Device Switcher -->
+    <div class="hidden md:flex items-center justify-center">
+      <div class="apple-segment-wrapper">
+        <button id="devBtnMobile" onclick="setDeviceMode('mobile')" class="apple-segment-btn active flex items-center gap-1.5">
+          📱 iPhone 16 Pro
+        </button>
+        <button id="devBtnTablet" onclick="setDeviceMode('tablet')" class="apple-segment-btn flex items-center gap-1.5">
+          iPad Pro
+        </button>
+        <button id="devBtnDesktop" onclick="setDeviceMode('desktop')" class="apple-segment-btn flex items-center gap-1.5">
+          Studio Display
+        </button>
+      </div>
+    </div>
+
+    <!-- Right: Controls & Actions -->
+    <div class="flex items-center gap-2.5">
+      <button onclick="toggleDarkMode()" class="w-8 h-8 rounded-full flex items-center justify-center text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white bg-black/[0.04] dark:bg-white/[0.08] hover:bg-black/[0.08] transition" title="Toggle Light/Dark Theme">
+        🌓
+      </button>
+
+      <div class="hidden lg:flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.06] rounded-full px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-mono">
+        <button onclick="adjustZoom(-0.05)" class="hover:text-blue-600 font-bold px-1">−</button>
+        <span id="zoomLabel" class="px-1 text-[11px]">100%</span>
+        <button onclick="adjustZoom(0.05)" class="hover:text-blue-600 font-bold px-1">+</button>
+      </div>
+
+      <button onclick="openShareModal()" class="px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 shadow-xs transition">
+        Share QR
+      </button>
+
+      <button id="publishBtn" onclick="simulatePublish()" class="px-5 py-1.5 rounded-full text-xs font-semibold text-white bg-[#000000] dark:bg-[#FFFFFF] dark:text-[#000000] shadow-[0_2px_8px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.4)] hover:opacity-90 active:scale-[0.98] transition-all flex items-center gap-1.5">
+        <span id="publishStatusDot" class="w-2 h-2 rounded-full bg-[#34C759]"></span>
+        <span id="publishBtnText">Publish Changes</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 3-Column macOS Studio Layout -->
+  <main class="relative z-10 flex-1 flex overflow-hidden">
+
+    <!-- LEFT COLUMN: Outline & Content Navigator -->
+    <aside class="w-80 border-r border-black/[0.06] dark:border-white/[0.08] apple-glass-panel flex flex-col shrink-0 overflow-y-auto">
+      
+      <!-- Profile Card -->
+      <div class="p-4 border-b border-black/[0.04] dark:border-white/[0.06]">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-[11px] font-bold tracking-wider uppercase text-gray-400">Workspace Bio</span>
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200">Live</span>
+        </div>
+        <div class="flex items-center gap-3 p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/[0.06]">
+          <div class="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 p-[1.5px] shrink-0">
+            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=160&auto=format&fit=crop&q=80" class="w-full h-full object-cover rounded-full" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="text-xs font-semibold truncate" id="sideNameDisplay">Shubham Vivek</div>
+            <div class="text-[11px] text-gray-400 font-mono truncate">@shubham</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Identity Inputs -->
+      <div class="p-4 border-b border-black/[0.04] dark:border-white/[0.06] space-y-2.5">
+        <span class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block mb-1">Identity & Bio</span>
+        <div>
+          <label class="text-[11px] font-medium text-gray-500">Display Name</label>
+          <input type="text" id="inputDisplayName" value="Shubham Vivek" oninput="updateProfileLive()" class="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-blue-500 focus:outline-none transition" />
+        </div>
+        <div>
+          <label class="text-[11px] font-medium text-gray-500">Bio Tagline</label>
+          <input type="text" id="inputBio" value="Product Engineer & Founder @ Unravler. Shipping AI growth engines." oninput="updateProfileLive()" class="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-blue-500 focus:outline-none transition" />
+        </div>
+        <div class="flex items-center justify-between pt-1">
+          <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Apple Verified Badge</span>
+          <label class="apple-switch">
+            <input type="checkbox" id="verifiedToggle" checked onchange="toggleVerifiedBadge()" />
+            <span class="apple-switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Blocks Tree -->
+      <div class="p-4 flex-1">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-[11px] font-bold tracking-wider uppercase text-gray-400">Content Blocks</span>
+          <button onclick="addNewBlock()" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 transition shadow-xs">
+            + Block
+          </button>
+        </div>
+
+        <div class="space-y-2" id="blockNavigatorList">
+          <div class="p-3 rounded-xl bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] shadow-xs hover:border-blue-500 transition cursor-pointer">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="text-gray-400">⋮⋮</span>
+                <span class="text-xs">⚡</span>
+                <div class="min-w-0">
+                  <div class="text-xs font-semibold truncate">Unravler AI Suite</div>
+                  <div class="text-[10px] text-gray-400 truncate">Featured Link</div>
+                </div>
+              </div>
+              <span class="text-[10px] font-medium text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">1.4k clicks</span>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] shadow-xs hover:border-blue-500 transition cursor-pointer">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="text-gray-400">⋮⋮</span>
+                <span class="text-xs">✉️</span>
+                <div class="min-w-0">
+                  <div class="text-xs font-semibold truncate">Join Founder Letter</div>
+                  <div class="text-[10px] text-gray-400 truncate">Newsletter Signup</div>
+                </div>
+              </div>
+              <span class="text-[10px] font-medium text-purple-600 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded">820 subs</span>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] shadow-xs hover:border-blue-500 transition cursor-pointer">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="text-gray-400">⋮⋮</span>
+                <span class="text-xs">▶</span>
+                <div class="min-w-0">
+                  <div class="text-xs font-semibold truncate">Building Unravler v7</div>
+                  <div class="text-[10px] text-gray-400 truncate">Video Embed</div>
+                </div>
+              </div>
+              <span class="text-[10px] font-medium text-rose-600 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded">Video</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTER COLUMN: Canvas & iPhone 16 Pro Mockup -->
+    <section class="flex-1 relative flex flex-col items-center justify-center p-8 overflow-auto">
+      
+      <div id="deviceContainer" class="transition-all duration-500 transform origin-center" style="transform: scale(1);">
+        
+        <!-- iPhone 16 Pro Frame -->
+        <div id="phoneChassis" class="iphone-chassis w-[385px] h-[780px] flex flex-col">
+          
+          <!-- Phone Screen -->
+          <div id="phoneScreen" class="iphone-screen flex-1 flex flex-col overflow-y-auto text-white" style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%);">
+            
+            <!-- Dynamic Island Header -->
+            <div class="sticky top-0 z-30 pt-3 px-7 pb-2 flex items-center justify-between text-[11px] font-semibold tracking-tight text-white/90 backdrop-blur-md bg-black/10">
+              <span>9:41</span>
+              <div class="w-24 h-6 rounded-full bg-black flex items-center justify-between px-2.5 shadow-md">
+                <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                <div class="flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-[#34C759]"></span>
+                  <span class="w-2.5 h-2.5 rounded-full bg-zinc-800"></span>
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                <span>5G</span>
+                <span>100%</span>
+              </div>
+            </div>
+
+            <!-- Bio Page Body -->
+            <div class="px-5 pt-8 pb-12 flex flex-col items-center text-center space-y-6 flex-1">
+              
+              <!-- Avatar -->
+              <div class="relative">
+                <div class="w-24 h-24 rounded-full p-[2px] bg-white/25 backdrop-blur-xl shadow-lg">
+                  <img id="screenAvatar" src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=240&auto=format&fit=crop&q=80" class="w-full h-full object-cover rounded-full" />
+                </div>
+              </div>
+
+              <!-- Name & Tagline -->
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-center gap-1.5">
+                  <h2 id="screenDisplayName" class="text-xl font-bold tracking-tight text-white">Shubham Vivek</h2>
+                  <span id="screenVerifiedBadge" class="text-blue-400">✓</span>
+                </div>
+                <p id="screenBio" class="text-xs text-white/80 max-w-[260px] leading-relaxed">
+                  Product Engineer & Founder @ Unravler. Shipping AI growth engines.
+                </p>
+              </div>
+
+              <!-- Social Pills -->
+              <div class="flex items-center justify-center gap-3 py-1.5 px-4 rounded-full bg-white/10 backdrop-blur-xl border border-white/15 text-xs">
+                <span class="cursor-pointer hover:opacity-80">📸 Instagram</span>
+                <span class="cursor-pointer hover:opacity-80">𝕏 Twitter</span>
+                <span class="cursor-pointer hover:opacity-80">▶ YouTube</span>
+                <span class="cursor-pointer hover:opacity-80">💼 LinkedIn</span>
+              </div>
+
+              <!-- Cards Stack -->
+              <div class="w-full space-y-3 pt-2" id="screenCardsStack">
+                
+                <div class="w-full p-4 rounded-2xl bg-white/15 backdrop-blur-xl border border-white/20 shadow-lg text-left flex items-center justify-between cursor-pointer hover:bg-white/25 transition">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-lg">⚡</div>
+                    <div>
+                      <div class="text-sm font-semibold text-white">Unravler AI Suite</div>
+                      <div class="text-[11px] text-white/70">Complete multi-channel growth command</div>
+                    </div>
+                  </div>
+                  <span class="text-white/60">→</span>
+                </div>
+
+                <div class="w-full p-4 rounded-2xl bg-white/10 backdrop-blur-xl border border-white/15 text-left space-y-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm">✉️</span>
+                    <span class="text-xs font-semibold text-white">Join Founder Letter</span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <input type="email" placeholder="Enter your email" class="flex-1 px-3 py-1.5 text-xs rounded-xl bg-black/20 border border-white/15 text-white placeholder-white/40 focus:outline-none" />
+                    <button class="px-3 py-1.5 rounded-xl bg-white text-black font-semibold text-xs">Join</button>
+                  </div>
+                </div>
+
+                <div class="w-full rounded-2xl bg-white/10 backdrop-blur-xl border border-white/15 overflow-hidden text-left cursor-pointer hover:bg-white/20 transition">
+                  <div class="relative h-28 bg-gradient-to-tr from-rose-900 to-indigo-900 flex items-center justify-center">
+                    <div class="w-10 h-10 rounded-full bg-white/90 text-red-600 flex items-center justify-center shadow-lg">▶</div>
+                    <span class="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-mono text-white">12:40</span>
+                  </div>
+                  <div class="p-3">
+                    <div class="text-xs font-semibold text-white truncate">Building Unravler v7</div>
+                    <div class="text-[10px] text-white/60">Engineering documentary</div>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Watermark -->
+              <div class="pt-6 pb-2 text-[11px] font-medium text-white/50">
+                Crafted with <span class="font-bold text-white/80">Unravler</span>
+              </div>
+
+            </div>
+
+            <div class="w-32 h-1 bg-white/40 rounded-full mx-auto mb-2 mt-auto shrink-0"></div>
+
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- RIGHT COLUMN: Apple Studio Inspector -->
+    <aside class="w-80 border-l border-black/[0.06] dark:border-white/[0.08] apple-glass-panel flex flex-col shrink-0 overflow-y-auto">
+      
+      <div class="p-3 border-b border-black/[0.04] dark:border-white/[0.06] flex items-center justify-center">
+        <div class="apple-segment-wrapper w-full justify-between">
+          <button id="tabBtnTheme" onclick="switchInspectorTab('theme')" class="apple-segment-btn active flex-1 text-center">Style</button>
+          <button id="tabBtnCards" onclick="switchInspectorTab('cards')" class="apple-segment-btn flex-1 text-center">Cards</button>
+          <button id="tabBtnStats" onclick="switchInspectorTab('stats')" class="apple-segment-btn flex-1 text-center">Insights</button>
+        </div>
+      </div>
+
+      <!-- Tab Content: Style -->
+      <div id="inspectorTabTheme" class="p-4 space-y-5">
+        <div>
+          <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block mb-2.5">Apple Theme Presets</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="applyPreset('cosmic')" class="p-2.5 rounded-xl border border-black/[0.08] dark:border-white/[0.12] bg-black/[0.02] dark:bg-white/[0.04] hover:border-blue-500 transition text-left">
+              <div class="h-10 rounded-lg mb-1.5 shadow-inner" style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%);"></div>
+              <div class="text-xs font-semibold">Cosmic Indigo</div>
+              <div class="text-[10px] text-gray-400">Deep Space</div>
+            </button>
+
+            <button onclick="applyPreset('titanium')" class="p-2.5 rounded-xl border border-black/[0.08] dark:border-white/[0.12] bg-black/[0.02] dark:bg-white/[0.04] hover:border-blue-500 transition text-left">
+              <div class="h-10 rounded-lg mb-1.5 shadow-inner" style="background: linear-gradient(135deg, #27272a 0%, #18181b 100%);"></div>
+              <div class="text-xs font-semibold">Natural Titanium</div>
+              <div class="text-[10px] text-gray-400">Brushed Metal</div>
+            </button>
+
+            <button onclick="applyPreset('aurora')" class="p-2.5 rounded-xl border border-black/[0.08] dark:border-white/[0.12] bg-black/[0.02] dark:bg-white/[0.04] hover:border-blue-500 transition text-left">
+              <div class="h-10 rounded-lg mb-1.5 shadow-inner" style="background: linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%);"></div>
+              <div class="text-xs font-semibold">Alpine Pine</div>
+              <div class="text-[10px] text-gray-400">Forest Glass</div>
+            </button>
+
+            <button onclick="applyPreset('desert')" class="p-2.5 rounded-xl border border-black/[0.08] dark:border-white/[0.12] bg-black/[0.02] dark:bg-white/[0.04] hover:border-blue-500 transition text-left">
+              <div class="h-10 rounded-lg mb-1.5 shadow-inner" style="background: linear-gradient(135deg, #451a03 0%, #78350f 50%, #b45309 100%);"></div>
+              <div class="text-xs font-semibold">Desert Gold</div>
+              <div class="text-[10px] text-gray-400">Warm Amber</div>
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-gray-600 dark:text-gray-300">Glass Blur Intensity</span>
+            <span id="blurValDisplay" class="font-mono text-[11px] text-gray-400">20px</span>
+          </div>
+          <input type="range" class="apple-slider" min="0" max="40" value="20" oninput="updateBlur(this.value)" />
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-gray-600 dark:text-gray-300">Squircle Corner Radius</span>
+            <span id="radiusValDisplay" class="font-mono text-[11px] text-gray-400">16px</span>
+          </div>
+          <input type="range" class="apple-slider" min="4" max="32" value="16" oninput="updateRadius(this.value)" />
+        </div>
+      </div>
+
+      <!-- Tab Content: Cards -->
+      <div id="inspectorTabCards" class="p-4 space-y-4 hidden">
+        <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block">Card Geometry</label>
+        <div class="space-y-2.5">
+          <div class="text-xs font-medium text-gray-600 dark:text-gray-300">Button Shape Style</div>
+          <div class="grid grid-cols-3 gap-2">
+            <button onclick="setCardShape('sharp')" class="py-2 text-xs font-medium rounded-lg border border-black/[0.08] hover:border-blue-500 transition">Sharp</button>
+            <button onclick="setCardShape('squircle')" class="py-2 text-xs font-medium rounded-2xl border-2 border-blue-500 bg-blue-50/50 text-blue-600 transition">Squircle</button>
+            <button onclick="setCardShape('pill')" class="py-2 text-xs font-medium rounded-full border border-black/[0.08] hover:border-blue-500 transition">Pill</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab Content: Insights -->
+      <div id="inspectorTabStats" class="p-4 space-y-4 hidden">
+        <label class="text-[11px] font-bold tracking-wider uppercase text-gray-400 block">Link Performance</label>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="p-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
+            <div class="text-[10px] text-gray-400 font-medium uppercase">Total Clicks</div>
+            <div class="text-lg font-bold mt-0.5">4,821</div>
+            <div class="text-[10px] text-emerald-500 font-semibold mt-1">↑ 18.4%</div>
+          </div>
+          <div class="p-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04]">
+            <div class="text-[10px] text-gray-400 font-medium uppercase">CTR Rate</div>
+            <div class="text-lg font-bold mt-0.5">14.2%</div>
+            <div class="text-[10px] text-blue-500 font-semibold mt-1">Top tier</div>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+  </main>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-full apple-glass-panel shadow-md text-xs font-semibold text-gray-900 dark:text-white flex items-center gap-2 transform translate-y-16 opacity-0 transition-all duration-300">
+    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+    <span id="toastMsg">Changes published to live bio!</span>
+  </div>
+
+  <script>
+    let currentZoom = 1;
+    let isDarkMode = false;
+    let currentDevice = "mobile";
+
+    function setDeviceMode(mode) {
+      currentDevice = mode;
+      document.getElementById("devBtnMobile").classList.toggle("active", mode === "mobile");
+      document.getElementById("devBtnTablet").classList.toggle("active", mode === "tablet");
+      document.getElementById("devBtnDesktop").classList.toggle("active", mode === "desktop");
+
+      const phoneChassis = document.getElementById("phoneChassis");
+      const phoneScreen = document.getElementById("phoneScreen");
+      
+      if (mode === "mobile") {
+        phoneChassis.style.width = "385px";
+        phoneChassis.style.height = "780px";
+        phoneChassis.style.borderRadius = "52px";
+        phoneScreen.style.borderRadius = "42px";
+      } else if (mode === "tablet") {
+        phoneChassis.style.width = "540px";
+        phoneChassis.style.height = "740px";
+        phoneChassis.style.borderRadius = "36px";
+        phoneScreen.style.borderRadius = "26px";
+      } else if (mode === "desktop") {
+        phoneChassis.style.width = "720px";
+        phoneChassis.style.height = "680px";
+        phoneChassis.style.borderRadius = "24px";
+        phoneScreen.style.borderRadius = "16px";
+      }
+      showToast("Switched viewport to " + mode);
+    }
+
+    function adjustZoom(delta) {
+      currentZoom = Math.max(0.7, Math.min(1.3, currentZoom + delta));
+      document.getElementById("deviceContainer").style.transform = `scale(${currentZoom})`;
+      document.getElementById("zoomLabel").innerText = Math.round(currentZoom * 100) + "%";
+    }
+
+    function toggleDarkMode() {
+      isDarkMode = !isDarkMode;
+      document.documentElement.classList.toggle("dark", isDarkMode);
+      showToast(isDarkMode ? "macOS Dark Mode enabled" : "macOS Light Mode enabled");
+    }
+
+    function updateProfileLive() {
+      const name = document.getElementById("inputDisplayName").value;
+      const bio = document.getElementById("inputBio").value;
+      document.getElementById("screenDisplayName").innerText = name || "Your Name";
+      document.getElementById("sideNameDisplay").innerText = name || "Your Name";
+      document.getElementById("screenBio").innerText = bio || "";
+    }
+
+    function toggleVerifiedBadge() {
+      const checked = document.getElementById("verifiedToggle").checked;
+      document.getElementById("screenVerifiedBadge").style.display = checked ? "inline-block" : "none";
+      showToast(checked ? "Verified Badge enabled" : "Verified Badge hidden");
+    }
+
+    function applyPreset(preset) {
+      const screen = document.getElementById("phoneScreen");
+      if (preset === "cosmic") {
+        screen.style.background = "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%)";
+      } else if (preset === "titanium") {
+        screen.style.background = "linear-gradient(135deg, #27272a 0%, #18181b 100%)";
+      } else if (preset === "aurora") {
+        screen.style.background = "linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)";
+      } else if (preset === "desert") {
+        screen.style.background = "linear-gradient(135deg, #451a03 0%, #78350f 50%, #b45309 100%)";
+      }
+      showToast("Applied preset: " + preset);
+    }
+
+    function updateBlur(val) {
+      document.getElementById("blurValDisplay").innerText = val + "px";
+      const cards = document.querySelectorAll("#screenCardsStack > div");
+      cards.forEach(c => {
+        c.style.backdropFilter = `blur(${val}px)`;
+      });
+    }
+
+    function updateRadius(val) {
+      document.getElementById("radiusValDisplay").innerText = val + "px";
+      const cards = document.querySelectorAll("#screenCardsStack > div");
+      cards.forEach(c => {
+        c.style.borderRadius = `${val}px`;
+      });
+    }
+
+    function setCardShape(shape) {
+      const cards = document.querySelectorAll("#screenCardsStack > div");
+      cards.forEach(c => {
+        if (shape === "sharp") c.style.borderRadius = "6px";
+        if (shape === "squircle") c.style.borderRadius = "16px";
+        if (shape === "pill") c.style.borderRadius = "9999px";
+      });
+      showToast("Card geometry set to: " + shape);
+    }
+
+    function switchInspectorTab(tab) {
+      ["Theme", "Cards", "Stats"].forEach(t => {
+        const btn = document.getElementById("tabBtn" + t);
+        const pane = document.getElementById("inspectorTab" + t);
+        const isActive = t.toLowerCase() === tab.toLowerCase();
+        if (btn) btn.classList.toggle("active", isActive);
+        if (pane) pane.classList.toggle("hidden", !isActive);
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById("toast");
+      document.getElementById("toastMsg").innerText = msg;
+      toast.classList.remove("translate-y-16", "opacity-0");
+      setTimeout(() => {
+        toast.classList.add("translate-y-16", "opacity-0");
+      }, 2400);
+    }
+
+    function simulatePublish() {
+      const btn = document.getElementById("publishBtn");
+      const btnText = document.getElementById("publishBtnText");
+      btnText.innerText = "Publishing to Edge...";
+      btn.style.opacity = "0.7";
+      setTimeout(() => {
+        btnText.innerText = "Published ✓";
+        btn.style.opacity = "1";
+        showToast("Live bio page updated successfully!");
+        setTimeout(() => {
+          btnText.innerText = "Publish Changes";
+        }, 2000);
+      }, 800);
+    }
+
+    function copyHandleLink() {
+      navigator.clipboard.writeText("https://www.unravler.com/bio/shubham");
+      showToast("Copied unravler.com/bio/shubham to clipboard!");
+    }
+
+    function openShareModal() {
+      showToast("QR Code & Universal Share sheet ready");
+    }
+
+    function addNewBlock() {
+      const stack = document.getElementById("screenCardsStack");
+      const newCard = document.createElement("div");
+      newCard.className = "w-full p-4 rounded-2xl bg-white/15 backdrop-blur-xl border border-white/20 shadow-lg text-left flex items-center justify-between cursor-pointer hover:bg-white/25 transition";
+      newCard.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-lg">✨</div>
+          <div>
+            <div class="text-sm font-semibold text-white">New Featured Link</div>
+            <div class="text-[11px] text-white/70">https://unravler.com/new</div>
+          </div>
+        </div>
+        <span class="text-[10px] text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full font-semibold">New</span>
+      `;
+      stack.appendChild(newCard);
+      showToast("Added new block to preview!");
+    }
+  </script>
+</body>
+</html>
