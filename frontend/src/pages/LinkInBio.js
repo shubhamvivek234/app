@@ -401,84 +401,93 @@ export default function LinkInBio() {
     <DashboardLayout noPadding={true}>
       <div className="h-[calc(100vh-3.5rem)] flex flex-col bg-[#F5F5F4] overflow-hidden font-sans select-none">
         
-        {/* ── TOP STUDIO CONTROL HEADER (Flush & High-Density) ── */}
-        <div className="h-12 sm:h-13 bg-white/95 border-b border-gray-200 px-3 sm:px-5 flex items-center justify-between z-30 shrink-0 backdrop-blur-md">
-          {/* Left: Branding & Handle Pill */}
-          <div className="flex items-center gap-2.5 min-w-0">
+        {/* ── TOP STUDIO CONTROL HEADER (Apple macOS Sequoia Glass Bar) ── */}
+        <div className="h-13 bg-white/80 dark:bg-[#1C1C1E]/80 border-b border-black/[0.06] dark:border-white/[0.08] px-3 sm:px-6 flex items-center justify-between z-30 shrink-0 backdrop-blur-2xl">
+          {/* Left: macOS Window Dots, Branding & Handle Pill */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="hidden sm:flex items-center gap-2 mr-1">
+              <span className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50 cursor-pointer hover:opacity-80" />
+              <span className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50 cursor-pointer hover:opacity-80" />
+              <span className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50 cursor-pointer hover:opacity-80" />
+            </div>
+            <div className="h-4 w-[1px] bg-black/[0.08] dark:bg-white/[0.1] hidden sm:block" />
+
             <div className="flex items-center gap-2 shrink-0">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/20" />
-              <span className="text-xs font-black uppercase tracking-widest text-gray-500 hidden lg:inline-block">
+              <span className="text-xs font-bold tracking-tight text-gray-900 dark:text-white hidden lg:inline-block">
                 Smart Bio Studio
               </span>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 hidden xl:inline-block">
+                Pro
+              </span>
             </div>
-            <div className="h-4 w-[1px] bg-gray-200 hidden lg:block" />
-            <div className="flex items-center gap-1 text-xs text-gray-700 font-mono bg-gray-50 px-2.5 py-1 rounded-xl border border-gray-200 shadow-sm truncate">
+
+            <div className="flex items-center gap-1 text-xs text-gray-700 dark:text-gray-200 font-mono bg-black/[0.04] dark:bg-white/[0.06] px-3 py-1 rounded-full border border-black/[0.06] dark:border-white/[0.08] shadow-xs truncate">
               <span className="text-gray-400 font-normal">bio/</span>
               <input
                 type="text"
                 value={handle}
                 onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
                 placeholder="handle"
-                className="bg-transparent font-bold text-gray-900 outline-none w-20 sm:w-28 focus:text-blue-600 transition-colors"
+                className="bg-transparent font-bold text-gray-900 dark:text-white outline-none w-20 sm:w-28 focus:text-blue-600 dark:focus:text-blue-400 transition-colors"
               />
             </div>
           </div>
 
-          {/* Center: Device Mode Switcher */}
-          <div className="flex items-center gap-1 p-0.5 rounded-xl bg-gray-100 border border-gray-200 shadow-xs">
+          {/* Center: Apple Segmented Device Mode Switcher */}
+          <div className="flex items-center p-1 rounded-full bg-black/[0.05] dark:bg-white/[0.08] border border-black/[0.04] dark:border-white/[0.06] shadow-xs">
             <button
               onClick={() => { setDeviceMode('mobile'); setZoomScale(1); }}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
                 deviceMode === 'mobile'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-700'
+                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }`}
-              title="iPhone 16 Pro (Mobile)"
+              title="Mobile"
             >
               <FaMobileAlt className="text-xs" />
               <span className="hidden md:inline">Mobile</span>
             </button>
             <button
               onClick={() => { setDeviceMode('tablet'); setZoomScale(0.95); }}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
                 deviceMode === 'tablet'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-700'
+                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }`}
-              title="iPad / Tablet"
+              title="Tablet"
             >
               <FaTabletAlt className="text-xs" />
               <span className="hidden md:inline">Tablet</span>
             </button>
             <button
               onClick={() => { setDeviceMode('desktop'); setZoomScale(0.9); }}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+              className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold transition-all ${
                 deviceMode === 'desktop'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-700'
+                  ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }`}
-              title="Desktop Browser"
+              title="Desktop"
             >
               <FaDesktop className="text-xs" />
               <span className="hidden md:inline">Desktop</span>
             </button>
           </div>
 
-          {/* Right: Actions, QR, Zoom & Publish CTA */}
+          {/* Right: Actions, QR, Zoom & Apple Obsidian Publish CTA */}
           <div className="flex items-center gap-2 shrink-0">
             {/* Zoom Controls */}
-            <div className="hidden xl:flex items-center gap-1 px-2 border-r border-gray-200 text-xs font-mono text-gray-400">
+            <div className="hidden xl:flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-full px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 font-mono">
               <button
                 onClick={() => setZoomScale((z) => Math.max(0.75, +(z - 0.05).toFixed(2)))}
-                className="p-1 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"
+                className="p-1 hover:text-blue-600 rounded-full transition-colors"
                 title="Zoom Out"
               >
                 <FaSearchMinus />
               </button>
-              <span className="w-10 text-center font-bold text-gray-600">{Math.round(zoomScale * 100)}%</span>
+              <span className="w-10 text-center font-bold text-gray-700 dark:text-gray-200 text-[11px]">{Math.round(zoomScale * 100)}%</span>
               <button
                 onClick={() => setZoomScale((z) => Math.min(1.15, +(z + 0.05).toFixed(2)))}
-                className="p-1 hover:text-gray-900 rounded-md hover:bg-gray-100 transition-colors"
+                className="p-1 hover:text-blue-600 rounded-full transition-colors"
                 title="Zoom In"
               >
                 <FaSearchPlus />
@@ -488,7 +497,7 @@ export default function LinkInBio() {
             {publicUrl && (
               <button
                 onClick={() => setQrModalOpen(true)}
-                className="p-1.5 text-gray-400 hover:text-gray-700 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all"
+                className="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all"
                 title="Scan QR Code on Phone"
               >
                 <FaQrcode className="text-xs" />
@@ -498,7 +507,7 @@ export default function LinkInBio() {
             {publicUrl && (
               <button
                 onClick={copyPublicUrl}
-                className="px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all hidden sm:flex items-center gap-1.5"
+                className="px-3.5 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all hidden sm:flex items-center gap-1.5"
                 title="Copy Public Link"
               >
                 <FaCopy className="text-gray-400 text-[10px]" /> Copy
@@ -510,7 +519,7 @@ export default function LinkInBio() {
                 href={publicUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="px-2.5 py-1.5 text-xs font-bold text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all hidden sm:flex items-center gap-1.5"
+                className="px-3.5 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.12] rounded-full shadow-xs hover:bg-gray-50 dark:hover:bg-[#3A3A3C] transition-all hidden sm:flex items-center gap-1.5"
                 title="View Live Public Page"
               >
                 <FaExternalLinkAlt className="text-gray-400 text-[9px]" /> Live
@@ -520,9 +529,10 @@ export default function LinkInBio() {
             <button
               onClick={() => handleSaveAll()}
               disabled={saving}
-              className="px-4 py-1.5 text-xs font-black bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer active:scale-95"
+              className="px-5 py-1.5 text-xs font-semibold text-white bg-black dark:bg-white dark:text-black rounded-full shadow-[0_2px_8px_rgba(0,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.4)] dark:shadow-[0_2px_8px_rgba(255,255,255,0.15)] hover:opacity-90 active:scale-[0.98] transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
             >
-              <FaSave className="text-xs" /> {saving ? 'Publishing…' : 'Publish Bio'}
+              <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
+              <span>{saving ? 'Publishing…' : 'Publish Bio'}</span>
             </button>
           </div>
         </div>
@@ -531,7 +541,7 @@ export default function LinkInBio() {
         <div className="flex-1 flex overflow-hidden">
           
           {/* 1. LEFT COLUMN: Outline & Content Tree (~320px) */}
-          <div className="w-72 md:w-80 lg:w-84 xl:w-88 shrink-0 h-full overflow-hidden flex flex-col border-r border-gray-200 bg-white relative z-20 shadow-lg">
+          <div className="w-72 md:w-80 lg:w-84 xl:w-88 shrink-0 h-full overflow-hidden flex flex-col border-r border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl relative z-20 shadow-xs">
             <BioOutlineTree
               title={title}
               setTitle={setTitle}
@@ -564,45 +574,45 @@ export default function LinkInBio() {
           </div>
 
           {/* 2. CENTER CANVAS: Contained & Responsive Machined Hardware Viewport */}
-          <div className="flex-1 min-w-0 h-full bg-[#F0F0EE] flex flex-col items-center justify-start p-3 sm:p-4 md:p-6 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10">
+          <div className="flex-1 min-w-0 h-full bg-[#F5F5F7] dark:bg-[#000000] flex flex-col items-center justify-start p-3 sm:p-4 md:p-6 overflow-x-hidden overflow-y-auto relative custom-scrollbar z-10 transition-colors">
             
-            {/* Background Studio Grid & Stage Spotlight */}
-            <div className="absolute inset-0 bg-[radial-gradient(#d4d4d4_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none opacity-40" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-tr from-blue-200/20 via-indigo-200/15 to-pink-200/10 blur-[100px] rounded-full pointer-events-none" />
+            {/* Background Studio Ambient Glow & Grid */}
+            <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_520px_at_50%_45%,rgba(0,113,227,0.08),transparent_70%)]" />
+            <div className="pointer-events-none absolute inset-0 z-0 opacity-40 bg-[radial-gradient(#d4d4d4_1px,transparent_1px)] dark:bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:24px_24px]" />
 
             {/* Stage Quick Replay Pill */}
             <div className="relative z-20 mb-2 flex items-center justify-center">
               <button
                 onClick={() => setPreviewKey((k) => k + 1)}
-                className="px-3 py-1 rounded-full bg-white/90 hover:bg-white border border-gray-200 text-[11px] font-bold text-gray-500 hover:text-gray-800 transition-all flex items-center gap-1.5 shadow-sm"
+                className="px-3.5 py-1 rounded-full bg-white/80 dark:bg-[#2C2C2E]/80 backdrop-blur-md hover:bg-white dark:hover:bg-[#3A3A3C] border border-black/[0.06] dark:border-white/[0.08] text-[11px] font-semibold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-all flex items-center gap-1.5 shadow-xs"
                 title="Replay Entrance Animations"
               >
                 <FaRedoAlt className="text-[10px]" /> Replay Animations
               </button>
             </div>
 
-            {/* ── THE MACHINED HARDWARE DEVICE CHASSIS (Contained & Centered) ── */}
+            {/* ── THE MACHINED HARDWARE DEVICE CHASSIS (Apple Titanium Engineering) ── */}
             <div
               style={{ transform: `scale(${zoomScale})`, transformOrigin: 'top center' }}
               className="transition-transform duration-300 flex items-center justify-center my-auto relative z-20 max-w-full"
             >
               {/* Outer Metallic Titanium Chassis */}
               <div
-                className={`relative transition-all duration-300 ${
+                className={`relative transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                   deviceMode === 'mobile'
-                    ? 'w-[360px] sm:w-[380px] h-[750px] sm:h-[770px] rounded-[50px] p-[10px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
+                    ? 'w-[365px] sm:w-[385px] h-[755px] sm:h-[780px] rounded-[52px] p-[11px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
                     : deviceMode === 'tablet'
-                    ? 'w-[440px] sm:w-[480px] md:w-[500px] h-[680px] sm:h-[720px] rounded-[36px] p-[10px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-950 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.18)_inset]'
-                    : 'w-[480px] sm:w-[540px] md:w-[580px] xl:w-[620px] h-[680px] sm:h-[720px] rounded-[24px] p-[8px] bg-gradient-to-b from-zinc-700 via-zinc-800 to-zinc-900 shadow-[0_25px_80px_-15px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.15)_inset]'
+                    ? 'w-[440px] sm:w-[490px] md:w-[520px] h-[680px] sm:h-[730px] rounded-[36px] p-[11px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
+                    : 'w-[480px] sm:w-[560px] md:w-[620px] xl:w-[660px] h-[680px] sm:h-[730px] rounded-[24px] p-[9px] bg-gradient-to-b from-[#E2DDD6] via-[#B8B2A8] to-[#8C867C] dark:from-[#3A3A3C] dark:via-[#2C2C2E] dark:to-[#1C1C1E] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.35),0_0_0_1.5px_rgba(210,205,195,0.8),0_0_0_4px_#1C1B18]'
                 }`}
               >
                 {/* Physical Hardware Buttons (Mobile Mode) */}
                 {deviceMode === 'mobile' && (
                   <>
-                    <div className="absolute -left-[4px] top-28 w-[4px] h-7 bg-zinc-600 rounded-l-md shadow-inner" />
-                    <div className="absolute -left-[4px] top-40 w-[4px] h-12 bg-zinc-600 rounded-l-md shadow-inner" />
-                    <div className="absolute -left-[4px] top-56 w-[4px] h-12 bg-zinc-600 rounded-l-md shadow-inner" />
-                    <div className="absolute -right-[4px] top-44 w-[4px] h-16 bg-zinc-600 rounded-r-md shadow-inner" />
+                    <div className="absolute -left-[4px] top-28 w-[4px] h-7 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
+                    <div className="absolute -left-[4px] top-40 w-[4px] h-12 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
+                    <div className="absolute -left-[4px] top-56 w-[4px] h-12 bg-[#9E988F] dark:bg-[#48484A] rounded-l-md shadow-inner" />
+                    <div className="absolute -right-[4px] top-44 w-[4px] h-16 bg-[#9E988F] dark:bg-[#48484A] rounded-r-md shadow-inner" />
                   </>
                 )}
 
@@ -610,26 +620,29 @@ export default function LinkInBio() {
                 <div
                   className={`w-full h-full bg-black overflow-hidden relative flex flex-col shadow-inner ${
                     deviceMode === 'mobile'
-                      ? 'rounded-[40px]'
+                      ? 'rounded-[42px]'
                       : deviceMode === 'tablet'
-                      ? 'rounded-[28px]'
-                      : 'rounded-[18px]'
+                      ? 'rounded-[26px]'
+                      : 'rounded-[16px]'
                   }`}
                 >
                   {/* Specular Diagonal Glass Gloss Reflection */}
-                  <div className="pointer-events-none absolute inset-0 z-40 bg-gradient-to-tr from-transparent via-white/[0.02] to-white/[0.08]" />
+                  <div className="pointer-events-none absolute inset-0 z-40 bg-gradient-to-tr from-transparent via-white/[0.02] to-white/[0.06]" />
 
                   {/* Top iOS Status Bar + Dynamic Island (Mobile Mode) */}
                   {deviceMode === 'mobile' && (
-                    <div className="relative w-full h-10 shrink-0 px-6 pt-1.5 flex items-center justify-between z-30 select-none bg-transparent">
+                    <div className="relative w-full h-10 shrink-0 px-7 pt-1.5 flex items-center justify-between z-30 select-none bg-transparent">
                       <span className="text-[12px] font-semibold tracking-tight text-white/90">9:41</span>
 
                       {/* Centered Dynamic Island Pill */}
-                      <div className="absolute left-1/2 -translate-x-1/2 top-2 w-28 h-6 bg-black rounded-full flex items-center justify-between px-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.15)] z-40">
+                      <div className="absolute left-1/2 -translate-x-1/2 top-2 w-28 h-6 bg-black rounded-full flex items-center justify-between px-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.18)] z-40 group cursor-pointer hover:w-32 transition-all duration-300">
                         <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 ring-1 ring-zinc-800 flex items-center justify-center">
-                          <span className="w-1 h-1 rounded-full bg-blue-500/80 blur-[0.5px]" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                         </div>
-                        <div className="w-2 h-2 rounded-full bg-zinc-950" />
+                        <div className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-[#34C759]" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-zinc-800 border border-zinc-700" />
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-1.5 text-white/90 text-[10px]">
@@ -641,18 +654,18 @@ export default function LinkInBio() {
                     </div>
                   )}
 
-                  {/* Desktop / Browser Header (Desktop & Tablet Mode) */}
+                  {/* Desktop / Browser Header (Desktop & Tablet Mode - Apple Safari Style) */}
                   {deviceMode !== 'mobile' && (
-                    <div className="bg-zinc-900 border-b border-zinc-800 px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 z-30">
+                    <div className="bg-[#2C2C2E] border-b border-white/[0.08] px-3.5 py-1.5 flex items-center justify-between text-xs shrink-0 z-30 select-none">
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F56] border border-[#E0443E]/50" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-[#27C93F] border border-[#1AAB29]/50" />
                       </div>
-                      <div className="bg-zinc-950/90 text-zinc-400 font-mono text-[11px] px-3.5 py-0.5 rounded-full border border-zinc-800/80 truncate max-w-xs">
+                      <div className="bg-[#1C1C1E] text-gray-300 font-mono text-[11px] px-3.5 py-0.5 rounded-full border border-white/[0.1] truncate max-w-xs shadow-inner">
                         {handle ? `https://unravler.bio/${handle}` : 'https://unravler.bio/preview'}
                       </div>
-                      <button onClick={copyPublicUrl} className="text-zinc-400 hover:text-white">
+                      <button onClick={copyPublicUrl} className="text-gray-400 hover:text-white transition-colors" title="Copy URL">
                         <FaShareAlt className="text-xs" />
                       </button>
                     </div>
@@ -947,7 +960,7 @@ export default function LinkInBio() {
           </div>
 
           {/* 3. RIGHT COLUMN: Inspector Drawer (~340px) */}
-          <div className="w-80 md:w-84 lg:w-88 xl:w-92 shrink-0 h-full overflow-hidden flex flex-col border-l border-gray-200 bg-white relative z-20 shadow-lg">
+          <div className="w-80 md:w-84 lg:w-88 xl:w-92 shrink-0 h-full overflow-hidden flex flex-col border-l border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl relative z-20 shadow-xs">
             <BioInspectorDrawer
               theme={theme}
               setTheme={setTheme}
@@ -973,27 +986,27 @@ export default function LinkInBio() {
           theme={theme}
         />
 
-        {/* 2. Add New Block Modal */}
+        {/* 2. Add New Block Modal (Apple Sheet Style) */}
         {addBlockModalOpen && (
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white border border-gray-200 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-gray-900">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] rounded-[28px] max-w-md w-full p-6 shadow-2xl space-y-4 text-gray-900 dark:text-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-black text-gray-900">Add Content Block</h3>
-                  <p className="text-xs text-gray-500">Choose a high-converting block archetype</p>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">Add Content Block</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Choose a high-converting block archetype</p>
                 </div>
-                <button onClick={() => setAddBlockModalOpen(false)} className="text-gray-400 hover:text-gray-700 p-2 rounded-xl hover:bg-gray-100 transition-colors">
+                <button onClick={() => setAddBlockModalOpen(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-2 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08] transition-colors">
                   <FaTimes />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { id: 'link', label: 'Custom Link', desc: 'Direct URL with badge & subtitle', icon: FaExternalLinkAlt, color: 'text-indigo-400' },
-                  { id: 'folder', label: 'Folder / Group', desc: 'Group links into a sleek accordion', icon: FaFolder, color: 'text-amber-400' },
-                  { id: 'media_card', label: 'Media Card', desc: 'Hero photo banner with subtitle & link', icon: FaImage, color: 'text-rose-400' },
-                  { id: 'embed', label: 'YouTube / Spotify', desc: 'Embedded video & podcast player', icon: FaPlay, color: 'text-purple-400' },
-                  { id: 'feed_grid', label: 'Instagram Feed', desc: 'Live mirror of recent social posts', icon: FaLayerGroup, color: 'text-emerald-400' },
+                  { id: 'link', label: 'Custom Link', desc: 'Direct URL with badge & subtitle', icon: FaExternalLinkAlt, color: 'text-blue-500' },
+                  { id: 'folder', label: 'Folder / Group', desc: 'Group links into a sleek accordion', icon: FaFolder, color: 'text-amber-500' },
+                  { id: 'media_card', label: 'Media Card', desc: 'Hero photo banner with subtitle & link', icon: FaImage, color: 'text-rose-500' },
+                  { id: 'embed', label: 'YouTube / Spotify', desc: 'Embedded video & podcast player', icon: FaPlay, color: 'text-purple-500' },
+                  { id: 'feed_grid', label: 'Instagram Feed', desc: 'Live mirror of recent social posts', icon: FaLayerGroup, color: 'text-emerald-500' },
                 ].map((typeItem) => (
                   <button
                     key={typeItem.id}
@@ -1017,11 +1030,11 @@ export default function LinkInBio() {
                       setAddBlockModalOpen(false);
                       setEditingBlock(newBlock);
                     }}
-                    className="p-3.5 rounded-2xl border border-gray-200 hover:border-blue-400 bg-gray-50 text-left transition-all hover:scale-[1.02] cursor-pointer group"
+                    className="p-3.5 rounded-2xl border border-black/[0.06] dark:border-white/[0.08] hover:border-blue-500/50 bg-black/[0.02] dark:bg-white/[0.04] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] text-left transition-all hover:scale-[1.02] cursor-pointer group"
                   >
                     <typeItem.icon className={`text-lg mb-2 ${typeItem.color} group-hover:scale-110 transition-transform`} />
-                    <p className="text-xs font-bold text-gray-900">{typeItem.label}</p>
-                    <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{typeItem.desc}</p>
+                    <p className="text-xs font-bold text-gray-900 dark:text-white">{typeItem.label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-tight mt-0.5">{typeItem.desc}</p>
                   </button>
                 ))}
               </div>
@@ -1029,17 +1042,17 @@ export default function LinkInBio() {
           </div>
         )}
 
-        {/* 3. QR Code Live Testing Modal */}
+        {/* 3. QR Code Live Testing Modal (Apple Style) */}
         {qrModalOpen && (
-          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white border border-gray-200 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center space-y-4 text-gray-900">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.12] rounded-[28px] max-w-sm w-full p-6 shadow-2xl text-center space-y-4 text-gray-900 dark:text-white">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-black">Scan on Mobile</h3>
-                <button onClick={() => setQrModalOpen(false)} className="text-gray-400 hover:text-gray-700">
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">Scan on Mobile</h3>
+                <button onClick={() => setQrModalOpen(false)} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-2 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/[0.08]">
                   <FaTimes />
                 </button>
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
                 Point your iPhone or Android camera at the QR code to view your Smart Bio live in real-time.
               </p>
               <div className="bg-white p-4 rounded-2xl inline-block shadow-lg mx-auto">
@@ -1049,7 +1062,7 @@ export default function LinkInBio() {
                   className="w-44 h-44 mx-auto rounded-lg"
                 />
               </div>
-              <div className="p-2.5 rounded-xl bg-gray-50 font-mono text-xs text-blue-600 truncate border border-gray-200">
+              <div className="p-2.5 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] font-mono text-xs text-blue-600 dark:text-blue-400 truncate border border-black/[0.06] dark:border-white/[0.08]">
                 {publicUrl}
               </div>
             </div>

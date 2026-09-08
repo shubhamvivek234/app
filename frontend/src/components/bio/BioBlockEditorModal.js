@@ -166,16 +166,21 @@ export default function BioBlockEditorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150">
-      <div className="bg-white border border-gray-200 rounded-3xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+      <div className="bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/[0.1] rounded-[28px] max-w-4xl w-full shadow-[0_25px_70px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col max-h-[90vh]">
         
-        {/* Top Header */}
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between gap-3 bg-gray-50/50">
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-bold text-gray-900">
+        {/* Top Header (Apple macOS Sheet Bar) */}
+        <div className="p-4 sm:px-6 border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-3 bg-black/[0.02] dark:bg-white/[0.02]">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5 mr-1">
+              <span className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/50 cursor-pointer hover:opacity-80" onClick={onClose} />
+              <span className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/50" />
+              <span className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/50" />
+            </div>
+            <h3 className="text-sm font-semibold tracking-tight text-gray-900 dark:text-white">
               Edit Block
             </h3>
-            <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider bg-blue-50 text-blue-600 rounded-md">
+            <span className="px-2.5 py-0.5 text-[10px] font-semibold capitalize bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-full border border-blue-200/50 dark:border-blue-800/40">
               {formData.type?.replace('_', ' ')}
             </span>
           </div>
@@ -183,20 +188,20 @@ export default function BioBlockEditorModal({
           <div className="flex items-center gap-2">
             <button
               onClick={() => { onDeleteBlock(block.id); onClose(); }}
-              className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+              className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-full transition-colors"
               title="Delete Block"
             >
               <FaTrash className="text-xs" />
             </button>
             <button
               onClick={handleSave}
-              className="px-4 py-1.5 text-xs font-bold bg-blue-500 hover:bg-blue-400 text-white rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              className="px-4 py-1.5 text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white rounded-full shadow-[0_2px_8px_rgba(0,113,227,0.3)] transition-all flex items-center gap-1.5"
             >
               <FaSave className="text-xs" /> Save Changes
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-gray-500 hover:text-gray-600 rounded-xl"
+              className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.08] rounded-full transition-colors"
             >
               <FaTimes className="text-xs" />
             </button>
@@ -204,27 +209,27 @@ export default function BioBlockEditorModal({
         </div>
 
         {/* 2-Column Split Editor: Left Content & Media vs Right Block Styles */}
-        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100 overflow-y-auto flex-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-black/[0.06] dark:divide-white/[0.08] overflow-y-auto flex-1 text-gray-800 dark:text-gray-200">
           
           {/* ── Left Column: Content, URL & Media ── */}
           <div className="p-5 space-y-4">
             
             {/* Button Type */}
             <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
+              <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 Button Type
               </label>
               <select
                 value={formData.type}
                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-semibold text-gray-900"
+                className="w-full px-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0071E3]"
               >
-                <option value="link">Destination URL</option>
-                <option value="folder">📁 Folder / Tappable Drawer</option>
-                <option value="media_card">Media Showcase Card</option>
-                <option value="embed">Video / Spotify Embed</option>
-                <option value="feed_grid">Live Instagram Feed Grid</option>
-                <option value="lead_capture">Newsletter Lead Capture</option>
+                <option value="link" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Destination URL</option>
+                <option value="folder" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">📁 Folder / Tappable Drawer</option>
+                <option value="media_card" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Media Showcase Card</option>
+                <option value="embed" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Video / Spotify Embed</option>
+                <option value="feed_grid" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Live Instagram Feed Grid</option>
+                <option value="lead_capture" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Newsletter Lead Capture</option>
               </select>
             </div>
 
@@ -232,7 +237,7 @@ export default function BioBlockEditorModal({
             {formData.type === 'folder' && (
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-gray-700">
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
                     Folder Links ({(formData.folder_items || []).length})
                   </label>
                   <button
@@ -248,20 +253,20 @@ export default function BioBlockEditorModal({
                         folder_items: [...(prev.folder_items || []), newSub],
                       }));
                     }}
-                    className="px-2.5 py-1 text-xs font-bold bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 rounded-lg flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1 text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 rounded-full border border-amber-500/20 flex items-center gap-1 cursor-pointer transition-colors"
                   >
                     + Add Link Inside
                   </button>
                 </div>
 
-                <div className="space-y-2 max-h-48 overflow-y-auto">
+                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
                   {(formData.folder_items || []).length === 0 ? (
-                    <p className="text-xs text-gray-500 italic p-3 text-center border border-dashed border-gray-200 rounded-xl">
+                    <p className="text-xs text-gray-400 italic p-3 text-center border border-dashed border-black/[0.08] dark:border-white/[0.1] rounded-2xl">
                       No links inside this folder yet. Click &ldquo;Add Link Inside&rdquo; above.
                     </p>
                   ) : (
                     formData.folder_items.map((sub, sIdx) => (
-                      <div key={sub.id || sIdx} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50 border border-gray-200">
+                      <div key={sub.id || sIdx} className="flex items-center gap-2 p-2 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
                         <input
                           type="text"
                           value={sub.title}
@@ -271,7 +276,7 @@ export default function BioBlockEditorModal({
                             setFormData({ ...formData, folder_items: updated });
                           }}
                           placeholder="Link Title"
-                          className="w-1/3 px-2 py-1 text-xs bg-white border border-gray-200 rounded-lg font-semibold text-gray-900"
+                          className="w-1/3 px-2.5 py-1 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-medium text-gray-900 dark:text-white"
                         />
                         <input
                           type="url"
@@ -282,7 +287,7 @@ export default function BioBlockEditorModal({
                             setFormData({ ...formData, folder_items: updated });
                           }}
                           placeholder="https://..."
-                          className="flex-1 px-2 py-1 text-xs bg-white border border-gray-200 rounded-lg font-mono text-gray-900"
+                          className="flex-1 px-2.5 py-1 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-mono text-gray-900 dark:text-white"
                         />
                         <button
                           type="button"
@@ -290,7 +295,7 @@ export default function BioBlockEditorModal({
                             const updated = (formData.folder_items || []).filter((_, idx) => idx !== sIdx);
                             setFormData({ ...formData, folder_items: updated });
                           }}
-                          className="p-1.5 text-gray-500 hover:text-rose-600 rounded-lg"
+                          className="p-1.5 text-gray-400 hover:text-rose-500 rounded-lg transition-colors"
                         >
                           <FaTrash className="text-xs" />
                         </button>
@@ -304,7 +309,7 @@ export default function BioBlockEditorModal({
             {/* Destination URL */}
             {formData.type !== 'feed_grid' && formData.type !== 'lead_capture' && formData.type !== 'folder' && (
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                   Destination URL
                 </label>
                 <div className="flex items-center gap-2">
@@ -313,14 +318,14 @@ export default function BioBlockEditorModal({
                     value={formData.url || formData.embed_url || ''}
                     onChange={(e) => setFormData({ ...formData, url: e.target.value, embed_url: e.target.value })}
                     placeholder="https://..."
-                    className="flex-1 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-mono text-gray-900 outline-hidden focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-mono text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0071E3]"
                   />
                   {formData.url && (
                     <a
                       href={formData.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="p-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 text-xs"
+                      className="p-2.5 bg-black/[0.04] hover:bg-black/[0.08] dark:bg-white/[0.06] dark:hover:bg-white/[0.1] rounded-xl text-gray-600 dark:text-gray-300 text-xs transition-colors"
                       title="Test Link"
                     >
                       <FaExternalLinkAlt />
@@ -332,7 +337,7 @@ export default function BioBlockEditorModal({
 
             {/* Layout Card Selector (5 presets) */}
             <div>
-              <label className="block text-xs font-bold text-gray-700 mb-2">
+              <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
                 Card Layout
               </label>
               <div className="grid grid-cols-4 gap-2">
@@ -348,28 +353,28 @@ export default function BioBlockEditorModal({
                       key={ly.id}
                       type="button"
                       onClick={() => setFormData({ ...formData, layout: ly.id })}
-                      className={`p-2 rounded-xl border text-center transition-all ${
+                      className={`p-2.5 rounded-2xl border text-center transition-all ${
                         isSelected
-                          ? 'border-blue-600 bg-blue-50/60 text-blue-600 font-bold shadow-2xs'
-                          : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                          ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-xs'
+                          : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                       }`}
                     >
-                      <div className="w-full h-6 rounded bg-gray-200/80 mb-1 flex items-center justify-center text-[10px]">
+                      <div className="w-full h-6 rounded-lg bg-black/[0.04] dark:bg-white/[0.08] mb-1.5 flex items-center justify-center text-[10px]">
                         {ly.id === 'card_left_image' && '◧'}
                         {ly.id === 'card_banner_top' && '⬒'}
                         {ly.id === 'compact_pill' && '━'}
                         {ly.id === 'grid_card' && '▦'}
                       </div>
-                      <span className="text-[10px] font-bold block truncate">{ly.label}</span>
+                      <span className="text-[10px] font-semibold block truncate">{ly.label}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Media Tabs [ Image | Icon | Emoji | 3D ] */}
+            {/* Media Tabs [ Image | Icon | Emoji | 3D ] (Apple Capsule Switcher) */}
             <div>
-              <div className="flex border-b border-gray-100 mb-3">
+              <div className="flex p-1 rounded-full bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.04] dark:border-white/[0.06] mb-3">
                 {[
                   { id: 'image', label: 'Image', icon: FaImage },
                   { id: 'icon', label: 'Icon', icon: FaIcons },
@@ -380,14 +385,14 @@ export default function BioBlockEditorModal({
                     key={m.id}
                     type="button"
                     onClick={() => setActiveMediaTab(m.id)}
-                    className={`pb-2 px-3 text-xs font-bold border-b-2 transition-colors flex items-center gap-1.5 ${
+                    className={`flex-1 py-1 px-2.5 text-xs font-semibold rounded-full transition-all flex items-center justify-center gap-1.5 ${
                       activeMediaTab === m.id
-                        ? 'border-blue-600 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-600'
+                        ? 'bg-white dark:bg-[#636366] text-gray-900 dark:text-white shadow-[0_2px_6px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)]'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
                     }`}
                   >
-                    <m.icon className="text-xs" />
-                    {m.label}
+                    <m.icon className="text-[11px]" />
+                    <span>{m.label}</span>
                   </button>
                 ))}
               </div>
@@ -397,7 +402,7 @@ export default function BioBlockEditorModal({
                 <div className="space-y-3">
                   <div className="flex items-start gap-3">
                     {/* Live Image Box */}
-                    <div className="relative w-16 h-16 rounded-2xl bg-gray-100 border border-gray-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                    <div className="relative w-16 h-16 rounded-2xl bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] overflow-hidden shrink-0 flex items-center justify-center">
                       {formData.media_url && !imageError ? (
                         <img
                           src={formData.media_url}
@@ -413,7 +418,7 @@ export default function BioBlockEditorModal({
                           ) : (
                             <FaImage className="text-base mb-0.5 opacity-60" />
                           )}
-                          <span className="text-[9px] font-bold leading-tight">
+                          <span className="text-[9px] font-semibold leading-tight">
                             {imageError ? 'Invalid' : 'No Image'}
                           </span>
                         </div>
@@ -427,7 +432,7 @@ export default function BioBlockEditorModal({
                         value={formData.media_url || ''}
                         onChange={(e) => handleImageUrlChange(e.target.value)}
                         placeholder="Paste image link (JPG, PNG, Unsplash, Drive, Dropbox)..."
-                        className="w-full px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl font-mono text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-blue-500 outline-hidden transition-colors"
+                        className="w-full px-3 py-1.5 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-mono text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:bg-white dark:focus:bg-[#2C2C2E] focus:border-[#0071E3] outline-none transition-colors"
                       />
 
                       {/* Helper Action Pills */}
@@ -443,7 +448,7 @@ export default function BioBlockEditorModal({
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          className="px-2.5 py-1 text-[11px] font-bold bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors flex items-center gap-1"
+                          className="px-3 py-1 text-[11px] font-semibold bg-black/[0.04] hover:bg-black/[0.08] dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-gray-700 dark:text-gray-200 border border-black/[0.06] dark:border-white/[0.08] rounded-full transition-colors flex items-center gap-1.5"
                         >
                           <FaUpload className="text-[10px]" /> Upload Image
                         </button>
@@ -452,7 +457,7 @@ export default function BioBlockEditorModal({
                           type="button"
                           onClick={handleQuickAiImage}
                           disabled={isGeneratingAi}
-                          className="px-2.5 py-1 text-[11px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors flex items-center gap-1"
+                          className="px-3 py-1 text-[11px] font-semibold bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 rounded-full transition-colors flex items-center gap-1.5"
                         >
                           <FaMagic className="text-[10px]" /> {isGeneratingAi ? 'Suggesting…' : 'AI Preset'}
                         </button>
@@ -464,7 +469,7 @@ export default function BioBlockEditorModal({
                               setFormData((prev) => ({ ...prev, media_url: '' }));
                               setImageError(false);
                             }}
-                            className="px-2.5 py-1 text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center gap-1"
+                            className="px-3 py-1 text-[11px] font-semibold text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-full transition-colors flex items-center gap-1.5"
                           >
                             <FaTrash className="text-[10px]" /> Clear
                           </button>
@@ -475,11 +480,11 @@ export default function BioBlockEditorModal({
 
                   {/* Image Error Alert if Link Fails */}
                   {imageError && (
-                    <div className="text-[11px] text-amber-700 bg-amber-50 px-3 py-2 rounded-xl flex items-start gap-2 border border-amber-200">
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 rounded-2xl flex items-start gap-2 border border-amber-200 dark:border-amber-800/50">
                       <FaExclamationTriangle className="text-amber-500 shrink-0 mt-0.5 text-xs" />
                       <div>
-                        <p className="font-bold">Image failed to display from this link</p>
-                        <p className="text-[10px] text-amber-600">
+                        <p className="font-semibold">Image failed to display from this link</p>
+                        <p className="text-[10px] opacity-80">
                           The link may be protected or not direct. Try clicking <strong>Upload Image</strong> above to load it directly from your device.
                         </p>
                       </div>
@@ -488,8 +493,8 @@ export default function BioBlockEditorModal({
 
                   {/* Curated Presets Strip */}
                   <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5 block">
-                      Quick Royalty-Free Presets
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5 block">
+                      Quick Curated Presets
                     </span>
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
                       {IMAGE_PRESETS.map((preset, pIdx) => (
@@ -500,10 +505,10 @@ export default function BioBlockEditorModal({
                             setFormData((prev) => ({ ...prev, media_url: preset.url }));
                             setImageError(false);
                           }}
-                          className="group relative h-10 rounded-lg overflow-hidden border border-gray-200 hover:border-blue-500 transition-all text-left"
+                          className="group relative h-11 rounded-xl overflow-hidden border border-black/[0.06] dark:border-white/[0.08] hover:border-[#0071E3] transition-all text-left shadow-2xs"
                         >
-                          <img src={preset.url} alt={preset.label} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200" />
-                          <span className="absolute inset-0 bg-black/40 flex items-end p-1 text-[8px] font-bold text-white truncate">
+                          <img src={preset.url} alt={preset.label} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" />
+                          <span className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent flex items-end p-1 text-[8px] font-semibold text-white truncate">
                             {preset.label}
                           </span>
                         </button>
@@ -516,7 +521,7 @@ export default function BioBlockEditorModal({
               {/* 2. Icon Media Tab */}
               {activeMediaTab === 'icon' && (
                 <div className="space-y-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 block">
                     Choose Icon
                   </span>
                   <div className="grid grid-cols-5 gap-2">
@@ -525,10 +530,10 @@ export default function BioBlockEditorModal({
                         key={ic.id}
                         type="button"
                         onClick={() => setFormData((prev) => ({ ...prev, icon: ic.id, media_type: 'icon' }))}
-                        className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                        className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1 transition-all ${
                           formData.icon === ic.id
-                            ? 'border-blue-500 bg-blue-50/70 text-blue-600 font-bold'
-                            : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-white'
+                            ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                            : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/[0.04]'
                         }`}
                       >
                         <ic.icon className="text-base" />
@@ -542,7 +547,7 @@ export default function BioBlockEditorModal({
               {/* 3. Emoji Media Tab */}
               {activeMediaTab === 'emoji' && (
                 <div className="space-y-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 block">
                     Choose Emoji Badge
                   </span>
                   <div className="flex items-center gap-2 mb-2">
@@ -552,7 +557,7 @@ export default function BioBlockEditorModal({
                       value={formData.emoji || ''}
                       onChange={(e) => setFormData((prev) => ({ ...prev, emoji: e.target.value, media_type: 'emoji' }))}
                       placeholder="✨ Custom Emoji"
-                      className="w-36 px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl font-bold text-gray-900 text-center"
+                      className="w-36 px-2.5 py-1.5 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-bold text-gray-900 dark:text-white text-center outline-none focus:ring-2 focus:ring-[#0071E3]"
                     />
                     <span className="text-[11px] text-gray-400">or pick below:</span>
                   </div>
@@ -564,8 +569,8 @@ export default function BioBlockEditorModal({
                         onClick={() => setFormData((prev) => ({ ...prev, emoji: em, media_type: 'emoji' }))}
                         className={`p-2 rounded-xl text-lg border transition-all flex items-center justify-center hover:scale-110 ${
                           formData.emoji === em
-                            ? 'border-blue-500 bg-blue-50 shadow-2xs'
-                            : 'border-gray-200 bg-white hover:bg-gray-50'
+                            ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 shadow-xs'
+                            : 'border-black/[0.06] dark:border-white/[0.08] bg-white/60 dark:bg-white/[0.04] hover:bg-black/[0.03] dark:hover:bg-white/[0.08]'
                         }`}
                       >
                         {em}
@@ -577,11 +582,11 @@ export default function BioBlockEditorModal({
 
               {/* 4. 3D Art Tab */}
               {activeMediaTab === '3d' && (
-                <div className="p-3 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center space-y-1.5">
-                  <FaCube className="text-xl text-blue-500 mx-auto mb-1" />
-                  <p className="text-xs font-bold text-gray-800">3D Glassmorphic Icon Pack</p>
-                  <p className="text-[10px] text-gray-500">
-                    Select from 3D stylized rendered badges in the icon options or upload custom 3D PNG transparent assets.
+                <div className="p-4 bg-black/[0.02] dark:bg-white/[0.03] rounded-2xl border border-dashed border-black/[0.08] dark:border-white/[0.1] text-center space-y-2">
+                  <FaCube className="text-2xl text-[#0071E3] mx-auto mb-1" />
+                  <p className="text-xs font-semibold text-gray-800 dark:text-gray-200">3D Glassmorphic Art</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 max-w-sm mx-auto">
+                    Select 3D stylized rendered badges in the icon options or load translucent 3D assets.
                   </p>
                   <button
                     type="button"
@@ -594,7 +599,7 @@ export default function BioBlockEditorModal({
                       setActiveMediaTab('image');
                       toast.success('Applied 3D Holographic art');
                     }}
-                    className="mt-1 px-3 py-1 text-xs font-bold bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100"
+                    className="mt-1 px-4 py-1.5 text-xs font-semibold bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200/50 dark:border-blue-800/40 transition-colors"
                   >
                     Apply 3D Art Sample
                   </button>
@@ -603,9 +608,9 @@ export default function BioBlockEditorModal({
             </div>
 
             {/* Text Inputs: Title, Subtitle, Badge, Tag */}
-            <div className="space-y-3 pt-2 border-t border-gray-100">
+            <div className="space-y-3 pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                   Title
                 </label>
                 <input
@@ -613,12 +618,12 @@ export default function BioBlockEditorModal({
                   value={formData.title || formData.headline || ''}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value, headline: e.target.value })}
                   placeholder="e.g. Spring 2026 Collection"
-                  className="w-full px-3 py-2 text-xs font-bold bg-gray-50 border border-gray-200 rounded-xl text-gray-900"
+                  className="w-full px-3 py-2 text-xs font-semibold bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-900 dark:text-white focus:bg-white dark:focus:bg-[#2C2C2E] focus:border-[#0071E3] outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                   Description / Subtitle
                 </label>
                 <textarea
@@ -626,13 +631,13 @@ export default function BioBlockEditorModal({
                   value={formData.subtitle || formData.subheadline || ''}
                   onChange={(e) => setFormData({ ...formData, subtitle: e.target.value, subheadline: e.target.value })}
                   placeholder="Short description under title..."
-                  className="w-full px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl text-gray-800 resize-none"
+                  className="w-full px-3 py-1.5 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 resize-none focus:bg-white dark:focus:bg-[#2C2C2E] focus:border-[#0071E3] outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                  <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
                     Badge Highlight
                   </label>
                   <input
@@ -640,11 +645,11 @@ export default function BioBlockEditorModal({
                     value={formData.badge || ''}
                     onChange={(e) => setFormData({ ...formData, badge: e.target.value })}
                     placeholder="e.g. HOT, NEW, SALE"
-                    className="w-full px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl text-gray-800"
+                    className="w-full px-2.5 py-1.5 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                  <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
                     Tag Category
                   </label>
                   <input
@@ -652,7 +657,7 @@ export default function BioBlockEditorModal({
                     value={formData.tag || ''}
                     onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
                     placeholder="e.g. Shop, Music"
-                    className="w-full px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl text-gray-800"
+                    className="w-full px-2.5 py-1.5 text-xs bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                   />
                 </div>
               </div>
@@ -661,10 +666,10 @@ export default function BioBlockEditorModal({
           </div>
 
           {/* ── Right Column: Block Styles & Animation ── */}
-          <div className="p-5 space-y-5 bg-gray-50/40">
+          <div className="p-5 space-y-5 bg-black/[0.015] dark:bg-white/[0.02]">
             <div>
-              <p className="text-xs font-bold text-gray-900 mb-2">
-                THIS BLOCK STYLES
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
+                Block Styling & Effects
               </p>
 
               {/* Block Size Large vs Small */}
@@ -672,10 +677,10 @@ export default function BioBlockEditorModal({
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, size: 'large' })}
-                  className={`py-1.5 text-xs font-bold rounded-xl border transition-colors ${
+                  className={`py-1.5 text-xs font-semibold rounded-xl border transition-colors ${
                     formData.size === 'large'
-                      ? 'border-blue-600 bg-blue-50/60 text-blue-600'
-                      : 'border-gray-200 text-gray-600'
+                      ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                      : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                   }`}
                 >
                   Large Card
@@ -683,10 +688,10 @@ export default function BioBlockEditorModal({
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, size: 'small' })}
-                  className={`py-1.5 text-xs font-bold rounded-xl border transition-colors ${
+                  className={`py-1.5 text-xs font-semibold rounded-xl border transition-colors ${
                     formData.size === 'small'
-                      ? 'border-blue-600 bg-blue-50/60 text-blue-600'
-                      : 'border-gray-200 text-gray-600'
+                      ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                      : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                   }`}
                 >
                   Small Card
@@ -695,7 +700,7 @@ export default function BioBlockEditorModal({
 
               {/* Text Alignment */}
               <div className="mb-4">
-                <label className="block text-[11px] font-bold text-gray-600 mb-1.5">
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1.5">
                   Text Alignment
                 </label>
                 <div className="grid grid-cols-3 gap-2">
@@ -708,10 +713,10 @@ export default function BioBlockEditorModal({
                       key={al.id}
                       type="button"
                       onClick={() => setFormData({ ...formData, text_align: al.id })}
-                      className={`py-1.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-bold transition-colors ${
+                      className={`py-1.5 flex items-center justify-center gap-1.5 rounded-xl border text-xs font-semibold transition-colors ${
                         formData.text_align === al.id
-                          ? 'border-blue-600 bg-blue-50/60 text-blue-600'
-                          : 'border-gray-200 text-gray-600'
+                          ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                          : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                       }`}
                     >
                       <al.icon className="text-[10px]" />
@@ -723,36 +728,36 @@ export default function BioBlockEditorModal({
 
               {/* Attention Micro-Animation */}
               <div>
-                <label className="block text-[11px] font-bold text-gray-600 mb-1.5">
+                <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1.5">
                   Attention Animation
                 </label>
                 <select
                   value={formData.animation || 'none'}
                   onChange={(e) => setFormData({ ...formData, animation: e.target.value })}
-                  className="w-full px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl font-bold text-gray-900"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/[0.08] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-[#0071E3]"
                 >
-                  <option value="none">None (Static)</option>
-                  <option value="pulse">Attention Pulse (Gentle Breathe 3x Clicks)</option>
-                  <option value="bounce">Bouncy Pop</option>
-                  <option value="wiggle">Hover Wiggle</option>
-                  <option value="glow">Cyber Halo Glow</option>
+                  <option value="none" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">None (Static)</option>
+                  <option value="pulse" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Attention Pulse (Gentle Breathe 3x Clicks)</option>
+                  <option value="bounce" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Bouncy Pop</option>
+                  <option value="wiggle" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Hover Wiggle</option>
+                  <option value="glow" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Cyber Halo Glow</option>
                 </select>
               </div>
             </div>
 
             {/* Live Block Preview */}
-            <div className="pt-4 border-t border-gray-100">
+            <div className="pt-4 border-t border-black/[0.06] dark:border-white/[0.08]">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
                   Card Preview
                 </p>
-                <span className="text-[10px] text-gray-400 capitalize">
+                <span className="text-[10px] text-gray-400 dark:text-gray-500 capitalize">
                   {formData.layout?.replace(/_/g, ' ')}
                 </span>
               </div>
 
               <div
-                className={`rounded-2xl border shadow-sm transition-all overflow-hidden ${
+                className={`rounded-2xl border shadow-xs transition-all overflow-hidden ${
                   formData.layout === 'card_banner_top'
                     ? 'flex flex-col text-left'
                     : formData.layout === 'compact_pill'
@@ -788,10 +793,10 @@ export default function BioBlockEditorModal({
                           src={formData.media_url}
                           alt=""
                           onError={() => setImageError(true)}
-                          className="w-11 h-11 rounded-xl object-cover flex-shrink-0 shadow-xs border border-gray-100"
+                          className="w-11 h-11 rounded-xl object-cover shrink-0 shadow-2xs border border-black/5 dark:border-white/10"
                         />
                       ) : formData.emoji ? (
-                        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg flex-shrink-0">
+                        <div className="w-10 h-10 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] flex items-center justify-center text-lg shrink-0">
                           {formData.emoji}
                         </div>
                       ) : null}
@@ -803,11 +808,11 @@ export default function BioBlockEditorModal({
                       {formData.animation === 'pulse' && (
                         <FaBolt className="text-amber-400 text-xs shrink-0 animate-pulse" />
                       )}
-                      <p className="text-xs font-bold truncate">
+                      <p className="text-xs font-semibold truncate">
                         {formData.title || formData.headline || 'Spring 2026 Collection'}
                       </p>
                       {formData.badge && (
-                        <span className="px-1.5 py-0.5 text-[8px] font-black uppercase rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-xs">
+                        <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase rounded-full bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-2xs">
                           {formData.badge}
                         </span>
                       )}
@@ -819,7 +824,7 @@ export default function BioBlockEditorModal({
                     )}
                   </div>
 
-                  <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 opacity-60 flex-shrink-0">
+                  <div className="w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center opacity-60 shrink-0">
                     <FaExternalLinkAlt className="text-[9px]" />
                   </div>
                 </div>

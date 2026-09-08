@@ -176,10 +176,10 @@ export default function BioInspectorDrawer({
   );
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-gray-200 text-gray-800 select-none overflow-y-auto custom-scrollbar">
+    <div className="flex flex-col h-full bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl border-l border-black/[0.06] dark:border-white/[0.08] text-gray-800 dark:text-gray-200 select-none overflow-y-auto custom-scrollbar">
       
-      {/* ── Top Inspector Bar: Search & Undo / Redo ── */}
-      <div className="p-3 border-b border-gray-100 flex items-center justify-between gap-2 shrink-0 bg-white z-10 sticky top-0">
+      {/* ── Top Inspector Bar: Search & Undo / Redo (Apple Frosted Header) ── */}
+      <div className="p-3 border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-2 shrink-0 bg-white/80 dark:bg-[#1C1C1E]/80 backdrop-blur-2xl z-10 sticky top-0">
         {activeCategory === 'root' ? (
           <div className="relative flex-1">
             <input
@@ -187,14 +187,14 @@ export default function BioInspectorDrawer({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search theme styles…"
-              className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-400 font-medium"
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-full outline-none focus:ring-2 focus:ring-[#0071E3] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 font-medium"
             />
-            <FaSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-[10px]" />
+            <FaSearch className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-[10px]" />
           </div>
         ) : (
           <button
             onClick={() => setActiveCategory('root')}
-            className="flex items-center gap-1.5 text-xs font-bold text-gray-700 hover:text-blue-600 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors"
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:text-[#0071E3] dark:hover:text-blue-400 px-2.5 py-1 rounded-full hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors"
           >
             <FaChevronLeft className="text-[10px]" />
             <span className="capitalize">{categories.find(c => c.id === activeCategory)?.title || 'Styles'}</span>
@@ -205,7 +205,7 @@ export default function BioInspectorDrawer({
           <button
             onClick={onUndo}
             disabled={!canUndo}
-            className="p-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600 disabled:opacity-30 transition-colors"
+            className="p-1.5 rounded-full border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.03] dark:bg-white/[0.06] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] text-gray-600 dark:text-gray-300 disabled:opacity-25 transition-colors"
             title="Undo"
           >
             <FaUndo className="text-[10px]" />
@@ -213,7 +213,7 @@ export default function BioInspectorDrawer({
           <button
             onClick={onRedo}
             disabled={!canRedo}
-            className="p-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600 disabled:opacity-30 transition-colors"
+            className="p-1.5 rounded-full border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.03] dark:bg-white/[0.06] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] text-gray-600 dark:text-gray-300 disabled:opacity-25 transition-colors"
             title="Redo"
           >
             <FaRedo className="text-[10px]" />
@@ -228,32 +228,32 @@ export default function BioInspectorDrawer({
             <button
               key={cat.id}
               onClick={() => setActiveCategory(cat.id)}
-              className="w-full flex items-center justify-between p-3 rounded-2xl border border-gray-200 hover:border-gray-300 bg-gray-50/40gray-50 hover:bg-gray-50 transition-all text-left group shadow-2xs"
+              className="w-full flex items-center justify-between p-3 rounded-2xl border border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.04] hover:bg-white dark:hover:bg-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] transition-all text-left group shadow-[0_1px_2px_rgba(0,0,0,0.03)] hover:shadow-xs"
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`p-2 rounded-xl text-sm ${cat.isRainbow ? 'bg-gradient-to-tr from-blue-500 via-purple-500 to-pink-500 text-white' : 'bg-gray-100 text-gray-700 group-hover:text-blue-600'}`}>
+                <div className={`p-2.5 rounded-xl text-sm ${cat.isRainbow ? 'bg-gradient-to-tr from-blue-500 via-indigo-500 to-purple-500 text-white shadow-2xs' : 'bg-black/[0.04] dark:bg-white/[0.08] text-gray-700 dark:text-gray-200 group-hover:text-[#0071E3] dark:group-hover:text-blue-400'}`}>
                   <cat.icon />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <p className="text-xs font-bold text-gray-900 truncate">{cat.title}</p>
+                    <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">{cat.title}</p>
                     {cat.badge && (
-                      <span className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-gray-200/70gray-200 text-gray-600">
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-black/[0.04] dark:bg-white/[0.08] text-gray-600 dark:text-gray-300 border border-black/[0.04] dark:border-white/[0.06]">
                         {cat.badge}
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-gray-500 truncate mt-0.5">{cat.desc}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate mt-0.5">{cat.desc}</p>
                 </div>
               </div>
-              <FaChevronRight className="text-xs text-gray-500 group-hover:text-gray-600 transition-transform group-hover:translate-x-0.5 shrink-0 ml-2" />
+              <FaChevronRight className="text-xs text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-transform group-hover:translate-x-0.5 shrink-0 ml-2" />
             </button>
           ))}
 
           <div className="pt-4 text-center">
             <button
               onClick={onResetTheme}
-              className="text-[11px] font-semibold text-gray-500 hover:text-rose-500 transition-colors"
+              className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
             >
               Reset to Default Editorial Cream
             </button>
@@ -264,7 +264,7 @@ export default function BioInspectorDrawer({
       {/* ── Sub-panel 1: Templates (18 Presets) ── */}
       {activeCategory === 'templates' && (
         <div className="p-3.5 space-y-3">
-          <p className="text-xs text-gray-500">Select any template to instantly apply curated styling, colors, and 3D card physics.</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Select any template to instantly apply curated styling, colors, and 3D card physics.</p>
           <div className="grid grid-cols-2 gap-2.5">
             {THEME_PRESETS.map((preset) => {
               const isSelected = theme.preset === preset.id || theme.name === preset.name;
@@ -274,12 +274,12 @@ export default function BioInspectorDrawer({
                   onClick={() => handleSelectPreset(preset)}
                   className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden group ${
                     isSelected
-                      ? 'border-blue-300 ring-2 ring-indigo-500/30 shadow-md'
-                      : 'border-gray-200 hover:border-gray-300 bg-gray-50/50gray-50'
+                      ? 'border-[#0071E3] ring-2 ring-[#0071E3]/20 bg-blue-50/40 dark:bg-blue-950/20 shadow-xs'
+                      : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] bg-white/60 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06]'
                   }`}
                 >
                   <div
-                    className="w-full h-10 rounded-xl mb-2 flex items-center justify-center p-1.5 shadow-sm"
+                    className="w-full h-10 rounded-xl mb-2 flex items-center justify-center p-1.5 shadow-2xs"
                     style={{ background: preset.background_gradient || preset.background_color }}
                   >
                     <div
@@ -295,10 +295,10 @@ export default function BioInspectorDrawer({
                       {preset.name}
                     </div>
                   </div>
-                  <p className="text-xs font-bold text-gray-900 truncate">{preset.name}</p>
-                  <p className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{preset.subtitle}</p>
+                  <p className="text-xs font-semibold text-gray-900 dark:text-white truncate">{preset.name}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-1 mt-0.5">{preset.subtitle}</p>
                   {isSelected && (
-                    <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-blue-500 text-white flex items-center justify-center text-[9px]">
+                    <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-[#0071E3] text-white flex items-center justify-center text-[9px] shadow-2xs">
                       <FaCheck />
                     </div>
                   )}
@@ -315,7 +315,7 @@ export default function BioInspectorDrawer({
           
           {/* Card Style Archetypes */}
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Tactile Card Style Archetype
             </label>
             <div className="space-y-1.5">
@@ -325,17 +325,17 @@ export default function BioInspectorDrawer({
                   <button
                     key={cs.id}
                     onClick={() => setTheme((prev) => ({ ...prev, card_style: cs.id }))}
-                    className={`w-full p-2.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+                    className={`w-full p-2.5 rounded-2xl border text-left transition-all flex items-center justify-between ${
                       isSelected
-                        ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold shadow-xs'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-gray-50/30gray-50'
+                        ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                        : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/[0.04]'
                     }`}
                   >
                     <div>
-                      <p className="text-xs font-bold">{cs.label}</p>
-                      <p className="text-[10px] text-gray-500 font-normal mt-0.5">{cs.description}</p>
+                      <p className="text-xs font-semibold">{cs.label}</p>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400 font-normal mt-0.5">{cs.description}</p>
                     </div>
-                    {isSelected && <FaCheck className="text-xs shrink-0 ml-2" />}
+                    {isSelected && <FaCheck className="text-xs shrink-0 ml-2 text-[#0071E3]" />}
                   </button>
                 );
               })}
@@ -343,22 +343,22 @@ export default function BioInspectorDrawer({
           </div>
 
           {/* Tactile 3D Physics Toggle */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 border border-gray-200">
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
             <div>
-              <p className="text-xs font-bold text-gray-900">Tactile 3D Physics</p>
-              <p className="text-[11px] text-gray-400">Specular highlights & convex tactile insets</p>
+              <p className="text-xs font-semibold text-gray-900 dark:text-white">Tactile 3D Physics</p>
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Specular highlights & convex tactile insets</p>
             </div>
             <input
               type="checkbox"
               checked={theme.tactile_blocks ?? true}
               onChange={(e) => setTheme((prev) => ({ ...prev, tactile_blocks: e.target.checked }))}
-              className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500 cursor-pointer"
+              className="w-4 h-4 text-[#0071E3] rounded-sm focus:ring-[#0071E3] cursor-pointer"
             />
           </div>
 
           {/* Card Color Controls */}
-          <div className="space-y-3.5 pt-2 border-t border-gray-100">
-            <label className="block text-xs font-bold text-gray-900">
+          <div className="space-y-3.5 pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white">
               Card Colors & Surface
             </label>
 
@@ -366,21 +366,21 @@ export default function BioInspectorDrawer({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-semibold text-gray-700">Card Background</span>
-                  <p className="text-[10px] text-gray-500">Fill color behind content</p>
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Card Background</span>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">Fill color behind content</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={rgbaToHex(theme.card_bg, '#FFFFFF')}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_bg: e.target.value }))}
-                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                   />
                   <input
                     type="text"
                     value={theme.card_bg || '#FFFFFF'}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_bg: e.target.value }))}
-                    className="w-24 px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-800"
+                    className="w-24 px-2 py-1 text-xs font-mono bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                   />
                 </div>
               </div>
@@ -392,7 +392,7 @@ export default function BioInspectorDrawer({
                     key={i}
                     type="button"
                     onClick={() => setTheme((prev) => ({ ...prev, card_bg: sw.val }))}
-                    className="w-6 h-6 rounded-lg border border-black/15 transition-transform hover:scale-110 shadow-2xs relative"
+                    className="w-6 h-6 rounded-lg border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs relative"
                     style={{ background: sw.bg }}
                     title={sw.label}
                   />
@@ -401,7 +401,7 @@ export default function BioInspectorDrawer({
 
               {/* Quick Card Opacity Presets */}
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                <span className="text-[10px] font-bold text-gray-500 mr-1">Opacity:</span>
+                <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 mr-1">Opacity:</span>
                 {[
                   { label: 'Solid', val: rgbaToHex(theme.card_bg, '#FFFFFF') },
                   { label: '90%', val: 'rgba(255, 255, 255, 0.90)' },
@@ -413,7 +413,7 @@ export default function BioInspectorDrawer({
                     key={i}
                     type="button"
                     onClick={() => setTheme((prev) => ({ ...prev, card_bg: op.val }))}
-                    className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+                    className="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.08] dark:hover:bg-white/[0.1] text-gray-700 dark:text-gray-300 transition-colors"
                   >
                     {op.label}
                   </button>
@@ -422,24 +422,24 @@ export default function BioInspectorDrawer({
             </div>
 
             {/* Card Text Color */}
-            <div className="space-y-1.5 pt-1 border-t border-gray-100">
+            <div className="space-y-1.5 pt-1 border-t border-black/[0.06] dark:border-white/[0.08]">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-semibold text-gray-700">Card Text Color</span>
-                  <p className="text-[10px] text-gray-500">Headlines & subtitles inside cards</p>
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Card Text Color</span>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">Headlines & subtitles inside cards</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={rgbaToHex(theme.card_text_color, '#18181B')}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_text_color: e.target.value }))}
-                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                   />
                   <input
                     type="text"
                     value={theme.card_text_color || '#18181B'}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_text_color: e.target.value }))}
-                    className="w-24 px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-800"
+                    className="w-24 px-2 py-1 text-xs font-mono bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                   />
                 </div>
               </div>
@@ -449,7 +449,7 @@ export default function BioInspectorDrawer({
                     key={tc}
                     type="button"
                     onClick={() => setTheme((prev) => ({ ...prev, card_text_color: tc }))}
-                    className="w-5 h-5 rounded-full border border-black/15 transition-transform hover:scale-110 shadow-2xs"
+                    className="w-5 h-5 rounded-full border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs"
                     style={{ background: tc }}
                     title={tc}
                   />
@@ -458,24 +458,24 @@ export default function BioInspectorDrawer({
             </div>
 
             {/* Card Border Color */}
-            <div className="space-y-1.5 pt-1 border-t border-gray-100">
+            <div className="space-y-1.5 pt-1 border-t border-black/[0.06] dark:border-white/[0.08]">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-semibold text-gray-700">Card Border Color</span>
-                  <p className="text-[10px] text-gray-500">Outer rim highlight</p>
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Card Border Color</span>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">Outer rim highlight</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={rgbaToHex(theme.card_border, '#000000')}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_border: e.target.value }))}
-                    className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                    className="w-8 h-8 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                   />
                   <input
                     type="text"
                     value={theme.card_border || 'rgba(0,0,0,0.08)'}
                     onChange={(e) => setTheme((prev) => ({ ...prev, card_border: e.target.value }))}
-                    className="w-24 px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-800"
+                    className="w-24 px-2 py-1 text-xs font-mono bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                   />
                 </div>
               </div>
@@ -485,7 +485,7 @@ export default function BioInspectorDrawer({
                     key={bc}
                     type="button"
                     onClick={() => setTheme((prev) => ({ ...prev, card_border: bc }))}
-                    className="w-5 h-5 rounded-full border border-black/15 transition-transform hover:scale-110 shadow-2xs"
+                    className="w-5 h-5 rounded-full border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs"
                     style={{ background: bc }}
                     title={bc}
                   />
@@ -495,11 +495,11 @@ export default function BioInspectorDrawer({
           </div>
 
           {/* Sliders: Corner Radius, Border Width, Shadow, Spacing */}
-          <div className="space-y-4 pt-2 border-t border-gray-100">
+          <div className="space-y-4 pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Corner Radius (Roundness)</span>
-                <span className="text-gray-500 font-mono">{theme.card_corner_radius ?? 20}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.card_corner_radius ?? 20}%</span>
               </div>
               <input
                 type="range"
@@ -507,14 +507,14 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.card_corner_radius ?? 20}
                 onChange={(e) => setTheme({ ...theme, card_corner_radius: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Border Width</span>
-                <span className="text-gray-500 font-mono">{theme.card_border_width ?? 0}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.card_border_width ?? 0}%</span>
               </div>
               <input
                 type="range"
@@ -522,14 +522,14 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.card_border_width ?? 0}
                 onChange={(e) => setTheme({ ...theme, card_border_width: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Shadow Depth</span>
-                <span className="text-gray-500 font-mono">{theme.card_shadow_depth ?? 100}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.card_shadow_depth ?? 100}%</span>
               </div>
               <input
                 type="range"
@@ -537,7 +537,7 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.card_shadow_depth ?? 100}
                 onChange={(e) => setTheme({ ...theme, card_shadow_depth: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
 
@@ -546,10 +546,10 @@ export default function BioInspectorDrawer({
               <button
                 type="button"
                 onClick={() => setTheme({ ...theme, card_shadow_type: 'soft' })}
-                className={`py-1.5 text-xs font-bold rounded-xl border transition-colors ${
+                className={`py-1.5 text-xs font-semibold rounded-xl border transition-colors ${
                   (theme.card_shadow_type || 'soft') === 'soft'
-                    ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold'
-                    : 'border-gray-200 text-gray-600'
+                    ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                    : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                 }`}
               >
                 Soft Ambient Shadow
@@ -557,10 +557,10 @@ export default function BioInspectorDrawer({
               <button
                 type="button"
                 onClick={() => setTheme({ ...theme, card_shadow_type: 'solid' })}
-                className={`py-1.5 text-xs font-bold rounded-xl border transition-colors ${
+                className={`py-1.5 text-xs font-semibold rounded-xl border transition-colors ${
                   theme.card_shadow_type === 'solid'
-                    ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold'
-                    : 'border-gray-200 text-gray-600'
+                    ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                    : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                 }`}
               >
                 Solid Neobrutalist
@@ -568,9 +568,9 @@ export default function BioInspectorDrawer({
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Card Spacing Gap</span>
-                <span className="text-gray-500 font-mono">{theme.card_spacing ?? 33}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.card_spacing ?? 33}%</span>
               </div>
               <input
                 type="range"
@@ -578,7 +578,7 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.card_spacing ?? 33}
                 onChange={(e) => setTheme({ ...theme, card_spacing: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
           </div>
@@ -592,19 +592,19 @@ export default function BioInspectorDrawer({
           
           {/* Accent Color */}
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-1.5">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-1.5">
               Brand Accent Color
             </label>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400">Buttons, verified badges & highlights</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">Buttons, verified badges & highlights</span>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
                   value={theme.accent_color || '#4F46E5'}
                   onChange={(e) => setTheme({ ...theme, accent_color: e.target.value })}
-                  className="w-7 h-7 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                  className="w-7 h-7 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                 />
-                <span className="text-xs font-mono text-gray-400 uppercase">{theme.accent_color || '#4F46E5'}</span>
+                <span className="text-xs font-mono text-gray-400 dark:text-gray-500 uppercase">{theme.accent_color || '#4F46E5'}</span>
               </div>
             </div>
 
@@ -614,7 +614,7 @@ export default function BioInspectorDrawer({
                   key={c}
                   type="button"
                   onClick={() => setTheme({ ...theme, accent_color: c })}
-                  className="w-6 h-6 rounded-full border border-black/10 transition-transform hover:scale-110 shadow-xs"
+                  className="w-6 h-6 rounded-full border border-black/15 dark:border-white/20 transition-transform hover:scale-110 shadow-2xs"
                   style={{ background: c }}
                   title={c}
                 />
@@ -623,8 +623,8 @@ export default function BioInspectorDrawer({
           </div>
 
           {/* Background Gradient Presets */}
-          <div className="pt-2 border-t border-gray-100">
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+          <div className="pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Backdrop Gradient Presets
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -638,21 +638,21 @@ export default function BioInspectorDrawer({
                     background_color: gp.bg,
                     text_color: gp.text,
                   })}
-                  className="p-2 rounded-xl border border-gray-200 hover:border-blue-500 flex items-center gap-2 text-left transition-all group"
+                  className="p-2 rounded-2xl border border-black/[0.06] dark:border-white/[0.08] hover:border-[#0071E3] flex items-center gap-2 text-left transition-all group bg-white/60 dark:bg-white/[0.04]"
                 >
-                  <div className="w-5 h-5 rounded-md shadow-sm shrink-0" style={{ background: gp.value }} />
-                  <span className="text-[11px] font-bold text-gray-700 truncate">{gp.label}</span>
+                  <div className="w-5 h-5 rounded-md shadow-2xs shrink-0" style={{ background: gp.value }} />
+                  <span className="text-[11px] font-semibold text-gray-700 dark:text-gray-300 truncate">{gp.label}</span>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Custom Background Color & Text Color */}
-          <div className="space-y-3 pt-2 border-t border-gray-100">
+          <div className="space-y-3 pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-xs font-semibold text-gray-700">Custom Canvas Background</span>
-                <p className="text-[10px] text-gray-500">Solid backdrop color</p>
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Custom Canvas Background</span>
+                <p className="text-[10px] text-gray-500 dark:text-gray-400">Solid backdrop color</p>
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -663,7 +663,7 @@ export default function BioInspectorDrawer({
                     background_color: e.target.value,
                     background_gradient: `linear-gradient(180deg, ${e.target.value} 0%, ${e.target.value} 100%)`,
                   }))}
-                  className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                  className="w-8 h-8 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                 />
                 <input
                   type="text"
@@ -673,36 +673,36 @@ export default function BioInspectorDrawer({
                     background_color: e.target.value,
                     background_gradient: `linear-gradient(180deg, ${e.target.value} 0%, ${e.target.value} 100%)`,
                   }))}
-                  className="w-24 px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-800"
+                  className="w-24 px-2 py-1 text-xs font-mono bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-xs font-semibold text-gray-700">Page Text Color</span>
-                <p className="text-[10px] text-gray-500">Header title, handle & bio</p>
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Page Text Color</span>
+                <p className="text-[10px] text-gray-500 dark:text-gray-400">Header title, handle & bio</p>
               </div>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
                   value={rgbaToHex(theme.text_color, '#18181B')}
                   onChange={(e) => setTheme((prev) => ({ ...prev, text_color: e.target.value }))}
-                  className="w-8 h-8 rounded-lg cursor-pointer border border-gray-200 bg-transparent"
+                  className="w-8 h-8 rounded-lg cursor-pointer border border-black/[0.06] dark:border-white/[0.08] bg-transparent"
                 />
                 <input
                   type="text"
                   value={theme.text_color || '#18181B'}
                   onChange={(e) => setTheme((prev) => ({ ...prev, text_color: e.target.value }))}
-                  className="w-24 px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-800"
+                  className="w-24 px-2 py-1 text-xs font-mono bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl text-gray-800 dark:text-gray-200 outline-none"
                 />
               </div>
             </div>
           </div>
 
           {/* Background Procedural Overlays */}
-          <div className="pt-2 border-t border-gray-100">
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+          <div className="pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Procedural Background Effects
             </label>
             <div className="space-y-1.5">
@@ -712,17 +712,17 @@ export default function BioInspectorDrawer({
                   <button
                     key={eff.id}
                     onClick={() => setTheme({ ...theme, background_effect: eff.id })}
-                    className={`w-full p-2.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+                    className={`w-full p-2.5 rounded-2xl border text-left transition-all flex items-center justify-between ${
                       isSelected
-                        ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold shadow-xs'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-gray-50/30gray-50'
+                        ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                        : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/[0.04]'
                     }`}
                   >
                     <div>
-                      <p className="text-xs font-bold">{eff.label}</p>
-                      <p className="text-[10px] text-gray-500 font-normal mt-0.5">{eff.description}</p>
+                      <p className="text-xs font-semibold">{eff.label}</p>
+                      <p className="text-[10px] text-gray-500 dark:text-gray-400 font-normal mt-0.5">{eff.description}</p>
                     </div>
-                    {isSelected && <FaCheck className="text-xs shrink-0 ml-2" />}
+                    {isSelected && <FaCheck className="text-xs shrink-0 ml-2 text-[#0071E3]" />}
                   </button>
                 );
               })}
@@ -738,7 +738,7 @@ export default function BioInspectorDrawer({
           
           {/* Header Layout Segmented Visual Picker */}
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Header Layout
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -753,14 +753,14 @@ export default function BioInspectorDrawer({
                   <button
                     key={hl.id}
                     onClick={() => setTheme({ ...theme, header_layout: hl.id })}
-                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                    className={`p-2.5 rounded-2xl border text-left transition-all ${
                       isSelected
-                        ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold shadow-xs'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-600 bg-gray-50/30gray-50'
+                        ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                        : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                     }`}
                   >
-                    <p className="text-xs font-bold text-gray-900">{hl.label}</p>
-                    <p className="text-[10px] text-gray-500 mt-0.5">{hl.desc}</p>
+                    <p className="text-xs font-semibold text-gray-900 dark:text-white">{hl.label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">{hl.desc}</p>
                   </button>
                 );
               })}
@@ -768,14 +768,14 @@ export default function BioInspectorDrawer({
           </div>
 
           {/* Profile Picture Sliders */}
-          <div className="space-y-3 pt-2 border-t border-gray-100">
-            <label className="block text-xs font-bold text-gray-900">
+          <div className="space-y-3 pt-2 border-t border-black/[0.06] dark:border-white/[0.08]">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white">
               Profile Avatar Sizing & Elevation
             </label>
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Profile Picture Size</span>
-                <span className="text-gray-500 font-mono">{theme.profile_picture_size ?? 50}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.profile_picture_size ?? 50}%</span>
               </div>
               <input
                 type="range"
@@ -783,14 +783,14 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.profile_picture_size ?? 50}
                 onChange={(e) => setTheme({ ...theme, profile_picture_size: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Profile Picture Shadow</span>
-                <span className="text-gray-500 font-mono">{theme.profile_picture_shadow ?? 0}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.profile_picture_shadow ?? 0}%</span>
               </div>
               <input
                 type="range"
@@ -798,14 +798,14 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.profile_picture_shadow ?? 0}
                 onChange={(e) => setTheme({ ...theme, profile_picture_shadow: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 <span>Profile Picture Border Ring</span>
-                <span className="text-gray-500 font-mono">{theme.profile_picture_border ?? 0}%</span>
+                <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.profile_picture_border ?? 0}%</span>
               </div>
               <input
                 type="range"
@@ -813,22 +813,22 @@ export default function BioInspectorDrawer({
                 max="100"
                 value={theme.profile_picture_border ?? 0}
                 onChange={(e) => setTheme({ ...theme, profile_picture_border: parseInt(e.target.value, 10) })}
-                className="w-full accent-blue-500 cursor-pointer"
+                className="w-full accent-[#0071E3] cursor-pointer"
               />
             </div>
           </div>
 
           {/* Collapse Long Bio Switch */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 border border-gray-200">
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
             <div>
-              <span className="text-xs font-bold text-gray-900">Collapse Long Bio</span>
-              <p className="text-[11px] text-gray-400">Truncates long bio text with a 'read more' toggle</p>
+              <span className="text-xs font-semibold text-gray-900 dark:text-white">Collapse Long Bio</span>
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Truncates long bio text with a 'read more' toggle</p>
             </div>
             <input
               type="checkbox"
               checked={theme.collapse_long_bio || false}
               onChange={(e) => setTheme({ ...theme, collapse_long_bio: e.target.checked })}
-              className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500 cursor-pointer"
+              className="w-4 h-4 text-[#0071E3] rounded-sm focus:ring-[#0071E3] cursor-pointer"
             />
           </div>
 
@@ -838,7 +838,7 @@ export default function BioInspectorDrawer({
       {/* ── Sub-panel 5: Fonts ── */}
       {activeCategory === 'fonts' && (
         <div className="p-3.5 space-y-3">
-          <label className="block text-xs font-bold text-gray-900 mb-1">
+          <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-1">
             Font Family & Pairings
           </label>
           <div className="space-y-2">
@@ -850,14 +850,14 @@ export default function BioInspectorDrawer({
                   onClick={() => setTheme({ ...theme, font_family: f.id })}
                   className={`w-full p-3 rounded-2xl border text-left transition-all ${
                     isSelected
-                      ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold shadow-xs'
-                      : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-gray-50/30gray-50'
+                      ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                      : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-white/[0.04]'
                   }`}
                   style={{ fontFamily: f.id }}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">{f.label}</span>
-                    {isSelected && <FaCheck className="text-xs" />}
+                    <span className="text-xs font-semibold">{f.label}</span>
+                    {isSelected && <FaCheck className="text-xs text-[#0071E3] dark:text-blue-400" />}
                   </div>
                   <p className="text-sm mt-1 opacity-75">{f.sample}</p>
                 </button>
@@ -871,26 +871,26 @@ export default function BioInspectorDrawer({
       {activeCategory === 'socials' && (
         <div className="p-3.5 space-y-4">
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Social Dock Position
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setTheme({ ...theme, social_position: 'top' })}
-                className={`py-2 text-xs font-bold rounded-xl border text-center transition-colors ${
+                className={`py-2 text-xs font-semibold rounded-xl border text-center transition-colors ${
                   (theme.social_position || 'top') === 'top'
-                    ? 'border-blue-300 bg-blue-50blue-50 text-blue-600'
-                    : 'border-gray-200 text-gray-600'
+                    ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                    : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                 }`}
               >
                 Top Header
               </button>
               <button
                 onClick={() => setTheme({ ...theme, social_position: 'bottom' })}
-                className={`py-2 text-xs font-bold rounded-xl border text-center transition-colors ${
+                className={`py-2 text-xs font-semibold rounded-xl border text-center transition-colors ${
                   theme.social_position === 'bottom'
-                    ? 'border-blue-300 bg-blue-50blue-50 text-blue-600'
-                    : 'border-gray-200 text-gray-600'
+                    ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 shadow-2xs'
+                    : 'border-black/[0.06] dark:border-white/[0.08] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                 }`}
               >
                 Bottom Footer
@@ -899,9 +899,9 @@ export default function BioInspectorDrawer({
           </div>
 
           <div>
-            <div className="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
               <span>Social Icon Size</span>
-              <span className="text-gray-500 font-mono">{theme.social_icon_size ?? 0}%</span>
+              <span className="text-gray-400 dark:text-gray-500 font-mono">{theme.social_icon_size ?? 0}%</span>
             </div>
             <input
               type="range"
@@ -909,7 +909,7 @@ export default function BioInspectorDrawer({
               max="100"
               value={theme.social_icon_size ?? 0}
               onChange={(e) => setTheme({ ...theme, social_icon_size: parseInt(e.target.value, 10) })}
-              className="w-full accent-blue-500 cursor-pointer"
+              className="w-full accent-[#0071E3] cursor-pointer"
             />
           </div>
         </div>
@@ -919,7 +919,7 @@ export default function BioInspectorDrawer({
       {activeCategory === 'navigation' && (
         <div className="p-3.5 space-y-4">
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-2">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-2">
               Multi-Page Navigation Style
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -934,14 +934,14 @@ export default function BioInspectorDrawer({
                   <button
                     key={nav.id}
                     onClick={() => setTheme({ ...theme, navigation_style: nav.id })}
-                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                    className={`p-2.5 rounded-2xl border text-left transition-all ${
                       isSelected
-                        ? 'border-blue-300 bg-blue-50blue-50 text-blue-600 font-bold shadow-xs'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-600 bg-gray-50/30gray-50'
+                        ? 'border-[#0071E3] bg-blue-50/60 dark:bg-blue-950/40 text-[#0071E3] dark:text-blue-400 font-semibold shadow-2xs'
+                        : 'border-black/[0.06] dark:border-white/[0.08] hover:border-black/[0.12] dark:hover:border-white/[0.15] text-gray-600 dark:text-gray-400 bg-white/60 dark:bg-white/[0.04]'
                     }`}
                   >
-                    <p className="text-xs font-bold text-gray-900">{nav.label}</p>
-                    <p className="text-[10px] text-gray-500 mt-0.5">{nav.desc}</p>
+                    <p className="text-xs font-semibold text-gray-900 dark:text-white">{nav.label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">{nav.desc}</p>
                   </button>
                 );
               })}
@@ -953,21 +953,21 @@ export default function BioInspectorDrawer({
       {/* ── Sub-panel 8: Announcement Banner ── */}
       {activeCategory === 'announcement' && (
         <div className="p-3.5 space-y-4">
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 border border-gray-200">
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
             <div>
-              <span className="text-xs font-bold text-gray-900">Enable Top Announcement</span>
-              <p className="text-[11px] text-gray-400">Show marquee banner at top of your bio</p>
+              <span className="text-xs font-semibold text-gray-900 dark:text-white">Enable Top Announcement</span>
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Show marquee banner at top of your bio</p>
             </div>
             <input
               type="checkbox"
               checked={theme.announcement_active || false}
               onChange={(e) => setTheme({ ...theme, announcement_active: e.target.checked })}
-              className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500 cursor-pointer"
+              className="w-4 h-4 text-[#0071E3] rounded-sm focus:ring-[#0071E3] cursor-pointer"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-1">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-1">
               Banner Text
             </label>
             <input
@@ -975,12 +975,12 @@ export default function BioInspectorDrawer({
               value={theme.announcement_banner || ''}
               onChange={(e) => setTheme({ ...theme, announcement_banner: e.target.value })}
               placeholder="🎉 Spring Sale: Use code UNRAVLER for 20% off!"
-              className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl outline-none focus:ring-2 focus:ring-[#0071E3] text-gray-900 dark:text-white font-medium"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-900 mb-1">
+            <label className="block text-xs font-semibold text-gray-900 dark:text-white mb-1">
               Banner Target URL (Optional)
             </label>
             <input
@@ -988,7 +988,7 @@ export default function BioInspectorDrawer({
               value={theme.announcement_url || ''}
               onChange={(e) => setTheme({ ...theme, announcement_url: e.target.value })}
               placeholder="https://myshop.com/discount"
-              className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:ring-2 focus:ring-blue-500 text-gray-900"
+              className="w-full px-3 py-2 text-xs bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] rounded-xl outline-none focus:ring-2 focus:ring-[#0071E3] text-gray-900 dark:text-white font-medium"
             />
           </div>
         </div>
