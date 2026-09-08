@@ -9,8 +9,8 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-08
 Completed:
-- Smart Bio Studio Live Preview Verification & Interactive Controls: Fixed Card Geometry (`sharp` 0px, `squircle` 16px, `pill` 9999px), Card Backdrop Tint (rich calibrated glass tints + solids, hex picker), and Card Text Color (full swatches + hex picker). In `LinkInBio.js`, rendered live-updating sample cards when `activeBlocks.length === 0` so geometry, backdrop tint, and text colors are 100% interactive and visible even on fresh/empty bio pages. Fully synchronized standalone `apple-bio-preview.html` with live DOM-updating controls.
-- Verification: Frontend production build succeeded (`CI=true npm run build --prefix frontend`), node utility verification passed, and backend test suite passed (354 passed, 0 failed).
+- Collapsed Sidebar Unravler Logo: In `DashboardLayout.js`, replaced legacy placeholder star (`✦`) with official `<UnravlerLogo size="small" showText={false} color="white" />` centered inside a circular (`rounded-full`) brand gradient button (`from-indigo-600 to-purple-600`). Extended `UnravlerLogo.js` to support `color="white"` / `forceWhite`. Also updated `PublicCalendar.js`.
+- Verification: Frontend production build passed (`CI=true npm run build --prefix frontend`) and backend test suite passed.
 
 ## Active Work
 Currently implementing: None

@@ -10,25 +10,38 @@ const UnravlerLogo = ({
   size = 'default', 
   showText = true, 
   className = '', 
-  darkText = false 
+  darkText = false,
+  color = null,
+  forceWhite = false,
+  height: customHeight = null,
 }) => {
   // Sizing is based on logo height.
   const sizes = {
+    xs:     16,
     small:  20,
     default: 28,
     large:  42,
     xl:     56,
   };
 
-  const height = sizes[size] || sizes.default;
-  const preferDark = !!darkText;
+  const height = customHeight || sizes[size] || sizes.default;
+  const isWhite = forceWhite || color === 'white';
+  const preferDark = !isWhite && !!darkText;
 
   return (
     <div
       className={cn("flex items-center select-none", className)}
     >
       {/* Brand mark + wordmark image (exact). */}
-      {preferDark ? (
+      {isWhite ? (
+        <img
+          src={showText ? logoWhite : markWhite}
+          alt="Unravler"
+          style={{ height, width: "auto" }}
+          className="block"
+          draggable={false}
+        />
+      ) : preferDark ? (
         <img
           src={showText ? logoDark : markDark}
           alt="Unravler"

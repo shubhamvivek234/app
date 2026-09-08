@@ -259,12 +259,24 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
 
         <div className={`flex-shrink-0 flex items-center h-full transition-all duration-200 ${collapsed ? 'w-16 justify-center px-0' : 'w-64 px-4'}`}>
           {collapsed ? (
-            <button
-              onClick={() => navigate('/dashboard')}
-              className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-extrabold flex items-center justify-center text-sm shadow-xs"
-            >
-              ✦
-            </button>
+            canNavigateHome ? (
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xs hover:opacity-95 hover:scale-105 active:scale-95 transition-all p-1.5 focus:outline-none"
+                title="Unravler - Go to dashboard"
+                aria-label="Unravler - Go to dashboard"
+              >
+                <UnravlerLogo size="small" showText={false} color="white" />
+              </button>
+            ) : (
+              <div
+                className="w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-xs p-1.5"
+                title="Unravler"
+              >
+                <UnravlerLogo size="small" showText={false} color="white" />
+              </div>
+            )
           ) : canNavigateHome ? (
             <button
               type="button"
