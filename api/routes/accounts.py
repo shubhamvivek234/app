@@ -2179,7 +2179,7 @@ def _build_oauth_url(platform: str, state: str, frontend_base: str | None = None
     scopes = {
         "facebook": "pages_show_list,pages_read_engagement,pages_manage_posts",
         "youtube": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.force-ssl",
-        "twitter": "tweet.read tweet.write users.read offline.access",
+        "twitter": "tweet.read tweet.write users.read offline.access media.write",
         "tiktok": "user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload",
         "threads": "threads_basic,threads_content_publish,threads_manage_insights,threads_manage_replies",
         "google_business": "https://www.googleapis.com/auth/business.manage https://www.googleapis.com/auth/userinfo.profile",
@@ -2480,7 +2480,7 @@ async def _exchange_twitter_code(code: str, code_verifier: str) -> dict | None:
             "username": user_data.get("username", user_data.get("name", "")),
             "display_name": user_data.get("name") or user_data.get("username"),
             "picture_url": user_data.get("profile_image_url"),
-            "scopes": ["tweet.read", "tweet.write", "users.read", "offline.access"],
+            "scopes": ["tweet.read", "tweet.write", "users.read", "offline.access", "media.write"],
             "expires_at": expires_at,
         }
     except Exception as exc:

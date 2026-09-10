@@ -43,7 +43,7 @@ class TwitterAuth:
         if not self.client_id or not self.redirect_uri:
             raise HTTPException(status_code=500, detail="Twitter credentials not configured")
         
-        scopes = "tweet.read tweet.write users.read offline.access"
+        scopes = "tweet.read tweet.write users.read offline.access media.write"
         params = {
             "response_type": "code",
             "client_id": self.client_id,

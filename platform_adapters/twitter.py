@@ -227,8 +227,8 @@ class TwitterAdapter(PlatformAdapter):
             headers=auth_headers,
             data=init_data,
         )
-        if init_resp.status_code != 202:
-            raise PlatformHTTPError(init_resp.status_code, f"Media INIT failed: {init_resp.text}")
+        if init_resp.status_code not in (200, 201, 202):
+            raise PlatformHTTPError(init_resp.status_code, f"Media INIT failed (status {init_resp.status_code}): {init_resp.text}")
         media_id = init_resp.json().get("media_id_string", "")
         if not media_id:
             raise PlatformResponseError("Missing media_id_string from INIT response")
