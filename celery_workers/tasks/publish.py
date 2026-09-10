@@ -476,9 +476,16 @@ def _is_async_accepted_target_state(state: dict | None) -> bool:
 
 # ── Media cleanup gate (Phase 2.6.1 / Section 18.9) ──────────────────────────
 def should_cleanup_media(platform_results: dict) -> bool:
-    """Only delete source media when ALL platforms are in terminal state."""
-    terminal = {"published", "failed", "permanently_failed", "cancelled"}
-    return all(v.get("status") in terminal for v in platform_results.values())
+    """Only schedule immediate 5-minute cleanup when ALL platforms succeeded (or were cancelled).
+    If ANY platform failed or is retrying, source media is preserved under a 48h grace period.
+    """
+    if not platform_results:
+        return False
+    statuses = {str((v or {}).get("status") or "").lower() for v in platform_results.values()}
+    # If any platform failed, do NOT trigger immediate cleanup — 48h grace period applies
+    if any(s in {"failed", "permanently_failed"} for s in statuses):
+        return False
+    return all(s in {"published", "cancelled"} for s in statuses)
 
 
 async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | None, str]:
@@ -534,6 +541,18 @@ async def _finalize_post_status(db, post_id: str) -> tuple[str | None, str | Non
                 logger.warning("Published card thumbnail generation failed for post %s: %s", post_id, exc)
 
     update_doc: dict = {"$set": set_updates}
+
+    # 48-Hour Grace Period for Failed Posts: grant 48h window before media is cleaned
+    has_failed_targets = agg_status in ("failed", "partial", "dlq") or any(
+        str((v or {}).get("status") or "").lower() in {"failed", "permanently_failed"}
+        for v in result_entries.values()
+    )
+    if has_failed_targets:
+        set_updates["failed_media_expires_at"] = now + timedelta(hours=48)
+        if not updated_post.get("failed_at"):
+            set_updates["failed_at"] = now
+    elif agg_status == "published":
+        update_doc.setdefault("$unset", {})["failed_media_expires_at"] = ""
     if agg_status != prev_agg_status:
         update_doc["$push"] = {
             "status_history": {
@@ -1506,6 +1525,7 @@ async def _async_publish_to_platform(
     post = await db.posts.find_one({"id": post_id}, {"_id": 0})
     if post is None:
         return {"status": "post_deleted"}
+    post = await _hydrate_post_media(db, post)
     if post.get("deleted_at") or post.get("status") == "cancelled":
         event_log(
             logger,
@@ -2038,6 +2058,16 @@ async def _async_publish_to_platform(
                 _override_media_urls = _override.get("media_urls") or []
                 _override_media_url = _override.get("media_url")
                 _override_thumbnails = _override.get("thumbnail_urls") or []
+                if _override_media_ids and (not _override_media_urls or not _override_media_url):
+                    override_hydrated = await _hydrate_post_media(db, {
+                        "media_ids": _override_media_ids,
+                        "media_urls": _override_media_urls,
+                        "media_url": _override_media_url,
+                        "thumbnail_urls": _override_thumbnails,
+                    })
+                    _override_media_urls = override_hydrated.get("media_urls") or []
+                    _override_media_url = override_hydrated.get("media_url")
+                    _override_thumbnails = override_hydrated.get("thumbnail_urls") or []
             else:
                 _override_media_ids = post.get("media_ids") or []
                 _override_media_urls = post.get("media_urls") or []

@@ -5,7 +5,7 @@ Only cleans up when ALL platforms are in terminal state (EC media cleanup gate).
 """
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
@@ -471,6 +471,163 @@ async def _async_cleanup_expired_published_card_thumbnails() -> dict:
         "cleaned": cleaned,
         "errors": errors,
         "cutoff": cutoff.isoformat(),
+    }
+
+
+@celery_app.task(
+    name="celery_workers.tasks.cleanup.cleanup_expired_failed_posts_media",
+    bind=True,
+    acks_late=True,
+)
+def cleanup_expired_failed_posts_media(self) -> dict:
+    return run_async(_async_cleanup_expired_failed_posts_media())
+
+
+async def _async_cleanup_expired_failed_posts_media() -> dict:
+    """
+    Scans for failed or partially-failed posts whose 48-hour grace period has expired.
+    Deletes source/processed media from Cloudflare R2 for ALL tiers, marks media_cleaned_at,
+    unsets media_urls/media_url, and sets media_expired=True.
+    """
+    from db.mongo import get_client
+    from utils.temp_audio_cleanup import cleanup_temporary_audio_for_post_media
+
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+
+    now = datetime.now(timezone.utc)
+    cutoff_48h = now - timedelta(hours=48)
+
+    query = {
+        "status": {"$in": ["failed", "partial", "dlq", "permanently_failed"]},
+        "media_cleaned_at": {"$exists": False},
+        "media_expired": {"$ne": True},
+        "$or": [
+            {"failed_media_expires_at": {"$lte": now}},
+            {"failed_media_expires_at": {"$exists": False}, "failed_at": {"$lte": cutoff_48h}},
+            {"failed_media_expires_at": {"$exists": False}, "updated_at": {"$lte": cutoff_48h}},
+        ],
+    }
+
+    cursor = db.posts.find(query, limit=500)
+    scanned = 0
+    cleaned = 0
+    errors = 0
+
+    async for post in cursor:
+        scanned += 1
+        post_id = post.get("id")
+        if not post_id:
+            continue
+
+        try:
+            media_ids = sorted(_collect_post_media_ids(post))
+            if not media_ids:
+                # Post has no media to clean up
+                await db.posts.update_one(
+                    {"id": post_id},
+                    {
+                        "$set": {
+                            "media_cleaned_at": now.isoformat(),
+                            "media_expired": True,
+                        }
+                    },
+                )
+                cleaned += 1
+                continue
+
+            await cleanup_temporary_audio_for_post_media(
+                db,
+                post=post,
+                media_ids=media_ids,
+                reason="failed_post_48h_expired",
+                excluding_post_id=post_id,
+            )
+
+            surviving_thumbnail_urls: list[str] = []
+
+            for media_id in media_ids:
+                asset = await db.media_assets.find_one({"media_id": media_id}, {"_id": 0})
+                if not asset:
+                    continue
+
+                storage_key = asset.get("storage_key", "")
+                source_storage_key = asset.get("source_storage_key", "")
+                thumb_url = asset.get("thumbnail_url")
+                if thumb_url:
+                    surviving_thumbnail_urls.append(thumb_url)
+
+                # Delete raw upload sources
+                if source_storage_key and source_storage_key != storage_key:
+                    try:
+                        await _delete_from_storage(source_storage_key)
+                        await db.media_assets.update_one(
+                            {"media_id": media_id},
+                            {
+                                "$set": {"source_storage_deleted_at": now.isoformat()},
+                                "$unset": {"source_storage_key": ""},
+                            },
+                        )
+                    except Exception as raw_exc:
+                        logger.warning(
+                            "Failed to delete raw source key %s for expired failed post %s: %s",
+                            source_storage_key, post_id, raw_exc,
+                        )
+
+                # For failed posts whose 48h expired: delete from R2 for ALL tiers
+                if storage_key:
+                    try:
+                        await _delete_from_storage(storage_key)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to delete storage key %s for expired failed post %s: %s",
+                            storage_key, post_id, exc,
+                        )
+
+                await db.media_assets.update_one(
+                    {"media_id": media_id},
+                    {
+                        "$set": {
+                            "status": "cleaned",
+                            "media_cleaned_at": now.isoformat(),
+                            "expired_cleanup_reason": "failed_post_48h_expired",
+                        },
+                        "$unset": {"storage_key": ""},
+                    },
+                )
+
+            post_update: dict = {
+                "$set": {
+                    "media_cleaned_at": now.isoformat(),
+                    "media_expired": True,
+                },
+                "$unset": {
+                    "media_urls": "",
+                    "media_url": "",
+                },
+            }
+            for platform in (post.get("platform_overrides") or {}).keys():
+                post_update["$unset"][f"platform_overrides.{platform}.media_urls"] = ""
+                post_update["$unset"][f"platform_overrides.{platform}.media_url"] = ""
+            for account_id in (post.get("account_overrides") or {}).keys():
+                post_update["$unset"][f"account_overrides.{account_id}.media_urls"] = ""
+                post_update["$unset"][f"account_overrides.{account_id}.media_url"] = ""
+            if surviving_thumbnail_urls:
+                post_update["$set"]["thumbnail_urls"] = surviving_thumbnail_urls
+
+            await db.posts.update_one({"id": post_id}, post_update)
+            cleaned += 1
+            logger.info("Cleaned expired media for failed post %s (48h grace period ended)", post_id)
+        except Exception as exc:
+            errors += 1
+            logger.error("Failed to clean expired media for post %s: %s", post_id, exc)
+
+    return {
+        "status": "complete",
+        "scanned": scanned,
+        "cleaned": cleaned,
+        "errors": errors,
+        "cutoff": cutoff_48h.isoformat(),
     }
 
 

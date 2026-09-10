@@ -123,6 +123,12 @@ celery_app.conf.beat_schedule.update({
         "schedule": 60.0,  # every minute
         "options": {"queue": "default"},
     },
+    # 48-Hour Grace Period Auto-Cleanup for Failed Posts
+    "cleanup-expired-failed-posts-media": {
+        "task": "celery_workers.tasks.cleanup.cleanup_expired_failed_posts_media",
+        "schedule": 3600,  # hourly
+        "options": {"queue": "default"},
+    },
 })
 
 

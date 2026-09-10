@@ -2103,7 +2103,22 @@ async def retry_failed_post(
     user_id = current_user["user_id"]
     post = await db.posts.find_one(
         {"id": post_id, "user_id": user_id, "deleted_at": {"$exists": False}},
-        {"_id": 0, "status": 1, "version": 1, "platforms": 1, "platform_results": 1, "account_results": 1, "publish_targets": 1},
+        {
+            "_id": 0,
+            "status": 1,
+            "version": 1,
+            "platforms": 1,
+            "platform_results": 1,
+            "account_results": 1,
+            "publish_targets": 1,
+            "media_ids": 1,
+            "media_urls": 1,
+            "media_url": 1,
+            "media_cleaned_at": 1,
+            "media_expired": 1,
+            "platform_overrides": 1,
+            "account_overrides": 1,
+        },
     )
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -2111,6 +2126,25 @@ async def retry_failed_post(
         raise HTTPException(
             status_code=409,
             detail="Only failed or partially failed posts can be retried",
+        )
+
+    # Check if media for this failed post has expired after the 48-hour grace period
+    has_media = bool(post.get("media_ids"))
+    if not has_media:
+        for ov in (post.get("platform_overrides") or {}).values():
+            if isinstance(ov, dict) and ov.get("media_ids"):
+                has_media = True
+                break
+    if not has_media:
+        for ov in (post.get("account_overrides") or {}).values():
+            if isinstance(ov, dict) and ov.get("media_ids"):
+                has_media = True
+                break
+
+    if has_media and (post.get("media_expired") or post.get("media_cleaned_at")):
+        raise HTTPException(
+            status_code=409,
+            detail="The 48-hour grace period for this failed post has expired and its uploaded media was automatically cleaned up. Please duplicate or re-create the post to retry.",
         )
 
     platform_results = post.get("platform_results") or {}
@@ -2169,7 +2203,16 @@ async def retry_failed_post(
     set_updates = {
         "status": PostStatus.PROCESSING,
         "updated_at": now,
+        "failed_media_expires_at": now + timedelta(hours=48),
     }
+    if has_media and not post.get("media_urls"):
+        from celery_workers.tasks.publish import _hydrate_post_media
+        hydrated = await _hydrate_post_media(db, post)
+        if hydrated.get("media_urls"):
+            set_updates["media_urls"] = hydrated["media_urls"]
+            set_updates["media_url"] = hydrated.get("media_url")
+            if hydrated.get("thumbnail_urls"):
+                set_updates["thumbnail_urls"] = hydrated.get("thumbnail_urls")
     unset_updates = {"dlq_reason": ""}
     for target in retry_targets:
         target_key = target["target_key"]

@@ -9,14 +9,20 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Twitter Media Upload Fix: Diagnosed 403 Forbidden failure on `upload.twitter.com/1.1/media/upload.json` during post publishing. Discovered OAuth scope `media.write` was missing from Twitter auth scopes in `backend/app/social/twitter.py` and `api/routes/accounts.py`, and `platform_adapters/twitter.py` only accepted 202 instead of (200, 201, 202) on INIT. Fixed locally, committed to `main`, deployed to EC2, and verified all containers healthy.
-- Unsplash & Dropbox: Added frontend environment keys locally and in production server.
-- Pinterest: Configured credentials in `backend/.env` on local and EC2 production server.
+- Twitter v2 & Media Lifecycle Remediation:
+  - Migrated Twitter media upload from legacy v1.1 chunked endpoint to modern Twitter API v2 (`/2/media/upload`) with OAuth 2.0 PKCE support and 402 Credits Depleted handling.
+  - Implemented 48-Hour Failed Post Media Grace Period:
+    - Updated `publish.py`: `should_cleanup_media()` only triggers immediate cleanup for fully successful posts; failed posts retain media and receive `failed_media_expires_at = now + 48h`.
+    - Added `publish_to_platform` media rehydration from `db.media_assets` when retrying.
+    - Updated `cleanup.py`: added `cleanup_expired_failed_posts_media()` task to delete expired media from Cloudflare R2 across all tiers once 48h elapse.
+    - Updated `scheduler.py`: scheduled hourly scanner for expired failed post media.
+    - Updated `posts.py`: `POST /posts/{post_id}/retry` re-hydrates media on retry within 48h, and guards against expired media with an HTTP 409 error.
+    - Added `tests/test_failed_post_media_grace_period.py` (4/4 passed).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Monitor live platform analytics and provider API rate limits across connected social channels.
+- Implement Cluster B (Monetization Engine / Invoicing & Subscriptions) or deploy Cluster A to production.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
