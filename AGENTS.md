@@ -9,18 +9,18 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Smart Bio Multi-Page Sub-Page Manager Isolation & Dedicated Save Controls:
-  - Fixed cross-page block and metadata bleed in `LinkInBio.js` and `BioOutlineTree.js`.
-  - Added dedicated Sub-Page Isolated Mode panel with title, description, URL slug, and explicit "Save Page Changes" button.
-  - Sub-pages now manage completely isolated block lists while preserving root profile for Home.
-  - Updated `PublicBioPage.js` to render isolated sub-page title, badge, description, and document title.
-  - Added backend test `test_bio_subpage_isolation_and_save` in `tests/test_bio_pages.py`.
-  - Verified with `CI=true npm run build --prefix frontend` (exit 0) and `pytest` (exit 0).
+- Content Library Post Card & Delivery Inspector Overhaul:
+  - Fixed button/date overlap in `ContentLibrary.js`: replaced hover swap with always-visible date and 3-dots kebab action dropdown.
+  - Eliminated raw internal IDs (`usr_c7...`) across `PostDeliveryInspector.js` and `publishFailures.js` with humanized account names and platform fallbacks.
+  - Added dedicated Twitter/X API 402 Credits Depleted diagnostic with direct link to X Developer Portal.
+  - Resolved duplicate retry controls and hiding previous error cards while active retry is running.
+  - Fixed retry endpoints in `api/routes/posts.py` and `backend/server.py` to support `failed` and `permanently_failed` states and flexible key matching.
+  - Verified frontend build (`npm run build --prefix frontend`) and 372 unit tests (`pytest`) pass with exit code 0.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy to production and verify live behavior.
+- Deploy backend to EC2 and verify live behavior on production.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
