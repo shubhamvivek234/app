@@ -7,12 +7,11 @@ Branch: main
 Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
 
 ## Last Session Completed
-Date: 2026-09-09
+Date: 2026-09-11
 Completed:
-- Smart Bio Scheduled Visibility Window & Modal: Added optional `page_schedule` (`enabled`, `start_at`, `end_at`) to bio backend and frontend. Added prominent `[ 🕒 Schedule ]` button in Studio top bar, made top status badge clickable, and created Apple-styled `BioScheduleModal.js` with 1-click presets (24h, 3d, 7d) and live status preview.
-- Smart Bio Header Size Slider: Added slide bar directly under Header Layout choices in Styles tab (48px to 140px with Compact, Standard, Hero presets) with proportional avatar and typography scaling in studio & public view.
-- Smart Bio Analytics Modal Overhaul: Redesigned with Double-Bezel Apple architecture, segmented tabs (Overview, Top Links, Traffic Sources), 7-day trend bars, hardware split, and Esc / backdrop dismissal.
-- Verification: Frontend production build passed (exit code 0); 356 pytest unit tests passed.
+- Twitter Media Upload Fix: Diagnosed 403 Forbidden failure on `upload.twitter.com/1.1/media/upload.json` during post publishing. Discovered OAuth scope `media.write` was missing from Twitter auth scopes in `backend/app/social/twitter.py` and `api/routes/accounts.py`, and `platform_adapters/twitter.py` only accepted 202 instead of (200, 201, 202) on INIT. Fixed locally, committed to `main`, deployed to EC2, and verified all containers healthy.
+- Unsplash & Dropbox: Added frontend environment keys locally and in production server.
+- Pinterest: Configured credentials in `backend/.env` on local and EC2 production server.
 
 ## Active Work
 Currently implementing: None
