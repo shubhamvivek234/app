@@ -147,6 +147,8 @@ class PublicBioResponse(BaseModel):
     theme: ThemeConfig
     social_links: list[SocialLinkItem]
     blocks: list[BioBlockItem]
+    pages: list[BioSubPage] = Field(default_factory=list)
+    active_page_id: str = "home"
     feed_posts: list[dict] = Field(default_factory=list)
     seo: SeoConfig
 

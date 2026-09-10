@@ -42,6 +42,9 @@ export default function BioOutlineTree({
   onSelectPage,
   onAddPage,
   onDeletePage,
+  onUpdateSubPage,
+  onSavePage,
+  saving = false,
   onOpenBlockEditor,
   onOpenAddModal,
   onQuickAddLink,
@@ -149,7 +152,7 @@ export default function BioOutlineTree({
       <div className="p-4 border-b border-black/[0.04] dark:border-white/[0.06] space-y-2.5 shrink-0">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-            Identity & Bio
+            {activePageId === 'home' ? 'Identity & Profile' : 'Sub-Page Manager'}
           </span>
           {/* Multi-Page Selector Pill */}
           <div className="relative">
@@ -157,7 +160,7 @@ export default function BioOutlineTree({
               onClick={() => setPageDropdownOpen(!pageDropdownOpen)}
               className="text-[10px] font-semibold text-[#0071E3] dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-0.5 rounded-full border border-blue-200/50 dark:border-blue-800/40 flex items-center gap-1"
             >
-              <span>{activePage.title}</span>
+              <span>{activePage.title || 'Page'}</span>
               <FaChevronDown className="text-[8px]" />
             </button>
 
@@ -222,48 +225,174 @@ export default function BioOutlineTree({
           </div>
         </div>
 
-        <div>
-          <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Display Name</label>
-          <input
-            type="text"
-            value={title || ''}
-            onChange={(e) => setTitle?.(e.target.value)}
-            className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
-          />
-        </div>
+        {activePageId === 'home' ? (
+          <>
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Display Name</label>
+              <input
+                type="text"
+                value={title || ''}
+                onChange={(e) => setTitle?.(e.target.value)}
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+              />
+            </div>
 
-        <div>
-          <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Bio Tagline</label>
-          <input
-            type="text"
-            value={bio || ''}
-            onChange={(e) => setBio?.(e.target.value)}
-            className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
-          />
-        </div>
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Bio Tagline</label>
+              <input
+                type="text"
+                value={bio || ''}
+                onChange={(e) => setBio?.(e.target.value)}
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+              />
+            </div>
 
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Apple Verified Badge</span>
-          <label className="apple-switch">
-            <input
-              type="checkbox"
-              checked={Boolean(verifiedBadge)}
-              onChange={(e) => setVerifiedBadge?.(e.target.checked)}
-            />
-            <span className="apple-switch-slider" />
-          </label>
-        </div>
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Apple Verified Badge</span>
+              <label className="apple-switch">
+                <input
+                  type="checkbox"
+                  checked={Boolean(verifiedBadge)}
+                  onChange={(e) => setVerifiedBadge?.(e.target.checked)}
+                />
+                <span className="apple-switch-slider" />
+              </label>
+            </div>
+
+            {/* Explicit Save Option for Home Page */}
+            <button
+              type="button"
+              onClick={onSavePage}
+              disabled={saving}
+              className="w-full mt-2 py-2 px-3 rounded-xl text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 active:scale-[0.98] transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Saving Home Page...</span>
+                </>
+              ) : (
+                <>
+                  <FaCheck className="text-[10px]" />
+                  <span>Save Home Page Changes</span>
+                </>
+              )}
+            </button>
+          </>
+        ) : (
+          /* Sub-Page Isolated Controls */
+          <div className="space-y-2.5">
+            <div className="p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-800/40 text-[11px] space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider text-[9px] flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                  Sub-Page Isolated Mode
+                </span>
+                <span className="text-[10px] text-gray-500 font-mono">
+                  ?page={activePage.slug || activePage.id}
+                </span>
+              </div>
+              <p className="text-gray-600 dark:text-gray-300 text-[11px] leading-tight">
+                Changes and blocks below are strictly confined to <strong>"{activePage.title}"</strong> and will never bleed to other pages.
+              </p>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Sub-Page Title</label>
+              <input
+                type="text"
+                value={activePage.title || ''}
+                onChange={(e) => onUpdateSubPage?.('title', e.target.value)}
+                placeholder="e.g. Portfolio, Shop, Press Kit"
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Sub-Page Tagline / Description</label>
+              <input
+                type="text"
+                value={activePage.description || ''}
+                onChange={(e) => onUpdateSubPage?.('description', e.target.value)}
+                placeholder="Tagline or bio for this sub-page..."
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">URL Slug</label>
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-[10px] text-gray-400 font-mono select-none">?page=</span>
+                <input
+                  type="text"
+                  value={activePage.slug || ''}
+                  onChange={(e) => onUpdateSubPage?.('slug', e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
+                  placeholder="slug"
+                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] focus:border-[#0071E3] focus:outline-none transition text-gray-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            {/* Explicit Save Option for Sub-Page */}
+            <button
+              type="button"
+              onClick={onSavePage}
+              disabled={saving}
+              className="w-full mt-2 py-2 px-3 rounded-xl text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 active:scale-[0.98] transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Saving Sub-Page...</span>
+                </>
+              ) : (
+                <>
+                  <FaCheck className="text-[10px]" />
+                  <span>Save "{activePage.title || 'Sub-Page'}" Changes</span>
+                </>
+              )}
+            </button>
+
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => onSelectPage?.('home')}
+                className="text-gray-500 hover:text-gray-900 dark:hover:text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+              >
+                ← Back to Home
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Delete sub-page "${activePage.title}" and all its blocks?`)) {
+                    onDeletePage?.(activePageId);
+                  }
+                }}
+                className="text-red-500 hover:text-red-600 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+              >
+                <FaTrash className="text-[9px]" /> Delete Page
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── 3. CONTENT BLOCKS TREE ── */}
       <div className="p-4 flex-1 flex flex-col min-h-0">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500">
-            Content Blocks ({blocks.length})
-          </span>
+        <div className="flex items-center justify-between mb-2">
+          <div className="min-w-0 flex-1 pr-2">
+            <span className="text-[11px] font-bold tracking-wider uppercase text-gray-400 dark:text-gray-500 block truncate">
+              {activePageId === 'home' ? 'Home Blocks' : `"${activePage.title}" Blocks`} ({blocks.length})
+            </span>
+            {activePageId !== 'home' && (
+              <span className="text-[10px] text-[#0071E3] dark:text-blue-400 font-medium block truncate">
+                Isolated to this page only
+              </span>
+            )}
+          </div>
           <button
             onClick={onOpenAddModal}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 transition shadow-xs"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-white bg-[#0071E3] hover:bg-blue-600 transition shadow-xs shrink-0 cursor-pointer"
           >
             <FaPlus className="text-[9px]" /> Block
           </button>
@@ -364,6 +493,21 @@ export default function BioOutlineTree({
             ))
           )}
         </div>
+
+        {/* Bottom Quick Save for Active Page */}
+        {blocks.length > 0 && (
+          <div className="pt-2 border-t border-black/[0.04] dark:border-white/[0.06] mt-2 shrink-0">
+            <button
+              type="button"
+              onClick={onSavePage}
+              disabled={saving}
+              className="w-full py-1.5 px-3 rounded-lg text-xs font-semibold text-gray-700 dark:text-gray-200 bg-black/[0.03] dark:bg-white/[0.06] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] border border-black/[0.06] dark:border-white/[0.08] active:scale-[0.98] transition flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+            >
+              <FaCheck className="text-[10px] text-[#0071E3]" />
+              <span>{saving ? 'Saving...' : `Save ${activePageId === 'home' ? 'Home' : `"${activePage.title}"`} Blocks`}</span>
+            </button>
+          </div>
+        )}
 
         {/* Deleted Items / Trash Drawer Trigger */}
         {deletedBlocks?.length > 0 && (

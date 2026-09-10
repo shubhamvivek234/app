@@ -113,6 +113,13 @@ async def get_public_bio_page(
                 "published_at": p.get("published_at").isoformat() if p.get("published_at") else None,
             })
 
+    sanitized_pages = []
+    for pg in page.get("pages", []):
+        pg_data = dict(pg)
+        pg_blocks = pg_data.get("blocks", [])
+        pg_data["blocks"] = [b for b in pg_blocks if _is_block_active(b, now)]
+        sanitized_pages.append(pg_data)
+
     return PublicBioResponse(
         handle=page["handle"],
         title=page.get("title", ""),
@@ -122,6 +129,8 @@ async def get_public_bio_page(
         theme=ThemeConfig(**(page.get("theme") or {})),
         social_links=page.get("social_links", []),
         blocks=active_blocks,
+        pages=sanitized_pages,
+        active_page_id=page.get("active_page_id", "home"),
         feed_posts=feed_posts,
         seo=SeoConfig(**(page.get("seo") or {})),
     )

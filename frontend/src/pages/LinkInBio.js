@@ -258,16 +258,39 @@ export default function LinkInBio() {
             setTheme((prev) => ({ ...prev, ...d.theme }));
           }
 
+          let initialPages = [];
           if (Array.isArray(d.pages) && d.pages.length > 0) {
-            setPages(d.pages);
-            const initialActive = d.active_page_id || 'home';
-            setActivePageId(initialActive);
-            const activePageObj = d.pages.find((p) => p.id === initialActive) || d.pages[0];
-            setBlocks(activePageObj.blocks || d.blocks || []);
-          } else if (Array.isArray(d.blocks)) {
-            setBlocks(d.blocks);
-            setPages([{ id: 'home', title: 'Home', slug: 'home', blocks: d.blocks }]);
+            initialPages = d.pages.map((p) => ({
+              ...p,
+              blocks: Array.isArray(p.blocks) ? p.blocks : [],
+              description: p.description || '',
+            }));
+            const hasHome = initialPages.some((p) => p.id === 'home');
+            if (!hasHome) {
+              initialPages.unshift({
+                id: 'home',
+                title: d.title || 'Home',
+                slug: 'home',
+                description: d.bio || '',
+                blocks: Array.isArray(d.blocks) ? d.blocks : [],
+              });
+            }
+          } else {
+            initialPages = [
+              {
+                id: 'home',
+                title: d.title || 'Home',
+                slug: 'home',
+                description: d.bio || '',
+                blocks: Array.isArray(d.blocks) ? d.blocks : [],
+              },
+            ];
           }
+          setPages(initialPages);
+          const initialActive = d.active_page_id || 'home';
+          const activePageObj = initialPages.find((p) => p.id === initialActive) || initialPages[0];
+          setActivePageId(activePageObj ? activePageObj.id : 'home');
+          setBlocks(activePageObj && Array.isArray(activePageObj.blocks) ? activePageObj.blocks : []);
         }
       } catch (err) {
         console.error('Failed to load bio data:', err);
@@ -295,30 +318,61 @@ export default function LinkInBio() {
     return () => clearTimeout(timeout);
   }, [theme, blocks, pages, loading]);
 
+  // Atomic block state updater: guarantees current active page and blocks are in sync
+  const updateCurrentPageBlocks = (updaterOrNewBlocks) => {
+    setBlocks((prevBlocks) => {
+      const nextBlocks = typeof updaterOrNewBlocks === 'function' ? updaterOrNewBlocks(prevBlocks) : updaterOrNewBlocks;
+      setPages((prevPages) => {
+        const pageExists = prevPages.some((p) => p.id === activePageId);
+        if (pageExists) {
+          return prevPages.map((p) => (p.id === activePageId ? { ...p, blocks: nextBlocks } : p));
+        }
+        return [
+          ...prevPages,
+          {
+            id: activePageId,
+            title: activePageId === 'home' ? 'Home' : 'Sub Page',
+            slug: activePageId,
+            description: '',
+            blocks: nextBlocks,
+          },
+        ];
+      });
+      return nextBlocks;
+    });
+  };
+
   // Page Management Handlers
   const handleSelectPage = (pageId) => {
+    if (pageId === activePageId) return;
     setPages((prev) => {
+      // Commit active blocks to current page in pages
       const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
       const targetPage = updated.find((p) => p.id === pageId);
-      if (targetPage) {
-        setBlocks(targetPage.blocks || []);
-      }
+      setBlocks(targetPage && Array.isArray(targetPage.blocks) ? targetPage.blocks : []);
       return updated;
     });
     setActivePageId(pageId);
   };
 
   const handleAddPage = (pageTitle, slug) => {
+    const cleanTitle = (pageTitle || '').trim();
+    if (!cleanTitle) return;
+    const cleanSlug = (slug || cleanTitle).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     const newPage = {
       id: `page_${Date.now()}`,
-      title: pageTitle,
-      slug: slug || pageTitle.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+      title: cleanTitle,
+      slug: cleanSlug,
+      description: '',
       blocks: [],
     };
-    setPages((prev) => [...prev, newPage]);
+    setPages((prev) => {
+      const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
+      return [...updated, newPage];
+    });
     setActivePageId(newPage.id);
     setBlocks([]);
-    toast.success(`Created page "${pageTitle}"`);
+    toast.success(`Created sub-page "${cleanTitle}"`);
   };
 
   const handleDeletePage = (pageId) => {
@@ -331,19 +385,63 @@ export default function LinkInBio() {
       if (activePageId === pageId) {
         setActivePageId('home');
         const homePage = filtered.find((p) => p.id === 'home');
-        setBlocks(homePage?.blocks || []);
+        setBlocks(homePage && Array.isArray(homePage.blocks) ? homePage.blocks : []);
       }
       return filtered;
     });
-    toast.success('Deleted page');
+    toast.success('Deleted sub-page');
+  };
+
+  const handleUpdateSubPage = (field, value) => {
+    if (activePageId === 'home') {
+      if (field === 'title') setTitle(value);
+      if (field === 'description' || field === 'bio') setBio(value);
+      return;
+    }
+    setPages((prev) =>
+      prev.map((p) => {
+        if (p.id === activePageId) {
+          return { ...p, [field]: value };
+        }
+        return p;
+      })
+    );
+  };
+
+  const handleSaveCurrentPage = () => {
+    const currentPageObj = pages.find((p) => p.id === activePageId);
+    const pageLabel = activePageId === 'home' ? 'Home' : (currentPageObj?.title || 'Sub-Page');
+    return handleSaveAll(null, `Saved "${pageLabel}" changes successfully!`);
   };
 
   // Save changes to backend
-  const handleSaveAll = async (overrideState = null) => {
+  const handleSaveAll = async (overrideState = null, customSuccessMsg = null) => {
     setSaving(true);
     try {
+      // Synchronize current active page blocks into updatedPages
       const updatedPages = pages.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
-      const homePage = updatedPages.find((p) => p.id === 'home');
+      const homeIdx = updatedPages.findIndex((p) => p.id === 'home');
+      const homeBlocks = activePageId === 'home'
+        ? blocks
+        : (homeIdx !== -1 && Array.isArray(updatedPages[homeIdx].blocks) ? updatedPages[homeIdx].blocks : []);
+
+      if (homeIdx !== -1) {
+        updatedPages[homeIdx] = {
+          ...updatedPages[homeIdx],
+          title: title || 'Home',
+          slug: 'home',
+          description: bio || '',
+          blocks: homeBlocks,
+        };
+      } else {
+        updatedPages.unshift({
+          id: 'home',
+          title: title || 'Home',
+          slug: 'home',
+          description: bio || '',
+          blocks: homeBlocks,
+        });
+      }
 
       const safeHandle = (handle || '').trim() || 'user';
       const safeTitle = (title || '').trim() || safeHandle;
@@ -356,7 +454,7 @@ export default function LinkInBio() {
         banner_url: bannerUrl || null,
         verified_badge: Boolean(verifiedBadge),
         theme: overrideState?.theme || theme,
-        blocks: homePage?.blocks || blocks,
+        blocks: homeBlocks,
         pages: updatedPages,
         active_page_id: activePageId || 'home',
         navigation_style: theme.navigation_style || 'pills',
@@ -380,11 +478,11 @@ export default function LinkInBio() {
       if (res && res.handle) {
         setHandle(res.handle);
       }
-      toast.success(isPublished ? '✨ Smart Bio saved live!' : 'Smart Bio saved in draft mode.');
+      toast.success(customSuccessMsg || (isPublished ? '✨ Smart Bio saved live!' : 'Smart Bio saved in draft mode.'));
 
-      // If published, open the public bio in a new tab
-      if (isPublished) {
-        const targetUrl = `${window.location.origin}/bio/${savedHandle}`;
+      // If user clicked the main header Publish button (no customSuccessMsg) and is published, open preview
+      if (isPublished && !customSuccessMsg) {
+        const targetUrl = `${window.location.origin}/bio/${savedHandle}${activePageId !== 'home' ? `?page=${pages.find((p) => p.id === activePageId)?.slug || activePageId}` : ''}`;
         window.open(targetUrl, '_blank', 'noopener,noreferrer');
       }
     } catch (err) {
@@ -463,9 +561,9 @@ export default function LinkInBio() {
     }
   };
 
-  // Block Actions
+  // Block Actions (strictly confined to active page)
   const handleSaveBlock = (updatedBlock) => {
-    setBlocks((prev) => prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b)));
+    updateCurrentPageBlocks((prev) => prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b)));
     setEditingBlock(null);
     toast.success('Block updated');
   };
@@ -489,7 +587,7 @@ export default function LinkInBio() {
         click_count: 0,
         layout: 'card_left_image',
       };
-      setBlocks((prev) => [...prev, newBlock]);
+      updateCurrentPageBlocks((prev) => [...prev, newBlock]);
       toast.success('Quick link added to outline');
     } catch (err) {
       toast.error('Invalid URL format');
@@ -503,12 +601,12 @@ export default function LinkInBio() {
       title: `${block.title || 'Block'} (Copy)`,
       click_count: 0,
     };
-    setBlocks((prev) => [...prev, duplicated]);
+    updateCurrentPageBlocks((prev) => [...prev, duplicated]);
     toast.success('Block duplicated');
   };
 
   const handleToggleBlockActive = (blockId) => {
-    setBlocks((prev) =>
+    updateCurrentPageBlocks((prev) =>
       prev.map((b) => (b.id === blockId ? { ...b, active: b.active === false ? true : false } : b))
     );
   };
@@ -517,7 +615,7 @@ export default function LinkInBio() {
     const target = blocks.find((b) => b.id === blockId);
     if (target) {
       setDeletedBlocks((prev) => [target, ...prev]);
-      setBlocks((prev) => prev.filter((b) => b.id !== blockId));
+      updateCurrentPageBlocks((prev) => prev.filter((b) => b.id !== blockId));
       setEditingBlock(null);
       toast.success('Moved block to trash bin');
     }
@@ -527,7 +625,7 @@ export default function LinkInBio() {
     const target = deletedBlocks.find((b) => b.id === blockId);
     if (target) {
       setDeletedBlocks((prev) => prev.filter((b) => b.id !== blockId));
-      setBlocks((prev) => [...prev, target]);
+      updateCurrentPageBlocks((prev) => [...prev, target]);
       toast.success('Restored block');
     }
   };
@@ -538,7 +636,7 @@ export default function LinkInBio() {
   };
 
   const handleReorderBlocks = (newBlocks) => {
-    setBlocks(newBlocks);
+    updateCurrentPageBlocks(newBlocks);
   };
 
   const toggleFolderPreview = (folderId) => {
@@ -553,6 +651,10 @@ export default function LinkInBio() {
 
   // Dynamic style calculations for live preview
   const activeBlocks = blocks.filter((b) => b.active !== false);
+  const activePageObj = pages.find((p) => p.id === activePageId);
+  const isSubPage = activePageId !== 'home' && Boolean(activePageObj);
+  const previewTitle = isSubPage && activePageObj?.title ? activePageObj.title : (title || 'Your Name');
+  const previewBio = isSubPage ? (activePageObj?.description || activePageObj?.bio || '') : (bio || '');
   const avatarStyles = getProfileAvatarStyles(theme);
   const blockGapPx = getBlockSpacingPx(theme);
   const socialIconPx = getSocialIconSizePx(theme);
@@ -738,6 +840,9 @@ export default function LinkInBio() {
               onSelectPage={handleSelectPage}
               onAddPage={handleAddPage}
               onDeletePage={handleDeletePage}
+              onUpdateSubPage={handleUpdateSubPage}
+              onSavePage={handleSaveCurrentPage}
+              saving={saving}
               onOpenBlockEditor={(blk) => setEditingBlock(blk)}
               onOpenAddModal={() => setAddBlockModalOpen(true)}
               onQuickAddLink={handleQuickAddLink}
@@ -852,20 +957,25 @@ export default function LinkInBio() {
                             <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-2xl font-black text-white">
-                              {title ? title[0] : 'U'}
+                              {previewTitle ? previewTitle[0] : 'U'}
                             </div>
                           )}
                         </div>
                         <div className="space-y-1 text-center">
+                          {isSubPage && (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-white/20 text-white backdrop-blur-md border border-white/20 mb-0.5">
+                              <span>Sub-Page: {activePageObj?.title}</span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-center gap-1.5">
                             <h2 className={`${headerTitleClass} font-bold tracking-tight`} style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
+                              {previewTitle}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                           </div>
-                          {bio && (
+                          {previewBio && (
                             <p className="text-xs max-w-[260px] leading-relaxed mx-auto opacity-80" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
+                              {previewBio}
                             </p>
                           )}
                         </div>
@@ -883,20 +993,25 @@ export default function LinkInBio() {
                             <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
-                              {title ? title[0] : 'U'}
+                              {previewTitle ? previewTitle[0] : 'U'}
                             </div>
                           )}
                         </div>
                         <div className="min-w-0 w-full">
+                          {isSubPage && (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/20 text-white backdrop-blur-md border border-white/20 mb-0.5">
+                              <span>Sub-Page: {activePageObj?.title}</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-1.5">
                             <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
+                              {previewTitle}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                           </div>
-                          {bio && (
+                          {previewBio && (
                             <p className="text-xs leading-relaxed opacity-80 mt-0.5" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
+                              {previewBio}
                             </p>
                           )}
                         </div>
@@ -914,20 +1029,25 @@ export default function LinkInBio() {
                             <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
-                              {title ? title[0] : 'U'}
+                              {previewTitle ? previewTitle[0] : 'U'}
                             </div>
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
+                          {isSubPage && (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/20 text-white backdrop-blur-md border border-white/20 mb-0.5">
+                              <span>Sub-Page: {activePageObj?.title}</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-1.5">
                             <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
+                              {previewTitle}
                             </h2>
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                           </div>
-                          {bio && (
+                          {previewBio && (
                             <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
+                              {previewBio}
                             </p>
                           )}
                         </div>
@@ -945,20 +1065,25 @@ export default function LinkInBio() {
                             <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
-                              {title ? title[0] : 'U'}
+                              {previewTitle ? previewTitle[0] : 'U'}
                             </div>
                           )}
                         </div>
                         <div className="min-w-0 w-full">
+                          {isSubPage && (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/20 text-white backdrop-blur-md border border-white/20 mb-0.5">
+                              <span>Sub-Page: {activePageObj?.title}</span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-end gap-1.5">
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                             <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
+                              {previewTitle}
                             </h2>
                           </div>
-                          {bio && (
+                          {previewBio && (
                             <p className="text-xs leading-relaxed opacity-80 mt-0.5" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
+                              {previewBio}
                             </p>
                           )}
                         </div>
@@ -969,15 +1094,20 @@ export default function LinkInBio() {
                     {theme.header_layout === 'right_row' && (
                       <div className="w-full flex items-center justify-between gap-3.5 text-right mb-2 px-1">
                         <div className="min-w-0 flex-1">
+                          {isSubPage && (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-white/20 text-white backdrop-blur-md border border-white/20 mb-0.5">
+                              <span>Sub-Page: {activePageObj?.title}</span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-end gap-1.5">
                             {verifiedBadge && <span className="font-bold text-sm" style={{ color: theme.accent_color || '#0071E3' }}>✓</span>}
                             <h2 className={`${headerTitleClass} font-bold tracking-tight truncate`} style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {title || 'Your Name'}
+                              {previewTitle}
                             </h2>
                           </div>
-                          {bio && (
+                          {previewBio && (
                             <p className="text-xs leading-relaxed opacity-80 mt-0.5 line-clamp-2" style={{ color: theme.text_color || '#FFFFFF' }}>
-                              {bio}
+                              {previewBio}
                             </p>
                           )}
                         </div>
@@ -989,7 +1119,7 @@ export default function LinkInBio() {
                             <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
-                              {title ? title[0] : 'U'}
+                              {previewTitle ? previewTitle[0] : 'U'}
                             </div>
                           )}
                         </div>
@@ -1276,7 +1406,7 @@ export default function LinkInBio() {
                         folder_items: typeItem.id === 'folder' ? [] : undefined,
                         is_expanded: false,
                       };
-                      setBlocks((prev) => [...prev, newBlock]);
+                      updateCurrentPageBlocks((prev) => [...prev, newBlock]);
                       setAddBlockModalOpen(false);
                       setEditingBlock(newBlock);
                     }}

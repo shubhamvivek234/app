@@ -1458,45 +1458,75 @@ async def retry_failed_post(post_id: str, current_user: User = Depends(get_curre
         raise HTTPException(status_code=400, detail="Only failed/partial posts can be retried")
 
     platform_results = post.get('platform_results', {})
+    account_results = post.get('account_results', {})
     retried_platforms = []
 
     if platform:
-        # Retry single platform
-        pr = platform_results.get(platform)
-        if not pr:
-            raise HTTPException(status_code=400, detail=f"Platform '{platform}' not found on this post")
-        if pr.get('status') != 'permanently_failed':
-            raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not in failed state (current: {pr.get('status')})")
-        pr['status'] = 'pending'
-        pr['retries'] = 0
-        pr['error'] = None
-        platform_results[platform] = pr
-        retried_platforms.append(platform)
+        norm_p = 'twitter' if platform.lower() in ('twitter', 'x') else platform.lower()
+        matched = False
+        for k, pr in list(platform_results.items()):
+            k_norm = 'twitter' if k.lower() in ('twitter', 'x') else k.lower()
+            if k_norm == norm_p or k_norm.startswith(f"{norm_p}_"):
+                if pr.get('status') in ('failed', 'permanently_failed'):
+                    pr['status'] = 'pending'
+                    pr['retries'] = 0
+                    pr['error'] = None
+                    platform_results[k] = pr
+                    retried_platforms.append(k)
+                    matched = True
+        for k, ar in list(account_results.items()):
+            k_norm = 'twitter' if k.lower() in ('twitter', 'x') else k.lower()
+            if k_norm == norm_p or k_norm.startswith(f"{norm_p}_"):
+                if ar.get('status') in ('failed', 'permanently_failed'):
+                    ar['status'] = 'pending'
+                    ar['retry_count'] = 0
+                    ar['error'] = None
+                    account_results[k] = ar
+                    if k not in retried_platforms:
+                        retried_platforms.append(k)
+                    matched = True
+        if not matched:
+            raise HTTPException(status_code=400, detail=f"Platform '{platform}' is not in failed state or not found")
     else:
-        # Retry ALL permanently failed platforms
+        # Retry ALL failed platforms
         for p, pr in platform_results.items():
-            if pr.get('status') == 'permanently_failed':
+            if pr.get('status') in ('failed', 'permanently_failed'):
                 pr['status'] = 'pending'
                 pr['retries'] = 0
                 pr['error'] = None
                 platform_results[p] = pr
                 retried_platforms.append(p)
+        for p, ar in account_results.items():
+            if ar.get('status') in ('failed', 'permanently_failed'):
+                ar['status'] = 'pending'
+                ar['retry_count'] = 0
+                ar['error'] = None
+                account_results[p] = ar
+                if p not in retried_platforms:
+                    retried_platforms.append(p)
 
     if not retried_platforms:
         raise HTTPException(status_code=400, detail="No failed platforms to retry")
 
     now = datetime.now(timezone.utc)
-    retry_time = now + timedelta(minutes=1)
+    retry_time = now
+
+    update_doc = {
+        "status": "publishing",
+        "scheduled_time": retry_time.isoformat(),
+        "platform_results": platform_results,
+        "failure_reason": None,
+        "updated_at": now.isoformat()
+    }
+    if account_results:
+        update_doc["account_results"] = account_results
 
     await db.posts.update_one(
         {"id": post_id},
-        {"$set": {
-            "status": "publishing",
-            "scheduled_time": retry_time.isoformat(),
-            "platform_results": platform_results,
-            "failure_reason": None,
-            "updated_at": now.isoformat()
-        }}
+        {
+            "$set": update_doc,
+            "$unset": {"claimed_at": ""}
+        }
     )
     return {
         "message": f"Retrying {len(retried_platforms)} platform(s): {', '.join(retried_platforms)}",

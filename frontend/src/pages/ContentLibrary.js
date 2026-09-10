@@ -6,7 +6,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { format, isToday, isTomorrow, isThisWeek, isThisMonth } from 'date-fns';
-import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup, FaCommentDots } from 'react-icons/fa';
+import { FaEdit, FaTrash, FaPlus, FaYoutube, FaInstagram, FaFacebook, FaTiktok, FaUser, FaCopy, FaSearch, FaPaperPlane, FaExclamationCircle, FaStickyNote, FaTimes, FaRedo, FaExternalLinkAlt, FaLinkedin, FaImage, FaVideo, FaAlignLeft, FaLayerGroup, FaCommentDots, FaEllipsisV } from 'react-icons/fa';
 import { FaXTwitter } from 'react-icons/fa6';
 import { SiBluesky, SiThreads } from 'react-icons/si';
 import GoogleBusinessIcon from '@/components/icons/GoogleBusinessIcon';
@@ -268,6 +268,17 @@ const ContentLibrary = () => {
   const [openNotePostId, setOpenNotePostId] = useState(null);
   const [noteInput, setNoteInput] = useState('');
   const [selectedCommentPost, setSelectedCommentPost] = useState(null);
+  const [openCardMenuId, setOpenCardMenuId] = useState(null);
+
+  useEffect(() => {
+    const handleMenuClickOutside = (e) => {
+      if (!e.target.closest('[data-card-menu]')) {
+        setOpenCardMenuId(null);
+      }
+    };
+    document.addEventListener('click', handleMenuClickOutside);
+    return () => document.removeEventListener('click', handleMenuClickOutside);
+  }, []);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -724,57 +735,89 @@ const ContentLibrary = () => {
                       )}
                     </div>
 
-                    {/* Right side: Date label swaps seamlessly with hover toolbar */}
-                    <div className="shrink-0 flex items-center justify-end relative h-7">
-                      {/* Date label in resting state */}
-                      <span className="text-slate-400 dark:text-slate-500 font-medium text-[11px] whitespace-nowrap transition-opacity duration-150 group-hover:opacity-0 group-hover:pointer-events-none select-none">
+                    {/* Right side: Always-visible Date label and 3-dots action menu */}
+                    <div className="shrink-0 flex items-center gap-1.5 relative">
+                      <span className="text-slate-400 dark:text-slate-500 font-medium text-[11px] whitespace-nowrap select-none">
                         {postDateLabel}
                       </span>
 
-                      {/* Action toolbar appearing on hover in place of date */}
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150 flex items-center gap-0.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-1 py-0.5 shadow-xs z-10">
-                        {canEditPost ? (
-                          <button
-                            onClick={() => navigate(`/create-post?edit=${encodeURIComponent(post.id)}`)}
-                            className="p-1 px-1.5 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                            title="Edit post"
-                          >
-                            Edit
-                          </button>
-                        ) : null}
+                      <div className="relative" data-card-menu>
                         <button
-                          onClick={() => handleDuplicate(post.id)}
-                          title="Duplicate as draft"
-                          className="p-1 px-1.5 text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenCardMenuId(openCardMenuId === post.id ? null : post.id);
+                          }}
+                          className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors focus:outline-none"
+                          title="Post actions"
                         >
-                          <FaCopy className="text-[10px]" />
+                          <FaEllipsisV className="text-[11px]" />
                         </button>
-                        {post.status === 'draft' && (
-                          <button
-                            onClick={() => handleSubmitForReview(post.id)}
-                            title="Submit for review"
-                            className="p-1 px-1.5 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+
+                        {openCardMenuId === post.id && (
+                          <div
+                            className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 py-1 z-30 animate-in fade-in zoom-in-95 duration-100"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <FaPaperPlane className="text-[10px]" />
-                          </button>
+                            {canEditPost && (
+                              <button
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  navigate(`/create-post?edit=${encodeURIComponent(post.id)}`);
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2"
+                              >
+                                <FaEdit className="text-[11px] text-slate-400" />
+                                <span>Edit post</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                setOpenCardMenuId(null);
+                                handleDuplicate(post.id);
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2"
+                            >
+                              <FaCopy className="text-[11px] text-slate-400" />
+                              <span>Duplicate as draft</span>
+                            </button>
+                            {post.status === 'draft' && (
+                              <button
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  handleSubmitForReview(post.id);
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2"
+                              >
+                                <FaPaperPlane className="text-[11px] text-amber-500" />
+                                <span>Submit for review</span>
+                              </button>
+                            )}
+                            {isApprovedScheduled && (
+                              <button
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  handleReturnApprovedToDraft(post.id);
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2"
+                              >
+                                <FaRedo className="text-[11px] text-amber-500" />
+                                <span>Return to draft</span>
+                              </button>
+                            )}
+                            <div className="border-t border-slate-100 dark:border-slate-700/60 my-1" />
+                            <button
+                              onClick={() => {
+                                setOpenCardMenuId(null);
+                                handleDelete(post.id);
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40 flex items-center gap-2"
+                            >
+                              <FaTrash className="text-[11px] text-rose-500" />
+                              <span>Delete post</span>
+                            </button>
+                          </div>
                         )}
-                        {isApprovedScheduled ? (
-                          <button
-                            onClick={() => handleReturnApprovedToDraft(post.id)}
-                            title="Return approved post to draft"
-                            className="p-1 px-1.5 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
-                          >
-                            <FaRedo className="text-[10px]" />
-                            Return
-                          </button>
-                        ) : null}
-                        <button
-                          onClick={() => handleDelete(post.id)}
-                          title="Delete post"
-                          className="p-1 px-1.5 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 text-[11px] font-medium rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                        >
-                          Delete
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -852,6 +895,7 @@ const ContentLibrary = () => {
                     <div className="border-t border-slate-100 dark:border-slate-800 p-2.5 bg-slate-50/20 dark:bg-slate-900/20">
                       <PostDeliveryInspector
                         post={post}
+                        accountMap={accountMap}
                         compact={true}
                         onRetrySuccess={() => {
                           fetchAll();

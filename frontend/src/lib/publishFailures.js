@@ -113,6 +113,24 @@ export const parsePlatformError = (platformKey, result) => {
   // 3. Twitter / X
   if (platform.includes('twitter') || platform.includes('x')) {
     if (
+      lowerError.includes('402') ||
+      lowerError.includes('payment required') ||
+      lowerError.includes('credits depleted') ||
+      lowerError.includes('credit')
+    ) {
+      return {
+        title: 'Twitter API Credits Depleted',
+        message: 'Your Twitter/X Developer account has depleted its API credits. Recharge your credit balance in the X Developer Portal to resume publishing.',
+        action: 'Recharge credits in the X Developer Portal, then retry publishing.',
+        actionType: 'external_link',
+        actionUrl: 'https://developer.x.com',
+        actionLabel: 'Open X Developer Portal ↗',
+        canRetryDirectly: true,
+        rawError,
+      };
+    }
+
+    if (
       lowerError.includes('187') ||
       lowerError.includes('duplicate') ||
       lowerError.includes('status is a duplicate') ||
@@ -236,12 +254,36 @@ export const parsePlatformError = (platformKey, result) => {
 
   // Generic fallback with clean humanized message
   let cleanMessage = rawError;
+  if (cleanMessage) {
+    // Strip raw mongo / internal IDs (e.g. twitter_usr_c7dc49f7... or usr_c7dc49f7...)
+    cleanMessage = cleanMessage.replace(/\b(?:[a-z0-9]+_)?usr_[a-f0-9_]{10,}\b/gi, 'connected account');
+    // Strip technical "(HTTP 402)" prefixes
+    cleanMessage = cleanMessage.replace(/\s*\(HTTP\s*\d+\)[:\s]*/gi, ': ');
+  }
   if (!cleanMessage || cleanMessage === 'Failed') {
     cleanMessage = actionReq || 'The social platform rejected this post during delivery.';
   }
 
+  // Sanitize platform display name so raw IDs never leak into the title
+  let displayBrand = 'Social Platform';
+  if (platform) {
+    const p = String(platform).toLowerCase();
+    if (p.includes('twitter') || p === 'x') displayBrand = 'Twitter';
+    else if (p.includes('linkedin')) displayBrand = 'LinkedIn';
+    else if (p.includes('instagram')) displayBrand = 'Instagram';
+    else if (p.includes('facebook')) displayBrand = 'Facebook';
+    else if (p.includes('youtube')) displayBrand = 'YouTube';
+    else if (p.includes('tiktok')) displayBrand = 'TikTok';
+    else if (p.includes('threads')) displayBrand = 'Threads';
+    else if (p.includes('google') || p.includes('gbp')) displayBrand = 'Google Business';
+    else if (p.includes('bluesky')) displayBrand = 'Bluesky';
+    else if (!p.startsWith('usr_') && !p.startsWith('acc_') && !/^[a-f0-9]{20,}/.test(p)) {
+      displayBrand = p.charAt(0).toUpperCase() + p.slice(1).replace(/[_-]+/g, ' ');
+    }
+  }
+
   return {
-    title: `${platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : 'Publish'} Delivery Issue`,
+    title: `${displayBrand} Delivery Issue`,
     message: cleanMessage,
     action: actionReq || (result.retry_count > 0 ? 'Retry this platform or edit the post.' : 'Click Retry to re-queue delivery.'),
     actionType: 'retry_now',

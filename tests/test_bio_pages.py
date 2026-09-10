@@ -7,6 +7,7 @@ from api.routes.bio_pages import (
     _is_block_active,
     BioPageConfig,
     BioBlockItem,
+    BioSubPage,
     BioTheme,
     PageSchedule,
     get_my_bio_page,
@@ -297,3 +298,84 @@ async def test_bio_page_permanent_deletion():
     with pytest.raises(HTTPException) as exc_info:
         await get_public_bio_page(handle="to_delete_page", db=db)
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_bio_subpage_isolation_and_save():
+    """Verify that multi-page sub-pages isolate blocks and metadata without bleed."""
+    db = _FakeDB()
+    user = {"user_id": "usr_sub1", "default_workspace_id": "ws_sub1", "name": "Multi-Page Creator"}
+
+    home_block = BioBlockItem(
+        id="blk_home_1",
+        type="link",
+        title="Official Website",
+        url="https://example.com",
+        active=True,
+    )
+    shop_block = BioBlockItem(
+        id="blk_shop_1",
+        type="link",
+        title="Merch Store",
+        url="https://shop.example.com",
+        active=True,
+    )
+
+    home_page = BioSubPage(
+        id="home",
+        title="Main Profile",
+        slug="home",
+        description="Creator Main Profile",
+        blocks=[home_block],
+    )
+    shop_page = BioSubPage(
+        id="page_shop",
+        title="Shop Page",
+        slug="shop",
+        description="Exclusive Merch",
+        blocks=[shop_block],
+    )
+
+    config = BioPageConfig(
+        handle="multipage_creator",
+        title="Multi-Page Creator",
+        bio="Welcome to all my pages",
+        blocks=[home_block],
+        pages=[home_page, shop_page],
+        active_page_id="page_shop",
+        is_published=True,
+    )
+
+    # Save to backend
+    save_res = await save_my_bio_page(config, current_user=user, db=db)
+    assert save_res["ok"] is True
+
+    # 1. Verify saved doc has isolated blocks per page
+    saved_doc = await db.bio_pages.find_one({"handle": "multipage_creator"})
+    assert saved_doc is not None
+    # Root blocks belong strictly to Home
+    assert len(saved_doc["blocks"]) == 1
+    assert saved_doc["blocks"][0]["id"] == "blk_home_1"
+
+    # Pages list preserves both pages independently
+    assert len(saved_doc["pages"]) == 2
+    saved_home = next(p for p in saved_doc["pages"] if p["id"] == "home")
+    saved_shop = next(p for p in saved_doc["pages"] if p["id"] == "page_shop")
+
+    assert saved_home["title"] == "Main Profile"
+    assert len(saved_home["blocks"]) == 1
+    assert saved_home["blocks"][0]["id"] == "blk_home_1"
+
+    assert saved_shop["title"] == "Shop Page"
+    assert saved_shop["description"] == "Exclusive Merch"
+    assert len(saved_shop["blocks"]) == 1
+    assert saved_shop["blocks"][0]["id"] == "blk_shop_1"
+
+    # 2. Verify get_public_bio_page returns properly filtered and isolated subpages
+    pub_res = await get_public_bio_page(handle="multipage_creator", db=db)
+    assert len(pub_res["blocks"]) == 1
+    assert pub_res["blocks"][0]["id"] == "blk_home_1"
+    assert len(pub_res["pages"]) == 2
+    pub_shop = next(p for p in pub_res["pages"] if p["id"] == "page_shop")
+    assert pub_shop["blocks"][0]["id"] == "blk_shop_1"
+

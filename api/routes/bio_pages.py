@@ -351,16 +351,21 @@ async def save_my_bio_page(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Handle '@{clean_handle}' is already taken by another creator")
 
-    def _sanitize_block_urls(block_item: BioBlockItem) -> dict:
-        b_dict = block_item.model_dump()
+    def _sanitize_block_urls(block_item: Any) -> dict:
+        if isinstance(block_item, BaseModel):
+            b_dict = block_item.model_dump()
+        elif isinstance(block_item, dict):
+            b_dict = dict(block_item)
+        else:
+            b_dict = {}
         if b_dict.get("url"):
-            u = b_dict["url"].strip()
+            u = str(b_dict["url"]).strip()
             if u and not (u.startswith("http://") or u.startswith("https://") or u.startswith("mailto:") or u.startswith("tel:")):
                 b_dict["url"] = f"https://{u}"
         if b_dict.get("folder_items"):
             for sub in b_dict["folder_items"]:
                 if isinstance(sub, dict) and sub.get("url"):
-                    su = sub["url"].strip()
+                    su = str(sub["url"]).strip()
                     if su and not (su.startswith("http://") or su.startswith("https://") or su.startswith("mailto:") or su.startswith("tel:")):
                         sub["url"] = f"https://{su}"
         return b_dict
@@ -368,8 +373,9 @@ async def save_my_bio_page(
     sanitized_blocks = [_sanitize_block_urls(b) for b in payload.blocks]
     sanitized_pages = []
     for p in payload.pages:
-        p_dict = p.model_dump()
-        p_dict["blocks"] = [_sanitize_block_urls(b) for b in p.blocks]
+        p_dict = p.model_dump() if isinstance(p, BaseModel) else dict(p)
+        p_blocks = p.blocks if isinstance(p, BaseModel) else p_dict.get("blocks", [])
+        p_dict["blocks"] = [_sanitize_block_urls(b) for b in p_blocks]
         sanitized_pages.append(p_dict)
 
     now = datetime.now(timezone.utc)
@@ -641,6 +647,13 @@ async def get_public_bio_page(
 
     active_blocks = [b for b in raw_blocks if _is_block_active(b, now)]
 
+    sanitized_pages = []
+    for pg in doc.get("pages", []):
+        pg_data = dict(pg)
+        pg_blocks = pg_data.get("blocks", [])
+        pg_data["blocks"] = [b for b in pg_blocks if _is_block_active(b, now)]
+        sanitized_pages.append(pg_data)
+
     # Fetch recent published media items for feed_grid
     recent_grid_posts = []
     has_feed_grid = any(b.get("type") == "feed_grid" for b in active_blocks) or doc.get("auto_sync_instagram_grid", True)
@@ -681,7 +694,7 @@ async def get_public_bio_page(
         "verified_badge": doc.get("verified_badge", False),
         "theme": doc.get("theme", BioTheme().model_dump()),
         "blocks": active_blocks,
-        "pages": doc.get("pages", []),
+        "pages": sanitized_pages,
         "active_page_id": doc.get("active_page_id", "home"),
         "navigation_style": doc.get("navigation_style", "pills"),
         "social_links": doc.get("social_links", {}),

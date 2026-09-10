@@ -2154,38 +2154,91 @@ async def retry_failed_post(
 
     if account_results:
         publish_targets = _get_publish_targets(post)
+        if not publish_targets:
+            for k, v in account_results.items():
+                p = (v or {}).get("platform")
+                if not p:
+                    for known in ("twitter", "x", "linkedin", "instagram", "facebook", "youtube", "tiktok", "threads", "google_business", "bluesky"):
+                        if k.lower().startswith(known):
+                            p = known
+                            break
+                p = "twitter" if p in ("twitter", "x") else (p or "social")
+                acc_id = (v or {}).get("account_id") or (k[len(p)+1:] if k.startswith(f"{p}_") else k)
+                publish_targets.append({
+                    "platform": p,
+                    "account_id": acc_id,
+                    "target_key": k,
+                })
+
+        def _get_res(target: dict) -> dict:
+            tk = target.get("target_key") or ""
+            p = (target.get("platform") or "").lower()
+            acc = target.get("account_id") or ""
+            if tk in account_results:
+                return account_results[tk]
+            if f"{p}_{acc}" in account_results:
+                return account_results[f"{p}_{acc}"]
+            if acc in account_results:
+                return account_results[acc]
+            for k, v in account_results.items():
+                if acc and (k == acc or k.endswith(f"_{acc}")):
+                    return v
+                if tk and (k == tk or k.endswith(f"_{tk}")):
+                    return v
+                if p and (k == p or k.startswith(f"{p}_")):
+                    return v
+            return {}
+
+        norm_platform = (platform or "").lower()
+        if norm_platform == "x":
+            norm_platform = "twitter"
+
+        def _matches_platform(t: dict) -> bool:
+            if not norm_platform:
+                return True
+            tp = (t.get("platform") or "").lower()
+            if tp == "x":
+                tp = "twitter"
+            tk = (t.get("target_key") or "").lower()
+            return tp == norm_platform or tk == norm_platform or tk.startswith(f"{norm_platform}_")
+
         if platform:
             retry_targets = [
                 target
                 for target in publish_targets
-                if target["platform"] == platform
-                and (account_results.get(target["target_key"]) or {}).get("status") in retryable_statuses
+                if _matches_platform(target)
+                and ((_get_res(target).get("status") in retryable_statuses) or post.get("status") in ("failed", "dlq", "partial"))
             ]
+            if not retry_targets:
+                retry_targets = [t for t in publish_targets if _matches_platform(t)]
             if not retry_targets:
                 raise HTTPException(status_code=409, detail=f"Platform {platform} is not in a retryable state")
         else:
             retry_targets = [
                 target
                 for target in publish_targets
-                if (account_results.get(target["target_key"]) or {}).get("status") in retryable_statuses
+                if (_get_res(target).get("status") in retryable_statuses)
             ]
             if not retry_targets:
-                if post.get("status") in ("failed", "dlq"):
+                if post.get("status") in ("failed", "dlq", "partial"):
                     retry_targets = publish_targets
                 else:
                     raise HTTPException(status_code=409, detail="No failed accounts to retry")
     else:
         retry_platforms: list[str]
+        norm_platform = (platform or "").lower()
+        if norm_platform == "x":
+            norm_platform = "twitter"
         if platform:
-            if platform not in set(post.get("platforms") or []):
-                raise HTTPException(status_code=404, detail="Platform not associated with this post")
-            platform_status = (platform_results.get(platform) or {}).get("status")
-            if platform_status not in retryable_statuses:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Platform {platform} is not in a retryable state",
-                )
-            retry_platforms = [platform]
+            matched_p = None
+            for p in (post.get("platforms") or []):
+                p_norm = "twitter" if p.lower() in ("twitter", "x") else p.lower()
+                if p_norm == norm_platform:
+                    matched_p = p
+                    break
+            if not matched_p:
+                matched_p = platform
+            retry_platforms = [matched_p]
         else:
             retry_platforms = [
                 name
@@ -2193,7 +2246,7 @@ async def retry_failed_post(
                 if (result or {}).get("status") in retryable_statuses
             ]
             if not retry_platforms:
-                if post.get("status") in ("failed", "dlq"):
+                if post.get("status") in ("failed", "dlq", "partial"):
                     retry_platforms = list(post.get("platforms") or [])
                 else:
                     raise HTTPException(status_code=409, detail="No failed platforms to retry")
@@ -2213,7 +2266,7 @@ async def retry_failed_post(
             set_updates["media_url"] = hydrated.get("media_url")
             if hydrated.get("thumbnail_urls"):
                 set_updates["thumbnail_urls"] = hydrated.get("thumbnail_urls")
-    unset_updates = {"dlq_reason": ""}
+    unset_updates = {"dlq_reason": "", "claimed_at": ""}
     for target in retry_targets:
         target_key = target["target_key"]
         if account_results:

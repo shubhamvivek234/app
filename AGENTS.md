@@ -9,11 +9,12 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Content Library & Post Delivery Inspector UI Modernization:
-  - Fixed action button overlap with date timestamp in `ContentLibrary.js` using seamless hover-swap alignment.
-  - Refactored `PostDeliveryInspector.js` into a 2-line layout that never squashes text or collides badges: Line 1 (Platform Icon + Account Name + Status Badge), Line 2 (Grace Period Timer + Retry / View Post Action), Line 3 (Diagnostic Error Card).
-  - Modernized status pills across Content Library with subtle SaaS micro-pills and status indicator dots.
-  - Passed `compact={true}` to `PostDeliveryInspector` in card views.
+- Smart Bio Multi-Page Sub-Page Manager Isolation & Dedicated Save Controls:
+  - Fixed cross-page block and metadata bleed in `LinkInBio.js` and `BioOutlineTree.js`.
+  - Added dedicated Sub-Page Isolated Mode panel with title, description, URL slug, and explicit "Save Page Changes" button.
+  - Sub-pages now manage completely isolated block lists while preserving root profile for Home.
+  - Updated `PublicBioPage.js` to render isolated sub-page title, badge, description, and document title.
+  - Added backend test `test_bio_subpage_isolation_and_save` in `tests/test_bio_pages.py`.
   - Verified with `CI=true npm run build --prefix frontend` (exit 0) and `pytest` (exit 0).
 
 ## Active Work

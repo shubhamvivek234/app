@@ -72,8 +72,25 @@ export default function PublicBioPage() {
         setLoading(true);
         const res = await getPublicBioPage(cleanHandle);
         setData(res);
-        if (res.active_page_id) {
-          setActivePageId(res.active_page_id);
+
+        // Check URL query param ?page=
+        const searchParams = new URLSearchParams(window.location.search);
+        const pageParam = searchParams.get('page');
+
+        if (Array.isArray(res.pages) && res.pages.length > 0) {
+          if (pageParam) {
+            const cleanParam = pageParam.toLowerCase().trim();
+            const matched = res.pages.find(
+              (p) => (p.slug && p.slug.toLowerCase() === cleanParam) || p.id === cleanParam
+            );
+            if (matched) {
+              setActivePageId(matched.id);
+            } else if (res.active_page_id) {
+              setActivePageId(res.active_page_id);
+            }
+          } else if (res.active_page_id) {
+            setActivePageId(res.active_page_id);
+          }
         }
 
         // Update document title & metadata
@@ -95,6 +112,18 @@ export default function PublicBioPage() {
       loadGoogleFont(data.theme.font_family);
     }
   }, [data?.theme?.font_family]);
+
+  // Sync document title on page/data change
+  useEffect(() => {
+    if (!data) return;
+    const pgList = Array.isArray(data.pages) ? data.pages : [];
+    const curPg = pgList.find((p) => p.id === activePageId);
+    if (activePageId !== 'home' && curPg?.title) {
+      document.title = `${curPg.title} | ${data.title || data.handle}`;
+    } else if (data.seo?.meta_title || data.title) {
+      document.title = data.seo?.meta_title || `${data.title} | Smart Bio`;
+    }
+  }, [data, activePageId]);
 
   const handleLinkClick = async (block) => {
     try {
@@ -220,8 +249,24 @@ export default function PublicBioPage() {
   const pages = (data.pages && data.pages.length > 0) ? data.pages : [];
 
   const currentPage = pages.find((p) => p.id === activePageId);
-  const rawPageBlocks = currentPage ? currentPage.blocks : (data.blocks || []);
+  const isSubPage = activePageId !== 'home' && Boolean(currentPage);
+  const displayTitle = (isSubPage && currentPage?.title) ? currentPage.title : (data.title || `@${data.handle}`);
+  const displayBio = isSubPage ? (currentPage?.description || '') : (data.bio || '');
+
+  const rawPageBlocks = isSubPage ? (currentPage?.blocks || []) : (currentPage?.blocks || data.blocks || []);
   const blocks = (rawPageBlocks || []).filter((b) => b.active !== false);
+
+  const handlePageChange = (pageId) => {
+    setActivePageId(pageId);
+    const targetPage = pages.find((p) => p.id === pageId);
+    const url = new URL(window.location.href);
+    if (pageId === 'home' || !targetPage?.slug) {
+      url.searchParams.delete('page');
+    } else {
+      url.searchParams.set('page', targetPage.slug);
+    }
+    window.history.replaceState({}, '', url.toString());
+  };
 
   const gridPosts = data.grid_posts || [];
   const headerLayout = theme.header_layout || 'classic';
@@ -313,24 +358,29 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-1.5 max-w-sm">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-center gap-1.5`} style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -345,24 +395,29 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-1 w-full">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center gap-1.5`} style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-1 leading-relaxed" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -377,24 +432,29 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-1 flex-1 min-w-0">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center gap-1.5 truncate`} style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -409,24 +469,29 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-1 w-full">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-end gap-1.5`} style={{ color: theme.text_color }}>
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
-                {data.title}
+                {displayTitle}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-1 leading-relaxed" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -437,16 +502,21 @@ export default function PublicBioPage() {
         {headerLayout === 'right_row' && (
           <div className="w-full flex items-center justify-between gap-4 text-right px-1">
             <div className="space-y-1 flex-1 min-w-0">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className={`${headerTitleClass} font-black tracking-tight flex items-center justify-end gap-1.5 truncate`} style={{ color: theme.text_color }}>
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm shrink-0" />}
-                {data.title}
+                {displayTitle}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -455,10 +525,10 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
@@ -473,24 +543,29 @@ export default function PublicBioPage() {
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-1 max-w-sm">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className="text-xl font-black tracking-tight flex items-center justify-center gap-1.5" style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-sm" />}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-1 leading-relaxed max-w-xs mx-auto" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -505,24 +580,29 @@ export default function PublicBioPage() {
               className="rounded-2xl overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
             >
               {data.avatar_url ? (
-                <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
-                  {data.title ? data.title[0] : 'U'}
+                  {displayTitle ? displayTitle[0] : 'U'}
                 </span>
               )}
             </div>
             <div className="space-y-0.5 flex-1 min-w-0">
+              {isSubPage && (
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                  Sub-Page: {currentPage?.title}
+                </span>
+              )}
               <h1 className="text-lg font-black tracking-tight flex items-center gap-1.5 truncate" style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-xs shrink-0" />}
               </h1>
               <p className="text-xs font-mono opacity-60" style={{ color: theme.text_color }}>
                 @{data.handle}
               </p>
-              {data.bio && (
+              {displayBio && (
                 <p className="text-xs opacity-80 pt-0.5 leading-snug line-clamp-2" style={{ color: theme.text_color }}>
-                  {data.bio}
+                  {displayBio}
                 </p>
               )}
             </div>
@@ -535,22 +615,27 @@ export default function PublicBioPage() {
             <div className="flex items-center justify-center gap-2">
               <div className="w-8 h-8 rounded-full border border-black/15 dark:border-white/20 overflow-hidden shrink-0">
                 {data.avatar_url ? (
-                  <img src={data.avatar_url} alt={data.title} className="w-full h-full object-cover" />
+                  <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-xs font-black" style={{ color: theme.text_color }}>
-                    {data.title ? data.title[0] : 'U'}
+                    {displayTitle ? displayTitle[0] : 'U'}
                   </span>
                 )}
               </div>
               <h1 className="text-xl font-serif font-black tracking-tight flex items-center gap-1.5" style={{ color: theme.text_color }}>
-                {data.title}
+                {displayTitle}
                 {data.verified_badge && <FaCheckCircle className="text-indigo-500 text-xs" />}
               </h1>
             </div>
+            {isSubPage && (
+              <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-black/5 dark:bg-white/10 mb-0.5 opacity-80">
+                Sub-Page: {currentPage?.title}
+              </span>
+            )}
             <p className="text-xs font-mono opacity-50">@{data.handle}</p>
-            {data.bio && (
+            {displayBio && (
               <p className="text-xs opacity-75 max-w-sm mx-auto font-serif italic" style={{ color: theme.text_color }}>
-                {data.bio}
+                {displayBio}
               </p>
             )}
           </div>
@@ -586,7 +671,7 @@ export default function PublicBioPage() {
               return (
                 <button
                   key={pg.id}
-                  onClick={() => setActivePageId(pg.id)}
+                  onClick={() => handlePageChange(pg.id)}
                   className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all cursor-pointer ${
                     isActive
                       ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-sm'

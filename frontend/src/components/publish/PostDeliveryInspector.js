@@ -73,22 +73,116 @@ const STATUS_BADGES = {
   },
 };
 
-export default function PostDeliveryInspector({ post, onRetrySuccess, compact = false }) {
+const KNOWN_PLATFORMS = [
+  'twitter', 'x', 'linkedin', 'instagram', 'facebook', 'youtube',
+  'tiktok', 'threads', 'google_business', 'google', 'gbp', 'bluesky', 'pinterest'
+];
+
+function isRawInternalId(str) {
+  if (!str) return false;
+  const s = String(str).toLowerCase().trim();
+  if (s.startsWith('usr_') || s.startsWith('acc_') || s.startsWith('user_') || s.includes('usr_c7') || s.includes('account_')) return true;
+  if (/^[a-f0-9]{24}$/.test(s)) return true;
+  if (/^[a-f0-9-]{32,}$/.test(s)) return true;
+  return false;
+}
+
+function resolvePlatform(rawKey = '', result = {}, post = {}) {
+  const candidates = [
+    result.platform,
+    result.platform_name,
+    result.provider,
+    rawKey,
+  ].filter(Boolean).map(s => String(s).toLowerCase().trim());
+
+  for (const candidate of candidates) {
+    for (const p of KNOWN_PLATFORMS) {
+      if (candidate === p || candidate.startsWith(`${p}_`) || candidate.startsWith(`${p}:`) || candidate.startsWith(`${p}-`)) {
+        if (p === 'x') return 'twitter';
+        if (p === 'gbp' || p === 'google') return 'google_business';
+        return p;
+      }
+    }
+  }
+
+  if (Array.isArray(post.platforms) && post.platforms.length === 1) {
+    const p = String(post.platforms[0]).toLowerCase();
+    return p === 'x' ? 'twitter' : p;
+  }
+  return 'social';
+}
+
+function resolveAccountDisplay(rawKey = '', result = {}, accountMap = {}, platform = 'social', post = {}) {
+  // 1. Result fields
+  if (result.account_name && !isRawInternalId(result.account_name)) {
+    return result.account_name;
+  }
+  if (result.platform_username && !isRawInternalId(result.platform_username)) {
+    return result.platform_username.startsWith('@') || platform !== 'twitter'
+      ? result.platform_username
+      : `@${result.platform_username}`;
+  }
+
+  // 2. Extract account ID
+  const accountId = result.account_id || rawKey.split(':')[1] || (rawKey.startsWith(`${platform}_`) ? rawKey.slice(platform.length + 1) : rawKey);
+
+  // 3. Direct accountMap lookup
+  const matched = (accountMap && (accountMap[accountId] || accountMap[rawKey])) || null;
+  if (matched) {
+    const name = matched.platform_username || matched.display_name || matched.name;
+    if (name && !isRawInternalId(name)) {
+      return name.startsWith('@') || platform !== 'twitter' ? name : `@${name}`;
+    }
+  }
+
+  // 4. Look into post.publish_targets or post.accounts
+  const postTargets = post.publish_targets || post.accounts || [];
+  if (Array.isArray(postTargets)) {
+    const matchedTarget = postTargets.find(
+      (t) => t && (t.account_id === accountId || t.target_key === rawKey || t.id === accountId)
+    );
+    if (matchedTarget) {
+      const name = matchedTarget.platform_username || matchedTarget.display_name || matchedTarget.account_name || matchedTarget.username;
+      if (name && !isRawInternalId(name)) {
+        return name.startsWith('@') || platform !== 'twitter' ? name : `@${name}`;
+      }
+    }
+  }
+
+  // 5. Look for any connected account matching the same platform in accountMap
+  if (accountMap && typeof accountMap === 'object') {
+    const samePlatformAccount = Object.values(accountMap).find(
+      (a) => a && (a.platform === platform || (platform === 'twitter' && (a.platform === 'x' || a.platform === 'twitter')))
+    );
+    if (samePlatformAccount) {
+      const name = samePlatformAccount.platform_username || samePlatformAccount.display_name || samePlatformAccount.name;
+      if (name && !isRawInternalId(name)) {
+        return name.startsWith('@') || platform !== 'twitter' ? name : `@${name}`;
+      }
+    }
+  }
+
+  // 6. Clean fallback
+  const platformLabel = platform === 'twitter' ? 'Twitter' : platform.charAt(0).toUpperCase() + platform.slice(1).replace('_', ' ');
+  return `${platformLabel} Account`;
+}
+
+export default function PostDeliveryInspector({ post, accountMap = {}, onRetrySuccess, compact = false }) {
   const navigate = useNavigate();
   const [retryingKeys, setRetryingKeys] = useState({});
   const [retryingAll, setRetryingAll] = useState(false);
 
   if (!post) return null;
 
-  // Extract platform / account entries
+  // Extract platform / account entries with robust humanized mapping
   const platformResults = post.platform_results || {};
   const accountResults = post.account_results || {};
 
   let entries = [];
   if (Object.keys(accountResults).length > 0) {
     entries = Object.entries(accountResults).map(([key, result]) => {
-      const platform = (result.platform || key.split(':')[0] || 'social').toLowerCase();
-      const accountName = result.account_name || result.account_id || key;
+      const platform = resolvePlatform(key, result, post);
+      const accountName = resolveAccountDisplay(key, result, accountMap, platform, post);
       return {
         key,
         platform,
@@ -97,26 +191,34 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
       };
     });
   } else if (Object.keys(platformResults).length > 0) {
-    entries = Object.entries(platformResults).map(([platform, result]) => {
+    entries = Object.entries(platformResults).map(([platformKey, result]) => {
+      const platform = resolvePlatform(platformKey, result, post);
+      const accountName = resolveAccountDisplay(platformKey, result, accountMap, platform, post);
       return {
-        key: platform,
-        platform: platform.toLowerCase(),
-        accountName: platform.charAt(0).toUpperCase() + platform.slice(1),
+        key: platformKey,
+        platform,
+        accountName,
         result: result || {},
       };
     });
   } else if (Array.isArray(post.platforms)) {
-    entries = post.platforms.map((platform) => ({
-      key: platform,
-      platform: platform.toLowerCase(),
-      accountName: platform.charAt(0).toUpperCase() + platform.slice(1),
-      result: { status: post.status || 'pending' },
-    }));
+    entries = post.platforms.map((platformKey) => {
+      const platform = resolvePlatform(platformKey, {}, post);
+      const accountName = resolveAccountDisplay(platformKey, {}, accountMap, platform, post);
+      return {
+        key: platformKey,
+        platform,
+        accountName,
+        result: { status: post.status || 'pending' },
+      };
+    });
   }
 
   const failedEntries = entries.filter((e) => {
     const status = String(e.result?.status || '').toLowerCase();
-    return status === 'failed' || status === 'permanently_failed' || Boolean(e.result?.error);
+    const isRetrying = Boolean(retryingKeys[e.key]) || status === 'retrying';
+    const isProcessing = status === 'processing';
+    return (status === 'failed' || status === 'permanently_failed') && !isRetrying && !isProcessing;
   });
 
   const hasMedia = Boolean(
@@ -218,43 +320,56 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
       <div className="divide-y divide-slate-100 rounded-lg border border-slate-200/80 bg-slate-50/40 dark:divide-slate-800/80 dark:border-slate-800 dark:bg-slate-900/40 shadow-2xs overflow-hidden">
         {entries.map(({ key, platform, accountName, result }) => {
           const rawStatus = String(result.status || 'pending').toLowerCase();
-          const badge = STATUS_BADGES[rawStatus] || STATUS_BADGES.pending;
-          const BadgeIcon = badge.icon;
-          const isFailed = rawStatus === 'failed' || rawStatus === 'permanently_failed' || Boolean(result.error);
-          const isPublished = rawStatus === 'published';
-          const diagnostic = isFailed ? parsePlatformError(platform, result) : null;
           const isRetrying = Boolean(retryingKeys[key]) || rawStatus === 'retrying';
+          const isProcessing = rawStatus === 'processing';
+          const isPublished = rawStatus === 'published';
+          const isFailed = (rawStatus === 'failed' || rawStatus === 'permanently_failed' || (Boolean(result.error) && !isRetrying && !isProcessing)) && !isRetrying && !isProcessing;
+
+          const currentStatusKey = isRetrying ? 'retrying' : (isProcessing ? 'processing' : rawStatus);
+          const badge = STATUS_BADGES[currentStatusKey] || STATUS_BADGES.pending;
+          const BadgeIcon = badge.icon;
+          const diagnostic = isFailed ? parsePlatformError(platform, result) : null;
+          const platformLabel = platform === 'twitter' ? 'Twitter' : platform.charAt(0).toUpperCase() + platform.slice(1).replace('_', ' ');
 
           return (
             <div key={key} className={`${compact ? 'p-2.5' : 'p-3'} transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/30`}>
               {/* Line 1: Identity on left, Status badge on right */}
               <div className="flex items-center justify-between gap-2 min-w-0">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 shadow-2xs">
+                <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 shadow-2xs">
                     {PLATFORM_ICONS[platform] || <span className="capitalize text-[10px] font-bold">{platform[0]}</span>}
                   </div>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 overflow-hidden">
                     <p className="truncate font-semibold text-slate-800 dark:text-slate-200 text-xs capitalize leading-tight" title={accountName}>
                       {accountName}
                     </p>
-                    <p className="text-[10px] text-slate-400 capitalize leading-tight">{platform}</p>
+                    <p className="truncate text-[10px] text-slate-400 capitalize leading-tight" title={platformLabel}>
+                      {platformLabel}
+                    </p>
                   </div>
                 </div>
 
                 {/* Status Badge */}
                 <span
-                  className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-2xs ${badge.className}`}
+                  className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-medium shadow-2xs ${badge.className}`}
                 >
-                  <BadgeIcon className={`text-[9px] ${rawStatus === 'retrying' || rawStatus === 'processing' ? 'animate-spin' : ''}`} />
+                  <BadgeIcon className={`text-[9px] ${currentStatusKey === 'retrying' || currentStatusKey === 'processing' ? 'animate-spin' : ''}`} />
                   {badge.label}
                 </span>
               </div>
 
-              {/* Line 2: Actions & Grace Info (shown if failed, retrying, or published with link) */}
-              {(isFailed || (isPublished && result.post_url) || isRetrying) && (
+              {/* Line 2: Actions & Grace Info / Active Retry indicator */}
+              {isRetrying ? (
                 <div className="mt-2 flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80">
-                  {/* Left: Grace period or info */}
-                  <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium py-0.5">
+                    <FaSpinner className="animate-spin text-[10px]" />
+                    <span>Publishing retry in progress…</span>
+                  </div>
+                </div>
+              ) : (isFailed || (isPublished && result.post_url)) ? (
+                <div className="mt-2 flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80">
+                  {/* Left: Grace period or delivery info */}
+                  <div className="min-w-0 flex-1 overflow-hidden">
                     {isFailed && !isMediaExpired && remainingHours !== null ? (
                       <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium" title="Media retained in Cloudflare R2 for 48 hours">
                         <FaClock className="text-[9px]" /> {remainingHours}h grace left
@@ -265,12 +380,12 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                       </span>
                     ) : isPublished ? (
                       <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                        Delivered
+                        Delivered successfully
                       </span>
                     ) : null}
                   </div>
 
-                  {/* Right: Button */}
+                  {/* Right: Action Button */}
                   <div className="shrink-0 flex items-center gap-1.5">
                     {isPublished && result.post_url && (
                       <a
@@ -286,19 +401,15 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                     {isFailed && (
                       <button
                         onClick={() => handleRetryTarget(key, platform)}
-                        disabled={isRetrying || isMediaExpired}
-                        title={isMediaExpired ? 'Media expired after 48 hours. Duplicate this post to re-upload.' : `Retry publishing to ${platform}`}
+                        disabled={isMediaExpired}
+                        title={isMediaExpired ? 'Media expired after 48 hours. Duplicate this post to re-upload.' : `Retry publishing to ${platformLabel}`}
                         className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium shadow-2xs transition-colors ${
                           isMediaExpired
                             ? 'bg-slate-100 text-slate-400 border border-slate-200 dark:bg-slate-800 dark:text-slate-600 dark:border-slate-700 cursor-not-allowed'
                             : 'bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50'
                         }`}
                       >
-                        {isRetrying ? (
-                          <>
-                            <FaSpinner className="animate-spin text-[9px]" /> Retrying…
-                          </>
-                        ) : isMediaExpired ? (
+                        {isMediaExpired ? (
                           <>
                             <FaRedo className="text-[9px] opacity-40" /> Expired
                           </>
@@ -311,9 +422,9 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                     )}
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              {/* Line 3: Granular Error Diagnostic Card */}
+              {/* Line 3: Granular Error Diagnostic Card (only shown when failed, never while retrying) */}
               {isFailed && diagnostic && (
                 <div className="mt-2 rounded-md border border-rose-200/70 bg-rose-50/50 p-2.5 dark:border-rose-900/40 dark:bg-rose-950/20 text-slate-700 dark:text-slate-300">
                   <div className="flex items-start gap-2">
@@ -331,6 +442,17 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                           <span className="text-[10px] font-medium text-rose-700 dark:text-rose-300">
                             Action: {diagnostic.action}
                           </span>
+
+                          {diagnostic.actionType === 'external_link' && diagnostic.actionUrl && (
+                            <a
+                              href={diagnostic.actionUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                            >
+                              <FaExternalLinkAlt className="text-[8px]" /> {diagnostic.actionLabel || 'Open Portal'}
+                            </a>
+                          )}
 
                           {diagnostic.actionType === 'reconnect' && (
                             <button
