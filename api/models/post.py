@@ -306,3 +306,6 @@ class PostResponse(BaseModel):
     approved_by: str | None = None
     account_results: dict[str, PlatformResult] = Field(default_factory=dict)
     comments: list[CommentEntry] = Field(default_factory=list)
+    failed_media_expires_at: datetime | None = None
+    media_cleaned_at: datetime | None = None
+    media_expired: bool = False

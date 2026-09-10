@@ -119,6 +119,24 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
     return status === 'failed' || status === 'permanently_failed' || Boolean(e.result?.error);
   });
 
+  const hasMedia = Boolean(
+    (post?.media_ids && post.media_ids.length > 0) ||
+    (post?.media_urls && post.media_urls.length > 0) ||
+    (post?.thumbnail_urls && post.thumbnail_urls.length > 0)
+  );
+
+  const isMediaExpired = Boolean(
+    hasMedia && (
+      post?.media_expired ||
+      post?.media_cleaned_at ||
+      (post?.failed_media_expires_at && new Date(post.failed_media_expires_at) <= new Date())
+    )
+  );
+
+  const remainingHours = (hasMedia && !isMediaExpired && post?.failed_media_expires_at)
+    ? Math.max(0, Math.round((new Date(post.failed_media_expires_at) - new Date()) / (1000 * 60 * 60)))
+    : null;
+
   const handleRetryTarget = async (entryKey, platformName) => {
     setRetryingKeys((prev) => ({ ...prev, [entryKey]: true }));
     try {
@@ -163,11 +181,25 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
           <div className="flex items-center gap-2 text-red-800 dark:text-red-300">
             <FaExclamationTriangle className="text-red-600 dark:text-red-400" />
             <span className="font-semibold">{failedEntries.length} platforms failed publishing</span>
+            {isMediaExpired ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-500" title="Media expired after 48-hour grace period">
+                Media Expired
+              </span>
+            ) : remainingHours !== null ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-100/70 dark:bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300" title="Media will be automatically purged 48 hours after failure">
+                <FaClock className="text-[9px]" /> Retry in {remainingHours}h
+              </span>
+            ) : null}
           </div>
           <button
             onClick={handleRetryAll}
-            disabled={retryingAll}
-            className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1 font-semibold text-white shadow-xs hover:bg-red-700 disabled:opacity-50 transition-colors"
+            disabled={retryingAll || isMediaExpired}
+            title={isMediaExpired ? 'Media expired after 48 hours. Please duplicate or re-upload the post.' : 'Retry publishing to all failed platforms'}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 font-semibold text-white shadow-xs transition-colors ${
+              isMediaExpired
+                ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60'
+                : 'bg-red-600 hover:bg-red-700 disabled:opacity-50'
+            }`}
           >
             {retryingAll ? (
               <>
@@ -175,7 +207,7 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
               </>
             ) : (
               <>
-                <FaRedo className="text-[10px]" /> Retry All Failed
+                <FaRedo className="text-[10px]" /> {isMediaExpired ? 'Media Expired' : 'Retry All Failed'}
               </>
             )}
           </button>
@@ -229,21 +261,37 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                   )}
 
                   {isFailed && (
-                    <button
-                      onClick={() => handleRetryTarget(key, platform)}
-                      disabled={isRetrying}
-                      className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-semibold text-white shadow-xs hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                    >
-                      {isRetrying ? (
-                        <>
-                          <FaSpinner className="animate-spin text-[9px]" /> Retrying…
-                        </>
-                      ) : (
-                        <>
-                          <FaRedo className="text-[9px]" /> Retry Platform
-                        </>
+                    <div className="flex items-center gap-1.5">
+                      {!isMediaExpired && remainingHours !== null && (
+                        <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium" title="Grace period remaining">
+                          <FaClock className="text-[9px]" /> {remainingHours}h left
+                        </span>
                       )}
-                    </button>
+                      <button
+                        onClick={() => handleRetryTarget(key, platform)}
+                        disabled={isRetrying || isMediaExpired}
+                        title={isMediaExpired ? 'Media expired after 48 hours. Duplicate this post to re-upload.' : `Retry publishing to ${platform}`}
+                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold text-white shadow-xs transition-colors ${
+                          isMediaExpired
+                            ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60'
+                            : 'bg-amber-600 hover:bg-amber-700 disabled:opacity-50'
+                        }`}
+                      >
+                        {isRetrying ? (
+                          <>
+                            <FaSpinner className="animate-spin text-[9px]" /> Retrying…
+                          </>
+                        ) : isMediaExpired ? (
+                          <>
+                            <FaRedo className="text-[9px] opacity-40" /> Media Expired
+                          </>
+                        ) : (
+                          <>
+                            <FaRedo className="text-[9px]" /> Retry Platform
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
