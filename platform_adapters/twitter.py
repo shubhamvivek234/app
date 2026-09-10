@@ -150,6 +150,11 @@ class TwitterAdapter(PlatformAdapter):
                 headers={**auth_headers, "Content-Type": "application/json"},
                 json=tweet_body,
             )
+            if resp.status_code == 402 or "credits depleted" in resp.text.lower():
+                raise PlatformAPIError(
+                    "Twitter/X API Credits Depleted (HTTP 402): Please add credits or top up billing in the X Developer Portal (developer.x.com).",
+                    code=402,
+                )
             if resp.status_code not in (200, 201):
                 if redis:
                     await record_failure(redis, self.platform)
@@ -211,8 +216,30 @@ class TwitterAdapter(PlatformAdapter):
         if total_bytes == 0:
             raise PlatformAPIError("Cannot determine media file size for Twitter upload")
 
-        media_type = head_resp.headers.get("content-type", "video/mp4")
+        media_type = head_resp.headers.get("content-type", "video/mp4").split(";")[0].strip()
         media_category = self._media_category_for_type(media_type)
+
+        # For static images under 5MB, use Twitter API v2 direct upload (supports OAuth 2.0 PKCE)
+        if media_type.startswith("image/") and media_type != "image/gif" and total_bytes <= 5 * 1024 * 1024:
+            import base64
+            media_get = await client.get(media_url, follow_redirects=True)
+            if media_get.status_code in (200, 206):
+                b64_payload = {
+                    "media": base64.b64encode(media_get.content).decode("utf-8"),
+                    "media_category": media_category or "tweet_image",
+                }
+                v2_upload_resp = await client.post(
+                    f"{TWITTER_V2_BASE}/media/upload",
+                    headers={**auth_headers, "Content-Type": "application/json"},
+                    json=b64_payload,
+                )
+                if v2_upload_resp.status_code in (200, 201):
+                    v2_data = v2_upload_resp.json().get("data", {})
+                    v2_media_id = v2_data.get("id") or v2_data.get("media_key")
+                    if v2_media_id:
+                        logger.info("Twitter v2 media upload succeeded: %s", v2_media_id)
+                        return [str(v2_media_id)]
+                logger.warning("Twitter v2 media upload returned %d: %s. Falling back to chunked v1.1.", v2_upload_resp.status_code, v2_upload_resp.text)
 
         # INIT
         init_data = {
