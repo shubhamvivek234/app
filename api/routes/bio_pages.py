@@ -456,7 +456,7 @@ async def get_bio_analytics(
         device_percentages = {"mobile": 72.0, "desktop": 28.0}
 
     # Total leads count
-    total_leads = await db.bio_leads.count_documents({"workspace_id": workspace_id})
+    total_leads = await db.workspace_leads.count_documents({"workspace_id": workspace_id})
 
     # 7-day daily activity trends
     from datetime import timedelta
@@ -523,6 +523,9 @@ async def get_bio_leads(
         {
             "id": str(lead["_id"]),
             "email": lead["email"],
+            "name": lead.get("name", ""),
+            "tag": lead.get("tag", "subscriber"),
+            "source": lead.get("source", "bio"),
             "created_at": lead["created_at"].isoformat() if hasattr(lead["created_at"], "isoformat") else str(lead["created_at"]),
         }
         for lead in leads
@@ -543,10 +546,10 @@ async def export_bio_leads_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Email", "Subscribed At", "Source"])
+    writer.writerow(["Name", "Email", "Tag", "Subscribed At", "Source"])
     for lead in leads:
         ts = lead["created_at"].isoformat() if hasattr(lead["created_at"], "isoformat") else str(lead["created_at"])
-        writer.writerow([lead["email"], ts, "Unravler Smart Bio"])
+        writer.writerow([lead.get("name", ""), lead["email"], lead.get("tag", "subscriber"), ts, lead.get("source", "Unravler Smart Bio")])
 
     return Response(
         content=output.getvalue(),
@@ -781,8 +784,14 @@ async def subscribe_to_bio_newsletter(
             "workspace_id": workspace_id,
             "page_id": doc.get("_id"),
             "email": email,
+            "name": "",
+            "phone": "",
+            "tag": "subscriber",
+            "notes": "",
+            "source": "bio",
             "source_block_id": body.source_block_id,
             "created_at": now,
+            "updated_at": now,
         })
 
     return {"ok": True, "message": "Successfully subscribed!"}

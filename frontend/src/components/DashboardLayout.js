@@ -35,6 +35,7 @@ import {
   FaMobileAlt,
   FaBolt,
   FaSyncAlt,
+  FaAddressBook,
 } from 'react-icons/fa';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -203,6 +204,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
     ],
     workflow: [
       { name: 'Client Approvals', path: '/approvals', icon: FaCheckDouble, badge: 'Review', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
+      { name: 'Audience', path: '/audience', icon: FaAddressBook, badge: 'CRM', badgeBg: 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' },
       { name: 'Social Inbox', path: '/inbox', icon: FaInbox },
     ],
     configuration: [

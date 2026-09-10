@@ -183,15 +183,32 @@ export default function BioOutlineTree({
                 {pages.filter((p) => p.id !== 'home').map((pg) => (
                   <div
                     key={pg.id}
-                    onClick={() => { onSelectPage?.(pg.id); setPageDropdownOpen(false); }}
-                    className={`flex items-center justify-between p-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                    className={`flex items-center justify-between p-1.5 rounded-lg text-xs font-semibold group ${
                       activePageId === pg.id
                         ? 'bg-blue-50 dark:bg-blue-950/50 text-[#0071E3]'
                         : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
                     }`}
                   >
-                    <span className="truncate">{pg.title}</span>
-                    {activePageId === pg.id && <FaCheck className="text-[10px]" />}
+                    <div
+                      onClick={() => { onSelectPage?.(pg.id); setPageDropdownOpen(false); }}
+                      className="flex-1 flex items-center justify-between cursor-pointer truncate mr-1"
+                    >
+                      <span className="truncate">{pg.title}</span>
+                      {activePageId === pg.id && <FaCheck className="text-[10px]" />}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Delete sub-page "${pg.title}"?`)) {
+                          onDeletePage?.(pg.id);
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 rounded transition-opacity"
+                      title="Delete page"
+                    >
+                      <FaTrash className="text-[9px]" />
+                    </button>
                   </div>
                 ))}
                 <button
@@ -389,6 +406,16 @@ export default function BioOutlineTree({
                 value={newPageTitle}
                 onChange={(e) => setNewPageTitle(e.target.value)}
                 placeholder="e.g. Portfolio, Shop, Press Kit"
+                className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white outline-none focus:border-[#0071E3]"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-medium text-gray-500">Page Slug (URL Path)</label>
+              <input
+                type="text"
+                value={newPageSlug}
+                onChange={(e) => setNewPageSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))}
+                placeholder="e.g. shop, press"
                 className="w-full mt-1 px-3 py-1.5 text-xs rounded-lg bg-black/[0.03] dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.1] text-gray-900 dark:text-white outline-none focus:border-[#0071E3]"
               />
             </div>

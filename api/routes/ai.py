@@ -1034,3 +1034,114 @@ async def toggle_hook_bookmark(
         return {"bookmarked": True}
 
 
+# ── Lead AI Summary ──────────────────────────────────────────────────────────
+
+class LeadSummaryRequest(BaseModel):
+    lead_id: str
+
+
+@router.post("/ai/lead-summary")
+@limiter.limit("15/minute")
+async def generate_lead_summary(
+    request: Request,
+    body: LeadSummaryRequest,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Generate an AI summary for a specific lead using their interaction history."""
+    from bson import ObjectId
+
+    workspace_id = current_user.get("default_workspace_id") or current_user["user_id"]
+
+    try:
+        oid = ObjectId(body.lead_id)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid lead ID")
+
+    lead = await db.workspace_leads.find_one({"_id": oid, "workspace_id": workspace_id})
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    email = lead.get("email", "")
+    name = lead.get("name", "") or email.split("@")[0]
+    tag = lead.get("tag", "subscriber")
+    notes = lead.get("notes", "")
+    source = lead.get("source", "bio")
+    created_at = lead.get("created_at")
+    created_str = created_at.strftime("%B %d, %Y") if hasattr(created_at, "strftime") else str(created_at)
+
+    # Gather related inbox messages
+    inbox_msgs = []
+    cursor = db.inbox_messages.find(
+        {"workspace_id": workspace_id, "$or": [{"sender_email": email}, {"sender_name": name}]}
+    ).sort("received_at", -1).limit(10)
+    async for msg in cursor:
+        inbox_msgs.append({
+            "platform": msg.get("platform", "unknown"),
+            "type": msg.get("message_type", "comment"),
+            "text": (msg.get("text") or msg.get("content") or "")[:200],
+            "sentiment": msg.get("sentiment"),
+            "date": msg.get("received_at").strftime("%b %d") if hasattr(msg.get("received_at"), "strftime") else "",
+        })
+
+    # Gather related deals
+    deals = []
+    deal_cursor = db.deals.find(
+        {"workspace_id": workspace_id, "contact_email": email}
+    ).sort("updated_at", -1).limit(5)
+    async for deal in deal_cursor:
+        deals.append({
+            "title": deal.get("title"),
+            "value": deal.get("value", 0),
+            "currency": deal.get("currency", "INR"),
+            "stage": deal.get("stage"),
+        })
+
+    # Build context prompt
+    context_parts = [
+        f"Lead: {name} ({email})",
+        f"Tag: {tag} | Source: {source} | Joined: {created_str}",
+    ]
+    if notes:
+        context_parts.append(f"Notes: {notes}")
+    if inbox_msgs:
+        msg_summary = "; ".join([f"[{m['platform']} {m['type']}] \"{m['text'][:80]}\"" for m in inbox_msgs[:5]])
+        context_parts.append(f"Recent inbox activity ({len(inbox_msgs)} messages): {msg_summary}")
+    if deals:
+        deal_summary = "; ".join([f"{d['title']} ({d['stage']}, {d['currency']} {d['value']})" for d in deals])
+        context_parts.append(f"Active deals: {deal_summary}")
+
+    context = "\n".join(context_parts)
+
+    system_msg = (
+        "You are a CRM assistant for a social media management platform used by creators and agencies. "
+        "Given a lead's profile and their interaction history, write a concise 2-3 sentence summary that helps "
+        "the creator understand who this contact is, their engagement level, and any actionable insights. "
+        "Be warm and professional. Do not use bullet points — write flowing prose. "
+        "If there's limited data, acknowledge it briefly and suggest next steps."
+    )
+
+    try:
+        content, provider, model = await free_llm.generate_text(system_msg, context)
+    except Exception as exc:
+        event_log(
+            logger,
+            "error",
+            "ai.lead_summary.failed",
+            exc_info=exc,
+            route="/ai/lead-summary",
+            user_id=current_user["user_id"],
+            provider_error=shorten_provider_error(exc),
+            outcome="failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI summary generation failed. Please try again.",
+        ) from exc
+
+    return {
+        "summary": content,
+        "provider": provider,
+        "model": model,
+        "lead_id": body.lead_id,
+    }

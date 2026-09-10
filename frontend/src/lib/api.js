@@ -1689,3 +1689,78 @@ export const generateCampaignBlueprint = async (campaignId, payload = {}) => {
   const response = await axios.post(`${API}/campaigns/${campaignId}/blueprint`, payload, { headers: getAuthHeaders() });
   return response.data;
 };
+
+// ── Audience Hub — Leads CRM ──
+export const getLeads = async (params = {}) => {
+  const response = await axios.get(`${API}/leads`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const getLeadStats = async () => {
+  const response = await axios.get(`${API}/leads/stats`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const addLead = async (data) => {
+  const response = await axios.post(`${API}/leads`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateLead = async (leadId, data) => {
+  const response = await axios.patch(`${API}/leads/${leadId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteLead = async (leadId) => {
+  const response = await axios.delete(`${API}/leads/${leadId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const exportLeadsCsv = async (tag = null) => {
+  const params = tag ? { tag } : {};
+  const response = await axios.get(`${API}/leads/export`, {
+    headers: getAuthHeaders(),
+    params,
+    responseType: "blob",
+  });
+  return response.data;
+};
+
+export const importLeadsCsv = async (formData) => {
+  const response = await axios.post(`${API}/leads/import`, formData, {
+    headers: { ...getAuthHeaders(), "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+};
+
+// ── Audience Hub — Deals Pipeline ──
+export const getDeals = async (params = {}) => {
+  const response = await axios.get(`${API}/deals`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const getDealStats = async () => {
+  const response = await axios.get(`${API}/deals/stats`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createDeal = async (data) => {
+  const response = await axios.post(`${API}/deals`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateDeal = async (dealId, data) => {
+  const response = await axios.patch(`${API}/deals/${dealId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteDeal = async (dealId) => {
+  const response = await axios.delete(`${API}/deals/${dealId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── AI Lead Summary ──
+export const generateLeadSummary = async (leadId) => {
+  const response = await axios.post(`${API}/ai/lead-summary`, { lead_id: leadId }, { headers: getAuthHeaders() });
+  return response.data;
+};

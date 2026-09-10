@@ -59,6 +59,8 @@ from api.routes.short_links import router as short_links_router
 from api.routes.bio_pages import router as bio_pages_router
 from api.routes.system_health import router as system_health_router
 from api.routes.campaigns import router as campaigns_router
+from api.routes.leads import router as leads_router
+from api.routes.deals import router as deals_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -190,6 +192,8 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(bio_pages_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(system_health_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(campaigns_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(leads_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(deals_router, prefix=prefix, include_in_schema=include_in_schema)
 
 
 def create_app() -> FastAPI:
