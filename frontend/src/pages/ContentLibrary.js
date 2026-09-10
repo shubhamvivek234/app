@@ -699,137 +699,160 @@ const ContentLibrary = () => {
                     highlightPostId === post.id ? 'ring-2 ring-indigo-500 shadow-lg' : ''
                   }`}
                 >
-                  {/* Action Dropdown Hover (Top Right) */}
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10 bg-white/80 dark:bg-slate-800/90 rounded border border-slate-100 dark:border-slate-700 px-1 py-1 backdrop-blur-sm shadow-sm">
-                    {canEditPost ? (
-                      <button onClick={() => navigate(`/create-post?edit=${encodeURIComponent(post.id)}`)} className="p-1 px-2 text-slate-500 hover:text-indigo-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
-                        Edit
-                      </button>
-                    ) : null}
-                    <button
-                      onClick={() => handleDuplicate(post.id)}
-                      title="Duplicate as draft"
-                      className="p-1 px-2 text-slate-500 hover:text-emerald-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
-                    >
-                      <FaCopy className="text-[10px]" />
-                    </button>
-                    {post.status === 'draft' && (
-                      <button
-                        onClick={() => handleSubmitForReview(post.id)}
-                        title="Submit for review"
-                        className="p-1 px-2 text-slate-500 hover:text-amber-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
-                      >
-                        <FaPaperPlane className="text-[10px]" />
-                      </button>
-                    )}
-                    {isApprovedScheduled ? (
-                      <button
-                        onClick={() => handleReturnApprovedToDraft(post.id)}
-                        title="Return approved post to draft"
-                        className="p-1 px-2 text-slate-500 hover:text-amber-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors flex items-center gap-1"
-                      >
-                        <FaRedo className="text-[10px]" />
-                        Return
-                      </button>
-                    ) : null}
-                    <button onClick={() => handleDelete(post.id)} className="p-1 px-2 text-slate-500 hover:text-red-600 text-xs font-medium rounded hover:bg-slate-100 transition-colors">
-                      Delete
-                    </button>
-                  </div>
-
-                  {/* Rejection note badge (shown on rejected drafts) */}
-                  {post.status === 'draft' && (post.rejection_reason || post.rejection_note) && (
-                    <div className="absolute top-2 left-2 z-10">
-                      <div
-                        title={`Rejected: ${post.rejection_reason || post.rejection_note}`}
-                        className="flex items-center gap-1 bg-red-100 text-red-600 text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                      >
-                        <FaExclamationCircle className="text-[9px]" />
-                        Rejected
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Top Bar: Platform Name & Date */}
-                  <div className="px-4 py-3 bg-offwhite border-b border-slate-100 flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="flex items-center gap-1.5 font-medium text-slate-600 capitalize bg-offwhite border border-slate-200 px-2 py-0.5 rounded text-[11px] uppercase tracking-wide">
-                        {platformIcons[primaryPlatform]} {primaryPlatform}
+                  {/* Top Bar: Platform Name & Date / Actions (Hover swaps cleanly with 0 overlap) */}
+                  <div className="px-3.5 py-2.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center text-xs min-h-[42px] gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+                      <div className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 px-2 py-0.5 rounded text-[11px] tracking-wide shrink-0 shadow-2xs">
+                        {platformIcons[primaryPlatform] || <span className="capitalize">{primaryPlatform[0]}</span>}
+                        <span className="capitalize">{primaryPlatform}</span>
                       </div>
                       {showCardMediaMeta && (
-                        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${mediaKindMeta.className}`}>
-                          <MediaKindIcon className="text-[10px]" />
-                          {mediaKindMeta.label}
+                        <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 ${mediaKindMeta.className}`}>
+                          <MediaKindIcon className="text-[9px]" />
+                          <span>{mediaKindMeta.label}</span>
+                        </div>
+                      )}
+                      {/* Rejection note badge (shown on rejected drafts) */}
+                      {post.status === 'draft' && (post.rejection_reason || post.rejection_note) && (
+                        <div
+                          title={`Rejected: ${post.rejection_reason || post.rejection_note}`}
+                          className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200/80 text-rose-600 dark:bg-rose-950/40 dark:border-rose-900 dark:text-rose-400 text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
+                        >
+                          <FaExclamationCircle className="text-[9px]" />
+                          Rejected
                         </div>
                       )}
                     </div>
-                    <div className="text-slate-500 font-medium">
-                      {postDateLabel}
+
+                    {/* Right side: Date label swaps seamlessly with hover toolbar */}
+                    <div className="shrink-0 flex items-center justify-end relative h-7">
+                      {/* Date label in resting state */}
+                      <span className="text-slate-400 dark:text-slate-500 font-medium text-[11px] whitespace-nowrap transition-opacity duration-150 group-hover:opacity-0 group-hover:pointer-events-none select-none">
+                        {postDateLabel}
+                      </span>
+
+                      {/* Action toolbar appearing on hover in place of date */}
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-150 flex items-center gap-0.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-1 py-0.5 shadow-xs z-10">
+                        {canEditPost ? (
+                          <button
+                            onClick={() => navigate(`/create-post?edit=${encodeURIComponent(post.id)}`)}
+                            className="p-1 px-1.5 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                            title="Edit post"
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={() => handleDuplicate(post.id)}
+                          title="Duplicate as draft"
+                          className="p-1 px-1.5 text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+                        >
+                          <FaCopy className="text-[10px]" />
+                        </button>
+                        {post.status === 'draft' && (
+                          <button
+                            onClick={() => handleSubmitForReview(post.id)}
+                            title="Submit for review"
+                            className="p-1 px-1.5 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+                          >
+                            <FaPaperPlane className="text-[10px]" />
+                          </button>
+                        )}
+                        {isApprovedScheduled ? (
+                          <button
+                            onClick={() => handleReturnApprovedToDraft(post.id)}
+                            title="Return approved post to draft"
+                            className="p-1 px-1.5 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 text-[11px] font-medium rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center gap-1"
+                          >
+                            <FaRedo className="text-[10px]" />
+                            Return
+                          </button>
+                        ) : null}
+                        <button
+                          onClick={() => handleDelete(post.id)}
+                          title="Delete post"
+                          className="p-1 px-1.5 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 text-[11px] font-medium rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
 
                   {/* Body Sub-content */}
-                  <div className="p-4 flex-1 flex flex-col text-sm">
+                  <div className="p-3.5 flex-1 flex flex-col text-sm">
                     {/* Caption Preview */}
-                    <div className="text-slate-700 leading-relaxed line-clamp-4 whitespace-pre-wrap mb-4 flex-1">
-                      {videoTitle ? <div className="font-semibold mb-1">{videoTitle}</div> : null}
+                    <div className="text-slate-700 dark:text-slate-300 leading-relaxed text-[13px] line-clamp-4 whitespace-pre-wrap mb-3 flex-1 font-normal">
+                      {videoTitle ? <div className="font-semibold mb-1 text-slate-900 dark:text-slate-100">{videoTitle}</div> : null}
                       {post.content || <span className="text-slate-400 italic">No caption</span>}
                     </div>
 
                     {/* Media Preview Thumbnail (If Image/Video provided) */}
                     {cardThumbnail && (
-                      <div className="mb-4 h-32 bg-offwhite rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center">
+                      <div className="mb-3 h-36 bg-slate-100 dark:bg-slate-800/60 rounded-lg overflow-hidden border border-slate-200/80 dark:border-slate-700 flex items-center justify-center">
                          <img src={cardThumbnail} alt="Media Thumbnail" className="w-full h-full object-cover" />
                       </div>
                     )}
                   </div>
 
                   {/* Bottom Bar: Accounts and Status Pill */}
-                  <div className="px-4 py-3 border-t border-slate-100 flex justify-between items-center bg-offwhite">
+                  <div className="px-3.5 py-2.5 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/40 dark:bg-slate-800/20">
                     {/* Avatars Stack */}
-                    <div className="flex -space-x-2">
+                    <div className="flex -space-x-1.5">
                       {postAccounts.slice(0, 4).map((acc, idx) => {
-                        const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500'];
+                        const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-purple-500', 'bg-pink-500'];
                         const bgColor = colors[(acc.platform_username || 'U').charCodeAt(0) % colors.length];
                         const zIndex = 10 - idx;
                         return (
-                          <div key={acc.id} className="relative rounded-full border-2 border-white bg-offwhite" style={{ zIndex }}>
+                          <div key={acc.id} className="relative rounded-full border-2 border-white dark:border-slate-900 bg-slate-100 shadow-2xs" style={{ zIndex }}>
                              {acc.picture_url ? (
-                                <img src={acc.picture_url} className="w-7 h-7 rounded-full object-cover" title={acc.platform_username} alt="avatar" />
+                                <img src={acc.picture_url} className="w-6 h-6 rounded-full object-cover" title={acc.platform_username} alt="avatar" />
                              ) : (
-                                <div className={`w-7 h-7 rounded-full ${bgColor} flex items-center justify-center text-[10px] text-white font-bold`} title={acc.platform_username}>
+                                <div className={`w-6 h-6 rounded-full ${bgColor} flex items-center justify-center text-[9px] text-white font-bold`} title={acc.platform_username}>
                                   {(acc.platform_username || 'U').charAt(0).toUpperCase()}
                                 </div>
                              )}
-                             <div className="absolute -bottom-0.5 -right-0.5 bg-offwhite rounded-full p-[1px]">
+                             <div className="absolute -bottom-0.5 -right-0.5 bg-white dark:bg-slate-900 rounded-full p-[1px] shadow-2xs">
                                {platformIcons[acc.platform] ? React.cloneElement(platformIcons[acc.platform], { className: "w-[8px] h-[8px]" }) : null}
                              </div>
                           </div>
                         )
                       })}
                       {postAccounts.length > 4 && (
-                        <div className="w-7 h-7 rounded-full border-2 border-white bg-offwhite flex items-center justify-center text-[10px] text-slate-600 font-bold z-0">
+                        <div className="w-6 h-6 rounded-full border-2 border-white dark:border-slate-900 bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-[9px] text-slate-600 dark:text-slate-300 font-bold z-0">
                           +{postAccounts.length - 4}
                         </div>
                       )}
                     </div>
 
-                    {/* Status Pill */}
-                    <div className={`px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-full ${
-                      post.status === 'scheduled' ? 'bg-[#00A3FF] text-white' :
-                      post.status === 'published' ? 'bg-emerald-500 text-white' :
-                      post.status === 'failed' ? 'bg-red-500 text-white' :
-                      'bg-offwhite border border-slate-300 text-slate-700'
+                    {/* Status Pill with dot indicator */}
+                    <div className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[11px] font-medium rounded-full border shadow-2xs ${
+                      post.status === 'scheduled'
+                        ? 'bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800'
+                        : post.status === 'published'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                        : post.status === 'failed'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+                        : post.status === 'draft'
+                        ? 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                        : 'bg-amber-50 text-amber-700 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
                     }`}>
-                      {post.status}
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        post.status === 'scheduled' ? 'bg-sky-500' :
+                        post.status === 'published' ? 'bg-emerald-500' :
+                        post.status === 'failed' ? 'bg-rose-500' :
+                        post.status === 'draft' ? 'bg-slate-400' : 'bg-amber-500'
+                      }`} />
+                      <span className="capitalize">{post.status}</span>
                     </div>
                   </div>
 
                   {/* Per-platform delivery inspector (published/partial/failed posts) */}
                   {['published', 'partial', 'failed', 'processing', 'publishing'].includes(post.status) && (
-                    <div className="border-t border-slate-100 dark:border-slate-800 p-2.5">
+                    <div className="border-t border-slate-100 dark:border-slate-800 p-2.5 bg-slate-50/20 dark:bg-slate-900/20">
                       <PostDeliveryInspector
                         post={post}
+                        compact={true}
                         onRetrySuccess={() => {
                           fetchAll();
                         }}

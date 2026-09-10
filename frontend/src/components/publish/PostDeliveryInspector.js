@@ -39,32 +39,32 @@ const STATUS_BADGES = {
   published: {
     label: 'Published',
     icon: FaCheckCircle,
-    className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800',
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
   },
   failed: {
     label: 'Failed',
     icon: FaExclamationCircle,
-    className: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800',
+    className: 'bg-rose-50 text-rose-700 border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800',
   },
   permanently_failed: {
     label: 'Failed (Permanent)',
     icon: FaExclamationCircle,
-    className: 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950/60 dark:text-red-300 dark:border-red-700',
+    className: 'bg-rose-100/70 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700',
   },
   retrying: {
     label: 'Retrying…',
     icon: FaSpinner,
-    className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800 animate-pulse',
+    className: 'bg-amber-50 text-amber-700 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 animate-pulse',
   },
   queued: {
     label: 'Queued',
     icon: FaClock,
-    className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800',
+    className: 'bg-blue-50 text-blue-700 border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800',
   },
   processing: {
     label: 'Publishing…',
     icon: FaSpinner,
-    className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800',
+    className: 'bg-blue-50 text-blue-700 border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800',
   },
   pending: {
     label: 'Pending',
@@ -174,20 +174,20 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
   }
 
   return (
-    <div className="space-y-2 text-xs">
+    <div className={`text-xs ${compact ? 'space-y-1.5' : 'space-y-2'}`}>
       {/* Header with quick Retry All button if multiple failed */}
       {failedEntries.length > 1 && (
-        <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50/70 p-2.5 dark:border-red-900/50 dark:bg-red-950/20">
-          <div className="flex items-center gap-2 text-red-800 dark:text-red-300">
-            <FaExclamationTriangle className="text-red-600 dark:text-red-400" />
-            <span className="font-semibold">{failedEntries.length} platforms failed publishing</span>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between rounded-lg border border-rose-200/80 bg-rose-50/60 p-2.5 dark:border-rose-900/50 dark:bg-rose-950/20">
+          <div className="flex items-center gap-1.5 text-rose-800 dark:text-rose-300 text-[11px] min-w-0 flex-wrap">
+            <FaExclamationTriangle className="text-rose-600 dark:text-rose-400 text-xs shrink-0" />
+            <span className="font-semibold">{failedEntries.length} platforms failed</span>
             {isMediaExpired ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-500" title="Media expired after 48-hour grace period">
-                Media Expired
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium text-slate-500" title="Media expired after 48-hour grace period">
+                Expired
               </span>
             ) : remainingHours !== null ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-100/70 dark:bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300" title="Media will be automatically purged 48 hours after failure">
-                <FaClock className="text-[9px]" /> Retry in {remainingHours}h
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 dark:border-amber-800 bg-amber-100/70 dark:bg-amber-950/40 px-1.5 py-0.5 text-[9px] font-medium text-amber-800 dark:text-amber-300" title="Media will be automatically purged 48 hours after failure">
+                <FaClock className="text-[8px]" /> {remainingHours}h left
               </span>
             ) : null}
           </div>
@@ -195,19 +195,19 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
             onClick={handleRetryAll}
             disabled={retryingAll || isMediaExpired}
             title={isMediaExpired ? 'Media expired after 48 hours. Please duplicate or re-upload the post.' : 'Retry publishing to all failed platforms'}
-            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 font-semibold text-white shadow-xs transition-colors ${
+            className={`inline-flex items-center justify-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium text-white shadow-2xs transition-colors shrink-0 ${
               isMediaExpired
-                ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60'
-                : 'bg-red-600 hover:bg-red-700 disabled:opacity-50'
+                ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
+                : 'bg-rose-600 hover:bg-rose-700 disabled:opacity-50'
             }`}
           >
             {retryingAll ? (
               <>
-                <FaSpinner className="animate-spin text-[10px]" /> Retrying…
+                <FaSpinner className="animate-spin text-[9px]" /> Retrying…
               </>
             ) : (
               <>
-                <FaRedo className="text-[10px]" /> {isMediaExpired ? 'Media Expired' : 'Retry All Failed'}
+                <FaRedo className="text-[9px]" /> {isMediaExpired ? 'Expired' : 'Retry All'}
               </>
             )}
           </button>
@@ -215,7 +215,7 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
       )}
 
       {/* Target platform delivery list */}
-      <div className="divide-y divide-slate-100 rounded-lg border border-slate-200/80 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/60 shadow-xs overflow-hidden">
+      <div className="divide-y divide-slate-100 rounded-lg border border-slate-200/80 bg-slate-50/40 dark:divide-slate-800/80 dark:border-slate-800 dark:bg-slate-900/40 shadow-2xs overflow-hidden">
         {entries.map(({ key, platform, accountName, result }) => {
           const rawStatus = String(result.status || 'pending').toLowerCase();
           const badge = STATUS_BADGES[rawStatus] || STATUS_BADGES.pending;
@@ -226,55 +226,72 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
           const isRetrying = Boolean(retryingKeys[key]) || rawStatus === 'retrying';
 
           return (
-            <div key={key} className="p-3 transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                {/* Platform info and badge */}
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 dark:bg-slate-800 text-sm">
-                    {PLATFORM_ICONS[platform] || <span className="capitalize">{platform[0]}</span>}
+            <div key={key} className={`${compact ? 'p-2.5' : 'p-3'} transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/30`}>
+              {/* Line 1: Identity on left, Status badge on right */}
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 shadow-2xs">
+                    {PLATFORM_ICONS[platform] || <span className="capitalize text-[10px] font-bold">{platform[0]}</span>}
                   </div>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-800 dark:text-slate-200 capitalize">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-slate-800 dark:text-slate-200 text-xs capitalize leading-tight" title={accountName}>
                       {accountName}
                     </p>
-                    <p className="text-[11px] text-slate-400 capitalize">{platform}</p>
+                    <p className="text-[10px] text-slate-400 capitalize leading-tight">{platform}</p>
                   </div>
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}
-                  >
-                    <BadgeIcon className={`text-[9px] ${rawStatus === 'retrying' || rawStatus === 'processing' ? 'animate-spin' : ''}`} />
-                    {badge.label}
-                  </span>
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center gap-2 self-end sm:self-auto">
-                  {isPublished && result.post_url && (
-                    <a
-                      href={result.post_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/60 px-2.5 py-1 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
-                    >
-                      <FaExternalLinkAlt className="text-[9px]" /> View Post
-                    </a>
-                  )}
+                {/* Status Badge */}
+                <span
+                  className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-2xs ${badge.className}`}
+                >
+                  <BadgeIcon className={`text-[9px] ${rawStatus === 'retrying' || rawStatus === 'processing' ? 'animate-spin' : ''}`} />
+                  {badge.label}
+                </span>
+              </div>
 
-                  {isFailed && (
-                    <div className="flex items-center gap-1.5">
-                      {!isMediaExpired && remainingHours !== null && (
-                        <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium" title="Grace period remaining">
-                          <FaClock className="text-[9px]" /> {remainingHours}h left
-                        </span>
-                      )}
+              {/* Line 2: Actions & Grace Info (shown if failed, retrying, or published with link) */}
+              {(isFailed || (isPublished && result.post_url) || isRetrying) && (
+                <div className="mt-2 flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/80">
+                  {/* Left: Grace period or info */}
+                  <div className="min-w-0 flex-1">
+                    {isFailed && !isMediaExpired && remainingHours !== null ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium" title="Media retained in Cloudflare R2 for 48 hours">
+                        <FaClock className="text-[9px]" /> {remainingHours}h grace left
+                      </span>
+                    ) : isFailed && isMediaExpired ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium" title="Grace period expired. Media removed from R2.">
+                        <FaExclamationTriangle className="text-[9px]" /> Media expired
+                      </span>
+                    ) : isPublished ? (
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                        Delivered
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Right: Button */}
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    {isPublished && result.post_url && (
+                      <a
+                        href={result.post_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-200 shadow-2xs transition-colors"
+                      >
+                        <FaExternalLinkAlt className="text-[8px]" /> View Post
+                      </a>
+                    )}
+
+                    {isFailed && (
                       <button
                         onClick={() => handleRetryTarget(key, platform)}
                         disabled={isRetrying || isMediaExpired}
                         title={isMediaExpired ? 'Media expired after 48 hours. Duplicate this post to re-upload.' : `Retry publishing to ${platform}`}
-                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold text-white shadow-xs transition-colors ${
+                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium shadow-2xs transition-colors ${
                           isMediaExpired
-                            ? 'bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-60'
-                            : 'bg-amber-600 hover:bg-amber-700 disabled:opacity-50'
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 dark:bg-slate-800 dark:text-slate-600 dark:border-slate-700 cursor-not-allowed'
+                            : 'bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50'
                         }`}
                       >
                         {isRetrying ? (
@@ -283,7 +300,7 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                           </>
                         ) : isMediaExpired ? (
                           <>
-                            <FaRedo className="text-[9px] opacity-40" /> Media Expired
+                            <FaRedo className="text-[9px] opacity-40" /> Expired
                           </>
                         ) : (
                           <>
@@ -291,34 +308,34 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                           </>
                         )}
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Granular Error Diagnostic Card */}
+              {/* Line 3: Granular Error Diagnostic Card */}
               {isFailed && diagnostic && (
-                <div className="mt-2.5 rounded-md border border-red-100 bg-red-50/50 p-2.5 dark:border-red-900/40 dark:bg-red-950/30 text-slate-700 dark:text-slate-300">
+                <div className="mt-2 rounded-md border border-rose-200/70 bg-rose-50/50 p-2.5 dark:border-rose-900/40 dark:bg-rose-950/20 text-slate-700 dark:text-slate-300">
                   <div className="flex items-start gap-2">
-                    <FaExclamationCircle className="mt-0.5 shrink-0 text-red-500 dark:text-red-400 text-xs" />
+                    <FaExclamationCircle className="mt-0.5 shrink-0 text-rose-500 dark:text-rose-400 text-xs" />
                     <div className="space-y-1 min-w-0 flex-1">
-                      <p className="font-semibold text-red-900 dark:text-red-200">
+                      <p className="font-semibold text-rose-900 dark:text-rose-200 text-xs leading-snug">
                         {diagnostic.title}
                       </p>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed break-words">
                         {diagnostic.message}
                       </p>
 
                       {diagnostic.action && (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2 pt-1 border-t border-red-100 dark:border-red-900/30">
-                          <span className="text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 pt-1 border-t border-rose-200/60 dark:border-rose-900/30">
+                          <span className="text-[10px] font-medium text-rose-700 dark:text-rose-300">
                             Action: {diagnostic.action}
                           </span>
 
                           {diagnostic.actionType === 'reconnect' && (
                             <button
                               onClick={() => navigate('/connected-accounts')}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:underline dark:text-blue-400"
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:underline dark:text-blue-400"
                             >
                               <FaTools className="text-[9px]" /> Open Connected Accounts
                             </button>
@@ -327,9 +344,9 @@ export default function PostDeliveryInspector({ post, onRetrySuccess, compact = 
                           {(diagnostic.actionType === 'edit_post' || diagnostic.actionType === 'crop_media') && (
                             <button
                               onClick={() => navigate(`/create-post?duplicateFrom=${post.id}`)}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
                             >
-                              Edit in Composer
+                              Edit in Composer →
                             </button>
                           )}
                         </div>

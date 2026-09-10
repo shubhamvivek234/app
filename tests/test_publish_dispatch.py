@@ -429,7 +429,9 @@ async def test_finalize_post_status_updates_timestamp_and_history_on_terminal_tr
     assert update["$set"]["status"] == "failed"
     assert update["$push"]["status_history"]["status"] == "failed"
     assert update["$push"]["status_history"]["actor"] == "celery_finalize"
-    cleanup_apply_async.assert_called_once()
+    # Under 48h grace period, failed posts do not immediately schedule cleanup
+    cleanup_apply_async.assert_not_called()
+    assert "failed_media_expires_at" in update["$set"]
 
 
 @pytest.mark.asyncio
