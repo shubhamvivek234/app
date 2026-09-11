@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock
 from bson import ObjectId
 from fastapi import HTTPException
 
@@ -328,11 +329,14 @@ async def test_bio_subpage_isolation_and_save():
         description="Creator Main Profile",
         blocks=[home_block],
     )
+    shop_theme = BioTheme(background_color="#123456", card_style="glass")
     shop_page = BioSubPage(
         id="page_shop",
         title="Shop Page",
         slug="shop",
         description="Exclusive Merch",
+        avatar_url="https://cdn.example.com/shop_avatar.png",
+        theme=shop_theme,
         blocks=[shop_block],
     )
 
@@ -350,7 +354,7 @@ async def test_bio_subpage_isolation_and_save():
     save_res = await save_my_bio_page(config, current_user=user, db=db)
     assert save_res["ok"] is True
 
-    # 1. Verify saved doc has isolated blocks per page
+    # 1. Verify saved doc has isolated blocks, theme, and avatar per page
     saved_doc = await db.bio_pages.find_one({"handle": "multipage_creator"})
     assert saved_doc is not None
     # Root blocks belong strictly to Home
@@ -368,6 +372,9 @@ async def test_bio_subpage_isolation_and_save():
 
     assert saved_shop["title"] == "Shop Page"
     assert saved_shop["description"] == "Exclusive Merch"
+    assert saved_shop["avatar_url"] == "https://cdn.example.com/shop_avatar.png"
+    assert saved_shop["theme"]["background_color"] == "#123456"
+    assert saved_shop["theme"]["card_style"] == "glass"
     assert len(saved_shop["blocks"]) == 1
     assert saved_shop["blocks"][0]["id"] == "blk_shop_1"
 
@@ -378,4 +385,31 @@ async def test_bio_subpage_isolation_and_save():
     assert len(pub_res["pages"]) == 2
     pub_shop = next(p for p in pub_res["pages"] if p["id"] == "page_shop")
     assert pub_shop["blocks"][0]["id"] == "blk_shop_1"
+    assert pub_shop["avatar_url"] == "https://cdn.example.com/shop_avatar.png"
+    assert pub_shop["theme"]["background_color"] == "#123456"
+
+
+@pytest.mark.asyncio
+async def test_upload_bio_avatar(monkeypatch):
+    from api.routes.bio_pages import upload_bio_avatar
+    from fastapi import UploadFile
+    import io
+
+    user = {"user_id": "usr_creator1"}
+    monkeypatch.setattr(
+        "utils.storage.upload_file_async",
+        AsyncMock(return_value="https://cdn.example.com/bio_avatars/avatar_test.png"),
+    )
+
+    file = UploadFile(
+        filename="profile.jpg",
+        file=io.BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"),
+        headers={"content-type": "image/jpeg"},
+    )
+    res = await upload_bio_avatar(file=file, current_user=user)
+    assert "url" in res
+    assert res["url"] == "https://cdn.example.com/bio_avatars/avatar_test.png"
+    assert res["filename"].startswith("avatar_")
+    assert res["filename"].endswith(".jpg")
+
 

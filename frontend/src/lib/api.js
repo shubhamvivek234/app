@@ -1523,6 +1523,18 @@ export const getMyBioPage = async () => {
   return response.data;
 };
 
+export const uploadBioAvatar = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await axios.post(`${API}/bio-pages/avatar`, formData, {
+    headers: {
+      ...getAuthHeaders(),
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
 export const saveMyBioPage = async (data) => {
   const response = await axios.put(`${API}/bio-pages/mine`, data, { headers: getAuthHeaders() });
   return response.data;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   FaGripVertical,
   FaTrash,
@@ -18,7 +18,11 @@ import {
   FaBolt,
   FaPlay,
   FaEnvelope,
+  FaCamera,
+  FaSpinner,
 } from 'react-icons/fa';
+import { toast } from 'sonner';
+import { uploadBioAvatar } from '@/lib/api';
 
 export default function BioOutlineTree({
   title,
@@ -64,8 +68,39 @@ export default function BioOutlineTree({
   const [trashOpen, setTrashOpen] = useState(false);
   const [draggedIdx, setDraggedIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const homeFileInputRef = useRef(null);
+  const subPageFileInputRef = useRef(null);
 
   const activePage = pages.find((p) => p.id === activePageId) || { title: 'Home', slug: 'home' };
+
+  const handleAvatarFileChange = async (e, isSubPage = false) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Avatar image must be under 10MB');
+      return;
+    }
+    try {
+      setUploadingAvatar(true);
+      const res = await uploadBioAvatar(file);
+      if (res?.url) {
+        if (isSubPage) {
+          onUpdateSubPage?.('avatar_url', res.url);
+          toast.success('Sub-page avatar updated!');
+        } else {
+          setAvatarUrl?.(res.url);
+          toast.success('Display picture updated!');
+        }
+      }
+    } catch (err) {
+      console.error('Avatar upload failed:', err);
+      toast.error(err?.response?.data?.detail || 'Failed to upload display picture');
+    } finally {
+      setUploadingAvatar(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   const handleQuickAddSubmit = (e) => {
     e.preventDefault();
@@ -128,7 +163,11 @@ export default function BioOutlineTree({
           </span>
         </div>
         <div className="flex items-center gap-3 p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/[0.06]">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 p-[1.5px] shrink-0">
+          <div
+            onClick={() => homeFileInputRef.current?.click()}
+            className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 p-[1.5px] shrink-0 relative group cursor-pointer"
+            title="Click to upload/change display picture"
+          >
             {avatarUrl ? (
               <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
             ) : (
@@ -136,6 +175,9 @@ export default function BioOutlineTree({
                 {title ? title[0] : 'U'}
               </div>
             )}
+            <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[11px]">
+              {uploadingAvatar ? <FaSpinner className="animate-spin" /> : <FaCamera />}
+            </div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-xs font-bold text-gray-900 dark:text-white truncate">
@@ -145,6 +187,27 @@ export default function BioOutlineTree({
               @{handle || 'handle'}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => homeFileInputRef.current?.click()}
+            disabled={uploadingAvatar}
+            className="px-2 py-1 text-[10px] font-semibold rounded-lg bg-blue-50 dark:bg-blue-950/50 text-[#0071E3] dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            title="Upload Display Picture"
+          >
+            {uploadingAvatar ? (
+              <FaSpinner className="animate-spin text-[9px]" />
+            ) : (
+              <FaCamera className="text-[9px]" />
+            )}
+            <span>Photo</span>
+          </button>
+          <input
+            type="file"
+            ref={homeFileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleAvatarFileChange(e, false)}
+          />
         </div>
       </div>
 
@@ -227,6 +290,56 @@ export default function BioOutlineTree({
 
         {activePageId === 'home' ? (
           <>
+            {/* Display Picture Upload Section */}
+            <div>
+              <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400 block mb-1">
+                Display Picture / Profile Avatar
+              </label>
+              <div className="flex items-center gap-2.5 p-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
+                <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 border border-black/10 dark:border-white/10 bg-gray-100 dark:bg-gray-800">
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs font-bold text-gray-400">
+                      {title ? title[0] : 'U'}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => homeFileInputRef.current?.click()}
+                    disabled={uploadingAvatar}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#0071E3] text-white hover:bg-blue-600 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {uploadingAvatar ? (
+                      <>
+                        <FaSpinner className="animate-spin text-[10px]" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FaCamera className="text-[10px]" />
+                        <span>{avatarUrl ? 'Change Image' : 'Upload Image'}</span>
+                      </>
+                    )}
+                  </button>
+                  {avatarUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setAvatarUrl?.('')}
+                      className="px-2 py-1 text-xs font-medium text-red-500 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+              <span className="text-[10px] text-gray-400 mt-1 block">
+                JPG, PNG, WebP up to 10MB
+              </span>
+            </div>
+
             <div>
               <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">Display Name</label>
               <input
@@ -295,6 +408,73 @@ export default function BioOutlineTree({
               <p className="text-gray-600 dark:text-gray-300 text-[11px] leading-tight">
                 Changes and blocks below are strictly confined to <strong>"{activePage.title}"</strong> and will never bleed to other pages.
               </p>
+            </div>
+
+            {/* Sub-Page Specific Display Picture */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                  Sub-Page Display Picture
+                </label>
+                {activePage.avatar_url && (
+                  <span className="text-[9px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded">
+                    Custom for this page
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2.5 p-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08]">
+                <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 border border-black/10 dark:border-white/10 bg-gray-100 dark:bg-gray-800">
+                  {activePage.avatar_url ? (
+                    <img src={activePage.avatar_url} alt="Subpage Avatar" className="w-full h-full object-cover" />
+                  ) : avatarUrl ? (
+                    <img src={avatarUrl} alt="Main Avatar" className="w-full h-full object-cover opacity-60" title="Using main bio avatar" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs font-bold text-gray-400">
+                      {activePage.title ? activePage.title[0] : 'P'}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => subPageFileInputRef.current?.click()}
+                    disabled={uploadingAvatar}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#0071E3] text-white hover:bg-blue-600 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {uploadingAvatar ? (
+                      <>
+                        <FaSpinner className="animate-spin text-[10px]" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FaCamera className="text-[10px]" />
+                        <span>{activePage.avatar_url ? 'Change Avatar' : 'Custom Avatar'}</span>
+                      </>
+                    )}
+                  </button>
+                  {activePage.avatar_url && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSubPage?.('avatar_url', '')}
+                      className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition cursor-pointer"
+                      title="Revert to using main profile avatar"
+                    >
+                      Use Main
+                    </button>
+                  )}
+                </div>
+              </div>
+              <input
+                type="file"
+                ref={subPageFileInputRef}
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleAvatarFileChange(e, true)}
+              />
+              <span className="text-[10px] text-gray-400 mt-1 block">
+                {activePage.avatar_url ? 'Custom display picture for this sub-page' : 'Currently inheriting main bio display picture'}
+              </span>
             </div>
 
             <div>

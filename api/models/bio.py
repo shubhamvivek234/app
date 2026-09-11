@@ -95,6 +95,8 @@ class BioSubPage(BaseModel):
     slug: str
     title: str
     description: str = ""
+    avatar_url: str | None = None
+    theme: ThemeConfig | None = None
     blocks: list[BioBlockItem] = Field(default_factory=list)
     seo: SeoConfig | None = None
 

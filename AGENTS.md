@@ -9,13 +9,13 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Content Library Post Card & Delivery Inspector Overhaul:
-  - Fixed button/date overlap in `ContentLibrary.js`: replaced hover swap with always-visible date and 3-dots kebab action dropdown.
-  - Eliminated raw internal IDs (`usr_c7...`) across `PostDeliveryInspector.js` and `publishFailures.js` with humanized account names and platform fallbacks.
-  - Added dedicated Twitter/X API 402 Credits Depleted diagnostic with direct link to X Developer Portal.
-  - Resolved duplicate retry controls and hiding previous error cards while active retry is running.
-  - Fixed retry endpoints in `api/routes/posts.py` and `backend/server.py` to support `failed` and `permanently_failed` states and flexible key matching.
-  - Verified frontend build (`npm run build --prefix frontend`) and 372 unit tests (`pytest`) pass with exit code 0.
+- Smart Bio Per-Page Theme Isolation & Avatar Upload:
+  - Fixed theme bleed between Page 1 and sub-pages in Studio preview and live public Smart Bio.
+  - Added `theme` and `avatar_url` fields to `BioSubPage` backend Pydantic models.
+  - Implemented `/api/bio-pages/avatar` upload endpoint with format/size validation and async storage.
+  - Added Display Picture upload UI in `BioOutlineTree.js` and `BioInspectorDrawer.js` (both main and sub-page).
+  - Isolated active theme updates and transitions synchronously in `LinkInBio.js` and `PublicBioPage.js`.
+  - Verified with 373 unit tests (`pytest`) and frontend production build (`npm run build`).
 
 ## Active Work
 Currently implementing: None

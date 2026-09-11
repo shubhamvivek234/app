@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   FaUndo,
   FaRedo,
@@ -10,7 +10,11 @@ import {
   FaTrashAlt,
   FaCalendarAlt,
   FaExclamationTriangle,
+  FaCamera,
+  FaSpinner,
 } from 'react-icons/fa';
+import { toast } from 'sonner';
+import { uploadBioAvatar } from '@/lib/api';
 import {
   THEME_PRESETS,
   HEADER_LAYOUTS,
@@ -63,6 +67,11 @@ const SOCIAL_PLATFORMS = [
 export default function BioInspectorDrawer({
   theme = {},
   setTheme,
+  avatarUrl = '',
+  onUploadAvatar,
+  onRemoveAvatar,
+  isSubPage = false,
+  pageTitle = 'Home',
   socialLinks = {},
   setSocialLinks,
   pageSchedule = { enabled: false, start_at: '', end_at: '' },
@@ -79,6 +88,31 @@ export default function BioInspectorDrawer({
 }) {
   const [activeTab, setActiveTab] = useState('themes'); // 'themes' | 'styles' | 'fonts' | 'settings'
   const [fontSearch, setFontSearch] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const drawerFileInputRef = useRef(null);
+
+  const handleDrawerAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Avatar image must be under 10MB');
+      return;
+    }
+    try {
+      setUploadingAvatar(true);
+      const res = await uploadBioAvatar(file);
+      if (res?.url) {
+        onUploadAvatar?.(res.url);
+        toast.success(isSubPage ? `Uploaded avatar for "${pageTitle}"!` : 'Display picture updated!');
+      }
+    } catch (err) {
+      console.error('Drawer avatar upload error:', err);
+      toast.error(err?.response?.data?.detail || 'Failed to upload display picture');
+    } finally {
+      setUploadingAvatar(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   // Filter fonts
   const filteredFonts = useMemo(() => {
@@ -356,6 +390,79 @@ export default function BioInspectorDrawer({
                   </div>
                   <div className="w-4 h-4 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
                 </button>
+              </div>
+
+              {/* Display Picture Upload Card */}
+              <div className="mt-3.5 p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-gray-800 dark:text-gray-200">
+                    {isSubPage ? `Display Picture (${pageTitle})` : 'Display Picture / Avatar'}
+                  </span>
+                  {isSubPage && avatarUrl && (
+                    <span className="text-[9px] font-semibold text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded">
+                      Page Custom
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <div
+                    onClick={() => drawerFileInputRef.current?.click()}
+                    className="w-12 h-12 rounded-full overflow-hidden shrink-0 border border-black/10 dark:border-white/10 bg-gray-100 dark:bg-gray-800 relative group cursor-pointer"
+                    title="Click to upload/change image"
+                  >
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-sm font-bold text-gray-400">
+                        {pageTitle ? pageTitle[0] : 'U'}
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs">
+                      {uploadingAvatar ? <FaSpinner className="animate-spin" /> : <FaCamera />}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => drawerFileInputRef.current?.click()}
+                        disabled={uploadingAvatar}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#0071E3] text-white hover:bg-blue-600 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        {uploadingAvatar ? (
+                          <>
+                            <FaSpinner className="animate-spin text-[10px]" />
+                            <span>Uploading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FaCamera className="text-[10px]" />
+                            <span>{avatarUrl ? 'Change' : 'Upload Image'}</span>
+                          </>
+                        )}
+                      </button>
+                      {avatarUrl && (
+                        <button
+                          type="button"
+                          onClick={() => onRemoveAvatar?.()}
+                          className="px-2 py-1 text-xs font-medium text-red-500 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition cursor-pointer"
+                        >
+                          {isSubPage ? 'Use Main' : 'Remove'}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-gray-400">
+                      JPG, PNG, WebP up to 10MB
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="file"
+                  ref={drawerFileInputRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleDrawerAvatarUpload}
+                />
               </div>
 
               {/* Header & Avatar Size Slider */}

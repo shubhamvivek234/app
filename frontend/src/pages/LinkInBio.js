@@ -254,9 +254,8 @@ export default function LinkInBio() {
             setIsPublished(Boolean(d.is_published));
           }
 
-          if (d.theme) {
-            setTheme((prev) => ({ ...prev, ...d.theme }));
-          }
+          const rootTheme = d.theme ? { ...THEME_PRESETS[0], ...d.theme } : THEME_PRESETS[0];
+          const homeBlocks = Array.isArray(d.blocks) ? d.blocks : [];
 
           let initialPages = [];
           if (Array.isArray(d.pages) && d.pages.length > 0) {
@@ -264,6 +263,8 @@ export default function LinkInBio() {
               ...p,
               blocks: Array.isArray(p.blocks) ? p.blocks : [],
               description: p.description || '',
+              avatar_url: p.avatar_url || '',
+              theme: p.theme ? { ...rootTheme, ...p.theme } : { ...rootTheme },
             }));
             const hasHome = initialPages.some((p) => p.id === 'home');
             if (!hasHome) {
@@ -272,8 +273,21 @@ export default function LinkInBio() {
                 title: d.title || 'Home',
                 slug: 'home',
                 description: d.bio || '',
-                blocks: Array.isArray(d.blocks) ? d.blocks : [],
+                avatar_url: d.avatar_url || '',
+                theme: { ...rootTheme },
+                blocks: homeBlocks,
               });
+            } else {
+              initialPages = initialPages.map((p) =>
+                p.id === 'home'
+                  ? {
+                      ...p,
+                      theme: p.theme ? { ...rootTheme, ...p.theme } : { ...rootTheme },
+                      avatar_url: p.avatar_url || d.avatar_url || '',
+                      blocks: (p.blocks && p.blocks.length > 0) ? p.blocks : homeBlocks,
+                    }
+                  : p
+              );
             }
           } else {
             initialPages = [
@@ -282,15 +296,19 @@ export default function LinkInBio() {
                 title: d.title || 'Home',
                 slug: 'home',
                 description: d.bio || '',
-                blocks: Array.isArray(d.blocks) ? d.blocks : [],
+                avatar_url: d.avatar_url || '',
+                theme: { ...rootTheme },
+                blocks: homeBlocks,
               },
             ];
           }
           setPages(initialPages);
           const initialActive = d.active_page_id || 'home';
           const activePageObj = initialPages.find((p) => p.id === initialActive) || initialPages[0];
-          setActivePageId(activePageObj ? activePageObj.id : 'home');
+          const currentId = activePageObj ? activePageObj.id : 'home';
+          setActivePageId(currentId);
           setBlocks(activePageObj && Array.isArray(activePageObj.blocks) ? activePageObj.blocks : []);
+          setTheme(activePageObj && activePageObj.theme ? { ...activePageObj.theme } : { ...rootTheme });
         }
       } catch (err) {
         console.error('Failed to load bio data:', err);
@@ -318,6 +336,24 @@ export default function LinkInBio() {
     return () => clearTimeout(timeout);
   }, [theme, blocks, pages, loading]);
 
+  // Synchronized theme updater: immediately applies to current page and local preview
+  const handleThemeChange = (updaterOrNewTheme) => {
+    setTheme((prevTheme) => {
+      const nextTheme =
+        typeof updaterOrNewTheme === 'function'
+          ? updaterOrNewTheme(prevTheme)
+          : updaterOrNewTheme;
+
+      setPages((prevPages) =>
+        prevPages.map((p) =>
+          p.id === activePageId ? { ...p, theme: nextTheme } : p
+        )
+      );
+
+      return nextTheme;
+    });
+  };
+
   // Atomic block state updater: guarantees current active page and blocks are in sync
   const updateCurrentPageBlocks = (updaterOrNewBlocks) => {
     setBlocks((prevBlocks) => {
@@ -334,6 +370,7 @@ export default function LinkInBio() {
             title: activePageId === 'home' ? 'Home' : 'Sub Page',
             slug: activePageId,
             description: '',
+            theme: { ...theme },
             blocks: nextBlocks,
           },
         ];
@@ -342,14 +379,17 @@ export default function LinkInBio() {
     });
   };
 
-  // Page Management Handlers
+  // Page Management Handlers with strict state and theme isolation
   const handleSelectPage = (pageId) => {
     if (pageId === activePageId) return;
     setPages((prev) => {
-      // Commit active blocks to current page in pages
-      const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
+      // Commit active blocks and theme to current page before switching
+      const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks, theme } : p));
       const targetPage = updated.find((p) => p.id === pageId);
+      const homePage = updated.find((p) => p.id === 'home');
       setBlocks(targetPage && Array.isArray(targetPage.blocks) ? targetPage.blocks : []);
+      const targetTheme = targetPage?.theme || homePage?.theme || THEME_PRESETS[0];
+      setTheme({ ...targetTheme });
       return updated;
     });
     setActivePageId(pageId);
@@ -359,19 +399,25 @@ export default function LinkInBio() {
     const cleanTitle = (pageTitle || '').trim();
     if (!cleanTitle) return;
     const cleanSlug = (slug || cleanTitle).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    const homePage = pages.find((p) => p.id === 'home');
+    const defaultPageTheme = homePage?.theme ? { ...homePage.theme } : { ...theme };
+
     const newPage = {
       id: `page_${Date.now()}`,
       title: cleanTitle,
       slug: cleanSlug,
       description: '',
+      avatar_url: '',
+      theme: defaultPageTheme,
       blocks: [],
     };
     setPages((prev) => {
-      const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
+      const updated = prev.map((p) => (p.id === activePageId ? { ...p, blocks, theme } : p));
       return [...updated, newPage];
     });
     setActivePageId(newPage.id);
     setBlocks([]);
+    setTheme(defaultPageTheme);
     toast.success(`Created sub-page "${cleanTitle}"`);
   };
 
@@ -386,6 +432,9 @@ export default function LinkInBio() {
         setActivePageId('home');
         const homePage = filtered.find((p) => p.id === 'home');
         setBlocks(homePage && Array.isArray(homePage.blocks) ? homePage.blocks : []);
+        if (homePage?.theme) {
+          setTheme({ ...homePage.theme });
+        }
       }
       return filtered;
     });
@@ -396,6 +445,7 @@ export default function LinkInBio() {
     if (activePageId === 'home') {
       if (field === 'title') setTitle(value);
       if (field === 'description' || field === 'bio') setBio(value);
+      if (field === 'avatar_url') setAvatarUrl(value);
       return;
     }
     setPages((prev) =>
@@ -414,16 +464,19 @@ export default function LinkInBio() {
     return handleSaveAll(null, `Saved "${pageLabel}" changes successfully!`);
   };
 
-  // Save changes to backend
+  // Save changes to backend with complete sub-page theme and avatar isolation
   const handleSaveAll = async (overrideState = null, customSuccessMsg = null) => {
     setSaving(true);
     try {
-      // Synchronize current active page blocks into updatedPages
-      const updatedPages = pages.map((p) => (p.id === activePageId ? { ...p, blocks } : p));
+      // Synchronize current active page blocks & theme into updatedPages
+      const updatedPages = pages.map((p) => (p.id === activePageId ? { ...p, blocks, theme } : p));
       const homeIdx = updatedPages.findIndex((p) => p.id === 'home');
       const homeBlocks = activePageId === 'home'
         ? blocks
         : (homeIdx !== -1 && Array.isArray(updatedPages[homeIdx].blocks) ? updatedPages[homeIdx].blocks : []);
+      const homeTheme = activePageId === 'home'
+        ? theme
+        : (homeIdx !== -1 && updatedPages[homeIdx].theme ? updatedPages[homeIdx].theme : theme);
 
       if (homeIdx !== -1) {
         updatedPages[homeIdx] = {
@@ -431,6 +484,8 @@ export default function LinkInBio() {
           title: title || 'Home',
           slug: 'home',
           description: bio || '',
+          avatar_url: avatarUrl || '',
+          theme: homeTheme,
           blocks: homeBlocks,
         };
       } else {
@@ -439,6 +494,8 @@ export default function LinkInBio() {
           title: title || 'Home',
           slug: 'home',
           description: bio || '',
+          avatar_url: avatarUrl || '',
+          theme: homeTheme,
           blocks: homeBlocks,
         });
       }
@@ -453,9 +510,18 @@ export default function LinkInBio() {
         avatar_url: avatarUrl || null,
         banner_url: bannerUrl || null,
         verified_badge: Boolean(verifiedBadge),
-        theme: overrideState?.theme || theme,
+        theme: overrideState?.theme || homeTheme,
         blocks: homeBlocks,
-        pages: updatedPages,
+        pages: updatedPages.map((p) => ({
+          id: p.id,
+          title: p.title || 'Page',
+          slug: p.slug || p.id,
+          description: p.description || '',
+          avatar_url: p.avatar_url || null,
+          theme: p.theme || homeTheme,
+          blocks: Array.isArray(p.blocks) ? p.blocks : [],
+          seo: p.seo || null,
+        })),
         active_page_id: activePageId || 'home',
         navigation_style: theme.navigation_style || 'pills',
         social_links: overrideState?.socialLinks || socialLinks || {},
@@ -655,6 +721,7 @@ export default function LinkInBio() {
   const isSubPage = activePageId !== 'home' && Boolean(activePageObj);
   const previewTitle = isSubPage && activePageObj?.title ? activePageObj.title : (title || 'Your Name');
   const previewBio = isSubPage ? (activePageObj?.description || activePageObj?.bio || '') : (bio || '');
+  const activePageAvatar = isSubPage ? (activePageObj?.avatar_url || avatarUrl) : avatarUrl;
   const avatarStyles = getProfileAvatarStyles(theme);
   const blockGapPx = getBlockSpacingPx(theme);
   const socialIconPx = getSocialIconSizePx(theme);
@@ -832,7 +899,7 @@ export default function LinkInBio() {
               socialLinks={socialLinks}
               setSocialLinks={setSocialLinks}
               theme={theme}
-              setTheme={setTheme}
+              setTheme={handleThemeChange}
               blocks={blocks}
               setBlocks={setBlocks}
               pages={pages}
@@ -953,8 +1020,8 @@ export default function LinkInBio() {
                           style={avatarStyles}
                           className="rounded-full p-[2px] bg-white/25 backdrop-blur-xl shadow-lg flex items-center justify-center overflow-hidden transition-all duration-300 mx-auto"
                         >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
+                          {activePageAvatar ? (
+                            <img src={activePageAvatar} alt="" className="w-full h-full object-cover rounded-full" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-2xl font-black text-white">
                               {previewTitle ? previewTitle[0] : 'U'}
@@ -989,8 +1056,8 @@ export default function LinkInBio() {
                           style={avatarStyles}
                           className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
                         >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          {activePageAvatar ? (
+                            <img src={activePageAvatar} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
                               {previewTitle ? previewTitle[0] : 'U'}
@@ -1025,8 +1092,8 @@ export default function LinkInBio() {
                           style={avatarStyles}
                           className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
                         >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          {activePageAvatar ? (
+                            <img src={activePageAvatar} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
                               {previewTitle ? previewTitle[0] : 'U'}
@@ -1061,8 +1128,8 @@ export default function LinkInBio() {
                           style={avatarStyles}
                           className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
                         >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          {activePageAvatar ? (
+                            <img src={activePageAvatar} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
                               {previewTitle ? previewTitle[0] : 'U'}
@@ -1115,8 +1182,8 @@ export default function LinkInBio() {
                           style={avatarStyles}
                           className="rounded-full overflow-hidden shrink-0 shadow-lg flex items-center justify-center"
                         >
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+                          {activePageAvatar ? (
+                            <img src={activePageAvatar} alt="" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 flex items-center justify-center text-xl font-black text-white">
                               {previewTitle ? previewTitle[0] : 'U'}
@@ -1333,7 +1400,24 @@ export default function LinkInBio() {
           <div className="w-80 md:w-84 shrink-0 h-full overflow-hidden flex flex-col border-l border-black/[0.06] dark:border-white/[0.08] apple-glass-panel relative z-20 shadow-xs">
             <BioInspectorDrawer
               theme={theme}
-              setTheme={setTheme}
+              setTheme={handleThemeChange}
+              avatarUrl={activePageAvatar}
+              onUploadAvatar={(url) => {
+                if (isSubPage) {
+                  handleUpdateSubPage('avatar_url', url);
+                } else {
+                  setAvatarUrl(url);
+                }
+              }}
+              onRemoveAvatar={() => {
+                if (isSubPage) {
+                  handleUpdateSubPage('avatar_url', '');
+                } else {
+                  setAvatarUrl('');
+                }
+              }}
+              isSubPage={isSubPage}
+              pageTitle={activePageObj?.title || 'Home'}
               socialLinks={socialLinks}
               setSocialLinks={setSocialLinks}
               pageSchedule={pageSchedule}
@@ -1349,7 +1433,7 @@ export default function LinkInBio() {
               onRedo={handleRedo}
               canUndo={historyIdx > 0}
               canRedo={historyIdx < history.length - 1}
-              onResetTheme={() => setTheme(THEME_PRESETS[0])}
+              onResetTheme={() => handleThemeChange(THEME_PRESETS[0])}
             />
           </div>
 

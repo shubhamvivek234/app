@@ -106,12 +106,18 @@ export default function PublicBioPage() {
     if (cleanHandle) fetchPage();
   }, [cleanHandle]);
 
-  // Load Google Font dynamically
+  // Load Google Font dynamically based on active page theme
   useEffect(() => {
-    if (data?.theme?.font_family) {
-      loadGoogleFont(data.theme.font_family);
+    if (!data) return;
+    const pgList = Array.isArray(data.pages) ? data.pages : [];
+    const curPg = pgList.find((p) => p.id === activePageId);
+    const activeFont = (activePageId !== 'home' && curPg?.theme?.font_family)
+      ? curPg.theme.font_family
+      : data.theme?.font_family;
+    if (activeFont) {
+      loadGoogleFont(activeFont);
     }
-  }, [data?.theme?.font_family]);
+  }, [data, activePageId]);
 
   // Sync document title on page/data change
   useEffect(() => {
@@ -245,13 +251,13 @@ export default function PublicBioPage() {
     );
   }
 
-  const theme = data.theme || {};
   const pages = (data.pages && data.pages.length > 0) ? data.pages : [];
-
   const currentPage = pages.find((p) => p.id === activePageId);
   const isSubPage = activePageId !== 'home' && Boolean(currentPage);
+  const theme = (isSubPage && currentPage?.theme) ? { ...data.theme, ...currentPage.theme } : (data.theme || {});
   const displayTitle = (isSubPage && currentPage?.title) ? currentPage.title : (data.title || `@${data.handle}`);
   const displayBio = isSubPage ? (currentPage?.description || '') : (data.bio || '');
+  const displayAvatar = (isSubPage && currentPage?.avatar_url) ? currentPage.avatar_url : (data.avatar_url || '');
 
   const rawPageBlocks = isSubPage ? (currentPage?.blocks || []) : (currentPage?.blocks || data.blocks || []);
   const blocks = (rawPageBlocks || []).filter((b) => b.active !== false);
@@ -357,8 +363,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -394,8 +400,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -431,8 +437,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -468,8 +474,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -524,8 +530,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/5 shadow-md"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -542,8 +548,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -579,8 +585,8 @@ export default function PublicBioPage() {
               style={avatarStyles}
               className="rounded-2xl overflow-hidden flex items-center justify-center shrink-0 bg-black/10"
             >
-              {data.avatar_url ? (
-                <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+              {displayAvatar ? (
+                <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-2xl font-extrabold uppercase" style={{ color: theme.text_color }}>
                   {displayTitle ? displayTitle[0] : 'U'}
@@ -614,8 +620,8 @@ export default function PublicBioPage() {
           <div className="w-full text-center space-y-2 pt-2">
             <div className="flex items-center justify-center gap-2">
               <div className="w-8 h-8 rounded-full border border-black/15 dark:border-white/20 overflow-hidden shrink-0">
-                {data.avatar_url ? (
-                  <img src={data.avatar_url} alt={displayTitle} className="w-full h-full object-cover" />
+                {displayAvatar ? (
+                  <img src={displayAvatar} alt={displayTitle} className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-xs font-black" style={{ color: theme.text_color }}>
                     {displayTitle ? displayTitle[0] : 'U'}

@@ -8,11 +8,13 @@ import csv
 import io
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUser, DB
@@ -120,6 +122,8 @@ class BioSubPage(BaseModel):
     slug: str
     title: str
     description: str = ""
+    avatar_url: str | None = None
+    theme: BioTheme | None = None
     blocks: list[BioBlockItem] = Field(default_factory=list)
     seo: SeoConfig | None = None
 
@@ -326,6 +330,48 @@ async def get_my_bio_page(
         "total_clicks": doc.get("total_clicks", 0),
         "page_url": f"https://www.unravler.com/@{doc['handle']}",
     }
+
+
+@router.post("/bio-pages/avatar")
+async def upload_bio_avatar(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = None,
+):
+    """Upload a profile avatar / display picture for Smart Bio."""
+    from utils.storage import upload_file_async
+
+    user_id = current_user["user_id"]
+    max_avatar_bytes = 10 * 1024 * 1024  # 10MB limit
+
+    content_type = file.content_type or "application/octet-stream"
+    original_name = Path(file.filename or "avatar.png").name
+    ext = Path(original_name).suffix.lower()
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif"}
+    if not (content_type.startswith("image/") or ext in valid_extensions):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only image files (JPEG, PNG, WebP, GIF, SVG, AVIF) are supported for bio avatars.",
+        )
+
+    content = await file.read()
+    if len(content) > max_avatar_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Avatar image exceeds maximum allowed size of 10MB.",
+        )
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
+
+    safe_ext = ext if ext in valid_extensions else ".png"
+    safe_filename = f"avatar_{uuid.uuid4().hex[:12]}{safe_ext}"
+    storage_folder = f"bio/avatars/{user_id}"
+
+    url = await upload_file_async(content, safe_filename, content_type, storage_folder)
+    return {"url": url, "filename": safe_filename}
 
 
 @router.put("/bio-pages/mine")
