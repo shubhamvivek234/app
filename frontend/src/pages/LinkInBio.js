@@ -32,6 +32,7 @@ import {
   FaTimes,
   FaPlus,
   FaFolder,
+  FaCreditCard,
   FaChevronDown,
   FaChevronUp,
   FaBolt,
@@ -1348,15 +1349,20 @@ export default function LinkInBio() {
                                       color: cardObj.style.color,
                                     }}
                                   >
-                                    {block.is_featured ? '⚡' : block.type === 'video' ? '▶' : block.type === 'newsletter' ? '✉️' : '🔗'}
+                                    {block.is_featured ? '⚡' : block.type === 'payment_link' ? '💳' : block.type === 'video' ? '▶' : block.type === 'newsletter' || block.type === 'lead_capture' ? '✉️' : '🔗'}
                                   </div>
                                 )}
                                 <div className="min-w-0">
-                                  <div className="text-sm font-bold truncate" style={{ color: cardObj.style.color }}>
-                                    {block.title || block.headline || 'View Link'}
+                                  <div className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: cardObj.style.color }}>
+                                    <span>{block.title || block.headline || 'View Link'}</span>
+                                    {block.type === 'payment_link' && block.payment_amount !== undefined && (
+                                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
+                                        {block.payment_currency === 'USD' ? '$' : block.payment_currency === 'EUR' ? '€' : block.payment_currency === 'GBP' ? '£' : '₹'}{block.payment_amount}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-[11px] truncate opacity-70" style={{ color: cardObj.style.color }}>
-                                    {block.subtitle || block.url || ''}
+                                    {block.subtitle || (block.type === 'payment_link' ? (block.button_text || 'Instant Checkout') : block.url) || ''}
                                   </div>
                                 </div>
                               </div>
@@ -1467,10 +1473,11 @@ export default function LinkInBio() {
               <div className="grid grid-cols-2 gap-2.5">
                 {[
                   { id: 'link', label: 'Custom Link', desc: 'Direct URL with badge & subtitle', icon: FaExternalLinkAlt, color: 'text-blue-500' },
+                  { id: 'payment_link', label: 'Payment / Monetize', desc: 'Direct checkout, tip jar, or paid booking', icon: FaCreditCard, color: 'text-emerald-500' },
                   { id: 'folder', label: 'Folder / Group', desc: 'Group links into a sleek accordion', icon: FaFolder, color: 'text-amber-500' },
                   { id: 'media_card', label: 'Media Card', desc: 'Hero photo banner with subtitle & link', icon: FaImage, color: 'text-rose-500' },
                   { id: 'embed', label: 'YouTube / Spotify', desc: 'Embedded video & podcast player', icon: FaPlay, color: 'text-purple-500' },
-                  { id: 'feed_grid', label: 'Instagram Feed', desc: 'Live mirror of recent social posts', icon: FaLayerGroup, color: 'text-emerald-500' },
+                  { id: 'feed_grid', label: 'Instagram Feed', desc: 'Live mirror of recent social posts', icon: FaLayerGroup, color: 'text-sky-500' },
                 ].map((typeItem) => (
                   <button
                     key={typeItem.id}
@@ -1478,8 +1485,8 @@ export default function LinkInBio() {
                       const newBlock = {
                         id: `block_${Date.now()}`,
                         type: typeItem.id,
-                        title: `New ${typeItem.label}`,
-                        subtitle: '',
+                        title: typeItem.id === 'payment_link' ? 'Digital Guide / Consultation' : `New ${typeItem.label}`,
+                        subtitle: typeItem.id === 'payment_link' ? 'Instant access after checkout' : '',
                         url: '',
                         embed_url: '',
                         media_url: '',
@@ -1488,6 +1495,10 @@ export default function LinkInBio() {
                         active: true,
                         click_count: 0,
                         folder_items: typeItem.id === 'folder' ? [] : undefined,
+                        payment_amount: typeItem.id === 'payment_link' ? 499 : undefined,
+                        payment_currency: typeItem.id === 'payment_link' ? 'INR' : undefined,
+                        payment_provider: typeItem.id === 'payment_link' ? 'custom' : undefined,
+                        button_text: typeItem.id === 'payment_link' ? 'Pay Now' : undefined,
                         is_expanded: false,
                       };
                       updateCurrentPageBlocks((prev) => [...prev, newBlock]);

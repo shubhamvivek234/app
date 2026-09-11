@@ -1776,3 +1776,64 @@ export const generateLeadSummary = async (leadId) => {
   const response = await axios.post(`${API}/ai/lead-summary`, { lead_id: leadId }, { headers: getAuthHeaders() });
   return response.data;
 };
+
+// ── Cluster B: Broadcasts & Monetization Engine ──
+export const getBroadcasts = async (params = {}) => {
+  const response = await axios.get(`${API}/broadcasts`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const getBroadcastStats = async () => {
+  const response = await axios.get(`${API}/broadcasts/stats`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getBroadcastTemplates = async () => {
+  const response = await axios.get(`${API}/broadcasts/templates`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getBroadcast = async (broadcastId) => {
+  const response = await axios.get(`${API}/broadcasts/${broadcastId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createBroadcast = async (data) => {
+  const response = await axios.post(`${API}/broadcasts`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateBroadcast = async (broadcastId, data) => {
+  const response = await axios.patch(`${API}/broadcasts/${broadcastId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteBroadcast = async (broadcastId) => {
+  const response = await axios.delete(`${API}/broadcasts/${broadcastId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const sendBroadcast = async (broadcastId) => {
+  const response = await axios.post(`${API}/broadcasts/${broadcastId}/send`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const sendTestBroadcast = async (payload) => {
+  const response = await axios.post(`${API}/broadcasts/test-send`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const generateAiBroadcastDraft = async (payload) => {
+  const response = await axios.post(`${API}/ai/broadcast-draft`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const generateWhatsAppLinks = async (payload) => {
+  const response = await axios.post(`${API}/broadcasts/whatsapp-links`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const generateBioPaymentLink = async (payload) => {
+  const response = await axios.post(`${API}/bio-pages/payment-link`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};

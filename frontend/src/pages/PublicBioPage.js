@@ -875,6 +875,60 @@ export default function PublicBioPage() {
               );
             }
 
+            if (block.type === 'payment_link') {
+              const currencySymbol = block.payment_currency === 'USD' ? '$' : block.payment_currency === 'EUR' ? '€' : block.payment_currency === 'GBP' ? '£' : '₹';
+              const priceText = block.payment_amount !== undefined && block.payment_amount !== null && Number(block.payment_amount) > 0
+                ? `${currencySymbol}${block.payment_amount}`
+                : '';
+              const ctaText = block.button_text || (priceText ? `Pay ${priceText}` : 'Instant Checkout');
+
+              return (
+                <div
+                  key={block.id}
+                  style={cardObj.style}
+                  className={`w-full p-4 space-y-3 text-left overflow-hidden transition-all ${cardObj.className}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {block.media_url ? (
+                        <img src={block.media_url} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0 shadow-xs" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl shrink-0 font-black">
+                          💳
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm truncate" style={{ color: cardObj.style.color }}>
+                            {block.title || 'Digital Product / Service'}
+                          </span>
+                          {priceText && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white shadow-xs shrink-0">
+                              {priceText}
+                            </span>
+                          )}
+                        </div>
+                        {block.subtitle && (
+                          <p className="text-xs opacity-75 mt-0.5 leading-relaxed" style={{ color: cardObj.style.color }}>
+                            {block.subtitle}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleLinkClick(block)}
+                    className="w-full py-2.5 px-4 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    <span>{ctaText}</span>
+                    <FaExternalLinkAlt className="text-[10px] opacity-80" />
+                  </button>
+                </div>
+              );
+            }
+
             if (block.type === 'text_block') {
               return (
                 <div

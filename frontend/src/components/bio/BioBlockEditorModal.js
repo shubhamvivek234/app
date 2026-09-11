@@ -94,6 +94,10 @@ export default function BioBlockEditorModal({
     text_align: block?.text_align || 'left',
     size: block?.size || 'large',
     tag: block?.tag || '',
+    payment_amount: block?.payment_amount ?? 499,
+    payment_currency: block?.payment_currency || 'INR',
+    payment_provider: block?.payment_provider || 'custom',
+    button_text: block?.button_text || 'Pay Now',
   }));
 
   const [activeMediaTab, setActiveMediaTab] = useState(() => block?.media_type || (initialMediaUrl ? 'image' : 'image'));
@@ -113,6 +117,10 @@ export default function BioBlockEditorModal({
         text_align: block?.text_align || 'left',
         size: block?.size || 'large',
         tag: block?.tag || '',
+        payment_amount: block?.payment_amount ?? 499,
+        payment_currency: block?.payment_currency || 'INR',
+        payment_provider: block?.payment_provider || 'custom',
+        button_text: block?.button_text || 'Pay Now',
       });
       setActiveMediaTab(block?.media_type || (mediaUrl ? 'image' : 'image'));
       setImageError(false);
@@ -233,8 +241,83 @@ export default function BioBlockEditorModal({
                 <option value="embed" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Video / Spotify Embed</option>
                 <option value="feed_grid" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Live Instagram Feed Grid</option>
                 <option value="lead_capture" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Newsletter Lead Capture</option>
+                <option value="payment_link" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">💰 Payment Link / Monetization</option>
               </select>
             </div>
+
+            {/* Payment & Monetization Setup Card */}
+            {formData.type === 'payment_link' && (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/[0.07] border border-emerald-500/20 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
+                  <FaCreditCard /> Monetization & Payment Setup
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Price / Amount
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={formData.payment_amount ?? ''}
+                      onChange={(e) => setFormData({ ...formData, payment_amount: parseFloat(e.target.value) || 0 })}
+                      placeholder="499"
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Currency
+                    </label>
+                    <select
+                      value={formData.payment_currency || 'INR'}
+                      onChange={(e) => setFormData({ ...formData, payment_currency: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="INR">INR (₹)</option>
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Provider Preset
+                    </label>
+                    <select
+                      value={formData.payment_provider || 'custom'}
+                      onChange={(e) => setFormData({ ...formData, payment_provider: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="custom">Custom Checkout Link</option>
+                      <option value="razorpay">Razorpay Link</option>
+                      <option value="stripe">Stripe Link</option>
+                      <option value="upi">UPI ID / Handle</option>
+                      <option value="paypal">PayPal.me</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Button CTA Text
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.button_text || ''}
+                      onChange={(e) => setFormData({ ...formData, button_text: e.target.value })}
+                      placeholder={`Pay ${formData.payment_currency === 'USD' ? '$' : '₹'}${formData.payment_amount || 0}`}
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Folder Sub-Links Manager */}
             {formData.type === 'folder' && (

@@ -62,6 +62,7 @@ import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
 import ViralStudio from '@/pages/ViralStudio';
 import Campaigns from '@/pages/Campaigns';
 import Audience from '@/pages/Audience';
+import Broadcast from '@/pages/Broadcast';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -505,6 +506,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <Audience />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/broadcast"
+                element={
+                  <PrivateRoute>
+                    <Broadcast />
                   </PrivateRoute>
                 }
               />
