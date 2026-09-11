@@ -97,6 +97,44 @@ const OAuthCallback = () => {
         return;
       }
 
+      if (searchParams.get('canva_connected') === 'true') {
+        const sessionId = searchParams.get('session_id');
+        const expiresAt = searchParams.get('expires_at');
+        setStatus('success');
+        setMessage('Canva connected successfully! Closing window…');
+        const payload = {
+          type: 'canva-import-connected',
+          session_id: sessionId,
+          expires_at: expiresAt,
+        };
+        broadcastOAuthResult(payload);
+        if (window.opener) {
+          try {
+            window.opener.postMessage(payload, '*');
+          } catch (_) {}
+        }
+        setTimeout(() => window.close(), 600);
+        return;
+      }
+
+      if (searchParams.get('canva_error')) {
+        const canvaErr = searchParams.get('canva_error');
+        setStatus('error');
+        setMessage(canvaErr || 'Canva connection failed.');
+        const payload = {
+          type: 'canva-import-error',
+          error: canvaErr || 'Canva connection failed',
+        };
+        broadcastOAuthResult(payload);
+        if (window.opener) {
+          try {
+            window.opener.postMessage(payload, '*');
+          } catch (_) {}
+        }
+        setTimeout(() => window.close(), 2500);
+        return;
+      }
+
       // Backend-redirect flow: backend already processed the OAuth and redirected here
       if (success === 'true') {
         setStatus('success');
@@ -228,7 +266,14 @@ const OAuthCallback = () => {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Successfully Connected!</h2>
-            <p className="text-slate-600">{message}</p>
+            <p className="text-slate-600 mb-4">{message}</p>
+            <button
+              type="button"
+              onClick={() => window.close()}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
+            >
+              Close this window
+            </button>
           </>
         )}
 
@@ -240,7 +285,14 @@ const OAuthCallback = () => {
               </svg>
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Connection Failed</h2>
-            <p className="text-slate-600">{message}</p>
+            <p className="text-slate-600 mb-4">{message}</p>
+            <button
+              type="button"
+              onClick={() => window.close()}
+              className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-300 transition"
+            >
+              Close Window
+            </button>
           </>
         )}
       </div>

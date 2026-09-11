@@ -432,9 +432,7 @@ const PlatformEditor = ({
   }, [platform, poll, pollDialogOpen]);
 
   useEffect(() => {
-    const handleCanvaMessage = (event) => {
-      if (event.origin !== window.location.origin) return;
-      const payload = event.data;
+    const handleCanvaPayload = (payload) => {
       if (!payload || typeof payload !== 'object') return;
       if (payload.type === 'canva-import-connected' && payload.session_id) {
         setCanvaSessionId(payload.session_id);
@@ -443,14 +441,38 @@ const PlatformEditor = ({
         setCanvaQuery('');
         setCanvaDesigns([]);
         toast.success('Canva connected');
+        if (canvaPopupRef.current && !canvaPopupRef.current.closed) {
+          try { canvaPopupRef.current.close(); } catch (_) {}
+        }
       }
       if (payload.type === 'canva-import-error') {
         toast.error(payload.error || 'Canva import failed');
+        if (canvaPopupRef.current && !canvaPopupRef.current.closed) {
+          try { canvaPopupRef.current.close(); } catch (_) {}
+        }
       }
     };
 
+    const handleCanvaMessage = (event) => {
+      const allowedOrigins = [
+        window.location.origin,
+        'https://unravler.com',
+        'https://www.unravler.com',
+        'https://api.unravler.com',
+      ];
+      if (!allowedOrigins.includes(event.origin)) return;
+      handleCanvaPayload(event.data);
+    };
+
+    const unlistenOAuth = listenForOAuthResult((data) => {
+      handleCanvaPayload(data);
+    });
+
     window.addEventListener('message', handleCanvaMessage);
-    return () => window.removeEventListener('message', handleCanvaMessage);
+    return () => {
+      window.removeEventListener('message', handleCanvaMessage);
+      unlistenOAuth();
+    };
   }, []);
 
   useEffect(() => {

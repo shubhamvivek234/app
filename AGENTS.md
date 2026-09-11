@@ -9,11 +9,12 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Notification Logo & Real-time State Transformation:
-  - Fixed notification icon remaining static when unread: BellRingIcon transforms into a solid filled bell (`fill="currentColor"`) with active acoustic sound waves and periodic gentle chime loop.
-  - Button switches from neutral gray to an active luminous amber pod (`bg-amber-50/90 text-amber-500 ring-1 ring-amber-400/50`) with an expanding `animate-ping` radar beacon behind the red badge.
-  - Added browser tab title dynamic alerting (`(${unreadCount}) Unravler`), real-time `visibilitychange`/`focus` sync, and `unravler:notification_refresh` event trigger.
-  - Verified with clean frontend production build (`npm run build`).
+- Canva OAuth Blank Callback Remediation:
+  - Fixed blank screen upon Canva OAuth redirect (`/api/media-sources/canva/callback`): switched callback to redirect directly to `{frontend_base}/oauth/callback` with originating frontend resolution.
+  - Implemented multi-channel cross-tab syncing in `OAuthCallback.js` and `PlatformEditor.js` (`BroadcastChannel`, `localStorage`, `postMessage`).
+  - Added manual "Close Window" fallback to prevent stuck popup if browser blocks `window.close()`.
+  - Sanitized Canva designs API params (`limit`, `query`, `continuation`) and robust timestamp parsing.
+  - Verified with 7 passing tests in `tests/test_media_sources_route.py` and clean frontend production build.
 
 ## Active Work
 Currently implementing: None

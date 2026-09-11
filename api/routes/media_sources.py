@@ -9,11 +9,11 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from api.deps import CacheRedis, CurrentUser, DB, QueueRedis, require_permission
 from api.limiter import limiter
@@ -59,14 +59,92 @@ _CANVA_STATE_TTL_SECONDS = 900
 _CANVA_SESSION_TTL_SECONDS = 14_400
 _CANVA_SCOPES = "design:meta:read design:content:read"
 _SUCCESS_POPUP_HTML = """<!doctype html>
-<html><body><script>
-  (function() {
-    if (window.opener) {
-      window.opener.postMessage(%s, %s);
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canva Connection — Unravler</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 16px;
     }
-    window.close();
-  })();
-</script></body></html>"""
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .icon-box {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: #ecfdf5;
+      color: #10b981;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .icon-box svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2.5; }
+    h1 { font-size: 20px; font-weight: 700; margin: 0 0 8px; }
+    p { font-size: 14px; color: #64748b; margin: 0 0 24px; line-height: 1.5; }
+    button {
+      background: #6366f1;
+      color: #ffffff;
+      border: none;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    button:hover { background: #4f46e5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-box">
+      <svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+    </div>
+    <h1>Canva Connected</h1>
+    <p>Your Canva account has been linked successfully. Returning to Unravler…</p>
+    <button onclick="window.close()">Close Window</button>
+  </div>
+  <script>
+    (function() {
+      var payload = %s;
+      var targetOrigin = %s;
+      if (window.opener) {
+        try { window.opener.postMessage(payload, '*'); } catch(e) {}
+        if (targetOrigin && targetOrigin !== '*') {
+          try { window.opener.postMessage(payload, targetOrigin); } catch(e) {}
+        }
+      }
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          var ch = new BroadcastChannel('oauth-status');
+          ch.postMessage(payload);
+          ch.close();
+        }
+      } catch(e) {}
+      setTimeout(function() { window.close(); }, 600);
+    })();
+  </script>
+</body>
+</html>"""
 
 
 def _utc_now() -> datetime:
@@ -243,7 +321,7 @@ async def _handle_canva_callback(
     code: str,
     state: str,
     cache_redis: CacheRedis,
-) -> CanvaCallbackResponse:
+) -> tuple[CanvaCallbackResponse, str | None]:
     raw_state = await safe_get(cache_redis, f"canva_import_state:{state}", default=None, feature="Canva state read")
     if not raw_state:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired Canva state")
@@ -258,7 +336,8 @@ async def _handle_canva_callback(
         verifier=state_data["code_verifier"],
         redirect_uri=state_data["redirect_uri"],
     )
-    return await _store_canva_session(cache_redis, user_id=state_data["user_id"], tokens=tokens)
+    callback_response = await _store_canva_session(cache_redis, user_id=state_data["user_id"], tokens=tokens)
+    return callback_response, state_data.get("frontend_base")
 
 
 @router.get(
@@ -469,7 +548,8 @@ async def canva_import_callback(
     current_user: CurrentUser,
     cache_redis: CacheRedis,
 ) -> CanvaCallbackResponse:
-    return await _handle_canva_callback(code=payload.code, state=payload.state, cache_redis=cache_redis)
+    callback_response, _ = await _handle_canva_callback(code=payload.code, state=payload.state, cache_redis=cache_redis)
+    return callback_response
 
 
 @router.get("/media-sources/canva/callback", include_in_schema=False)
@@ -480,26 +560,54 @@ async def canva_import_callback_redirect(
     state: str | None = None,
     error: str | None = None,
 ):
-    frontend_base = _resolve_frontend_base(request)
-    target_origin = json.dumps(frontend_base)
+    state_frontend_base = None
+    if state:
+        peeked = await safe_get(cache_redis, f"canva_import_state:{state}", default=None, feature="Canva state peek")
+        if peeked:
+            try:
+                state_frontend_base = json.loads(peeked).get("frontend_base")
+            except Exception:
+                pass
 
-    if error or not code or not state:
-        payload = json.dumps({"type": "canva-import-error", "error": error or "missing_params"})
-        return HTMLResponse(_SUCCESS_POPUP_HTML % (payload, target_origin), status_code=200)
+    frontend_base = (state_frontend_base or _resolve_frontend_base(request)).rstrip("/")
+
+    if error:
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?canva_error={quote(str(error))}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?canva_error=missing_params",
+            status_code=status.HTTP_302_FOUND,
+        )
 
     try:
-        response = await _handle_canva_callback(code=code, state=state, cache_redis=cache_redis)
-        payload = json.dumps(
+        response, resolved_frontend_base = await _handle_canva_callback(code=code, state=state, cache_redis=cache_redis)
+        target_frontend = (resolved_frontend_base or frontend_base).rstrip("/")
+        query = urlencode(
             {
-                "type": "canva-import-connected",
+                "canva_connected": "true",
                 "session_id": response.session_id,
                 "expires_at": response.expires_at.isoformat(),
             }
         )
-        return HTMLResponse(_SUCCESS_POPUP_HTML % (payload, target_origin), status_code=200)
+        return RedirectResponse(
+            url=f"{target_frontend}/oauth/callback?{query}",
+            status_code=status.HTTP_302_FOUND,
+        )
     except HTTPException as exc:
-        payload = json.dumps({"type": "canva-import-error", "error": exc.detail})
-        return HTMLResponse(_SUCCESS_POPUP_HTML % (payload, target_origin), status_code=200)
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?canva_error={quote(str(exc.detail))}",
+            status_code=status.HTTP_302_FOUND,
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error in Canva callback redirect: %s", exc)
+        return RedirectResponse(
+            url=f"{frontend_base}/oauth/callback?canva_error={quote('Connection failed')}",
+            status_code=status.HTTP_302_FOUND,
+        )
 
 
 @router.get(
@@ -517,21 +625,39 @@ async def list_canva_designs(
     session = await _load_canva_session(cache_redis, session_id)
     if session["user_id"] != current_user["user_id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Canva session does not belong to this user")
+
+    params = {"limit": 25}
+    if query and query.strip():
+        params["query"] = query.strip()
+    if continuation and continuation.strip():
+        params["continuation"] = continuation.strip()
+
     payload = await _canva_api_get(
         session,
         _CANVA_DESIGNS_URL,
-        params={"query": query, "continuation": continuation, "limit": 25},
+        params=params,
     )
-    designs = [
-        CanvaDesignResponse(
-            id=item["id"],
-            title=item.get("title"),
-            thumbnail_url=((item.get("thumbnail") or {}).get("url")),
-            updated_at=datetime.fromtimestamp(item["updated_at"], tz=timezone.utc) if item.get("updated_at") else None,
-            edit_url=((item.get("urls") or {}).get("edit_url")),
+    designs = []
+    for item in payload.get("items", []):
+        updated_at = None
+        raw_updated = item.get("updated_at")
+        if isinstance(raw_updated, (int, float)):
+            updated_at = datetime.fromtimestamp(raw_updated, tz=timezone.utc)
+        elif isinstance(raw_updated, str):
+            try:
+                updated_at = datetime.fromisoformat(raw_updated.replace("Z", "+00:00"))
+            except Exception:
+                updated_at = None
+
+        designs.append(
+            CanvaDesignResponse(
+                id=item["id"],
+                title=item.get("title"),
+                thumbnail_url=((item.get("thumbnail") or {}).get("url")),
+                updated_at=updated_at,
+                edit_url=((item.get("urls") or {}).get("edit_url")),
+            )
         )
-        for item in payload.get("items", [])
-    ]
     return CanvaDesignListResponse(designs=designs, continuation=payload.get("continuation"))
 
 

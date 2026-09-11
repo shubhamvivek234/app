@@ -221,6 +221,89 @@ async def test_canva_callback_exchanges_code_and_stores_short_lived_session(monk
     assert stored_keys
 
 
+@pytest.mark.asyncio
+async def test_canva_callback_redirect_redirects_to_originating_frontend_callback(monkeypatch):
+    cache_redis = _FakeRedis()
+    state_payload = {
+        "user_id": "user-1",
+        "code_verifier": "verifier",
+        "redirect_uri": "https://api.unravler.com/api/media-sources/canva/callback",
+        "frontend_base": "https://unravler.com",
+    }
+    cache_redis.store["canva_import_state:state-xyz"] = json.dumps(state_payload)
+
+    async def fake_exchange_canva_code(*, code, verifier, redirect_uri):
+        return {"access_token": "access", "refresh_token": "refresh", "expires_in": 3600}
+
+    monkeypatch.setattr(media_sources_route, "_exchange_canva_code", fake_exchange_canva_code)
+
+    response = await media_sources_route.canva_import_callback_redirect(
+        request=SimpleNamespace(headers={}),
+        cache_redis=cache_redis,
+        code="auth-code",
+        state="state-xyz",
+    )
+
+    assert response.status_code == 302
+    redirect_url = response.headers["location"]
+    assert redirect_url.startswith("https://unravler.com/oauth/callback?")
+    assert "canva_connected=true" in redirect_url
+    assert "session_id=" in redirect_url
+
+
+@pytest.mark.asyncio
+async def test_canva_callback_redirect_handles_error(monkeypatch):
+    cache_redis = _FakeRedis()
+    response = await media_sources_route.canva_import_callback_redirect(
+        request=SimpleNamespace(headers={"origin": "https://unravler.com"}),
+        cache_redis=cache_redis,
+        error="access_denied",
+    )
+    assert response.status_code == 302
+    assert "canva_error=access_denied" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_list_canva_designs_omits_none_and_empty_params(monkeypatch):
+    cache_redis = _FakeRedis()
+    cache_redis.store["canva_import_session:sess-1"] = json.dumps({
+        "user_id": "user-1",
+        "access_token": "token-xyz",
+    })
+
+    captured_params = None
+
+    async def fake_canva_api_get(_session, _url, *, params=None):
+        nonlocal captured_params
+        captured_params = params
+        return {
+            "items": [
+                {
+                    "id": "design-1",
+                    "title": "Post",
+                    "thumbnail": {"url": "https://example.com/thumb.jpg"},
+                    "updated_at": 1710000000,
+                }
+            ],
+            "continuation": "next-token",
+        }
+
+    monkeypatch.setattr(media_sources_route, "_canva_api_get", fake_canva_api_get)
+
+    result = await media_sources_route.list_canva_designs(
+        current_user={"user_id": "user-1"},
+        cache_redis=cache_redis,
+        session_id="sess-1",
+        query="",
+        continuation=None,
+    )
+
+    assert captured_params == {"limit": 25}
+    assert len(result.designs) == 1
+    assert result.designs[0].id == "design-1"
+    assert result.continuation == "next-token"
+
+
 def test_provider_url_allowlist_blocks_cross_provider_targets():
     assert_allowed_provider_url("dropbox", "https://www.dropbox.com/s/example/file.jpg?dl=1")
     with pytest.raises(ValueError):
