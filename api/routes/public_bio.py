@@ -5,12 +5,15 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from api.deps import DB
 from api.models.bio import (
+    BioFeedbackRequest,
     BioLeadSubscribeRequest,
+    BioPollVoteRequest,
     BioTrackRequest,
     PublicBioResponse,
     SeoConfig,
     ThemeConfig,
 )
+from api.routes.automations import dispatch_automation_event
 
 router = APIRouter(prefix="/public/bio", tags=["public-bio"])
 
@@ -62,6 +65,32 @@ async def get_public_bio_page(
     # Filter active blocks (respecting scheduling / expiration)
     raw_blocks = page.get("blocks", [])
     active_blocks = [b for b in raw_blocks if _is_block_active(b, now)]
+
+    # A/B Testing: Split traffic if variants are configured and enabled
+    active_variant_id = None
+    ab_testing_enabled = bool(page.get("ab_testing_enabled", False))
+    variants = page.get("variants", [])
+    active_variants = [v for v in variants if v.get("is_active", True)]
+
+    chosen_theme = page.get("theme") or {}
+    if ab_testing_enabled and active_variants:
+        import random
+        # Split between control and variant
+        roll = random.random() * 100
+        first_variant = active_variants[0]
+        weight = first_variant.get("weight", 50)
+        if roll < weight:
+            active_variant_id = first_variant.get("id")
+            variant_blocks = first_variant.get("blocks", [])
+            if variant_blocks:
+                active_blocks = [b for b in variant_blocks if _is_block_active(b, now)]
+            if first_variant.get("theme"):
+                chosen_theme = first_variant.get("theme")
+            # Increment variant view counter
+            await db.bio_pages.update_one(
+                {"_id": page["_id"], "variants.id": active_variant_id},
+                {"$inc": {"variants.$.views": 1}}
+            )
 
     # If page contains feed_grid block, hydrate published posts
     has_feed_grid = any(b.get("type") == "feed_grid" for b in active_blocks)
@@ -126,13 +155,15 @@ async def get_public_bio_page(
         bio=page.get("bio", ""),
         avatar_url=page.get("avatar_url", ""),
         verified_badge=page.get("verified_badge", False),
-        theme=ThemeConfig(**(page.get("theme") or {})),
+        theme=ThemeConfig(**chosen_theme),
         social_links=page.get("social_links", []),
         blocks=active_blocks,
         pages=sanitized_pages,
         active_page_id=page.get("active_page_id", "home"),
         feed_posts=feed_posts,
         seo=SeoConfig(**(page.get("seo") or {})),
+        active_variant_id=active_variant_id,
+        ab_testing_enabled=ab_testing_enabled,
     )
 
 
@@ -162,6 +193,19 @@ async def track_bio_interaction(
                 {"$inc": {"blocks.$.click_count": 1}}
             )
 
+        if body.variant_id:
+            await db.bio_pages.update_one(
+                {"_id": page["_id"], "variants.id": body.variant_id},
+                {"$inc": {"variants.$.clicks": 1}}
+            )
+
+    elif body.event_type == "conversion":
+        if body.variant_id:
+            await db.bio_pages.update_one(
+                {"_id": page["_id"], "variants.id": body.variant_id},
+                {"$inc": {"variants.$.conversions": 1}}
+            )
+
     # Log granular analytics
     user_agent = request.headers.get("user-agent", "")
     device = "mobile" if "mobile" in user_agent.lower() or "iphone" in user_agent.lower() or "android" in user_agent.lower() else "desktop"
@@ -174,11 +218,139 @@ async def track_bio_interaction(
         "block_id": body.block_id,
         "target_url": body.target_url,
         "referrer": body.referrer,
+        "variant_id": body.variant_id,
         "device": device,
         "timestamp": now,
     })
 
     return {"success": True}
+
+
+@router.post("/{handle}/poll/{block_id}")
+async def vote_bio_poll(
+    handle: str,
+    block_id: str,
+    body: BioPollVoteRequest,
+    db: DB,
+):
+    """Cast a vote in a Quick Poll block on the bio page and return updated live tally."""
+    cleaned_handle = handle.strip().lstrip("@").lower()
+    page = await db.bio_pages.find_one({"handle": cleaned_handle})
+    if not page:
+        raise HTTPException(status_code=404, detail="Bio page not found")
+
+    blocks = page.get("blocks", [])
+    target_block = next((b for b in blocks if b.get("id") == block_id and b.get("type") == "poll"), None)
+    if not target_block:
+        raise HTTPException(status_code=404, detail="Poll block not found on this bio page")
+
+    poll_options = target_block.get("poll_options", [])
+    valid_option = any(opt.get("id") == body.option_id for opt in poll_options)
+    if not valid_option:
+        raise HTTPException(status_code=400, detail="Invalid poll option ID")
+
+    # Increment votes
+    updated_options = []
+    total_votes = 0
+    for opt in poll_options:
+        votes = opt.get("votes", 0)
+        if opt.get("id") == body.option_id:
+            votes += 1
+        total_votes += votes
+        updated_options.append({
+            "id": opt.get("id"),
+            "text": opt.get("text", ""),
+            "votes": votes,
+        })
+
+    for opt in updated_options:
+        opt["percentage"] = round((opt["votes"] / total_votes * 100), 1) if total_votes > 0 else 0
+
+    await db.bio_pages.update_one(
+        {"_id": page["_id"], "blocks.id": block_id},
+        {"$set": {"blocks.$.poll_options": updated_options}}
+    )
+
+    now = datetime.now(timezone.utc)
+    await db.bio_analytics.insert_one({
+        "_id": ObjectId(),
+        "page_id": page["_id"],
+        "workspace_id": page["workspace_id"],
+        "event_type": "poll_vote",
+        "block_id": block_id,
+        "option_id": body.option_id,
+        "variant_id": body.variant_id,
+        "timestamp": now,
+    })
+
+    if body.variant_id:
+        await db.bio_pages.update_one(
+            {"_id": page["_id"], "variants.id": body.variant_id},
+            {"$inc": {"variants.$.conversions": 1}}
+        )
+
+    return {
+        "success": True,
+        "total_votes": total_votes,
+        "options": updated_options,
+    }
+
+
+@router.post("/{handle}/feedback")
+async def submit_bio_feedback(
+    handle: str,
+    body: BioFeedbackRequest,
+    db: DB,
+):
+    """Submit an NPS or star rating feedback on the bio page."""
+    cleaned_handle = handle.strip().lstrip("@").lower()
+    page = await db.bio_pages.find_one({"handle": cleaned_handle})
+    if not page:
+        raise HTTPException(status_code=404, detail="Bio page not found")
+
+    if body.score < 1 or body.score > 10:
+        raise HTTPException(status_code=400, detail="Score must be between 1 and 10")
+
+    now = datetime.now(timezone.utc)
+    workspace_id = page["workspace_id"]
+
+    await db.bio_analytics.insert_one({
+        "_id": ObjectId(),
+        "page_id": page["_id"],
+        "workspace_id": workspace_id,
+        "event_type": "nps_rating",
+        "score": body.score,
+        "feedback": (body.feedback or "").strip()[:500],
+        "block_id": body.block_id,
+        "variant_id": body.variant_id,
+        "timestamp": now,
+    })
+
+    if body.variant_id:
+        await db.bio_pages.update_one(
+            {"_id": page["_id"], "variants.id": body.variant_id},
+            {"$inc": {"variants.$.conversions": 1}}
+        )
+
+    # Reactive trigger for Automations Engine
+    try:
+        await dispatch_automation_event(
+            "feedback.received",
+            workspace_id,
+            {
+                "score": body.score,
+                "feedback": body.feedback,
+                "handle": handle,
+            },
+            db,
+        )
+    except Exception as exc:
+        pass
+
+    return {
+        "success": True,
+        "message": "Thank you for your rating and feedback!",
+    }
 
 
 @router.post("/{handle}/subscribe", status_code=status.HTTP_201_CREATED)
@@ -198,17 +370,57 @@ async def subscribe_to_bio_newsletter(
 
     workspace_id = page["workspace_id"]
     now = datetime.now(timezone.utc)
+    name = (body.name or "").strip()
+    phone = (body.phone or "").strip()
+    tag = body.tag or "subscriber"
 
     # Check if already subscribed
     existing = await db.workspace_leads.find_one({"workspace_id": workspace_id, "email": email})
     if not existing:
-        await db.workspace_leads.insert_one({
+        lead_doc = {
             "_id": ObjectId(),
             "workspace_id": workspace_id,
             "page_id": page["_id"],
             "email": email,
+            "name": name,
+            "phone": phone,
+            "tag": tag,
+            "source": "bio",
             "source_block_id": body.source_block_id,
             "created_at": now,
-        })
+            "updated_at": now,
+        }
+        await db.workspace_leads.insert_one(lead_doc)
+    else:
+        update_set: dict = {"updated_at": now}
+        if name and not existing.get("name"):
+            update_set["name"] = name
+        if phone and not existing.get("phone"):
+            update_set["phone"] = phone
+        await db.workspace_leads.update_one({"_id": existing["_id"]}, {"$set": update_set})
+
+    if body.variant_id:
+        await db.bio_pages.update_one(
+            {"_id": page["_id"], "variants.id": body.variant_id},
+            {"$inc": {"variants.$.conversions": 1}}
+        )
+
+    # Reactive trigger for Automations Engine (Cluster D)
+    try:
+        await dispatch_automation_event(
+            "lead.created",
+            workspace_id,
+            {
+                "email": email,
+                "name": name,
+                "phone": phone,
+                "tag": tag,
+                "source": "bio",
+                "handle": handle,
+            },
+            db,
+        )
+    except Exception as exc:
+        pass
 
     return {"success": True, "message": "Subscribed successfully!"}

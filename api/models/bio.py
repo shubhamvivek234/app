@@ -17,7 +17,7 @@ class PageSchedule(BaseModel):
 
 class BioBlockItem(BaseModel):
     id: str
-    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group", "payment_link"]
+    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group", "payment_link", "poll", "nps_rating"]
     title: str = ""
     subtitle: str = ""
     url: str = ""
@@ -42,6 +42,13 @@ class BioBlockItem(BaseModel):
     payment_provider: str = "custom"
     payment_type: str = "fixed"
     button_text: str = ""
+    poll_question: str = ""
+    poll_options: list[dict] = Field(default_factory=list)
+    rating_prompt: str = ""
+    rating_scale: int = 5
+    rating_type: str = "stars"
+    capture_fields: list[str] = Field(default_factory=lambda: ["email"])
+    lead_tag: str = "subscriber"
     limit: int = 6
     show_caption: bool = True
     active: bool = True
@@ -106,6 +113,18 @@ class BioSubPage(BaseModel):
     seo: SeoConfig | None = None
 
 
+class BioVariant(BaseModel):
+    id: str
+    name: str = "Variant B"
+    weight: int = 50
+    is_active: bool = True
+    blocks: list[BioBlockItem] = Field(default_factory=list)
+    theme: ThemeConfig | None = None
+    views: int = 0
+    clicks: int = 0
+    conversions: int = 0
+
+
 class BioPageUpdate(BaseModel):
     handle: str
     title: str
@@ -116,6 +135,8 @@ class BioPageUpdate(BaseModel):
     social_links: list[SocialLinkItem] = Field(default_factory=list)
     blocks: list[BioBlockItem] = Field(default_factory=list)
     pages: list[BioSubPage] = Field(default_factory=list)
+    variants: list[BioVariant] = Field(default_factory=list)
+    ab_testing_enabled: bool = False
     active_page_id: str = "home"
     navigation_style: str = "pills"
     custom_domain: str = ""
@@ -135,6 +156,9 @@ class BioPageResponse(BaseModel):
     theme: ThemeConfig
     social_links: list[SocialLinkItem]
     blocks: list[BioBlockItem]
+    pages: list[BioSubPage] = Field(default_factory=list)
+    variants: list[BioVariant] = Field(default_factory=list)
+    ab_testing_enabled: bool = False
     custom_domain: str
     seo: SeoConfig
     published: bool
@@ -158,15 +182,34 @@ class PublicBioResponse(BaseModel):
     active_page_id: str = "home"
     feed_posts: list[dict] = Field(default_factory=list)
     seo: SeoConfig
+    active_variant_id: str | None = None
+    ab_testing_enabled: bool = False
 
 
 class BioTrackRequest(BaseModel):
-    event_type: Literal["impression", "click"]
+    event_type: Literal["impression", "click", "conversion"]
     block_id: str | None = None
     target_url: str | None = None
     referrer: str | None = None
+    variant_id: str | None = None
 
 
 class BioLeadSubscribeRequest(BaseModel):
     email: str
+    name: str = ""
+    phone: str = ""
+    tag: str = "subscriber"
     source_block_id: str | None = None
+    variant_id: str | None = None
+
+
+class BioPollVoteRequest(BaseModel):
+    option_id: str
+    variant_id: str | None = None
+
+
+class BioFeedbackRequest(BaseModel):
+    score: int
+    feedback: str = ""
+    block_id: str | None = None
+    variant_id: str | None = None

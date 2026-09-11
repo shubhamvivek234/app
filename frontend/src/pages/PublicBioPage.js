@@ -5,6 +5,8 @@ import {
   trackBioLinkClick,
   trackBioInteraction,
   subscribeBioNewsletter,
+  submitBioPollVote,
+  submitBioFeedback,
 } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -28,6 +30,8 @@ import {
   FaChevronUp,
   FaChevronDown,
   FaClock,
+  FaStar,
+  FaRegStar,
 } from 'react-icons/fa';
 import {
   loadGoogleFont,
@@ -61,8 +65,15 @@ export default function PublicBioPage() {
 
   // Newsletter lead state
   const [emailInput, setEmailInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
   const [subscribing, setSubscribing] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
+
+  // Polls & Feedback state
+  const [pollState, setPollState] = useState({});
+  const [ratingState, setRatingState] = useState({});
+  const [hoverRating, setHoverRating] = useState({});
 
   const cleanHandle = (handle || '').replace(/^@/, '');
 
@@ -147,7 +158,7 @@ export default function PublicBioPage() {
     }
   };
 
-  const handleSubscribe = async (e, blockId) => {
+  const handleSubscribe = async (e, blockId, leadTag = 'subscriber') => {
     e.preventDefault();
     if (!emailInput || !emailInput.includes('@')) {
       toast.error('Please provide a valid email address');
@@ -155,14 +166,68 @@ export default function PublicBioPage() {
     }
     setSubscribing(true);
     try {
-      await subscribeBioNewsletter(cleanHandle, emailInput, blockId);
+      await subscribeBioNewsletter(cleanHandle, {
+        email: emailInput,
+        name: nameInput,
+        phone: phoneInput,
+        tag: leadTag,
+        source_block_id: blockId,
+        variant_id: data?.active_variant_id || null,
+      });
       setSubscribed(true);
       setEmailInput('');
+      setNameInput('');
+      setPhoneInput('');
       toast.success('Thank you for subscribing!');
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Failed to subscribe');
     } finally {
       setSubscribing(false);
+    }
+  };
+
+  const handleVotePoll = async (blockId, optionId) => {
+    try {
+      const res = await submitBioPollVote(cleanHandle, blockId, {
+        option_id: optionId,
+        variant_id: data?.active_variant_id || null,
+      });
+      if (res.success) {
+        setPollState((prev) => ({
+          ...prev,
+          [blockId]: {
+            voted: true,
+            selected: optionId,
+            options: res.options,
+            total_votes: res.total_votes,
+          },
+        }));
+        toast.success('Vote recorded!');
+      }
+    } catch (err) {
+      console.error('Failed to vote in poll:', err);
+      toast.error('Unable to record vote.');
+    }
+  };
+
+  const handleRateBio = async (blockId, score, feedbackText = '') => {
+    try {
+      const res = await submitBioFeedback(cleanHandle, {
+        score,
+        feedback: feedbackText,
+        block_id: blockId,
+        variant_id: data?.active_variant_id || null,
+      });
+      if (res.success) {
+        setRatingState((prev) => ({
+          ...prev,
+          [blockId]: { score, submitted: true, feedback: feedbackText },
+        }));
+        toast.success(res.message || 'Thank you for your rating!');
+      }
+    } catch (err) {
+      console.error('Failed to submit feedback:', err);
+      toast.error('Unable to submit rating.');
     }
   };
 
@@ -841,7 +906,7 @@ export default function PublicBioPage() {
                 <div
                   key={block.id}
                   style={cardObj.style}
-                  className={`w-full p-5 space-y-2.5 text-center ${cardObj.className}`}
+                  className={`w-full p-5 space-y-3 text-center ${cardObj.className}`}
                 >
                   <h3 className="text-sm font-black">{block.headline || 'Join Newsletter'}</h3>
                   {block.subheadline && (
@@ -853,23 +918,195 @@ export default function PublicBioPage() {
                       <FaCheckCircle /> You&apos;re subscribed!
                     </div>
                   ) : (
-                    <form onSubmit={(e) => handleSubscribe(e, block.id)} className="flex items-center gap-2 pt-1">
-                      <input
-                        type="email"
-                        required
-                        value={emailInput}
-                        onChange={(e) => setEmailInput(e.target.value)}
-                        placeholder="Enter your email"
-                        className="flex-1 px-3 py-2 text-xs bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <button
-                        type="submit"
-                        disabled={subscribing}
-                        className="px-4 py-2 text-xs font-black bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-xs transition-all active:scale-95 disabled:opacity-50 shrink-0"
-                      >
-                        {subscribing ? '...' : block.button_label || 'Subscribe'}
-                      </button>
+                    <form onSubmit={(e) => handleSubscribe(e, block.id, block.lead_tag || 'subscriber')} className="space-y-2 pt-1 text-left">
+                      {block.capture_fields?.name && (
+                        <input
+                          type="text"
+                          value={nameInput}
+                          onChange={(e) => setNameInput(e.target.value)}
+                          placeholder="Your Name (Optional)"
+                          className="w-full px-3 py-2 text-xs bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
+                      {block.capture_fields?.phone && (
+                        <input
+                          type="tel"
+                          value={phoneInput}
+                          onChange={(e) => setPhoneInput(e.target.value)}
+                          placeholder="Phone Number (Optional)"
+                          className="w-full px-3 py-2 text-xs bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500"
+                        />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="email"
+                          required
+                          value={emailInput}
+                          onChange={(e) => setEmailInput(e.target.value)}
+                          placeholder="Enter your email"
+                          className="flex-1 px-3 py-2 text-xs bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 rounded-xl outline-hidden focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={subscribing}
+                          className="px-4 py-2 text-xs font-black bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-xs transition-all active:scale-95 disabled:opacity-50 shrink-0"
+                        >
+                          {subscribing ? '...' : block.button_label || 'Subscribe'}
+                        </button>
+                      </div>
                     </form>
+                  )}
+                </div>
+              );
+            }
+
+            if (block.type === 'poll') {
+              const currentPoll = pollState[block.id] || {};
+              const rawOptions = currentPoll.options || block.poll_options || [];
+              const options = rawOptions.map((opt, idx) => {
+                if (typeof opt === 'string') return { id: `opt_${idx}`, text: opt, votes: 0 };
+                return {
+                  id: opt.id || `opt_${idx}`,
+                  text: opt.text || opt.label || `Option ${idx + 1}`,
+                  votes: opt.votes || opt.count || 0,
+                };
+              });
+              const totalVotes = currentPoll.total_votes ?? options.reduce((sum, o) => sum + (o.votes || 0), 0);
+              const hasVoted = Boolean(currentPoll.voted);
+
+              return (
+                <div
+                  key={block.id}
+                  style={cardObj.style}
+                  className={`w-full p-4.5 space-y-3 text-left ${cardObj.className}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black tracking-wide flex items-center gap-1.5" style={{ color: cardObj.style.color }}>
+                      <FaBolt className="text-amber-500 text-[11px]" />
+                      {block.poll_question || block.title || 'Quick Poll'}
+                    </span>
+                    {totalVotes > 0 && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/10 dark:bg-white/10 opacity-70">
+                        {totalVotes} {totalVotes === 1 ? 'vote' : 'votes'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-0.5">
+                    {options.map((option) => {
+                      const optVotes = option.votes || 0;
+                      const pct = totalVotes > 0 ? Math.round((optVotes / totalVotes) * 100) : 0;
+                      const isSelected = currentPoll.selected === option.id;
+
+                      if (hasVoted) {
+                        return (
+                          <div
+                            key={option.id}
+                            className={`relative overflow-hidden rounded-xl p-3 border transition-all text-xs font-semibold ${
+                              isSelected
+                                ? 'border-indigo-500 bg-indigo-500/10'
+                                : 'border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5'
+                            }`}
+                          >
+                            <div
+                              className="absolute inset-y-0 left-0 bg-indigo-500/20 dark:bg-indigo-500/30 transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                            <div className="relative flex items-center justify-between z-10">
+                              <span className="flex items-center gap-1.5 truncate">
+                                {isSelected && <FaCheckCircle className="text-indigo-500 text-xs shrink-0" />}
+                                <span className={isSelected ? 'font-bold' : ''}>{option.text}</span>
+                              </span>
+                              <span className="text-[11px] font-bold opacity-80 shrink-0 ml-2">
+                                {pct}% ({optVotes})
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => handleVotePoll(block.id, option.id)}
+                          className="w-full text-left p-3 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 hover:border-indigo-500 hover:bg-indigo-500/10 transition-all text-xs font-semibold active:scale-[0.99] flex items-center justify-between group"
+                          style={{ color: cardObj.style.color }}
+                        >
+                          <span className="truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+                            {option.text}
+                          </span>
+                          <span className="text-[10px] opacity-0 group-hover:opacity-100 text-indigo-500 font-bold transition-opacity">
+                            Vote ➔
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            if (block.type === 'nps_rating') {
+              const currentRating = ratingState[block.id] || {};
+              const currentHover = hoverRating[block.id] || 0;
+              const isSubmitted = Boolean(currentRating.submitted);
+              const isNps10 = block.rating_type === 'nps_10' || block.rating_scale === 10;
+              const scale = isNps10 ? 10 : 5;
+
+              return (
+                <div
+                  key={block.id}
+                  style={cardObj.style}
+                  className={`w-full p-4.5 space-y-3 text-center ${cardObj.className}`}
+                >
+                  <h4 className="text-xs font-black tracking-wide" style={{ color: cardObj.style.color }}>
+                    {block.rating_prompt || block.title || 'How was your experience?'}
+                  </h4>
+
+                  {isSubmitted ? (
+                    <div className="p-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+                      <FaCheckCircle /> Thank you for rating us {currentRating.score}/{scale}!
+                    </div>
+                  ) : isNps10 ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-10 gap-1 pt-1">
+                        {Array.from({ length: 10 }, (_, i) => i + 1).map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => handleRateBio(block.id, num)}
+                            className="aspect-square flex items-center justify-center rounded-lg border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 text-xs font-bold transition-all active:scale-90"
+                            style={{ color: cardObj.style.color }}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] opacity-60 font-medium px-1">
+                        <span>Not likely</span>
+                        <span>Extremely likely</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center gap-2 py-1">
+                      {[1, 2, 3, 4, 5].map((star) => {
+                        const filled = currentHover ? star <= currentHover : star <= (currentRating.score || 0);
+                        return (
+                          <button
+                            key={star}
+                            type="button"
+                            onMouseEnter={() => setHoverRating((prev) => ({ ...prev, [block.id]: star }))}
+                            onMouseLeave={() => setHoverRating((prev) => ({ ...prev, [block.id]: 0 }))}
+                            onClick={() => handleRateBio(block.id, star)}
+                            className="p-1.5 text-xl transition-transform hover:scale-125 active:scale-95 text-amber-400 focus:outline-hidden"
+                            aria-label={`${star} star`}
+                          >
+                            {filled ? <FaStar /> : <FaRegStar className="opacity-40" />}
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               );

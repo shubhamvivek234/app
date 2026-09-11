@@ -218,6 +218,28 @@ async def update_deal(
 
     await db.deals.update_one({"_id": oid}, {"$set": update_fields})
     updated = await db.deals.find_one({"_id": oid})
+
+    if body.stage is not None and body.stage in VALID_STAGES and body.stage != deal.get("stage"):
+        try:
+            from api.routes.automations import dispatch_automation_event
+            await dispatch_automation_event(
+                "deal.stage_changed",
+                workspace_id,
+                {
+                    "deal_id": deal_id,
+                    "title": updated.get("title", ""),
+                    "contact_name": updated.get("contact_name", ""),
+                    "contact_email": updated.get("contact_email", ""),
+                    "old_stage": deal.get("stage"),
+                    "new_stage": body.stage,
+                    "value": updated.get("value", 0),
+                    "currency": updated.get("currency", "INR"),
+                },
+                db,
+            )
+        except Exception as exc:
+            logger.warning("Failed to dispatch automation for deal.stage_changed: %s", exc)
+
     return _serialize_deal(updated)
 
 

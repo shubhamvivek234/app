@@ -207,6 +207,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
       { name: 'Client Approvals', path: '/approvals', icon: FaCheckDouble, badge: 'Review', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
       { name: 'Audience', path: '/audience', icon: FaAddressBook, badge: 'CRM', badgeBg: 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' },
       { name: 'Broadcast', path: '/broadcast', icon: FaPaperPlane, badge: 'Outreach', badgeBg: 'bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300' },
+      { name: 'Automations', path: '/automations', icon: FaBolt, badge: 'Auto', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
       { name: 'Social Inbox', path: '/inbox', icon: FaInbox },
     ],
     configuration: [

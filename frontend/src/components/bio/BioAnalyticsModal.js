@@ -13,6 +13,12 @@ import {
   FaCheck,
   FaCompass,
   FaLink,
+  FaFire,
+  FaStar,
+  FaFilter,
+  FaTrophy,
+  FaBolt,
+  FaCheckCircle,
 } from 'react-icons/fa';
 import { getBioAnalytics } from '@/lib/api';
 import { toast } from 'sonner';
@@ -137,7 +143,7 @@ export default function BioAnalyticsModal({ isOpen, onClose, handle, publicUrl }
 
           {/* ── APPLE SEGMENTED CONTROL TABS ── */}
           <div className="px-6 pt-3 pb-2 border-b border-black/[0.04] dark:border-white/[0.06] bg-gray-50/40 dark:bg-[#2C2C2E]/20 shrink-0">
-            <div className="apple-segment-wrapper w-full max-w-sm mx-auto">
+            <div className="apple-segment-wrapper w-full max-w-lg mx-auto flex">
               <button
                 onClick={() => setActiveTab('overview')}
                 className={`apple-segment-btn flex-1 text-center py-1.5 text-xs font-semibold ${activeTab === 'overview' ? 'active' : ''}`}
@@ -154,7 +160,14 @@ export default function BioAnalyticsModal({ isOpen, onClose, handle, publicUrl }
                 onClick={() => setActiveTab('sources')}
                 className={`apple-segment-btn flex-1 text-center py-1.5 text-xs font-semibold ${activeTab === 'sources' ? 'active' : ''}`}
               >
-                Traffic Sources
+                Sources
+              </button>
+              <button
+                onClick={() => setActiveTab('intelligence')}
+                className={`apple-segment-btn flex-1 text-center py-1.5 text-xs font-semibold flex items-center justify-center gap-1.5 ${activeTab === 'intelligence' ? 'active' : ''}`}
+              >
+                <FaBolt className="text-[10px] text-amber-500" />
+                <span>Funnel & Intel</span>
               </button>
             </div>
           </div>
@@ -429,6 +442,188 @@ export default function BioAnalyticsModal({ isOpen, onClose, handle, publicUrl }
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* ══════ TAB 4: FUNNEL & INTELLIGENCE ══════ */}
+            {activeTab === 'intelligence' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* 1. Conversion Funnel */}
+                <div className="p-5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <FaFilter className="text-indigo-500" />
+                      Conversion Funnel Drop-off
+                    </h3>
+                    <span className="text-[11px] font-semibold text-gray-500">
+                      Overall Conversion: <strong className="text-indigo-600 dark:text-indigo-400">{data?.conversion_rate || (views > 0 ? ((leads / views) * 100).toFixed(1) : 0)}%</strong>
+                    </span>
+                  </div>
+
+                  {/* 3 Step Visual Funnel */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    {(data?.funnel_steps && data.funnel_steps.length > 0 ? data.funnel_steps : [
+                      { step: 'Page Impressions', count: views, conversion_rate: 100 },
+                      { step: 'Block Clicks', count: clicks, conversion_rate: ctr },
+                      { step: 'Goal Conversions', count: leads, conversion_rate: views > 0 ? Math.round((leads / views) * 100) : 0 },
+                    ]).map((fStep, sIdx) => (
+                      <div
+                        key={sIdx}
+                        className="p-3.5 rounded-xl bg-white dark:bg-[#252528] border border-black/[0.06] dark:border-white/[0.08] relative overflow-hidden flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Step {sIdx + 1}</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
+                            {fStep.conversion_rate}%
+                          </span>
+                        </div>
+                        <div className="my-2">
+                          <div className="text-xl font-black text-gray-900 dark:text-white">
+                            {(fStep.count || 0).toLocaleString()}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-300 font-medium">
+                            {fStep.step}
+                          </div>
+                        </div>
+                        <div className="w-full bg-black/5 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 rounded-full"
+                            style={{ width: `${Math.min(100, Math.max(5, fStep.conversion_rate || 0))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Heatmap Density Ranking */}
+                <div className="p-5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <FaFire className="text-rose-500" />
+                      Heatmap Density Ranking
+                    </h3>
+                    <span className="text-[10px] text-gray-400 font-mono">Relative block click share</span>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    {(data?.heatmap_blocks && data.heatmap_blocks.length > 0 ? data.heatmap_blocks : topBlocks.map((b) => ({
+                      id: b.id,
+                      title: b.title,
+                      click_count: b.clicks,
+                      share_pct: clicks > 0 ? Math.round((b.clicks / clicks) * 100) : 0,
+                      density_tier: (b.clicks / (clicks || 1)) > 0.4 ? 'high' : (b.clicks / (clicks || 1)) > 0.15 ? 'medium' : 'low',
+                    }))).map((hBlock, hIdx) => {
+                      const tierColor = hBlock.density_tier === 'high'
+                        ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800'
+                        : hBlock.density_tier === 'medium'
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800'
+                        : 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800';
+
+                      return (
+                        <div
+                          key={hIdx}
+                          className="p-3 rounded-xl bg-white dark:bg-[#252528] border border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-3 text-xs"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-gray-900 dark:text-white truncate">
+                                {hBlock.title || 'Content Block'}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold border ${tierColor} uppercase`}>
+                                {hBlock.density_tier || 'tier'}
+                              </span>
+                            </div>
+                            <div className="w-full bg-black/5 dark:bg-white/10 h-1.5 rounded-full overflow-hidden mt-2">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  hBlock.density_tier === 'high' ? 'bg-rose-500' : hBlock.density_tier === 'medium' ? 'bg-amber-500' : 'bg-blue-500'
+                                }`}
+                                style={{ width: `${Math.min(100, Math.max(3, hBlock.share_pct || 0))}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-mono font-bold text-gray-900 dark:text-white">
+                              {hBlock.click_count || 0} clicks
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-medium">
+                              {hBlock.share_pct || 0}% of taps
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. NPS & Satisfaction Feedback */}
+                {data?.nps_stats && data.nps_stats.total_responses > 0 && (
+                  <div className="p-5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <FaStar className="text-amber-400" />
+                        Satisfaction & NPS Feedback
+                      </h3>
+                      <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300">
+                        Avg: <strong className="text-amber-500">{data.nps_stats.average_score} / 5.0</strong> ({data.nps_stats.total_responses} reviews)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-2 pt-1 text-center">
+                      {[5, 4, 3, 2, 1].map((score) => (
+                        <div key={score} className="p-2 rounded-xl bg-white dark:bg-[#252528] border border-black/[0.06] dark:border-white/[0.08]">
+                          <div className="text-[11px] font-bold flex items-center justify-center gap-0.5 text-amber-500">
+                            {score} <FaStar className="text-[9px]" />
+                          </div>
+                          <div className="text-sm font-black text-gray-900 dark:text-white mt-0.5">
+                            {data.nps_stats.distribution?.[score] || 0}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. A/B Testing Variant Stats (if variants enabled) */}
+                {data?.variant_stats && data.variant_stats.length > 0 && (
+                  <div className="p-5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <FaTrophy className="text-amber-500" />
+                        A/B Traffic Experiment Performance
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      {data.variant_stats.map((v) => (
+                        <div
+                          key={v.variant_id}
+                          className="p-4 rounded-xl bg-white dark:bg-[#252528] border border-black/[0.06] dark:border-white/[0.08] space-y-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs text-gray-900 dark:text-white">{v.name || v.variant_id}</span>
+                            <span className="text-[10px] font-mono text-gray-400">{v.traffic_pct || 50}% traffic</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                            <div className="p-2 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg">
+                              <div className="text-[10px] text-gray-400">Views</div>
+                              <div className="font-bold">{v.views || 0}</div>
+                            </div>
+                            <div className="p-2 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg">
+                              <div className="text-[10px] text-gray-400">Clicks</div>
+                              <div className="font-bold">{v.clicks || 0}</div>
+                            </div>
+                            <div className="p-2 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg">
+                              <div className="text-[10px] text-gray-400">CR %</div>
+                              <div className="font-bold text-emerald-600 dark:text-emerald-400">{v.conversion_rate || 0}%</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

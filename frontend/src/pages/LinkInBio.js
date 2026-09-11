@@ -47,6 +47,9 @@ import {
   FaClock,
   FaTrashAlt,
   FaExclamationTriangle,
+  FaFire,
+  FaStar,
+  FaEnvelope,
 } from 'react-icons/fa';
 import { SiThreads, SiBluesky } from 'react-icons/si';
 
@@ -126,6 +129,7 @@ export default function LinkInBio() {
   const [previewKey, setPreviewKey] = useState(0);
   const [deletedBlocks, setDeletedBlocks] = useState([]);
   const [activeFolders, setActiveFolders] = useState({});
+  const [heatmapMode, setHeatmapMode] = useState(false);
 
   // History for Undo / Redo
   const [history, setHistory] = useState([]);
@@ -836,6 +840,20 @@ export default function LinkInBio() {
               </button>
             </div>
 
+            {/* Heatmap Mode Toggle */}
+            <button
+              onClick={() => setHeatmapMode((prev) => !prev)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                heatmapMode
+                  ? 'bg-rose-500 text-white border-rose-600 font-semibold shadow-rose-500/20 shadow-sm'
+                  : 'text-gray-700 dark:text-gray-200 bg-white dark:bg-[#2C2C2E] border-black/[0.08] dark:border-white/[0.12] hover:bg-gray-50 dark:hover:bg-[#3A3A3C]'
+              }`}
+              title="Toggle Heatmap Mode (View click density & thermal borders)"
+            >
+              <FaFire className={`text-xs ${heatmapMode ? 'text-white' : 'text-rose-500'}`} />
+              <span>{heatmapMode ? 'Heatmap On' : 'Heatmap'}</span>
+            </button>
+
             {/* Live Analytics Modal Trigger */}
             <button
               onClick={() => setAnalyticsModalOpen(true)}
@@ -1316,65 +1334,90 @@ export default function LinkInBio() {
                           </div>
                         </div>
                       ) : (
-                        activeBlocks.map((block) => {
-                          const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
-                            animation: block.animation,
-                            has_custom_bg: Boolean(block.has_custom_bg),
-                            card_bg: block.card_bg,
-                            has_custom_border: Boolean(block.has_custom_border),
-                            card_border: block.card_border,
-                            has_custom_text_color: Boolean(block.has_custom_text_color),
-                            card_text_color: block.card_text_color,
-                          });
+                        (() => {
+                          const totalClicks = activeBlocks.reduce((sum, b) => sum + (b.click_count || 0), 0);
+                          const maxClicks = Math.max(1, ...activeBlocks.map((b) => b.click_count || 0));
 
-                          return (
-                            <div
-                              key={block.id}
-                              onClick={() => setEditingBlock(block)}
-                              style={cardObj.style}
-                              className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group overflow-hidden ${cardObj.className}`}
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                {block.media_url ? (
-                                  <img
-                                    src={block.media_url}
-                                    alt=""
-                                    className="w-10 h-10 rounded-xl object-cover shrink-0 shadow-xs"
-                                  />
-                                ) : (
-                                  <div
-                                    className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs"
-                                    style={{
-                                      backgroundColor: 'rgba(255, 255, 255, 0.14)',
-                                      color: cardObj.style.color,
-                                    }}
-                                  >
-                                    {block.is_featured ? '⚡' : block.type === 'payment_link' ? '💳' : block.type === 'video' ? '▶' : block.type === 'newsletter' || block.type === 'lead_capture' ? '✉️' : '🔗'}
-                                  </div>
-                                )}
-                                <div className="min-w-0">
-                                  <div className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: cardObj.style.color }}>
-                                    <span>{block.title || block.headline || 'View Link'}</span>
-                                    {block.type === 'payment_link' && block.payment_amount !== undefined && (
-                                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
-                                        {block.payment_currency === 'USD' ? '$' : block.payment_currency === 'EUR' ? '€' : block.payment_currency === 'GBP' ? '£' : '₹'}{block.payment_amount}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="text-[11px] truncate opacity-70" style={{ color: cardObj.style.color }}>
-                                    {block.subtitle || (block.type === 'payment_link' ? (block.button_text || 'Instant Checkout') : block.url) || ''}
+                          return activeBlocks.map((block) => {
+                            const cardObj = getTactileCardStyles(theme.card_style, theme, block.is_featured, {
+                              animation: block.animation,
+                              has_custom_bg: Boolean(block.has_custom_bg),
+                              card_bg: block.card_bg,
+                              has_custom_border: Boolean(block.has_custom_border),
+                              card_border: block.card_border,
+                              has_custom_text_color: Boolean(block.has_custom_text_color),
+                              card_text_color: block.card_text_color,
+                            });
+
+                            const clicks = block.click_count || 0;
+                            const sharePct = totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0;
+                            const heatRatio = clicks / maxClicks;
+                            let heatBorderClass = '';
+                            if (heatmapMode) {
+                              if (heatRatio >= 0.7 && clicks > 0) {
+                                heatBorderClass = 'ring-2 ring-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.45)]';
+                              } else if (heatRatio >= 0.3 && clicks > 0) {
+                                heatBorderClass = 'ring-2 ring-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.35)]';
+                              } else {
+                                heatBorderClass = 'ring-1 ring-blue-400/50';
+                              }
+                            }
+
+                            return (
+                              <div
+                                key={block.id}
+                                onClick={() => setEditingBlock(block)}
+                                style={cardObj.style}
+                                className={`w-full p-3.5 text-left flex items-center justify-between cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all group overflow-hidden ${cardObj.className} ${heatBorderClass}`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  {block.media_url ? (
+                                    <img
+                                      src={block.media_url}
+                                      alt=""
+                                      className="w-10 h-10 rounded-xl object-cover shrink-0 shadow-xs"
+                                    />
+                                  ) : (
+                                    <div
+                                      className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs"
+                                      style={{
+                                        backgroundColor: 'rgba(255, 255, 255, 0.14)',
+                                        color: cardObj.style.color,
+                                      }}
+                                    >
+                                      {block.is_featured ? '⚡' : block.type === 'payment_link' ? '💳' : block.type === 'video' ? '▶' : block.type === 'poll' ? '📊' : block.type === 'nps_rating' ? '⭐' : block.type === 'newsletter' || block.type === 'lead_capture' ? '✉️' : '🔗'}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-bold truncate flex items-center gap-1.5" style={{ color: cardObj.style.color }}>
+                                      <span>{block.title || block.headline || (block.type === 'poll' ? block.poll_question : block.type === 'nps_rating' ? block.rating_prompt : 'View Link')}</span>
+                                      {block.type === 'payment_link' && block.payment_amount !== undefined && (
+                                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
+                                          {block.payment_currency === 'USD' ? '$' : block.payment_currency === 'EUR' ? '€' : block.payment_currency === 'GBP' ? '£' : '₹'}{block.payment_amount}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] truncate opacity-70" style={{ color: cardObj.style.color }}>
+                                      {block.subtitle || (block.type === 'payment_link' ? (block.button_text || 'Instant Checkout') : block.url) || (block.type === 'poll' ? 'Interactive quick poll' : block.type === 'nps_rating' ? 'Audience satisfaction rating' : '')}
+                                    </div>
                                   </div>
                                 </div>
+                                {heatmapMode ? (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500 text-white shrink-0 shadow-xs flex items-center gap-1">
+                                    🔥 {clicks} ({sharePct}%)
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="text-sm shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform opacity-70 group-hover:opacity-100"
+                                    style={{ color: cardObj.style.color }}
+                                  >
+                                    →
+                                  </span>
+                                )}
                               </div>
-                              <span
-                                className="text-sm shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform opacity-70 group-hover:opacity-100"
-                                style={{ color: cardObj.style.color }}
-                              >
-                                →
-                              </span>
-                            </div>
-                          );
-                        })
+                            );
+                          });
+                        })()
                       )}
                     </div>
 
@@ -1470,10 +1513,13 @@ export default function LinkInBio() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2.5 max-h-[65vh] overflow-y-auto pr-1">
                 {[
                   { id: 'link', label: 'Custom Link', desc: 'Direct URL with badge & subtitle', icon: FaExternalLinkAlt, color: 'text-blue-500' },
                   { id: 'payment_link', label: 'Payment / Monetize', desc: 'Direct checkout, tip jar, or paid booking', icon: FaCreditCard, color: 'text-emerald-500' },
+                  { id: 'lead_capture', label: 'Lead Capture Form', desc: 'Capture name, email, phone & CRM tagging', icon: FaEnvelope, color: 'text-indigo-500' },
+                  { id: 'poll', label: 'Quick Poll', desc: 'Interactive audience voting & live bar charts', icon: FaBolt, color: 'text-amber-500' },
+                  { id: 'nps_rating', label: 'Star / NPS Rating', desc: 'Feedback collector with 5-star or 10-NPS', icon: FaStar, color: 'text-yellow-500' },
                   { id: 'folder', label: 'Folder / Group', desc: 'Group links into a sleek accordion', icon: FaFolder, color: 'text-amber-500' },
                   { id: 'media_card', label: 'Media Card', desc: 'Hero photo banner with subtitle & link', icon: FaImage, color: 'text-rose-500' },
                   { id: 'embed', label: 'YouTube / Spotify', desc: 'Embedded video & podcast player', icon: FaPlay, color: 'text-purple-500' },
@@ -1485,7 +1531,15 @@ export default function LinkInBio() {
                       const newBlock = {
                         id: `block_${Date.now()}`,
                         type: typeItem.id,
-                        title: typeItem.id === 'payment_link' ? 'Digital Guide / Consultation' : `New ${typeItem.label}`,
+                        title: typeItem.id === 'payment_link'
+                          ? 'Digital Guide / Consultation'
+                          : typeItem.id === 'lead_capture'
+                          ? 'Join Our VIP Newsletter'
+                          : typeItem.id === 'poll'
+                          ? 'What should we build next?'
+                          : typeItem.id === 'nps_rating'
+                          ? 'How was your experience?'
+                          : `New ${typeItem.label}`,
                         subtitle: typeItem.id === 'payment_link' ? 'Instant access after checkout' : '',
                         url: '',
                         embed_url: '',
@@ -1499,6 +1553,20 @@ export default function LinkInBio() {
                         payment_currency: typeItem.id === 'payment_link' ? 'INR' : undefined,
                         payment_provider: typeItem.id === 'payment_link' ? 'custom' : undefined,
                         button_text: typeItem.id === 'payment_link' ? 'Pay Now' : undefined,
+                        headline: typeItem.id === 'lead_capture' ? 'Join Our VIP Community' : undefined,
+                        subheadline: typeItem.id === 'lead_capture' ? 'Get weekly insights & free templates' : undefined,
+                        button_label: typeItem.id === 'lead_capture' ? 'Subscribe' : undefined,
+                        capture_fields: typeItem.id === 'lead_capture' ? { name: true, phone: false } : undefined,
+                        lead_tag: typeItem.id === 'lead_capture' ? 'subscriber' : undefined,
+                        poll_question: typeItem.id === 'poll' ? 'What should we build next?' : undefined,
+                        poll_options: typeItem.id === 'poll' ? [
+                          { id: 'opt_1', text: 'AI Video Engine', votes: 0 },
+                          { id: 'opt_2', text: 'Mobile App', votes: 0 },
+                          { id: 'opt_3', text: 'More Templates', votes: 0 },
+                        ] : undefined,
+                        rating_prompt: typeItem.id === 'nps_rating' ? 'How satisfied are you with our content?' : undefined,
+                        rating_type: typeItem.id === 'nps_rating' ? 'star' : undefined,
+                        rating_scale: typeItem.id === 'nps_rating' ? 5 : undefined,
                         is_expanded: false,
                       };
                       updateCurrentPageBlocks((prev) => [...prev, newBlock]);

@@ -1560,11 +1560,11 @@ export const trackBioInteraction = async (handle, data) => {
   return response.data;
 };
 
-export const subscribeBioNewsletter = async (handle, email, sourceBlockId = null) => {
-  const response = await axios.post(`${API}/bio-pages/public/${handle}/subscribe`, {
-    email,
-    source_block_id: sourceBlockId,
-  });
+export const subscribeBioNewsletter = async (handle, emailOrPayload, sourceBlockId = null) => {
+  const payload = typeof emailOrPayload === "object"
+    ? emailOrPayload
+    : { email: emailOrPayload, source_block_id: sourceBlockId };
+  const response = await axios.post(`${API}/bio-pages/public/${handle}/subscribe`, payload);
   return response.data;
 };
 
@@ -1835,5 +1835,67 @@ export const generateWhatsAppLinks = async (payload) => {
 
 export const generateBioPaymentLink = async (payload) => {
   const response = await axios.post(`${API}/bio-pages/payment-link`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── Cluster C: Bio Intelligence (Polls, Feedback, Variants) ──
+export const submitBioPollVote = async (handle, blockId, payload) => {
+  const response = await axios.post(`${API}/public/bio/${handle}/poll/${blockId}`, payload);
+  return response.data;
+};
+
+export const submitBioFeedback = async (handle, payload) => {
+  const response = await axios.post(`${API}/public/bio/${handle}/feedback`, payload);
+  return response.data;
+};
+
+export const saveBioVariant = async (payload) => {
+  const response = await axios.post(`${API}/bio-pages/variants`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const toggleBioVariant = async (variantId) => {
+  const response = await axios.post(`${API}/bio-pages/variants/${variantId}/toggle`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteBioVariant = async (variantId) => {
+  const response = await axios.delete(`${API}/bio-pages/variants/${variantId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── Cluster D: Automations Engine & Recipes ──
+export const getAutomations = async (params = {}) => {
+  const response = await axios.get(`${API}/automations`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const getAutomationRecipes = async () => {
+  const response = await axios.get(`${API}/automations/recipes`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createAutomation = async (data) => {
+  const response = await axios.post(`${API}/automations`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updateAutomation = async (automationId, data) => {
+  const response = await axios.patch(`${API}/automations/${automationId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteAutomation = async (automationId) => {
+  const response = await axios.delete(`${API}/automations/${automationId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const testAutomation = async (automationId, payload = {}) => {
+  const response = await axios.post(`${API}/automations/${automationId}/test`, payload, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getAutomationLogs = async (params = {}) => {
+  const response = await axios.get(`${API}/automations/logs`, { headers: getAuthHeaders(), params });
   return response.data;
 };

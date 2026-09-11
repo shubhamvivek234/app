@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
@@ -475,8 +475,8 @@ async def get_bio_analytics(
     db: DB,
 ):
     """Fetch high-level and per-block performance analytics for the workspace's Bio page."""
-    user_id = current_user["user_id"]
-    workspace_id = current_user.get("default_workspace_id") or user_id
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or user_id
 
     page = await db.bio_pages.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
     if not page:
@@ -540,29 +540,137 @@ async def get_bio_analytics(
             "clicks": day_clicks,
         })
 
+    # Poll & NPS Aggregation
+    total_poll_votes = await db.bio_analytics.count_documents({"workspace_id": workspace_id, "event_type": "poll_vote"})
+    total_ratings = await db.bio_analytics.count_documents({"workspace_id": workspace_id, "event_type": "nps_rating"})
+    total_conversions = total_leads + total_poll_votes + total_ratings
+    conversion_rate = round((total_conversions / total_views * 100), 1) if total_views > 0 else 0.0
+
+    # Rating histogram & average
+    rating_pipeline = [
+        {"$match": {"workspace_id": workspace_id, "event_type": "nps_rating"}},
+        {"$group": {"_id": "$score", "count": {"$sum": 1}}},
+    ]
+    raw_ratings = await db.bio_analytics.aggregate(rating_pipeline).to_list(length=10)
+    score_distribution = {i: 0 for i in range(1, 6)}
+    weighted_sum = 0
+    total_rated_count = 0
+    for r in raw_ratings:
+        score_val = r["_id"]
+        cnt = r["count"]
+        if isinstance(score_val, int) and 1 <= score_val <= 5:
+            score_distribution[score_val] = cnt
+        weighted_sum += (score_val or 0) * cnt
+        total_rated_count += cnt
+    avg_rating = round(weighted_sum / total_rated_count, 1) if total_rated_count > 0 else 0.0
+
+    # Funnel Pipeline
+    funnel_steps = [
+        {"step": "Total Views", "count": total_views, "percentage": 100.0, "dropoff": 0.0},
+        {
+            "step": "Block Clicks",
+            "count": total_clicks,
+            "percentage": round(total_clicks / total_views * 100, 1) if total_views > 0 else 0.0,
+            "dropoff": round(max(total_views - total_clicks, 0) / total_views * 100, 1) if total_views > 0 else 0.0,
+        },
+        {
+            "step": "Conversions",
+            "count": total_conversions,
+            "percentage": conversion_rate,
+            "dropoff": round(max(total_clicks - total_conversions, 0) / total_clicks * 100, 1) if total_clicks > 0 else 0.0,
+        },
+    ]
+
+    # Block Heatmap & Click share
     blocks = page.get("blocks", [])
     top_blocks = []
+    poll_blocks = []
     for b in blocks:
         clicks = b.get("click_count", 0) or b.get("clicks", 0)
-        title = b.get("title") or b.get("headline") or "Block"
+        title = b.get("title") or b.get("headline") or b.get("poll_question") or "Block"
+        b_type = b.get("type", "link")
+        click_share = round((clicks / total_clicks * 100), 1) if total_clicks > 0 else 0.0
+        heat_tier = (
+            "hot" if click_share >= 25 else
+            "warm" if click_share >= 12 else
+            "medium" if click_share >= 4 else
+            "cool" if clicks > 0 else "cold"
+        )
         top_blocks.append({
             "id": b.get("id"),
             "title": title,
-            "type": b.get("type", "link"),
+            "type": b_type,
             "url": b.get("url", ""),
             "clicks": clicks,
+            "click_share": click_share,
+            "heat_tier": heat_tier,
         })
+        if b_type == "poll":
+            poll_blocks.append({
+                "id": b.get("id"),
+                "question": b.get("poll_question") or title,
+                "options": b.get("poll_options", []),
+                "total_votes": sum(opt.get("votes", 0) for opt in b.get("poll_options", [])),
+            })
     top_blocks.sort(key=lambda x: x["clicks"], reverse=True)
+
+    # A/B Testing Comparison
+    variants = page.get("variants", [])
+    ab_enabled = bool(page.get("ab_testing_enabled", False))
+    variant_stats = []
+
+    # Control
+    control_views = max(total_views - sum(v.get("views", 0) for v in variants), 0)
+    control_clicks = max(total_clicks - sum(v.get("clicks", 0) for v in variants), 0)
+    control_conv = max(total_conversions - sum(v.get("conversions", 0) for v in variants), 0)
+    variant_stats.append({
+        "id": "control",
+        "name": "Variant A (Control)",
+        "views": control_views,
+        "clicks": control_clicks,
+        "conversions": control_conv,
+        "ctr": round(control_clicks / control_views * 100, 1) if control_views > 0 else 0.0,
+        "conversion_rate": round(control_conv / control_views * 100, 1) if control_views > 0 else 0.0,
+    })
+    for v in variants:
+        v_views = v.get("views", 0)
+        v_clicks = v.get("clicks", 0)
+        v_conv = v.get("conversions", 0)
+        variant_stats.append({
+            "id": v.get("id"),
+            "name": v.get("name", "Variant B"),
+            "views": v_views,
+            "clicks": v_clicks,
+            "conversions": v_conv,
+            "ctr": round(v_clicks / v_views * 100, 1) if v_views > 0 else 0.0,
+            "conversion_rate": round(v_conv / v_views * 100, 1) if v_views > 0 else 0.0,
+        })
 
     return {
         "views": total_views,
         "clicks": total_clicks,
         "ctr": ctr,
         "total_leads": total_leads,
+        "total_conversions": total_conversions,
+        "conversion_rate": conversion_rate,
         "devices": device_percentages,
         "daily_trends": daily_trends,
         "referrers": referrers,
         "top_blocks": top_blocks,
+        "heatmap_blocks": top_blocks,
+        "funnel_steps": funnel_steps,
+        "nps_stats": {
+            "average_score": avg_rating,
+            "total_ratings": total_rated_count,
+            "total_responses": total_rated_count,
+            "distribution": score_distribution,
+        },
+        "poll_results": poll_blocks,
+        "ab_testing": {
+            "enabled": ab_enabled,
+            "variants": variant_stats,
+            "winner": max(variant_stats, key=lambda x: (x["conversion_rate"], x["ctr"]))["name"] if variant_stats else "Variant A",
+        }
     }
 
 
@@ -960,4 +1068,109 @@ async def create_or_format_payment_link(
         "amount": body.amount,
         "currency": body.currency,
     }
+
+
+class BioVariantPayload(BaseModel):
+    id: Optional[str] = None
+    name: str = "Variant B"
+    weight: int = 50
+    is_active: bool = True
+    blocks: list[dict] = Field(default_factory=list)
+    theme: Optional[dict] = None
+
+
+@router.post("/bio-pages/variants")
+async def save_bio_variant(
+    body: BioVariantPayload,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Create or update an A/B test variant on the creator's Smart Bio page."""
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or user_id
+
+    page = await db.bio_pages.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+    if not page:
+        raise HTTPException(status_code=404, detail="Bio page not found")
+
+    variants = page.get("variants", [])
+    variant_id = body.id or str(uuid.uuid4())[:8]
+
+    existing_idx = next((i for i, v in enumerate(variants) if v.get("id") == variant_id), None)
+    variant_data = {
+        "id": variant_id,
+        "name": body.name.strip() or "Variant B",
+        "weight": max(1, min(body.weight, 99)),
+        "is_active": body.is_active,
+        "blocks": body.blocks if body.blocks else page.get("blocks", []),
+        "theme": body.theme if body.theme else page.get("theme", {}),
+        "views": variants[existing_idx].get("views", 0) if existing_idx is not None else 0,
+        "clicks": variants[existing_idx].get("clicks", 0) if existing_idx is not None else 0,
+        "conversions": variants[existing_idx].get("conversions", 0) if existing_idx is not None else 0,
+    }
+
+    if existing_idx is not None:
+        variants[existing_idx] = variant_data
+    else:
+        variants.append(variant_data)
+
+    await db.bio_pages.update_one(
+        {"_id": page["_id"]},
+        {"$set": {"variants": variants, "ab_testing_enabled": True}}
+    )
+
+    return {"ok": True, "variant": variant_data, "ab_testing_enabled": True}
+
+
+@router.post("/bio-pages/variants/{variant_id}/toggle")
+async def toggle_bio_variant(
+    variant_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Toggle whether A/B testing is active or whether a specific variant is enabled."""
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or user_id
+
+    page = await db.bio_pages.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+    if not page:
+        raise HTTPException(status_code=404, detail="Bio page not found")
+
+    if variant_id == "global":
+        new_state = not page.get("ab_testing_enabled", False)
+        await db.bio_pages.update_one({"_id": page["_id"]}, {"$set": {"ab_testing_enabled": new_state}})
+        return {"ok": True, "ab_testing_enabled": new_state}
+
+    variants = page.get("variants", [])
+    target = next((v for v in variants if v.get("id") == variant_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Variant not found")
+
+    target["is_active"] = not target.get("is_active", True)
+    await db.bio_pages.update_one({"_id": page["_id"]}, {"$set": {"variants": variants}})
+    return {"ok": True, "variant": target}
+
+
+@router.delete("/bio-pages/variants/{variant_id}")
+async def delete_bio_variant(
+    variant_id: str,
+    current_user: CurrentUser,
+    db: DB,
+):
+    """Delete an A/B test variant."""
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or user_id
+
+    page = await db.bio_pages.find_one({"$or": [{"workspace_id": workspace_id}, {"user_id": user_id}]})
+    if not page:
+        raise HTTPException(status_code=404, detail="Bio page not found")
+
+    variants = [v for v in page.get("variants", []) if v.get("id") != variant_id]
+    ab_enabled = page.get("ab_testing_enabled", False) if len(variants) > 0 else False
+
+    await db.bio_pages.update_one(
+        {"_id": page["_id"]},
+        {"$set": {"variants": variants, "ab_testing_enabled": ab_enabled}}
+    )
+    return {"ok": True, "message": "Variant deleted successfully."}
 

@@ -98,6 +98,16 @@ export default function BioBlockEditorModal({
     payment_currency: block?.payment_currency || 'INR',
     payment_provider: block?.payment_provider || 'custom',
     button_text: block?.button_text || 'Pay Now',
+    poll_question: block?.poll_question || block?.title || 'What should I build next?',
+    poll_options: block?.poll_options && block.poll_options.length > 0 ? block.poll_options : [
+      { id: 'opt_1', text: 'Option A', votes: 0 },
+      { id: 'opt_2', text: 'Option B', votes: 0 },
+    ],
+    rating_prompt: block?.rating_prompt || 'How would you rate your experience?',
+    rating_scale: block?.rating_scale || 5,
+    rating_type: block?.rating_type || 'stars',
+    capture_fields: block?.capture_fields || ['email'],
+    lead_tag: block?.lead_tag || 'subscriber',
   }));
 
   const [activeMediaTab, setActiveMediaTab] = useState(() => block?.media_type || (initialMediaUrl ? 'image' : 'image'));
@@ -121,6 +131,16 @@ export default function BioBlockEditorModal({
         payment_currency: block?.payment_currency || 'INR',
         payment_provider: block?.payment_provider || 'custom',
         button_text: block?.button_text || 'Pay Now',
+        poll_question: block?.poll_question || block?.title || 'What should I build next?',
+        poll_options: block?.poll_options && block.poll_options.length > 0 ? block.poll_options : [
+          { id: 'opt_1', text: 'Option A', votes: 0 },
+          { id: 'opt_2', text: 'Option B', votes: 0 },
+        ],
+        rating_prompt: block?.rating_prompt || 'How would you rate your experience?',
+        rating_scale: block?.rating_scale || 5,
+        rating_type: block?.rating_type || 'stars',
+        capture_fields: block?.capture_fields || ['email'],
+        lead_tag: block?.lead_tag || 'subscriber',
       });
       setActiveMediaTab(block?.media_type || (mediaUrl ? 'image' : 'image'));
       setImageError(false);
@@ -242,6 +262,8 @@ export default function BioBlockEditorModal({
                 <option value="feed_grid" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Live Instagram Feed Grid</option>
                 <option value="lead_capture" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">Newsletter Lead Capture</option>
                 <option value="payment_link" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">💰 Payment Link / Monetization</option>
+                <option value="poll" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">📊 Quick Poll / Voting</option>
+                <option value="nps_rating" className="bg-white dark:bg-[#1C1C1E] text-gray-900 dark:text-white">⭐ Rating / Feedback Widget</option>
               </select>
             </div>
 
@@ -315,6 +337,183 @@ export default function BioBlockEditorModal({
                       className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Poll Setup Card */}
+            {formData.type === 'poll' && (
+              <div className="p-3.5 rounded-2xl bg-indigo-500/[0.07] border border-indigo-500/20 space-y-3">
+                <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs">
+                  <FaChartLine /> Quick Poll / Voting Configuration
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Poll Question
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.poll_question || ''}
+                    onChange={(e) => setFormData({ ...formData, poll_question: e.target.value, title: e.target.value })}
+                    placeholder="e.g. What content should I post next week?"
+                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300">
+                    Options ({(formData.poll_options || []).length})
+                  </label>
+                  {(formData.poll_options || []).map((opt, idx) => (
+                    <div key={opt.id || idx} className="flex items-center gap-2">
+                      <span className="w-5 text-center text-xs font-bold text-gray-400">{idx + 1}.</span>
+                      <input
+                        type="text"
+                        value={opt.text}
+                        onChange={(e) => {
+                          const nextOpts = [...(formData.poll_options || [])];
+                          nextOpts[idx] = { ...nextOpts[idx], text: e.target.value };
+                          setFormData({ ...formData, poll_options: nextOpts });
+                        }}
+                        placeholder={`Option ${idx + 1}`}
+                        className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      {(formData.poll_options || []).length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextOpts = (formData.poll_options || []).filter((_, i) => i !== idx);
+                            setFormData({ ...formData, poll_options: nextOpts });
+                          }}
+                          className="text-gray-400 hover:text-red-500 p-1 cursor-pointer"
+                        >
+                          <FaTimes className="text-xs" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextId = `opt_${Date.now()}`;
+                      const nextOpts = [...(formData.poll_options || []), { id: nextId, text: `Option ${(formData.poll_options || []).length + 1}`, votes: 0 }];
+                      setFormData({ ...formData, poll_options: nextOpts });
+                    }}
+                    className="mt-1 px-3 py-1 text-xs font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/20 rounded-full border border-indigo-500/20 cursor-pointer transition-colors"
+                  >
+                    + Add Option
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* NPS / Rating Setup Card */}
+            {formData.type === 'nps_rating' && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/[0.07] border border-amber-500/20 space-y-3">
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-bold text-xs">
+                  <FaStar /> Feedback & Rating Configuration
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Rating Prompt / Title
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.rating_prompt || ''}
+                    onChange={(e) => setFormData({ ...formData, rating_prompt: e.target.value, title: e.target.value })}
+                    placeholder="e.g. How helpful was this resource for you?"
+                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Rating Scale
+                    </label>
+                    <select
+                      value={formData.rating_scale || 5}
+                      onChange={(e) => setFormData({ ...formData, rating_scale: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value={5}>5 Stars (Standard)</option>
+                      <option value={10}>10 Points (Net Promoter Score)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      Display Type
+                    </label>
+                    <select
+                      value={formData.rating_type || 'stars'}
+                      onChange={(e) => setFormData({ ...formData, rating_type: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500"
+                    >
+                      <option value="stars">Star Rating</option>
+                      <option value="numbers">Numeric Buttons</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Extended Lead Capture Options Card */}
+            {formData.type === 'lead_capture' && (
+              <div className="p-3.5 rounded-2xl bg-sky-500/[0.07] border border-sky-500/20 space-y-3">
+                <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-bold text-xs">
+                  <FaEnvelope /> Form Fields & Audience Tagging
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1.5">
+                    Capture Fields
+                  </label>
+                  <div className="flex items-center gap-4 text-xs">
+                    <label className="flex items-center gap-1.5 cursor-not-allowed opacity-75">
+                      <input type="checkbox" checked disabled className="rounded text-sky-600" />
+                      Email (Required)
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(formData.capture_fields || []).includes('name')}
+                        onChange={(e) => {
+                          const current = new Set(formData.capture_fields || ['email']);
+                          if (e.target.checked) current.add('name');
+                          else current.delete('name');
+                          setFormData({ ...formData, capture_fields: Array.from(current) });
+                        }}
+                        className="rounded text-sky-600"
+                      />
+                      Name
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(formData.capture_fields || []).includes('phone')}
+                        onChange={(e) => {
+                          const current = new Set(formData.capture_fields || ['email']);
+                          if (e.target.checked) current.add('phone');
+                          else current.delete('phone');
+                          setFormData({ ...formData, capture_fields: Array.from(current) });
+                        }}
+                        className="rounded text-sky-600"
+                      />
+                      Phone (WhatsApp)
+                    </label>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    Auto-Assign Tag in Audience CRM
+                  </label>
+                  <select
+                    value={formData.lead_tag || 'subscriber'}
+                    onChange={(e) => setFormData({ ...formData, lead_tag: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/[0.1] rounded-xl font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-sky-500"
+                  >
+                    <option value="subscriber">Subscriber</option>
+                    <option value="lead">Lead</option>
+                    <option value="client">Client</option>
+                    <option value="vip">VIP</option>
+                  </select>
                 </div>
               </div>
             )}

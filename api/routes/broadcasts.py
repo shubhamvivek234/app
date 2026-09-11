@@ -371,6 +371,23 @@ async def send_broadcast(
     )
 
     updated_doc = await db.broadcasts.find_one({"_id": oid})
+
+    try:
+        from api.routes.automations import dispatch_automation_event
+        await dispatch_automation_event(
+            "broadcast.sent",
+            workspace_id,
+            {
+                "broadcast_id": str(oid),
+                "subject": broadcast.get("subject", ""),
+                "recipients_count": len(leads),
+                "delivered_count": success_count,
+            },
+            db,
+        )
+    except Exception as exc:
+        logger.warning("Failed to dispatch automation for broadcast.sent: %s", exc)
+
     return {
         "ok": True,
         "message": f"Broadcast successfully dispatched to {success_count} recipients ({fail_count} skipped/failed).",
