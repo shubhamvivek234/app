@@ -1657,85 +1657,93 @@ const post = await unravler.publish({
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
 
-      {/* ── Left Preview Canvas Column ── */}
-      <div className="xl:col-span-7 flex flex-col items-center space-y-4">
+      {/* ── Left Preview Canvas Column — Airbnb Craft ── */}
+      <div className="xl:col-span-7 flex flex-col items-center space-y-5">
 
-        {/* Studio Mode Switcher & Quick AI Action */}
-        <div className="w-full flex items-center justify-between bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-2xl p-2 shadow-2xs">
-          <div className="flex items-center gap-1.5 p-1 bg-gray-100/90 dark:bg-zinc-800 rounded-xl">
+        {/* Airbnb Signature Floating Search Pill Bar */}
+        <div className="w-full flex items-center justify-between bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-full p-1.5 shadow-[0_3px_12px_rgba(0,0,0,0.06)]">
+          <div className="flex items-center gap-1">
             <button
               onClick={() => setStudioMode('single')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all cursor-pointer ${
                 studioMode === 'single'
-                  ? 'bg-white dark:bg-zinc-900 text-gray-900 dark:text-white shadow-2xs'
-                  : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'
+                  ? 'bg-[#222222] dark:bg-white text-white dark:text-gray-900 shadow-xs'
+                  : 'text-[#6A6A6A] hover:text-[#222222] dark:hover:text-gray-200'
               }`}
             >
-              Single Graphic
+              <span>Single Graphic</span>
             </button>
             <button
               onClick={() => setStudioMode('carousel')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all cursor-pointer ${
                 studioMode === 'carousel'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
-                  : 'text-gray-500 hover:text-gray-900 dark:hover:text-gray-200'
+                  ? 'bg-[#FF385C] text-white shadow-xs'
+                  : 'text-[#6A6A6A] hover:text-[#222222] dark:hover:text-gray-200'
               }`}
             >
               <FaLayerGroup className="text-[10px]" />
-              LinkedIn PDF Carousel ({slides.length} Slides)
+              <span>LinkedIn Carousel</span>
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                studioMode === 'carousel' ? 'bg-white/20 text-white' : 'bg-[#FFF1F4] text-[#FF385C]'
+              }`}>
+                {slides.length} Slides
+              </span>
             </button>
           </div>
 
           <button
             onClick={() => setAiModal({ open: true, topic: '', loading: false })}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-xs font-bold transition-all cursor-pointer"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FFF1F4] hover:bg-[#FF385C]/15 text-[#FF385C] border border-[#FF385C]/30 text-xs font-bold transition-all cursor-pointer"
           >
             <FaMagic className="text-xs" />
             <span className="hidden sm:inline">AI Magic Writer</span>
           </button>
         </div>
 
-        {/* Aspect Ratio & Canvas Toolbar */}
+        {/* Aspect Ratio Filter Chips & Canvas Zoom Bar */}
         <div className="w-full flex items-center justify-between gap-2 px-1">
-          {/* Aspect Ratios */}
-          <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-xl p-1 shadow-2xs">
-            {ASPECT_RATIOS.map(ar => (
-              <button
-                key={ar.id}
-                onClick={() => setAspectRatio(ar)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  aspectRatio.id === ar.id
-                    ? 'bg-indigo-600 text-white shadow-2xs'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                }`}
-              >
-                <span>{ar.icon}</span>
-                <span>{ar.label}</span>
-                <span className="hidden sm:inline text-[10px] opacity-70">({ar.id})</span>
-              </button>
-            ))}
+          {/* Aspect Ratios as Airbnb Filter Chips */}
+          <div className="flex items-center gap-1.5">
+            {ASPECT_RATIOS.map(ar => {
+              const isSelected = aspectRatio.id === ar.id;
+              return (
+                <button
+                  key={ar.id}
+                  onClick={() => setAspectRatio(ar)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-[#222222] dark:bg-white text-white dark:text-gray-900 shadow-xs'
+                      : 'border border-[#EBEBEB] dark:border-zinc-800 bg-white dark:bg-zinc-900 text-[#6A6A6A] dark:text-gray-400 hover:text-[#222222] dark:hover:text-white hover:border-[#DDDDDD]'
+                  }`}
+                >
+                  <span className="text-[10px]">{ar.icon}</span>
+                  <span>{ar.label}</span>
+                  <span className="hidden sm:inline text-[10px] opacity-70">({ar.id})</span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Canvas Zoom */}
-          <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-xl px-2 py-1 shadow-2xs text-xs font-mono text-gray-500">
+          {/* Canvas Zoom Pill */}
+          <div className="flex items-center gap-1.5 bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-full px-2.5 py-1 shadow-2xs text-xs font-mono text-[#6A6A6A]">
             <button
               onClick={() => setCanvasZoom(prev => Math.max(0.6, prev - 0.1))}
-              className="px-1.5 py-0.5 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded cursor-pointer"
+              className="w-6 h-6 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full font-bold text-sm cursor-pointer"
             >
               -
             </button>
-            <span>{Math.round(canvasZoom * 100)}%</span>
+            <span className="w-9 text-center font-bold text-[#222222] dark:text-white text-[11px]">{Math.round(canvasZoom * 100)}%</span>
             <button
               onClick={() => setCanvasZoom(prev => Math.min(1.4, prev + 0.1))}
-              className="px-1.5 py-0.5 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded cursor-pointer"
+              className="w-6 h-6 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-full font-bold text-sm cursor-pointer"
             >
               +
             </button>
           </div>
         </div>
 
-        {/* Main Canvas Frame */}
-        <div className="w-full flex items-center justify-center p-6 bg-gray-100/80 dark:bg-zinc-950/80 border border-gray-200/80 dark:border-zinc-800/80 rounded-3xl overflow-hidden min-h-[440px] shadow-inner relative">
+        {/* Main Canvas Frame — Airbnb Luxury Stay Framing */}
+        <div className="w-full flex items-center justify-center p-6 sm:p-8 bg-white dark:bg-zinc-950 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl overflow-hidden min-h-[460px] shadow-[0_6px_20px_rgba(0,0,0,0.06)] relative">
           <canvas
             ref={canvasRef}
             style={{
@@ -1745,97 +1753,109 @@ const post = await unravler.publish({
               maxHeight: '520px',
               objectFit: 'contain',
               borderRadius: '24px',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              boxShadow: '0 20px 40px -12px rgba(0, 0, 0, 0.22)',
               transition: 'transform 0.15s ease-out',
             }}
           />
         </div>
 
-        {/* Carousel Multi-Slide Reel (Only shown in carousel mode) */}
+        {/* Carousel Multi-Slide Reel (Airbnb Itinerary Strip) */}
         {studioMode === 'carousel' && (
-          <div className="w-full flex items-center gap-2.5 overflow-x-auto pb-2 pt-1 px-1">
-            {slides.map((s, idx) => (
-              <div
-                key={s.id}
-                onClick={() => setActiveSlideIdx(idx)}
-                className={`shrink-0 flex flex-col justify-between w-28 h-24 p-2.5 rounded-2xl border transition-all cursor-pointer ${
-                  activeSlideIdx === idx
-                    ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/40 shadow-xs ring-2 ring-indigo-500/20'
-                    : 'border-gray-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-gray-300">
-                    #{idx + 1}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {idx > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          moveSlide(idx, -1);
-                        }}
-                        className="text-gray-400 hover:text-gray-700 p-0.5 text-[8px]"
-                        title="Move Left"
-                      >
-                        ◀
-                      </button>
-                    )}
-                    {idx < slides.length - 1 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          moveSlide(idx, 1);
-                        }}
-                        className="text-gray-400 hover:text-gray-700 p-0.5 text-[8px]"
-                        title="Move Right"
-                      >
-                        ▶
-                      </button>
-                    )}
-                    {slides.length > 2 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeSlide(idx);
-                        }}
-                        className="text-gray-400 hover:text-rose-500 p-0.5"
-                        title="Delete Slide"
-                      >
-                        <FaTrash className="text-[9px]" />
-                      </button>
-                    )}
+          <div className="w-full bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-4 shadow-xs">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <span className="text-xs font-bold text-[#222222] dark:text-white">
+                Slide Itinerary ({slides.length} of 10)
+              </span>
+              <span className="text-[11px] font-semibold text-[#FF385C]">
+                LinkedIn Document PDF
+              </span>
+            </div>
+            <div className="w-full flex items-center gap-3 overflow-x-auto pb-1 pt-1 px-1">
+              {slides.map((s, idx) => (
+                <div
+                  key={s.id}
+                  onClick={() => setActiveSlideIdx(idx)}
+                  className={`shrink-0 flex flex-col justify-between w-32 h-24 p-3 rounded-2xl border transition-all cursor-pointer ${
+                    activeSlideIdx === idx
+                      ? 'border-2 border-[#FF385C] bg-[#FFF1F4]/40 dark:bg-[#FF385C]/10 shadow-xs ring-2 ring-[#FF385C]/20'
+                      : 'border-[#EBEBEB] dark:border-zinc-800 bg-gray-50/60 dark:bg-zinc-800/40 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      activeSlideIdx === idx ? 'bg-[#FF385C] text-white' : 'bg-gray-200/80 dark:bg-zinc-700 text-gray-700 dark:text-gray-300'
+                    }`}>
+                      #{idx + 1}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {idx > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSlide(idx, -1);
+                          }}
+                          className="text-gray-400 hover:text-gray-700 p-0.5 text-[8px]"
+                          title="Move Left"
+                        >
+                          ◀
+                        </button>
+                      )}
+                      {idx < slides.length - 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSlide(idx, 1);
+                          }}
+                          className="text-gray-400 hover:text-gray-700 p-0.5 text-[8px]"
+                          title="Move Right"
+                        >
+                          ▶
+                        </button>
+                      )}
+                      {slides.length > 2 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeSlide(idx);
+                          }}
+                          className="text-gray-400 hover:text-rose-500 p-0.5"
+                          title="Delete Slide"
+                        >
+                          <FaTrash className="text-[9px]" />
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  <p className="text-[11px] font-bold text-[#222222] dark:text-white truncate">
+                    {s.badge || `Slide ${idx + 1}`}
+                  </p>
+                  <p className="text-[10px] text-[#6A6A6A] dark:text-gray-400 truncate leading-tight">
+                    {s.headline || 'No text'}
+                  </p>
                 </div>
-                <p className="text-[11px] font-bold text-gray-900 dark:text-white truncate">
-                  {s.badge || `Slide ${idx + 1}`}
-                </p>
-                <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate mt-0.5 leading-tight">
-                  {s.headline || 'No text'}
-                </p>
-              </div>
-            ))}
+              ))}
 
-            {slides.length < 10 && (
-              <button
-                onClick={addSlide}
-                className="shrink-0 flex flex-col items-center justify-center gap-1 w-24 h-24 rounded-2xl border-2 border-dashed border-gray-300 dark:border-zinc-700 hover:border-indigo-500 hover:bg-indigo-50/20 text-gray-500 text-xs font-bold transition-all cursor-pointer"
-              >
-                <FaPlus className="text-xs" />
-                <span>Add Slide</span>
-              </button>
-            )}
+              {slides.length < 10 && (
+                <button
+                  onClick={addSlide}
+                  className="shrink-0 flex flex-col items-center justify-center gap-1 w-24 h-24 rounded-2xl border-2 border-dashed border-[#DDDDDD] dark:border-zinc-700 hover:border-[#FF385C] hover:bg-[#FFF1F4]/20 text-[#6A6A6A] hover:text-[#FF385C] text-xs font-bold transition-all cursor-pointer"
+                >
+                  <FaPlus className="text-xs" />
+                  <span>Add Slide</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Export & Actions Toolbar */}
+        {/* Export & Actions Toolbar — Airbnb Rausch Primary */}
         <div className="w-full flex flex-wrap items-center justify-between gap-3 pt-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             {studioMode === 'carousel' ? (
               <button
                 onClick={handleDownloadPdf}
                 disabled={isExportingPdf}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 active:scale-95 transition-all cursor-pointer"
+                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#FF385C] hover:bg-[#E00B41] text-white font-bold text-xs shadow-md shadow-[#FF385C]/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
               >
                 <FaFilePdf className="text-xs" />
                 {isExportingPdf ? 'Exporting PDF...' : 'Download LinkedIn Carousel (PDF)'}
@@ -1843,7 +1863,7 @@ const post = await unravler.publish({
             ) : (
               <button
                 onClick={handleDownloadImage}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-100 text-white dark:text-gray-900 font-bold text-xs shadow-xs active:scale-95 transition-all cursor-pointer"
+                className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#FF385C] hover:bg-[#E00B41] text-white font-bold text-xs shadow-md shadow-[#FF385C]/20 active:scale-95 transition-all cursor-pointer"
               >
                 <FaDownload className="text-xs" />
                 Download High-Res PNG
@@ -1852,7 +1872,7 @@ const post = await unravler.publish({
 
             <button
               onClick={handleCopyClipboard}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-gray-300/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-700 font-bold text-xs text-gray-700 dark:text-gray-200 active:scale-95 transition-all cursor-pointer shadow-2xs"
+              className="flex items-center gap-2 px-5 py-3 rounded-full border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-700 font-semibold text-xs text-[#222222] dark:text-gray-200 active:scale-95 transition-all cursor-pointer shadow-xs"
             >
               <FaCopy className="text-xs" />
               Copy Slide
@@ -1861,25 +1881,25 @@ const post = await unravler.publish({
 
           <button
             onClick={handleAttachPost}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 active:scale-95 transition-all cursor-pointer"
+            className="flex items-center gap-2 px-6 py-3 rounded-full bg-[#222222] hover:bg-black dark:bg-zinc-800 dark:hover:bg-zinc-700 text-white font-bold text-xs shadow-xs active:scale-95 transition-all cursor-pointer"
           >
-            <FaMagic className="text-xs" />
+            <FaMagic className="text-xs text-[#FF385C]" />
             Attach to Post Composer →
           </button>
         </div>
 
       </div>
 
-      {/* ── Right Controls Inspector Panel Column ── */}
-      <div className="xl:col-span-5 space-y-4">
+      {/* ── Right Controls Inspector Panel Column — Airbnb Craft ── */}
+      <div className="xl:col-span-5 space-y-5">
 
-        {/* Inspector Navigation Tabs */}
-        <div className="flex items-center p-1 bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-2xl shadow-2xs">
+        {/* Inspector Navigation Segmented Pill Tabs */}
+        <div className="flex items-center p-1.5 bg-[#F7F7F7] dark:bg-zinc-800/80 border border-[#EBEBEB] dark:border-zinc-700 rounded-full shadow-2xs">
           {[
-            { id: 'layout', label: 'Layout & Archetype', icon: FaBorderAll },
-            { id: 'style', label: 'Canvas & Style', icon: FaPalette },
-            { id: 'content', label: 'Content & Copy', icon: FaFont },
-            { id: 'extras', label: 'Archetype Extras', icon: FaSlidersH },
+            { id: 'layout', label: 'Layout & Style', icon: FaBorderAll },
+            { id: 'style', label: 'Atmosphere', icon: FaPalette },
+            { id: 'content', label: 'Story & Copy', icon: FaFont },
+            { id: 'extras', label: 'Credentials', icon: FaSlidersH },
           ].map(tab => {
             const Icon = tab.icon;
             const isSelected = activeInspectorTab === tab.id;
@@ -1887,13 +1907,13 @@ const post = await unravler.publish({
               <button
                 key={tab.id}
                 onClick={() => setActiveInspectorTab(tab.id)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-full text-xs font-bold transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                    ? 'bg-white dark:bg-zinc-900 text-[#222222] dark:text-white shadow-xs'
+                    : 'text-[#6A6A6A] hover:text-[#222222] dark:text-gray-400 dark:hover:text-white font-semibold'
                 }`}
               >
-                <Icon className="text-[11px]" />
+                <Icon className={`text-[11px] ${isSelected ? 'text-[#FF385C]' : ''}`} />
                 <span className="hidden sm:inline">{tab.label}</span>
               </button>
             );
@@ -1902,16 +1922,21 @@ const post = await unravler.publish({
 
         {/* ── TAB 1: LAYOUT & ARCHETYPE ── */}
         {activeInspectorTab === 'layout' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {/* 1. Layout Archetypes Selector */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center justify-between">
-                <span>Card Layout Archetype</span>
-                <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950">
-                  12 Premium Styles
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
+                    Card Architecture
+                  </h3>
+                  <p className="text-xs text-[#6A6A6A] mt-0.5">Select a presentation archetype</p>
+                </div>
+                <span className="text-[10px] font-bold text-[#FF385C] px-2.5 py-1 rounded-full bg-[#FFF1F4] dark:bg-[#FF385C]/10 border border-[#FF385C]/20">
+                  12 Curated Styles
                 </span>
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[380px] overflow-y-auto pr-1">
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-[380px] overflow-y-auto pr-1">
                 {CARD_ARCHETYPES.map((arch) => {
                   const Icon = arch.icon;
                   const isSelected = cardArchetype === arch.id;
@@ -1929,26 +1954,26 @@ const post = await unravler.publish({
                           setFontFamily('Arial Black');
                         }
                       }}
-                      className={`flex flex-col items-start p-3 rounded-2xl border text-left transition-all cursor-pointer relative group ${
+                      className={`flex flex-col items-start p-3.5 rounded-2xl border text-left transition-all cursor-pointer relative group ${
                         isSelected
-                          ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/50 ring-2 ring-indigo-500/20'
-                          : 'border-gray-200/80 dark:border-zinc-800 bg-gray-50/60 dark:bg-zinc-800/40 hover:bg-gray-100 dark:hover:bg-zinc-800'
+                          ? 'border-2 border-[#FF385C] bg-[#FFF1F4]/40 dark:bg-[#FF385C]/10 ring-2 ring-[#FF385C]/20 shadow-xs'
+                          : 'border-[#EBEBEB] dark:border-zinc-800 bg-[#F7F7F7]/60 dark:bg-zinc-800/40 hover:bg-gray-100 dark:hover:bg-zinc-800 hover:border-gray-300'
                       }`}
                     >
-                      <div className="w-full flex items-center justify-between mb-1.5">
+                      <div className="w-full flex items-center justify-between mb-2">
                         <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${
-                          isSelected ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-zinc-700 text-gray-700 dark:text-gray-300'
+                          isSelected ? 'bg-[#FF385C] text-white shadow-xs' : 'bg-gray-200 dark:bg-zinc-700 text-gray-700 dark:text-gray-300'
                         }`}>
                           <Icon className="text-xs" />
                         </div>
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-zinc-700 text-gray-600 dark:text-gray-300">
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-white dark:bg-zinc-700 border border-[#EBEBEB] dark:border-zinc-600 text-[#6A6A6A] dark:text-gray-300">
                           {arch.tag}
                         </span>
                       </div>
-                      <span className="text-xs font-bold text-gray-900 dark:text-white leading-tight">
+                      <span className="text-xs font-bold text-[#222222] dark:text-white leading-tight">
                         {arch.label}
                       </span>
-                      <span className="text-[9px] text-gray-400 leading-tight mt-0.5 line-clamp-1">
+                      <span className="text-[9px] text-[#6A6A6A] dark:text-gray-400 leading-tight mt-1 line-clamp-1">
                         {arch.desc}
                       </span>
                     </button>
@@ -1958,9 +1983,9 @@ const post = await unravler.publish({
             </div>
 
             {/* 2. Card Placement & Sizing Controls */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-4">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
-                <FaArrowsAltV className="text-indigo-500" /> Card Placement & Inset
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400 flex items-center gap-1.5">
+                <FaArrowsAltV className="text-[#FF385C]" /> Card Placement & Geometry
               </p>
 
               {/* Placement options */}
@@ -1971,12 +1996,12 @@ const post = await unravler.publish({
                     onClick={() => setCardPlacement(cp.id)}
                     className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                       cardPlacement === cp.id
-                        ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold ring-1 ring-indigo-500/20'
-                        : 'border-gray-200 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 text-gray-700 dark:text-gray-300'
+                        ? 'border-[#FF385C] bg-[#FFF1F4]/50 dark:bg-[#FF385C]/10 text-[#FF385C] font-bold ring-1 ring-[#FF385C]/20'
+                        : 'border-[#EBEBEB] dark:border-zinc-800 bg-[#F7F7F7]/70 dark:bg-zinc-800/40 text-[#222222] dark:text-gray-300 hover:border-gray-300'
                     }`}
                   >
                     <p className="text-xs font-bold leading-tight">{cp.label}</p>
-                    <p className="text-[9px] text-gray-400 leading-tight mt-0.5 truncate">{cp.desc}</p>
+                    <p className="text-[9px] text-[#6A6A6A] dark:text-gray-400 leading-tight mt-0.5 truncate">{cp.desc}</p>
                   </button>
                 ))}
               </div>
@@ -1987,10 +2012,10 @@ const post = await unravler.publish({
                   <button
                     key={cw.id}
                     onClick={() => setCardWidthMode(cw.id)}
-                    className={`py-2 px-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                    className={`py-2 px-3 rounded-full border text-center transition-all cursor-pointer ${
                       cardWidthMode === cw.id
-                        ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold'
-                        : 'border-gray-200 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 text-gray-700 dark:text-gray-300'
+                        ? 'border-[#FF385C] bg-[#FFF1F4]/50 dark:bg-[#FF385C]/10 text-[#FF385C] font-bold shadow-xs'
+                        : 'border-[#EBEBEB] dark:border-zinc-800 bg-[#F7F7F7]/70 dark:bg-zinc-800/40 text-[#222222] dark:text-gray-300 hover:border-gray-300'
                     }`}
                   >
                     <p className="text-xs font-bold">{cw.label}</p>
@@ -1999,10 +2024,10 @@ const post = await unravler.publish({
               </div>
 
               {/* Corner Radius Slider */}
-              <div className="pt-2 border-t border-gray-100 dark:border-zinc-800">
-                <div className="flex items-center justify-between text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">
+              <div className="pt-3 border-t border-[#EBEBEB] dark:border-zinc-800">
+                <div className="flex items-center justify-between text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">
                   <span>Card Corner Radius</span>
-                  <span>{cardCornerRadius}px</span>
+                  <span className="font-mono text-[#FF385C] font-bold">{cardCornerRadius}px</span>
                 </div>
                 <input
                   type="range"
@@ -2010,15 +2035,15 @@ const post = await unravler.publish({
                   max="48"
                   value={cardCornerRadius}
                   onChange={(e) => setCardCornerRadius(Number(e.target.value))}
-                  className="w-full accent-indigo-600 cursor-pointer"
+                  className="w-full accent-[#FF385C] cursor-pointer"
                 />
               </div>
             </div>
 
             {/* 3. Quick 1-Click Templates */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2.5 flex items-center gap-1.5">
-                <FaMagic className="text-amber-500" /> Curated 1-Click Templates
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400 mb-3 flex items-center gap-1.5">
+                <FaMagic className="text-[#FF385C]" /> Curated 1-Click Experiences
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {TEMPLATES.map((tmpl) => (
@@ -2043,10 +2068,10 @@ const post = await unravler.publish({
                       setFontFamily(tmpl.font);
                       toast.success(`Loaded "${tmpl.name}" template`);
                     }}
-                    className="text-left p-2.5 rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 hover:bg-indigo-50/50 hover:border-indigo-200 transition-all text-xs font-semibold text-gray-800 dark:text-gray-200 cursor-pointer"
+                    className="text-left p-3 rounded-2xl border border-[#EBEBEB] dark:border-zinc-800 bg-[#F7F7F7]/70 dark:bg-zinc-800/40 hover:bg-[#FFF1F4]/30 hover:border-[#FF385C]/40 transition-all text-xs font-semibold text-[#222222] dark:text-gray-200 cursor-pointer"
                   >
                     <p className="font-bold truncate">{tmpl.name}</p>
-                    <p className="text-[9px] text-gray-400 mt-0.5 truncate">{tmpl.archetype}</p>
+                    <p className="text-[9px] text-[#6A6A6A] dark:text-gray-400 mt-0.5 truncate">{tmpl.archetype}</p>
                   </button>
                 ))}
               </div>
@@ -2054,39 +2079,42 @@ const post = await unravler.publish({
           </div>
         )}
 
-        {/* ── TAB 2: CANVAS & STYLE ── */}
+        {/* ── TAB 2: CANVAS & STYLE (ATMOSPHERE) ── */}
         {activeInspectorTab === 'style' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {/* Background Selector */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-4">
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
-                  <FaPalette className="text-indigo-500" /> Canvas Background
-                </p>
-                <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 p-0.5 rounded-lg text-[10px] font-bold">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400 flex items-center gap-1.5">
+                    <FaPalette className="text-[#FF385C]" /> Destination Atmosphere
+                  </h3>
+                  <p className="text-xs text-[#6A6A6A] mt-0.5">Choose gradient mesh or solid tone</p>
+                </div>
+                <div className="flex items-center gap-1 bg-[#F7F7F7] dark:bg-zinc-800 p-1 rounded-full text-xs font-semibold">
                   <button
                     onClick={() => setBgType('gradient')}
-                    className={`px-2 py-0.5 rounded-md cursor-pointer ${bgType === 'gradient' ? 'bg-white dark:bg-zinc-900 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500'}`}
+                    className={`px-3 py-1 rounded-full cursor-pointer transition-all ${bgType === 'gradient' ? 'bg-white dark:bg-zinc-900 text-[#222222] dark:text-white shadow-xs font-bold' : 'text-[#6A6A6A]'}`}
                   >
                     Gradients
                   </button>
                   <button
                     onClick={() => setBgType('solid')}
-                    className={`px-2 py-0.5 rounded-md cursor-pointer ${bgType === 'solid' ? 'bg-white dark:bg-zinc-900 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500'}`}
+                    className={`px-3 py-1 rounded-full cursor-pointer transition-all ${bgType === 'solid' ? 'bg-white dark:bg-zinc-900 text-[#222222] dark:text-white shadow-xs font-bold' : 'text-[#6A6A6A]'}`}
                   >
-                    Luxury Solids
+                    Solids
                   </button>
                 </div>
               </div>
 
               {bgType === 'gradient' ? (
-                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
                   {GRADIENTS.map((g) => (
                     <button
                       key={g.id}
                       onClick={() => setSelectedGradient(g)}
-                      className={`h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                        selectedGradient.id === g.id ? 'ring-2 ring-indigo-500 ring-offset-2 scale-105 shadow-md' : 'opacity-80 hover:opacity-100'
+                      className={`h-10 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
+                        selectedGradient.id === g.id ? 'ring-2 ring-[#FF385C] ring-offset-2 scale-105 shadow-md' : 'opacity-80 hover:opacity-100 hover:scale-102'
                       }`}
                       style={{
                         background: `linear-gradient(135deg, ${g.colors[0]}, ${g.colors[1]})`,
@@ -2101,8 +2129,8 @@ const post = await unravler.publish({
                     <button
                       key={s.id}
                       onClick={() => setSelectedSolid(s)}
-                      className={`h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer border border-gray-200 dark:border-zinc-700 ${
-                        selectedSolid.id === s.id ? 'ring-2 ring-indigo-500 ring-offset-2 scale-105 shadow-md' : 'opacity-80 hover:opacity-100'
+                      className={`h-10 rounded-2xl flex items-center justify-center transition-all cursor-pointer border border-[#EBEBEB] dark:border-zinc-700 ${
+                        selectedSolid.id === s.id ? 'ring-2 ring-[#FF385C] ring-offset-2 scale-105 shadow-md' : 'opacity-80 hover:opacity-100'
                       }`}
                       style={{ backgroundColor: s.color }}
                       title={s.name}
@@ -2112,13 +2140,13 @@ const post = await unravler.publish({
               )}
 
               {/* Texture & Shadow */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-2 gap-3 pt-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Texture Overlay</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">Texture Overlay</label>
                   <select
                     value={patternOverlay}
                     onChange={(e) => setPatternOverlay(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none cursor-pointer"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none cursor-pointer focus:border-[#222222]"
                   >
                     <option value="none">Clean Solid</option>
                     <option value="dots">Subtle Dots</option>
@@ -2127,11 +2155,11 @@ const post = await unravler.publish({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Card Shadow Depth</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">Card Shadow Depth</label>
                   <select
                     value={cardShadow}
                     onChange={(e) => setCardShadow(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none cursor-pointer"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none cursor-pointer focus:border-[#222222]"
                   >
                     <option value="elevated">Elevated 3D</option>
                     <option value="subtle">Subtle Soft</option>
@@ -2142,13 +2170,13 @@ const post = await unravler.publish({
               </div>
 
               {/* Window Chrome & Bezel Options */}
-              <div className="pt-2 border-t border-gray-100 dark:border-zinc-800 flex items-center justify-between gap-4">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-700 dark:text-gray-300">
+              <div className="pt-3 border-t border-[#EBEBEB] dark:border-zinc-800 flex items-center justify-between gap-4">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-[#222222] dark:text-gray-300">
                   <input
                     type="checkbox"
                     checked={showMacOsBar}
                     onChange={(e) => setShowMacOsBar(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    className="rounded text-[#FF385C] focus:ring-[#FF385C] cursor-pointer accent-[#FF385C]"
                   />
                   <span>macOS Traffic Lights Bar (🔴 🟡 🟢)</span>
                 </label>
@@ -2156,14 +2184,14 @@ const post = await unravler.publish({
             </div>
 
             {/* Branding & Watermark */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-700 dark:text-gray-300">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-[#222222] dark:text-gray-300">
                   <input
                     type="checkbox"
                     checked={showWatermark}
                     onChange={(e) => setShowWatermark(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    className="rounded text-[#FF385C] focus:ring-[#FF385C] cursor-pointer accent-[#FF385C]"
                   />
                   <span>Brand Watermark Stamp</span>
                 </label>
@@ -2173,7 +2201,7 @@ const post = await unravler.publish({
                     value={watermarkText}
                     onChange={(e) => setWatermarkText(e.target.value)}
                     placeholder="e.g. unravler.com"
-                    className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none w-36"
+                    className="text-xs px-3 py-1.5 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none w-40 focus:border-[#222222]"
                   />
                 )}
               </div>
@@ -2181,30 +2209,33 @@ const post = await unravler.publish({
           </div>
         )}
 
-        {/* ── TAB 3: CONTENT & COPY ── */}
+        {/* ── TAB 3: CONTENT & COPY (STORY & COPY) ── */}
         {activeInspectorTab === 'content' && (
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-4">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500 flex items-center gap-1.5">
-                <FaFont className="text-gray-500" />
-                {studioMode === 'carousel' ? `Slide #${activeSlideIdx + 1} Content` : 'Text & Content'}
-              </p>
+          <div className="space-y-5">
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400 flex items-center gap-1.5">
+                  <FaFont className="text-[#FF385C]" />
+                  {studioMode === 'carousel' ? `Slide #${activeSlideIdx + 1} Content` : 'Text & Storytelling'}
+                </p>
+                <span className="text-xs font-bold text-[#FF385C]">Airbnb Cereal Pairings</span>
+              </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">Badge / Category Pill</label>
+                <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">Badge / Stay Tag</label>
                 <input
                   type="text"
                   value={currentBadge}
                   onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('badge', e.target.value) : setBadge(e.target.value)}
                   placeholder="e.g. 💡 QUICK TIP"
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                  className="w-full text-xs px-4 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none focus:border-[#222222] focus:ring-1 focus:ring-[#222222]"
                 />
-                <div className="flex flex-wrap gap-1.5 mt-2">
+                <div className="flex flex-wrap gap-1.5 mt-2.5">
                   {BADGE_PRESETS.slice(0, 6).map((p) => (
                     <button
                       key={p}
                       onClick={() => studioMode === 'carousel' ? updateActiveSlide('badge', p) : setBadge(p)}
-                      className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-gray-100 dark:bg-zinc-800 hover:bg-indigo-50 text-gray-600 dark:text-gray-300 cursor-pointer"
+                      className="text-[10px] font-bold px-3 py-1 rounded-full bg-gray-100 dark:bg-zinc-800 hover:bg-[#FFF1F4] hover:text-[#FF385C] text-[#6A6A6A] dark:text-gray-300 cursor-pointer transition-colors"
                     >
                       {p}
                     </button>
@@ -2213,37 +2244,37 @@ const post = await unravler.publish({
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">
                   {cardArchetype === 'tweet_card' ? 'Tweet Body' : 'Headline / Hook'}
                 </label>
                 <textarea
                   rows={3}
                   value={currentHeadline}
                   onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('headline', e.target.value) : setHeadline(e.target.value)}
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none resize-none font-medium leading-relaxed"
+                  className="w-full text-xs px-4 py-3 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none resize-none font-medium leading-relaxed focus:border-[#222222] focus:ring-1 focus:ring-[#222222]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">
                   {cardArchetype === 'tweet_card' ? 'Timestamp / Date' : 'Subtitle / Key Takeaway'}
                 </label>
                 <textarea
                   rows={2}
                   value={currentSubtitle}
                   onChange={(e) => studioMode === 'carousel' ? updateActiveSlide('subtitle', e.target.value) : setSubtitle(e.target.value)}
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none resize-none leading-relaxed"
+                  className="w-full text-xs px-4 py-3 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none resize-none leading-relaxed focus:border-[#222222] focus:ring-1 focus:ring-[#222222]"
                 />
               </div>
 
               {/* Typography & Size */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-2 gap-3 pt-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Typography</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">Typography</label>
                   <select
                     value={fontFamily}
                     onChange={(e) => setFontFamily(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none cursor-pointer"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none cursor-pointer focus:border-[#222222]"
                   >
                     {FONTS.map((f) => (
                       <option key={f.id} value={f.id}>{f.label}</option>
@@ -2251,14 +2282,17 @@ const post = await unravler.publish({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Headline Size ({headlineSize}px)</label>
+                  <div className="flex items-center justify-between text-xs font-bold text-[#222222] dark:text-gray-300 mb-1.5">
+                    <span>Headline Size</span>
+                    <span className="font-mono text-[#FF385C]">{headlineSize}px</span>
+                  </div>
                   <input
                     type="range"
                     min="36"
                     max="72"
                     value={headlineSize}
                     onChange={(e) => setHeadlineSize(Number(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
+                    className="w-full accent-[#FF385C] cursor-pointer"
                   />
                 </div>
               </div>
@@ -2266,83 +2300,83 @@ const post = await unravler.publish({
           </div>
         )}
 
-        {/* ── TAB 4: ARCHETYPE EXTRAS & CONTEXTUAL CONTROLS ── */}
+        {/* ── TAB 4: ARCHETYPE EXTRAS & CREDENTIALS ── */}
         {activeInspectorTab === 'extras' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {/* Contextual Card Controls */}
             {cardArchetype === 'metric_stat' && (
-              <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
                   Big Stat KPI Settings
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Giant KPI</label>
+                    <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Giant KPI</label>
                     <input
                       type="text"
                       value={metricValue}
                       onChange={(e) => setMetricValue(e.target.value)}
                       placeholder="+340%"
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white font-bold outline-none"
+                      className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white font-bold outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Delta Pill</label>
+                    <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Delta Pill</label>
                     <input
                       type="text"
                       value={metricDelta}
                       onChange={(e) => setMetricDelta(e.target.value)}
                       placeholder="▲ +28% MoM"
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                      className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Metric Label</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Metric Label</label>
                   <input
                     type="text"
                     value={metricLabel}
                     onChange={(e) => setMetricLabel(e.target.value)}
                     placeholder="Organic Reach"
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none"
                   />
                 </div>
               </div>
             )}
 
             {cardArchetype === 'code_snippet' && (
-              <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
                   Code Terminal Snippet
                 </p>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Filename</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Filename</label>
                   <input
                     type="text"
                     value={codeFilename}
                     onChange={(e) => setCodeFilename(e.target.value)}
                     placeholder="pipeline.ts"
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none font-mono"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Code Lines</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Code Lines</label>
                   <textarea
                     rows={4}
                     value={codeSnippet}
                     onChange={(e) => setCodeSnippet(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none font-mono resize-none leading-relaxed"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none font-mono resize-none leading-relaxed"
                   />
                 </div>
               </div>
             )}
 
             {cardArchetype === 'versus_comparison' && (
-              <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
                   Versus Matrix Comparison Settings
                 </p>
-                <div className="space-y-2 p-3 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/40">
+                <div className="space-y-2 p-3.5 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/40">
                   <label className="block text-xs font-bold text-rose-700 dark:text-rose-400">Traditional / Old Way (✕)</label>
                   <input
                     type="text"
@@ -2358,7 +2392,7 @@ const post = await unravler.publish({
                     className="w-full text-xs px-3 py-1.5 rounded-xl border border-rose-200 bg-white dark:bg-zinc-800 text-gray-900 dark:text-white outline-none resize-none"
                   />
                 </div>
-                <div className="space-y-2 p-3 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
+                <div className="space-y-2 p-3.5 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
                   <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400">The 10x Modern System (✓)</label>
                   <input
                     type="text"
@@ -2378,116 +2412,121 @@ const post = await unravler.publish({
             )}
 
             {cardArchetype === 'chat_bubble' && (
-              <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
                   Chat Conversation Settings
                 </p>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Contact Name</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Contact Name</label>
                   <input
                     type="text"
                     value={chatSenderName}
                     onChange={(e) => setChatSenderName(e.target.value)}
                     placeholder="Sarah (Founder)"
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Incoming Hook / Question</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Incoming Hook / Question</label>
                   <textarea
                     rows={2}
                     value={chatPrompt}
                     onChange={(e) => setChatPrompt(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none resize-none"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none resize-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Outgoing Answer / Insight</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Outgoing Answer / Insight</label>
                   <textarea
                     rows={2}
                     value={chatReply}
                     onChange={(e) => setChatReply(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none resize-none"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none resize-none"
                   />
                 </div>
               </div>
             )}
 
             {cardArchetype === 'minimal_swiss' && (
-              <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
                   Minimal Swiss Index & Tagline
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Index Number</label>
+                    <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Index Number</label>
                     <input
                       type="text"
                       value={swissIndex}
                       onChange={(e) => setSwissIndex(e.target.value)}
                       placeholder="01"
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none font-mono font-bold"
+                      className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none font-mono font-bold"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-1">Swiss Tagline</label>
+                    <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Swiss Tagline</label>
                     <input
                       type="text"
                       value={swissTagline}
                       onChange={(e) => setSwissTagline(e.target.value)}
                       placeholder="ISSUE NO. 24"
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                      className="w-full text-xs px-3.5 py-2 rounded-xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none"
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Author Attribution & Badges */}
-            <div className="bg-white dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-3xl p-5 shadow-2xs space-y-4">
-              <p className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                Author Attribution & Social Badges
-              </p>
+            {/* Author Attribution & Host Badges */}
+            <div className="bg-white dark:bg-zinc-900 border border-[#EBEBEB] dark:border-zinc-800 rounded-3xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[#6A6A6A] dark:text-gray-400">
+                  Host Attribution & Credentials
+                </h4>
+                <span className="text-[10px] font-bold text-[#FF385C] bg-[#FFF1F4] px-2 py-0.5 rounded-full">
+                  Verified Host
+                </span>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Author Name</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Host Name</label>
                   <input
                     type="text"
                     value={authorName}
                     onChange={(e) => setAuthorName(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none focus:border-[#222222]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-400 mb-1">Handle</label>
+                  <label className="block text-xs font-bold text-[#222222] dark:text-gray-300 mb-1">Handle / Bio Tag</label>
                   <input
                     type="text"
                     value={authorHandle}
                     onChange={(e) => setAuthorHandle(e.target.value)}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 text-gray-900 dark:text-white outline-none"
+                    className="w-full text-xs px-3.5 py-2.5 rounded-2xl border border-[#DDDDDD] dark:border-zinc-700 bg-white dark:bg-zinc-800 text-[#222222] dark:text-white outline-none focus:border-[#222222]"
                   />
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-gray-100 dark:border-zinc-800 space-y-2">
+              <div className="pt-3 border-t border-[#EBEBEB] dark:border-zinc-800 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-[#222222] dark:text-gray-300">
                     <input
                       type="checkbox"
                       checked={isVerified}
                       onChange={(e) => setIsVerified(e.target.checked)}
-                      className="rounded text-blue-500 focus:ring-blue-400 cursor-pointer"
+                      className="rounded text-blue-500 focus:ring-blue-400 cursor-pointer accent-blue-500"
                     />
                     <span>Blue Verified Badge (✓)</span>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-[#222222] dark:text-gray-300">
                     <input
                       type="checkbox"
                       checked={showStars}
                       onChange={(e) => setShowStars(e.target.checked)}
-                      className="rounded text-amber-500 focus:ring-amber-400 cursor-pointer"
+                      className="rounded text-amber-500 focus:ring-amber-400 cursor-pointer accent-amber-500"
                     />
                     <span>5-Star Rating (★★★★★)</span>
                   </label>
@@ -2499,47 +2538,47 @@ const post = await unravler.publish({
 
       </div>
 
-      {/* ── AI MAGIC CAROUSEL GENERATOR MODAL ── */}
+      {/* ── AI MAGIC CAROUSEL GENERATOR MODAL — AIRBNB STORYTELLER ── */}
       {aiModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
-          <div className="w-full max-w-lg bg-white dark:bg-zinc-900 rounded-3xl border border-gray-200 dark:border-zinc-800 p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-zinc-800">
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <FaMagic className="text-amber-500 text-xs" /> AI Carousel & Graphic Generator
+          <div className="w-full max-w-lg bg-white dark:bg-zinc-900 rounded-3xl border border-[#EBEBEB] dark:border-zinc-800 p-7 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3.5 border-b border-[#EBEBEB] dark:border-zinc-800">
+              <h3 className="text-sm font-bold text-[#222222] dark:text-white flex items-center gap-2">
+                <FaMagic className="text-[#FF385C] text-xs" /> AI Storyteller & Carousel Generator
               </h3>
               <button
                 onClick={() => setAiModal({ open: false, topic: '', loading: false })}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                className="text-[#6A6A6A] hover:text-[#222222] dark:hover:text-white p-2 rounded-full hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
               >
                 <FaTimes className="text-xs" />
               </button>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                What is your topic, concept, or article link?
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-[#222222] dark:text-gray-300">
+                What concept, experience, or framework would you like to share?
               </label>
               <textarea
                 rows={3}
                 value={aiModal.topic}
                 onChange={(e) => setAiModal((prev) => ({ ...prev, topic: e.target.value }))}
-                placeholder="e.g. 5 actionable lessons from scaling an AI SaaS to $50k MRR without venture capital..."
-                className="w-full p-3 bg-gray-50/70 dark:bg-zinc-800/60 border border-gray-200 dark:border-zinc-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-gray-900 dark:text-white placeholder-gray-400 transition-all resize-none"
+                placeholder="e.g. 5 lessons from welcoming 10,000 community members with hospitality-driven content..."
+                className="w-full p-3.5 bg-[#F7F7F7] dark:bg-zinc-800/60 border border-[#DDDDDD] dark:border-zinc-700 rounded-2xl text-xs focus:outline-none focus:border-[#222222] focus:ring-1 focus:ring-[#222222] text-[#222222] dark:text-white placeholder-gray-400 transition-all resize-none leading-relaxed"
               />
             </div>
 
             {/* Quick Prompts */}
             <div className="flex flex-wrap gap-1.5">
               {[
-                '5 LinkedIn Growth Rules',
-                'Cold Email Framework',
-                'AI Tools That Save 10h/week',
-                'Founder Mistake in 2026',
+                '5 Creator Hospitality Rules',
+                'Storytelling Framework',
+                'Why Intentional Design Wins',
+                'Superhost Content Strategy',
               ].map((suggestion) => (
                 <button
                   key={suggestion}
                   onClick={() => setAiModal((prev) => ({ ...prev, topic: suggestion }))}
-                  className="px-2.5 py-1 bg-gray-100 dark:bg-zinc-800 hover:bg-amber-50 text-[11px] font-medium text-gray-600 dark:text-gray-300 rounded-lg transition-colors cursor-pointer"
+                  className="px-3 py-1.5 bg-gray-100 dark:bg-zinc-800 hover:bg-[#FFF1F4] hover:text-[#FF385C] text-[11px] font-semibold text-[#6A6A6A] dark:text-gray-300 rounded-full transition-colors cursor-pointer"
                 >
                   {suggestion}
                 </button>
@@ -2549,7 +2588,7 @@ const post = await unravler.publish({
             <button
               onClick={handleRunAiGenerate}
               disabled={aiModal.loading || !aiModal.topic.trim()}
-              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95"
+              className="w-full py-3 bg-[#FF385C] hover:bg-[#E00B41] disabled:opacity-50 text-white font-bold text-xs rounded-full flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer active:scale-98"
             >
               {aiModal.loading ? (
                 <>
@@ -2559,7 +2598,7 @@ const post = await unravler.publish({
               ) : (
                 <>
                   <FaMagic className="text-xs" />
-                  <span>Generate 5-Slide LinkedIn Carousel</span>
+                  <span>Craft 5-Slide LinkedIn Carousel</span>
                 </>
               )}
             </button>
