@@ -9,18 +9,20 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Smart Bio Per-Page Theme Isolation & Avatar Upload:
-  - Fixed theme bleed between Page 1 and sub-pages in Studio preview and live public Smart Bio.
-  - Added `theme` and `avatar_url` fields to `BioSubPage` backend Pydantic models.
-  - Implemented `/api/bio-pages/avatar` upload endpoint with format/size validation and async storage.
-  - Added Display Picture upload UI in `BioOutlineTree.js` and `BioInspectorDrawer.js` (both main and sub-page).
-  - Isolated active theme updates and transitions synchronously in `LinkInBio.js` and `PublicBioPage.js`.
-  - Verified with 373 unit tests (`pytest`) and frontend production build (`npm run build`).
+- Cluster B — Monetization Engine & Broadcast Lite:
+  - Added Smart Bio `payment_link` block with amount, currency, gateway selector (Razorpay, UPI, PayPal, Stripe/Custom).
+  - Implemented `/api/bio-pages/payment-link` generator endpoint.
+  - Implemented `/api/broadcasts` router: campaign CRUD, stats, SES/Resend async dispatches, test emails.
+  - Catalog of 6 responsive email templates (`api/data/email_templates.py`).
+  - Added `/api/ai/broadcast-draft` copywriter endpoint with fallback generator.
+  - Added `/api/broadcasts/whatsapp-links` personalized `wa.me` outreach pipeline.
+  - Added dedicated `/broadcast` frontend hub with 4 tabs and integrated sidebar navigation.
+  - Verified with 380 backend tests (`pytest`) and frontend production build (`npm run build`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy backend to EC2 and verify live behavior on production.
+- Deploy to EC2 production (`ubuntu@51.20.210.184`) and verify live health.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
