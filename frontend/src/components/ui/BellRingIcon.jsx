@@ -64,17 +64,23 @@ const BellRingIcon = forwardRef(
       [controls, onMouseLeave],
     );
 
-    // Subtle gentle ring trigger if there are unread notifications
+    // Gentle periodic ring trigger if there are unread notifications
     useEffect(() => {
       if (hasUnread && isAnimated && !reduced) {
         controls.start("animate");
+        const interval = setInterval(() => {
+          controls.start("animate");
+        }, 8000);
+        return () => clearInterval(interval);
+      } else {
+        controls.start("normal");
       }
     }, [hasUnread, isAnimated, reduced, controls]);
 
     const bellVariants = {
       normal: { rotate: 0 },
       animate: {
-        rotate: [0, 7, -18, 14, -9, 5, -2, 0],
+        rotate: [0, 9, -18, 14, -9, 5, -2, 0],
         transition: {
           duration: 1.3 * duration,
           ease: "easeInOut",
@@ -97,9 +103,12 @@ const BellRingIcon = forwardRef(
     };
 
     const waveVariants = {
-      normal: { opacity: 0, scale: 0.8 },
+      normal: {
+        opacity: hasUnread ? 0.75 : 0,
+        scale: hasUnread ? 1 : 0.8,
+      },
       animate: {
-        opacity: [0, 1, 0.25, 1, 0],
+        opacity: [0, 1, 0.35, 1, hasUnread ? 0.75 : 0],
         scale: [0.5, 1.15, 0.7, 1.15, 1],
         transition: {
           duration: 1.3 * duration,
@@ -134,16 +143,30 @@ const BellRingIcon = forwardRef(
             variants={bellVariants}
             style={{ transformOrigin: "top center" }}
           >
-            <m.path d="M10.268 21a2 2 0 0 0 3.464 0" variants={clapperVariants} />
+            {/* Clapper / Tongue */}
+            <m.path
+              d="M10.268 21a2 2 0 0 0 3.464 0"
+              variants={clapperVariants}
+              fill={hasUnread ? "currentColor" : "none"}
+            />
+            {/* Right Sound Wave */}
             <m.path
               d="M22 8c0-2.3-.8-4.3-2-6"
               variants={waveVariants}
+              strokeWidth="2.5"
               style={{ transformOrigin: "0% 100%" }}
             />
-            <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+            {/* Main Bell Dome: Filled solid when unread, outline when read */}
+            <path
+              d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"
+              fill={hasUnread ? "currentColor" : "none"}
+              fillOpacity={hasUnread ? 0.9 : 0}
+            />
+            {/* Left Sound Wave */}
             <m.path
               d="M4 2C2.8 3.7 2 5.7 2 8"
               variants={waveVariants}
+              strokeWidth="2.5"
               style={{ transformOrigin: "100% 100%" }}
             />
           </m.svg>

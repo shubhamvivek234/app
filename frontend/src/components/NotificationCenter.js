@@ -49,6 +49,12 @@ const formatRelativeTime = (value) => {
   return new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
+export const triggerNotificationRefresh = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('unravler:notification_refresh'));
+  }
+};
+
 const NotificationCenter = () => {
   const [notifications, setNotifications] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -58,6 +64,19 @@ const NotificationCenter = () => {
   const navigate = useNavigate();
 
   const unreadCount = notifications.filter((notification) => !notification.is_read).length;
+
+  // Dynamically update browser tab title to alert the user of new notifications
+  useEffect(() => {
+    const originalTitle = 'Unravler';
+    if (unreadCount > 0) {
+      document.title = `(${unreadCount}) Unravler`;
+    } else {
+      document.title = originalTitle;
+    }
+    return () => {
+      document.title = originalTitle;
+    };
+  }, [unreadCount]);
 
   const filteredNotifications = useMemo(() => {
     if (activeTab === 'unread') {
@@ -86,8 +105,28 @@ const NotificationCenter = () => {
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 20000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchNotifications, 12000);
+
+    const handleWindowSync = () => {
+      if (document.visibilityState === 'visible') {
+        fetchNotifications();
+      }
+    };
+
+    const handleCustomRefresh = () => {
+      fetchNotifications();
+    };
+
+    window.addEventListener('focus', handleWindowSync);
+    window.addEventListener('visibilitychange', handleWindowSync);
+    window.addEventListener('unravler:notification_refresh', handleCustomRefresh);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleWindowSync);
+      window.removeEventListener('visibilitychange', handleWindowSync);
+      window.removeEventListener('unravler:notification_refresh', handleCustomRefresh);
+    };
   }, []);
 
   useEffect(() => {
@@ -160,16 +199,39 @@ const NotificationCenter = () => {
 
   return (
     <div className="relative flex items-center justify-center" ref={dropdownRef}>
+      {/* 
+        The notification bell button visibly transforms when there are unread notifications:
+        - Calm neutral gray wireframe when 0 unread
+        - Luminous active amber pod, solid filled bell, sound waves, and pulsing radar beacon when > 0 unread
+      */}
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
-        className="relative w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100 transition-colors focus:outline-none group"
-        aria-label="Open notifications"
+        className={cn(
+          "relative w-9 h-9 flex items-center justify-center rounded-xl transition-all duration-200 focus:outline-none group",
+          unreadCount > 0
+            ? "text-amber-500 bg-amber-50/90 hover:bg-amber-100/90 dark:text-amber-400 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 ring-1 ring-amber-400/50 dark:ring-amber-500/40 shadow-xs"
+            : "text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+        )}
+        aria-label={unreadCount > 0 ? `Open notifications (${unreadCount} unread)` : "Open notifications"}
+        title={unreadCount > 0 ? `${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}` : "Notifications"}
       >
-        <BellRingIcon size={18} hasUnread={unreadCount > 0} className="transition-transform group-hover:scale-105" />
+        <BellRingIcon
+          size={18}
+          hasUnread={unreadCount > 0}
+          className={cn(
+            "transition-transform group-hover:scale-105",
+            unreadCount > 0 ? "text-amber-500 dark:text-amber-400" : "text-gray-500 dark:text-gray-400"
+          )}
+        />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 inline-flex min-w-[1.05rem] h-[1.05rem] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white ring-2 ring-white dark:ring-gray-900">
-            {unreadCount > 9 ? '9+' : unreadCount}
+          <span className="absolute -top-1 -right-1 flex h-4 min-w-[1rem] items-center justify-center pointer-events-none">
+            {/* Ping radar ripple animation */}
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+            {/* Solid badge with counter */}
+            <span className="relative inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-extrabold leading-none text-white ring-2 ring-white dark:ring-gray-900 shadow-sm">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
           </span>
         )}
       </button>
