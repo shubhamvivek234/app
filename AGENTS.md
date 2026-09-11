@@ -7,19 +7,17 @@ Branch: main
 Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
 
 ## Last Session Completed
-Date: 2026-09-11
+Date: 2026-09-12
 Completed:
-- Canva OAuth & Modal Remediation:
-  - Fixed blank screen upon Canva OAuth redirect (`/api/media-sources/canva/callback`) by redirecting directly to `{frontend_base}/oauth/callback` with multi-channel cross-tab syncing (`BroadcastChannel`, `localStorage`, `postMessage`).
-  - Fixed infinite loading loop in `PlatformEditor.js` when connected Canva account has 0 designs by introducing a `canvaLoaded` guard.
-  - Added empty state card with Canva direct link ("Create Design on Canva") and Refresh button.
-  - Sanitized Canva designs API params (`limit`, `query`, `continuation`) and robust timestamp parsing.
-  - Verified with 7 passing tests in `tests/test_media_sources_route.py` and clean frontend production build.
+- Reddit Integration & Responsible Builder Policy Compliance:
+  - Updated Reddit adapter User-Agent to standard format: `web:com.unravler.app:v1.0 (by /u/UnravlerApp)` with `REDDIT_USER_AGENT` environment override.
+  - Added unit test suite in `tests/test_reddit_social.py` verifying headers on all outbound requests.
+  - Configured `REDDIT_USER_AGENT` across `docker-compose.yml` and `docker-compose.prod.yml`.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy updates to production and verify live health.
+- Deploy updates to production and submit Reddit appeal.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

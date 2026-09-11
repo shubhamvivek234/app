@@ -22,12 +22,14 @@ class RedditAuth:
     BASE_URL  = "https://oauth.reddit.com"
 
     SCOPES = "identity submit read history mysubreddits"
-    USER_AGENT = "Unravler/1.0"
+    DEFAULT_USER_AGENT = "web:com.unravler.app:v1.0 (by /u/UnravlerApp)"
+    USER_AGENT = DEFAULT_USER_AGENT
 
     def __init__(self):
         self.client_id     = os.environ.get("REDDIT_CLIENT_ID")
         self.client_secret = os.environ.get("REDDIT_CLIENT_SECRET")
         self.redirect_uri  = os.environ.get("REDDIT_REDIRECT_URI", "http://localhost:8001/api/oauth/reddit/callback")
+        self.user_agent    = os.environ.get("REDDIT_USER_AGENT", self.DEFAULT_USER_AGENT)
 
     def _basic_auth_header(self) -> str:
         credentials = f"{self.client_id}:{self.client_secret}"
@@ -57,7 +59,7 @@ class RedditAuth:
                 self.TOKEN_URL,
                 headers={
                     "Authorization": self._basic_auth_header(),
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
                 data={
                     "grant_type":   "authorization_code",
@@ -78,7 +80,7 @@ class RedditAuth:
                 self.TOKEN_URL,
                 headers={
                     "Authorization": self._basic_auth_header(),
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
                 data={
                     "grant_type":    "refresh_token",
@@ -97,7 +99,7 @@ class RedditAuth:
                 f"{self.BASE_URL}/api/v1/me",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
             )
             logging.info(f"[Reddit] /api/v1/me status: {response.status_code}")
@@ -113,7 +115,7 @@ class RedditAuth:
                 f"{self.BASE_URL}/subreddits/mine/subscriber",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
                 params={"limit": limit},
             )
@@ -154,7 +156,7 @@ class RedditAuth:
                 f"{self.BASE_URL}/api/submit",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
                 data=payload,
             )
@@ -172,7 +174,7 @@ class RedditAuth:
                 f"{self.BASE_URL}/user/{username}/submitted",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent":    self.USER_AGENT,
+                    "User-Agent":    self.user_agent,
                 },
                 params={"limit": limit, "sort": "new"},
             )
@@ -210,7 +212,7 @@ class RedditAuth:
                 params={"sort": "new", "limit": limit, "raw_json": 1},
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent": self.USER_AGENT,
+                    "User-Agent": self.user_agent,
                 },
             )
             logging.info(f"[Reddit] fetch_comments status: {response.status_code}")
@@ -252,7 +254,7 @@ class RedditAuth:
                 data={"thing_id": thing_id, "text": text, "api_type": "json"},
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "User-Agent": self.USER_AGENT,
+                    "User-Agent": self.user_agent,
                 },
             )
             logging.info(f"[Reddit] reply_to_comment status: {response.status_code}")
