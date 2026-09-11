@@ -334,6 +334,7 @@ const PlatformEditor = ({
   const [canvaQuery, setCanvaQuery] = useState('');
   const [canvaContinuation, setCanvaContinuation] = useState(null);
   const [canvaLoading, setCanvaLoading] = useState(false);
+  const [canvaLoaded, setCanvaLoaded] = useState(false);
   const [canvaImportingId, setCanvaImportingId] = useState(null);
   const [pollDraft, setPollDraft] = useState(() => createPollDraft(poll, platform));
   const textareaRef = useRef(null);
@@ -422,6 +423,7 @@ const PlatformEditor = ({
       toast.error(error?.response?.data?.detail || 'Failed to load Canva designs');
     } finally {
       setCanvaLoading(false);
+      setCanvaLoaded(true);
     }
   }, [canvaSessionId]);
 
@@ -440,6 +442,7 @@ const PlatformEditor = ({
         setCanvaContinuation(null);
         setCanvaQuery('');
         setCanvaDesigns([]);
+        setCanvaLoaded(false);
         toast.success('Canva connected');
         if (canvaPopupRef.current && !canvaPopupRef.current.closed) {
           try { canvaPopupRef.current.close(); } catch (_) {}
@@ -476,10 +479,10 @@ const PlatformEditor = ({
   }, []);
 
   useEffect(() => {
-    if (canvaOpen && canvaSessionId && canvaDesigns.length === 0 && !canvaLoading) {
+    if (canvaOpen && canvaSessionId && !canvaLoaded && !canvaLoading) {
       loadCanvaDesignList('', null, false);
     }
-  }, [canvaOpen, canvaSessionId, canvaDesigns.length, canvaLoading, loadCanvaDesignList]);
+  }, [canvaOpen, canvaSessionId, canvaLoaded, canvaLoading, loadCanvaDesignList]);
 
   const insertEmoji = (emoji) => {
     const el = textareaRef.current;
@@ -2736,9 +2739,40 @@ const PlatformEditor = ({
                 ))}
               </div>
 
-              {!canvaLoading && canvaDesigns.length === 0 && (
+              {!canvaLoading && canvaLoaded && canvaDesigns.length === 0 && (
                 <div className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500">
-                  Connect Canva to load recent designs, then import them directly into this composer.
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[#00C4CC]/10 text-[#00C4CC]">
+                    <SiCanva className="text-xl" />
+                  </div>
+                  <p className="font-semibold text-gray-800">
+                    {canvaQuery ? `No designs found for "${canvaQuery}"` : 'No designs found in your Canva account'}
+                  </p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs text-gray-500">
+                    {canvaQuery
+                      ? 'Try a different search term or clear the search bar.'
+                      : 'Designs created in your Canva account will appear here so you can import them into your posts.'}
+                  </p>
+                  <div className="mt-4 flex items-center justify-center gap-2">
+                    <a
+                      href="https://www.canva.com"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800"
+                    >
+                      Create Design on Canva
+                      <FaExternalLinkAlt className="text-[10px]" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCanvaContinuation(null);
+                        loadCanvaDesignList(canvaQuery, null, false);
+                      }}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:border-gray-300"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
               )}
 
