@@ -1145,3 +1145,106 @@ async def generate_lead_summary(
         "model": model,
         "lead_id": body.lead_id,
     }
+
+
+class BroadcastDraftRequest(BaseModel):
+    topic: str
+    tone: str = "engaging"
+    audience_type: str = "subscribers"
+    key_points: list[str] = Field(default_factory=list)
+    creator_name: str | None = None
+
+
+@router.post("/ai/broadcast-draft")
+@limiter.limit("15/minute")
+async def generate_broadcast_draft(
+    request: Request,
+    body: BroadcastDraftRequest,
+    current_user: CurrentUser,
+):
+    """
+    Generate high-converting email broadcast copy, subject lines, and preview text
+    using the free LLM waterfall router.
+    """
+    resolved_creator = (
+        body.creator_name
+        or current_user.get("display_name")
+        or current_user.get("name")
+        or "Your Creator"
+    )
+
+    system_msg = (
+        "You are an elite email copywriter and direct-response marketing expert for digital creators, "
+        "solopreneurs, and agencies. You write emails that achieve 45%+ open rates and high click-through rates. "
+        "Always respond with valid JSON ONLY, no markdown fences, matching this exact schema:\n"
+        "{\n"
+        '  "subject_lines": ["Subject 1 with emoji", "Subject 2 punchy", "Subject 3 curiosity curiosity-driven"],\n'
+        '  "preview_text": "Single compelling preheader sentence under 80 characters",\n'
+        '  "suggested_cta": "Action-oriented CTA button label (e.g. Claim Your Spot Now →)",\n'
+        '  "body_markdown": "Full formatted email body in Markdown. Use {{name}} for subscriber name and {{creator_name}} for creator signature.",\n'
+        '  "body_html": "<p>Clean responsive HTML markup with inline styles</p>"\n'
+        "}"
+    )
+
+    user_prompt = (
+        f"Topic / Core Message: {body.topic}\n"
+        f"Tone of Voice: {body.tone}\n"
+        f"Audience Segment: {body.audience_type}\n"
+        f"Creator Name: {resolved_creator}\n"
+    )
+    if body.key_points:
+        user_prompt += f"Key points to include: {', '.join(body.key_points)}\n"
+
+    try:
+        raw_text, provider, model = await free_llm.generate_text(system_msg, user_prompt)
+        cleaned_json = raw_text.strip()
+        if cleaned_json.startswith("```"):
+            cleaned_json = re.sub(r"^```(?:json)?\s*", "", cleaned_json)
+            cleaned_json = re.sub(r"\s*```$", "", cleaned_json)
+
+        parsed = json.loads(cleaned_json)
+        return {
+            "ok": True,
+            "subject_lines": parsed.get("subject_lines", [f"Exciting update from {resolved_creator}", f"Quick note about {body.topic[:30]}", "A personal invitation inside 🎁"]),
+            "preview_text": parsed.get("preview_text", "Here is something valuable I wanted to share with you today..."),
+            "suggested_cta": parsed.get("suggested_cta", "Learn More →"),
+            "body_markdown": parsed.get("body_markdown", f"Hey {{{{name}}}},\n\n{body.topic}\n\nWarmly,\n{{{{creator_name}}}}"),
+            "body_html": parsed.get("body_html", f"<p>Hey <strong>{{{{name}}}}</strong>,</p><p>{body.topic}</p><p>Warmly,<br><strong>{{{{creator_name}}}}</strong></p>"),
+            "provider": provider,
+            "model": model,
+        }
+    except Exception as exc:
+        logger.warning("AI broadcast draft parse failed, falling back to structured generator: %s", exc)
+        # Fallback structured draft
+        return {
+            "ok": True,
+            "subject_lines": [
+                f"🚀 Big update: {body.topic[:40]}",
+                f"Quick question for you, {{{{name}}}}...",
+                f"Something special for our {body.audience_type} community",
+            ],
+            "preview_text": f"Here is what you need to know about {body.topic[:50]}...",
+            "suggested_cta": "Check Out the Details →",
+            "body_markdown": (
+                f"# A Special Update from {resolved_creator}\n\n"
+                f"Hey {{{{name}}}},\n\n"
+                f"I wanted to reach out directly to share what we've been working on:\n\n"
+                f"**{body.topic}**\n\n"
+                f"Whether you are looking to save time or level up your workflow, this was built specifically with you in mind.\n\n"
+                f"[Take a Look Now →](https://unravler.com)\n\n"
+                f"Best regards,\n"
+                f"{{{{creator_name}}}}"
+            ),
+            "body_html": (
+                f"<div style='font-family: -apple-system, sans-serif; line-height: 1.6; color: #18181b;'>"
+                f"<p>Hey <strong>{{{{name}}}}</strong>,</p>"
+                f"<p>I wanted to reach out directly to share what we've been working on:</p>"
+                f"<div style='background-color: #f4f4f5; padding: 16px; border-radius: 8px; margin: 16px 0;'><strong>{body.topic}</strong></div>"
+                f"<p>Whether you're looking to save time or level up your workflow, this was built specifically with you in mind.</p>"
+                f"<p style='text-align: center; margin: 24px 0;'><a href='https://unravler.com' style='background-color: #4f46e5; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;'>Take a Look Now →</a></p>"
+                f"<p>Best regards,<br><strong>{{{{creator_name}}}}</strong></p>"
+                f"</div>"
+            ),
+            "provider": "fallback",
+            "model": "template",
+        }

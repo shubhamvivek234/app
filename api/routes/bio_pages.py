@@ -60,6 +60,11 @@ class BioBlockItem(BaseModel):
     headline: str = ""
     subheadline: str = ""
     button_label: str = "Subscribe"
+    payment_amount: float | int | None = None
+    payment_currency: str = "INR"
+    payment_provider: str = "custom"
+    payment_type: str = "fixed"
+    button_text: str = ""
     content: str = ""
     limit: int = 6
     show_caption: bool = True
@@ -879,5 +884,79 @@ async def delete_my_bio_page(
     return {
         "success": True,
         "message": f"Smart Bio page '@{handle}' and all associated data have been permanently deleted.",
+    }
+
+
+class PaymentLinkRequest(BaseModel):
+    title: str
+    amount: float = 0.0
+    currency: str = "INR"
+    description: str = ""
+    provider: str = "custom"
+    custom_url: str = ""
+
+
+@router.post("/bio-pages/payment-link")
+async def create_or_format_payment_link(
+    body: PaymentLinkRequest,
+    current_user: CurrentUser,
+):
+    """
+    Generate or format a payment link for Smart Bio blocks.
+    Supports Razorpay API (if env keys present), Stripe, UPI, PayPal, or custom URLs.
+    """
+    provider = (body.provider or "custom").lower()
+
+    # 1. Razorpay standard payment link API if keys configured
+    rzp_key = os.getenv("RAZORPAY_KEY_ID")
+    rzp_secret = os.getenv("RAZORPAY_KEY_SECRET")
+    if provider == "razorpay" and rzp_key and rzp_secret:
+        try:
+            import httpx
+            amount_paise = int(round(body.amount * 100))
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    "https://api.razorpay.com/v1/payment_links",
+                    auth=(rzp_key, rzp_secret),
+                    json={
+                        "amount": amount_paise,
+                        "currency": (body.currency or "INR").upper(),
+                        "description": body.title or "Payment",
+                        "notes": {"created_via": "unravler_smart_bio"},
+                    },
+                )
+                if res.status_code in (200, 201):
+                    data = res.json()
+                    short_url = data.get("short_url") or data.get("url")
+                    if short_url:
+                        return {"ok": True, "payment_url": short_url, "provider": "razorpay", "id": data.get("id")}
+        except Exception as exc:
+            logger.warning("Failed to call Razorpay Payment Links API: %s", exc)
+
+    # 2. UPI Direct Intent link format
+    if provider == "upi" and body.custom_url:
+        clean_vpa = body.custom_url.replace("upi://pay?pa=", "").strip()
+        amt_str = f"&am={body.amount:.2f}" if body.amount > 0 else ""
+        upi_link = f"upi://pay?pa={clean_vpa}&pn={body.title or 'Creator'}{amt_str}&cu={(body.currency or 'INR').upper()}"
+        return {"ok": True, "payment_url": upi_link, "provider": "upi"}
+
+    # 3. PayPal.me format
+    if provider == "paypal" and body.custom_url:
+        clean_user = body.custom_url.replace("https://paypal.me/", "").replace("paypal.me/", "").strip()
+        amt_str = f"/{body.amount:.2f}{(body.currency or 'USD').upper()}" if body.amount > 0 else ""
+        pp_link = f"https://paypal.me/{clean_user}{amt_str}"
+        return {"ok": True, "payment_url": pp_link, "provider": "paypal"}
+
+    # 4. Custom / Direct URL fallback
+    target_url = (body.custom_url or "").strip()
+    if target_url and not target_url.startswith("http://") and not target_url.startswith("https://") and not target_url.startswith("upi://"):
+        target_url = f"https://{target_url}"
+
+    return {
+        "ok": True,
+        "payment_url": target_url,
+        "provider": provider,
+        "amount": body.amount,
+        "currency": body.currency,
     }
 

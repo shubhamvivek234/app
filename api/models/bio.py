@@ -17,7 +17,7 @@ class PageSchedule(BaseModel):
 
 class BioBlockItem(BaseModel):
     id: str
-    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group"]
+    type: Literal["link", "feed_grid", "embed", "lead_capture", "text_block", "media_card", "folder", "tab_group", "payment_link"]
     title: str = ""
     subtitle: str = ""
     url: str = ""
@@ -37,6 +37,11 @@ class BioBlockItem(BaseModel):
     headline: str = ""
     subheadline: str = ""
     button_label: str = "Subscribe"
+    payment_amount: float | int | None = None
+    payment_currency: str = "INR"
+    payment_provider: str = "custom"
+    payment_type: str = "fixed"
+    button_text: str = ""
     limit: int = 6
     show_caption: bool = True
     active: bool = True

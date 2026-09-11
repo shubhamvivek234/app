@@ -24,6 +24,9 @@ import {
   FaVideo,
   FaGlobe,
   FaEnvelope,
+  FaCreditCard,
+  FaCoins,
+  FaCheckCircle,
 } from 'react-icons/fa';
 import { toast } from 'sonner';
 
