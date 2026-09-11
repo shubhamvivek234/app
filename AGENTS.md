@@ -9,10 +9,10 @@ Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media
 ## Last Session Completed
 Date: 2026-09-11
 Completed:
-- Canva OAuth Blank Callback Remediation:
-  - Fixed blank screen upon Canva OAuth redirect (`/api/media-sources/canva/callback`): switched callback to redirect directly to `{frontend_base}/oauth/callback` with originating frontend resolution.
-  - Implemented multi-channel cross-tab syncing in `OAuthCallback.js` and `PlatformEditor.js` (`BroadcastChannel`, `localStorage`, `postMessage`).
-  - Added manual "Close Window" fallback to prevent stuck popup if browser blocks `window.close()`.
+- Canva OAuth & Modal Remediation:
+  - Fixed blank screen upon Canva OAuth redirect (`/api/media-sources/canva/callback`) by redirecting directly to `{frontend_base}/oauth/callback` with multi-channel cross-tab syncing (`BroadcastChannel`, `localStorage`, `postMessage`).
+  - Fixed infinite loading loop in `PlatformEditor.js` when connected Canva account has 0 designs by introducing a `canvaLoaded` guard.
+  - Added empty state card with Canva direct link ("Create Design on Canva") and Refresh button.
   - Sanitized Canva designs API params (`limit`, `query`, `continuation`) and robust timestamp parsing.
   - Verified with 7 passing tests in `tests/test_media_sources_route.py` and clean frontend production build.
 
