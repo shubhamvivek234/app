@@ -115,7 +115,9 @@ const TikTokPreview = ({ content, media, account }) => {
         <div className="flex items-center gap-1.5 mt-2">
           <FaMusic className="text-white text-[10px]" />
           <p className="text-white/80 text-[10px] truncate drop-shadow">
-            Original audio · {name}
+            {firstItem?.audioMix?.source_label
+              ? `${firstItem.audioMix.source_label} · ${name}`
+              : `Original audio · ${name}`}
           </p>
         </div>
       </div>

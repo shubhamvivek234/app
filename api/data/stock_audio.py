@@ -87,8 +87,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     },
     {
         "media_id": "stock_upbeat_vlog",
@@ -176,8 +176,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     },
     {
         "media_id": "stock_cinematic_ambient",
@@ -265,8 +265,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     },
     {
         "media_id": "stock_tech_minimal",
@@ -354,8 +354,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     },
     {
         "media_id": "stock_acoustic_warm",
@@ -443,8 +443,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     },
     {
         "media_id": "stock_synthwave_drive",
@@ -532,8 +532,8 @@ STOCK_AUDIO_CATALOG = [
         ],
         "asset_kind": "audio",
         "mime_type": "audio/mpeg",
-        "is_stock": true,
-        "has_audio": true
+        "is_stock": True,
+        "has_audio": True
     }
 ]
 

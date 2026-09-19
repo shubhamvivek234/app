@@ -16,7 +16,15 @@ class _FakeMediaAssetsCollection:
         if not doc:
             return None
         for key, value in query.items():
-            if doc.get(key) != value:
+            if key == "$or":
+                matched_or = False
+                for branch in value:
+                    if all(doc.get(k) == v for k, v in branch.items()):
+                        matched_or = True
+                        break
+                if not matched_or:
+                    return None
+            elif doc.get(key) != value:
                 return None
         return dict(doc)
 
@@ -24,6 +32,19 @@ class _FakeMediaAssetsCollection:
         self.inserted_docs.append(dict(doc))
         self.docs[doc["media_id"]] = dict(doc)
         return SimpleNamespace(inserted_id=doc["media_id"])
+
+    async def update_one(self, query, update, *_args, **_kwargs):
+        doc = await self.find_one(query)
+        if not doc:
+            return SimpleNamespace(matched_count=0, modified_count=0)
+        target = self.docs[doc["media_id"]]
+        if "$set" in update:
+            for k, v in update["$set"].items():
+                target[k] = v
+        if "$unset" in update:
+            for k in update["$unset"]:
+                target.pop(k, None)
+        return SimpleNamespace(matched_count=1, modified_count=1)
 
 
 class _FakeDB:
@@ -198,3 +219,71 @@ async def test_render_video_audio_allows_zero_selected_when_original_is_audible(
     assert response.status == "processing"
     assert queued[0][1]["args"][-1]["selected_volume"] == 0
     assert queued[0][1]["args"][-1]["mute_original"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_stock_audio_tracks():
+    tracks = await audio_route.list_stock_audio_tracks(
+        current_user={"user_id": "user-1"},
+    )
+    assert len(tracks) >= 6
+    chill_tracks = await audio_route.list_stock_audio_tracks(
+        current_user={"user_id": "user-1"},
+        category="chill",
+    )
+    assert len(chill_tracks) >= 1
+    assert all(t["category"] == "chill" for t in chill_tracks)
+
+
+@pytest.mark.asyncio
+async def test_render_video_with_stock_audio_track(monkeypatch):
+    queued = []
+    # DB only contains the video; audio is loaded from stock catalog
+    db = _FakeDB([_base_render_docs()[0]])
+    monkeypatch.setattr(audio_route, "enqueue_task", lambda task_name, **kwargs: queued.append((task_name, kwargs)))
+
+    response = await audio_route.render_video_audio(
+        video_media_id="video-1",
+        payload=_payload("stock_lofi_chill"),
+        current_user={
+            "user_id": "user-1",
+            "default_workspace_id": "ws-1",
+            "subscription_status": "active",
+        },
+        db=db,
+    )
+
+    assert response.status == "processing"
+    assert len(db.media_assets.inserted_docs) == 1
+    inserted = db.media_assets.inserted_docs[0]
+    assert inserted["audio_mix"]["audio_media_id"] == "stock_lofi_chill"
+    assert "Lo-Fi Study Chill" in inserted["audio_mix"]["source_label"]
+
+
+@pytest.mark.asyncio
+async def test_persist_audio_asset():
+    db = _FakeDB(
+        [
+            {
+                "media_id": "temp-audio-1",
+                "user_id": "user-1",
+                "temporary": True,
+                "purpose": "composer_audio_temp",
+                "composer_session_id": "sess-123",
+                "cleanup_after": "2026-09-20T10:00:00Z",
+            }
+        ]
+    )
+
+    result = await audio_route.persist_audio_asset(
+        audio_id="temp-audio-1",
+        current_user={"user_id": "user-1"},
+        db=db,
+    )
+
+    assert result["status"] == "persisted"
+    updated = db.media_assets.docs["temp-audio-1"]
+    assert updated["temporary"] is False
+    assert "purpose" not in updated
+    assert "composer_session_id" not in updated
+

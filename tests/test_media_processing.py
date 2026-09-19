@@ -69,7 +69,15 @@ class _FakeManyMediaAssetsCollection:
         if not doc:
             return None
         for key, value in query.items():
-            if doc.get(key) != value:
+            if key == "$or":
+                matched_or = False
+                for branch in value:
+                    if all(doc.get(k) == v for k, v in branch.items()):
+                        matched_or = True
+                        break
+                if not matched_or:
+                    return None
+            elif doc.get(key) != value:
                 return None
         return dict(doc)
 

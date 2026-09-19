@@ -100,7 +100,11 @@ const ReelPost = ({ mediaArray, content, name, avatar }) => {
         )}
         <div className="flex items-center gap-1.5 mt-2">
           <FaMusic className="text-white text-[10px]" />
-          <p className="text-white/80 text-[10px] truncate">Original audio · {name}</p>
+          <p className="text-white/80 text-[10px] truncate">
+            {firstItem?.audioMix?.source_label
+              ? `${firstItem.audioMix.source_label} · ${name}`
+              : `Original audio · ${name}`}
+          </p>
         </div>
       </div>
     </div>

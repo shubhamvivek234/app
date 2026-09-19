@@ -7,8 +7,9 @@ import { validateMediaForPlatforms } from '@/lib/mediaValidation';
 import { format, parseISO } from 'date-fns';
 import {
   FaImages, FaUpload, FaSearch, FaCopy, FaTrash, FaVideo, FaImage,
-  FaTimes, FaCloudUploadAlt,
+  FaTimes, FaCloudUploadAlt, FaMusic, FaPlay, FaPause,
 } from 'react-icons/fa';
+import AddAudioDialog from '@/components/composer/AddAudioDialog';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -19,7 +20,11 @@ const formatBytes = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const isVideo = (contentType = '') => contentType.startsWith('video/');
+const isVideo = (contentType = '', assetKind = '') =>
+  contentType.startsWith('video/') || assetKind === 'video';
+
+const isAudio = (contentType = '', assetKind = '') =>
+  contentType.startsWith('audio/') || assetKind === 'audio';
 
 const resolveUrl = (url) => {
   if (!url) return '';
@@ -28,15 +33,50 @@ const resolveUrl = (url) => {
 };
 
 // ── Asset card ────────────────────────────────────────────────────────────────
-const AssetCard = ({ asset, onCopy, onDelete }) => {
+const AssetCard = ({ asset, onCopy, onDelete, onAddAudio }) => {
   const url = resolveUrl(asset.url);
-  const video = isVideo(asset.content_type);
+  const video = isVideo(asset.content_type || '', asset.asset_kind || '');
+  const audio = isAudio(asset.content_type || '', asset.asset_kind || '');
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const audioRef = useRef(null);
+
+  const toggleAudio = (e) => {
+    e.stopPropagation();
+    if (!audioRef.current) return;
+    if (isPlayingAudio) {
+      audioRef.current.pause();
+      setIsPlayingAudio(false);
+    } else {
+      audioRef.current.play().catch(() => {});
+      setIsPlayingAudio(true);
+    }
+  };
 
   return (
     <div className="group relative bg-offwhite rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
       {/* Preview */}
-      <div className="relative w-full aspect-square bg-offwhite border-b border-gray-100 overflow-hidden">
-        {video ? (
+      <div className="relative w-full aspect-square bg-offwhite border-b border-gray-100 overflow-hidden flex items-center justify-center">
+        {audio ? (
+          <div className="relative w-full h-full bg-gradient-to-br from-emerald-50 via-teal-50 to-blue-50 flex flex-col items-center justify-center p-4">
+            <audio
+              ref={audioRef}
+              src={url}
+              onEnded={() => setIsPlayingAudio(false)}
+              onPause={() => setIsPlayingAudio(false)}
+            />
+            <div className="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center text-emerald-600 mb-2 shadow-xs">
+              <FaMusic className="text-xl" />
+            </div>
+            <button
+              type="button"
+              onClick={toggleAudio}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white text-gray-800 text-xs font-semibold shadow-xs hover:bg-gray-50 border border-gray-200 transition"
+            >
+              {isPlayingAudio ? <FaPause className="text-[10px]" /> : <FaPlay className="text-[10px] ml-0.5" />}
+              <span>{isPlayingAudio ? 'Pause' : 'Play'}</span>
+            </button>
+          </div>
+        ) : video ? (
           <video
             src={url}
             className="w-full h-full object-cover"
@@ -55,24 +95,37 @@ const AssetCard = ({ asset, onCopy, onDelete }) => {
             }}
           />
         )}
-        {/* Fallback for broken images */}
+        {/* Fallback for broken media */}
         <div
           className="absolute inset-0 hidden items-center justify-center bg-offwhite text-gray-300"
         >
-          {video ? <FaVideo className="text-3xl" /> : <FaImage className="text-3xl" />}
+          {audio ? <FaMusic className="text-3xl" /> : video ? <FaVideo className="text-3xl" /> : <FaImage className="text-3xl" />}
         </div>
 
         {/* Type badge */}
         <div className="absolute top-2 left-2">
           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-            video ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+            audio
+              ? 'bg-emerald-100 text-emerald-700'
+              : video
+              ? 'bg-purple-100 text-purple-700'
+              : 'bg-blue-100 text-blue-700'
           }`}>
-            {video ? 'Video' : 'Image'}
+            {audio ? 'Audio' : video ? 'Video' : 'Image'}
           </span>
         </div>
 
         {/* Hover overlay */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+          {video && onAddAudio && (
+            <button
+              onClick={() => onAddAudio(asset)}
+              className="w-9 h-9 rounded-full bg-white/90 hover:bg-blue-600 hover:text-white text-gray-700 flex items-center justify-center transition-colors shadow"
+              title="Add audio to video"
+            >
+              <FaMusic className="text-sm" />
+            </button>
+          )}
           <button
             onClick={() => onCopy(asset)}
             className="w-9 h-9 rounded-full bg-white/90 hover:bg-offwhite text-gray-700 flex items-center justify-center transition-colors shadow"
@@ -151,10 +204,11 @@ const MediaLibrary = () => {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [filterType, setFilterType] = useState('all'); // 'all' | 'image' | 'video'
+  const [filterType, setFilterType] = useState('all'); // 'all' | 'image' | 'video' | 'audio'
   const [searchQuery, setSearchQuery] = useState('');
   const [dragging, setDragging] = useState(false);
   const [mediaValidation, setMediaValidation] = useState(null); // { file, violations }
+  const [audioDialogAsset, setAudioDialogAsset] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -176,11 +230,15 @@ const MediaLibrary = () => {
   const filtered = useMemo(() => {
     let list = assets;
     if (filterType !== 'all') {
-      list = list.filter((a) => (a.content_type || '').startsWith(`${filterType}/`));
+      list = list.filter((a) => {
+        const ct = a.content_type || a.mime_type || '';
+        const kind = a.asset_kind || '';
+        return ct.startsWith(`${filterType}/`) || kind === filterType;
+      });
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      list = list.filter((a) => (a.filename || '').toLowerCase().includes(q));
+      list = list.filter((a) => (a.filename || a.source_label || '').toLowerCase().includes(q));
     }
     return list;
   }, [assets, filterType, searchQuery]);
@@ -188,19 +246,19 @@ const MediaLibrary = () => {
   // ── Upload logic ──────────────────────────────────────────────────────────
   const handleFiles = async (files, { skipValidation = false } = {}) => {
     const arr = Array.from(files).filter((f) =>
-      f.type.startsWith('image/') || f.type.startsWith('video/')
+      f.type.startsWith('image/') || f.type.startsWith('video/') || f.type.startsWith('audio/')
     );
     if (!arr.length) {
-      toast.error('Only image and video files are supported');
+      toast.error('Only image, video, and audio files are supported');
       return;
     }
 
-    // Validate the first file against all known platforms (library has no platform context)
-    if (!skipValidation && arr.length > 0) {
+    // Validate the first image/video file against platforms
+    const visualFiles = arr.filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'));
+    if (!skipValidation && visualFiles.length > 0) {
       const allPlatforms = ['instagram', 'facebook', 'youtube', 'twitter', 'linkedin', 'tiktok', 'pinterest'];
-      const firstFile = arr[0];
+      const firstFile = visualFiles[0];
       const violations = validateMediaForPlatforms(firstFile, allPlatforms);
-      // Only show modal if ALL platforms reject the file (hard block) or there are size violations
       const hardBlock = violations.length === allPlatforms.length;
       const sizeViolations = violations.filter(v => v.field === 'size');
       if (hardBlock || sizeViolations.length > 0) {
@@ -268,8 +326,21 @@ const MediaLibrary = () => {
     }
   };
 
-  const imageCount = assets.filter((a) => (a.content_type || '').startsWith('image/')).length;
-  const videoCount = assets.filter((a) => (a.content_type || '').startsWith('video/')).length;
+  const handleOpenAddAudio = (asset) => {
+    setAudioDialogAsset({
+      mediaId: asset.id || asset.media_id,
+      url: resolveUrl(asset.url),
+      duration: asset.duration_seconds || asset.duration || 0,
+      name: asset.filename || 'video',
+      width: asset.width,
+      height: asset.height,
+      hasAudio: asset.has_audio !== false,
+    });
+  };
+
+  const imageCount = assets.filter((a) => (a.content_type || a.mime_type || '').startsWith('image/')).length;
+  const videoCount = assets.filter((a) => (a.content_type || a.mime_type || '').startsWith('video/')).length;
+  const audioCount = assets.filter((a) => (a.content_type || a.mime_type || '').startsWith('audio/') || a.asset_kind === 'audio').length;
 
   return (
     <DashboardLayout>
@@ -286,6 +357,21 @@ const MediaLibrary = () => {
           }}
         />
       )}
+
+      {audioDialogAsset && (
+        <AddAudioDialog
+          open={Boolean(audioDialogAsset)}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setAudioDialogAsset(null);
+          }}
+          video={audioDialogAsset}
+          onRenderComplete={async () => {
+            await fetchAssets();
+            setAudioDialogAsset(null);
+          }}
+        />
+      )}
+
       <div
         className="max-w-6xl mx-auto"
         onDragOver={handleDragOver}
@@ -297,7 +383,7 @@ const MediaLibrary = () => {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*"
           className="hidden"
           onChange={handleFileInputChange}
         />
@@ -310,7 +396,7 @@ const MediaLibrary = () => {
               Media Library
             </h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {assets.length} asset{assets.length !== 1 ? 's' : ''} · {imageCount} image{imageCount !== 1 ? 's' : ''}, {videoCount} video{videoCount !== 1 ? 's' : ''}
+              {assets.length} asset{assets.length !== 1 ? 's' : ''} · {imageCount} image{imageCount !== 1 ? 's' : ''}, {videoCount} video{videoCount !== 1 ? 's' : ''}, {audioCount} audio
             </p>
           </div>
           <button
@@ -363,6 +449,7 @@ const MediaLibrary = () => {
               { label: 'All', value: 'all' },
               { label: 'Images', value: 'image' },
               { label: 'Videos', value: 'video' },
+              { label: 'Audio', value: 'audio' },
             ].map((opt) => (
               <button
                 key={opt.value}
@@ -420,6 +507,7 @@ const MediaLibrary = () => {
                 asset={asset}
                 onCopy={handleCopy}
                 onDelete={handleDelete}
+                onAddAudio={handleOpenAddAudio}
               />
             ))}
           </div>
