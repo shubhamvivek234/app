@@ -115,6 +115,21 @@ class PlatformOverride(BaseModel):
     poll: PollPayload | None = None
 
 
+class AutoPlugConfig(BaseModel):
+    """Viral Auto-Plug configuration (auto-reply when post crosses engagement threshold)."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    enabled: bool = False
+    trigger_metric: str = Field(default="likes", max_length=50)
+    threshold: int = Field(default=50, ge=1, le=1000000)
+    content: str = Field(default="", max_length=1000)
+    executed: bool = False
+    executed_at: datetime | None = None
+    comment_id: str | None = None
+    status: str = Field(default="pending", max_length=50)
+    error: str | None = None
+
+
 class CreatePostRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -139,6 +154,9 @@ class CreatePostRequest(BaseModel):
     campaign_id: str | None = Field(None, max_length=100)
     platform_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
     account_overrides: dict[str, PlatformOverride] = Field(default_factory=dict)
+    stagger_delay_minutes: int = Field(default=0, ge=0, le=1440)
+    stagger_order: list[str] = Field(default_factory=list, max_length=20)
+    auto_plug: AutoPlugConfig | None = None
 
     @field_validator("platforms")
     @classmethod
@@ -222,6 +240,9 @@ class UpdatePostRequest(BaseModel):
     first_comment_enabled: bool | None = None
     platform_overrides: dict[str, PlatformOverride] | None = None
     account_overrides: dict[str, PlatformOverride] | None = None
+    stagger_delay_minutes: int | None = Field(None, ge=0, le=1440)
+    stagger_order: list[str] | None = None
+    auto_plug: AutoPlugConfig | None = None
     version: int = Field(..., description="Optimistic lock version — must match current DB version")
 
     @field_validator("platforms")
@@ -309,3 +330,6 @@ class PostResponse(BaseModel):
     failed_media_expires_at: datetime | None = None
     media_cleaned_at: datetime | None = None
     media_expired: bool = False
+    stagger_delay_minutes: int = 0
+    stagger_order: list[str] = Field(default_factory=list)
+    auto_plug: AutoPlugConfig | None = None

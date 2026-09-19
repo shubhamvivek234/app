@@ -63,6 +63,7 @@ from api.routes.leads import router as leads_router
 from api.routes.deals import router as deals_router
 from api.routes.broadcasts import router as broadcasts_router
 from api.routes.automations import router as automations_router
+from api.routes.posting_sets import router as posting_sets_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -198,6 +199,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(deals_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(broadcasts_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(automations_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(posting_sets_router, prefix=prefix, include_in_schema=include_in_schema)
 
 
 def create_app() -> FastAPI:

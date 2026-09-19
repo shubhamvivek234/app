@@ -526,6 +526,39 @@ export const getAudioAssets = async () => {
   return response.data;
 };
 
+export const getStockAudioTracks = async (category = null) => {
+  try {
+    const response = await axios.get(`${API}/media/stock-audio`, {
+      headers: getAuthHeaders(),
+      params: category ? { category } : {},
+    });
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      return response.data;
+    }
+  } catch (_err) {
+    // fallback to static bundled JSON
+  }
+  try {
+    const stockData = await import('@/data/stockAudio.json');
+    const tracks = stockData.default || stockData;
+    if (category) {
+      return tracks.filter((t) => t.category === category);
+    }
+    return tracks;
+  } catch (_fallbackErr) {
+    return [];
+  }
+};
+
+export const persistTemporaryAudio = async (audioId) => {
+  const response = await axios.post(
+    `${API}/media/audio/${audioId}/persist`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+};
+
 export const renderVideoAudio = async (videoMediaId, mix) => {
   const response = await axios.post(
     `${API}/media/${videoMediaId}/audio/render`,
@@ -1897,5 +1930,26 @@ export const testAutomation = async (automationId, payload = {}) => {
 
 export const getAutomationLogs = async (params = {}) => {
   const response = await axios.get(`${API}/automations/logs`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+// ── Posting Sets (Account Groups) ──
+export const getPostingSets = async (params = {}) => {
+  const response = await axios.get(`${API}/posting-sets`, { headers: getAuthHeaders(), params });
+  return response.data;
+};
+
+export const createPostingSet = async (data) => {
+  const response = await axios.post(`${API}/posting-sets`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const updatePostingSet = async (setId, data) => {
+  const response = await axios.put(`${API}/posting-sets/${setId}`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deletePostingSet = async (setId) => {
+  const response = await axios.delete(`${API}/posting-sets/${setId}`, { headers: getAuthHeaders() });
   return response.data;
 };

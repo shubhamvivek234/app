@@ -833,10 +833,27 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
     # This gives us child task IDs for observability and avoids silent handoff
     # gaps where the parent ran but no platform task ever left a trace.
     targets = _get_publish_targets(post)
+    stagger_delay_minutes = int(post.get("stagger_delay_minutes") or 0)
+    stagger_order = list(post.get("stagger_order") or [])
+    if stagger_order:
+        def _sort_key(t):
+            acc_id = t.get("account_id")
+            plat = t.get("platform")
+            if acc_id in stagger_order:
+                return stagger_order.index(acc_id)
+            if plat in stagger_order:
+                return stagger_order.index(plat)
+            return 999
+        targets = sorted(targets, key=_sort_key)
+
     dispatch_updates: dict[str, object] = {}
     dispatched_children: list[dict[str, str | None]] = []
-    for target in targets:
+    for idx, target in enumerate(targets):
         queue_name = _publish_queue_for(target["platform"], post)
+        stagger_delay = idx * stagger_delay_minutes * 60
+        target_countdown = jitter + stagger_delay
+        target_scheduled_at = processing_started_at + timedelta(seconds=target_countdown)
+
         async_result = publish_to_platform.apply_async(
             kwargs={
                 "post_id": post_id,
@@ -845,7 +862,7 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
                 "attempt": 0,
                 "dispatch_source": "primary",
             },
-            countdown=jitter,
+            countdown=target_countdown,
             queue=queue_name,
         )
         event_log(
@@ -859,10 +876,14 @@ async def _async_publish_post(task, post_id: str, version: int) -> dict:
             queue_name=queue_name,
             child_task_id=async_result.id,
             dispatch_source="primary",
+            stagger_delay_seconds=stagger_delay,
             outcome="enqueued",
         )
         dispatch_updates[f"account_results.{target['target_key']}.dispatch_task_id"] = async_result.id
         dispatch_updates[f"account_results.{target['target_key']}.dispatch_enqueued_at"] = processing_started_at
+        if stagger_delay > 0:
+            dispatch_updates[f"account_results.{target['target_key']}.stagger_scheduled_at"] = target_scheduled_at.isoformat()
+            dispatch_updates[f"platform_results.{target['platform']}.stagger_scheduled_at"] = target_scheduled_at.isoformat()
         dispatch_updates[f"platform_results.{target['platform']}.dispatch_task_id"] = async_result.id
         dispatch_updates[f"platform_results.{target['platform']}.dispatch_enqueued_at"] = processing_started_at
         dispatched_children.append(

@@ -1474,45 +1474,61 @@ const PlatformEditor = ({
                           <img src={item.url} alt="" className="w-full h-full object-cover" />
                         )}
 
+                        {/* Top-Left: position badge and audio badge */}
+                        {mediaArray.length > 1 && (
+                          <div className="absolute top-1 left-1 z-10 w-4 h-4 rounded bg-black/70 text-white text-[9px] flex items-center justify-center font-semibold shadow-xs">
+                            {idx + 1}
+                          </div>
+                        )}
                         {item.type === 'video' && item.audioMix && (
-                          <div className="absolute left-1 top-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
-                            Audio
+                          <div
+                            className={`absolute top-1 ${mediaArray.length > 1 ? 'left-6' : 'left-1'} z-10 flex items-center gap-1 rounded-full bg-blue-600/95 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm`}
+                            title={item.audioMix?.source_label ? `Audio: ${item.audioMix.source_label}` : 'Custom audio added'}
+                          >
+                            <FaMusic className="text-[8px]" />
+                            <span>Audio</span>
                           </div>
                         )}
 
-                        {/* Remove button */}
+                        {/* Top-Right: Remove media button */}
                         {onRemoveMedia && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onRemoveMedia(idx); }}
-                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 text-white flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity z-20 hover:bg-black/95"
+                            title="Remove media"
                           >
                             <FaTimes />
                           </button>
                         )}
 
-                        {/* Audio button (videos only) */}
-                        {onEditAudio && item.type === 'video' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
-                            className="absolute bottom-1 left-1 z-10 flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
-                            title="Add or replace audio"
-                          >
-                            <FaMusic />
-                            Audio
-                          </button>
+                        {/* Bottom-Left: Audio actions (videos only) */}
+                        {item.type === 'video' && (
+                          <div className="absolute bottom-1 left-1 z-10 flex items-center gap-1">
+                            {onEditAudio && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
+                                className="flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600 cursor-pointer"
+                                title={item.audioMix ? "Edit or replace audio" : "Add audio to video"}
+                              >
+                                <FaMusic className="text-[9px]" />
+                                <span>Audio</span>
+                              </button>
+                            )}
+                            {onRemoveAudio && item.audioMix && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
+                                className="flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[9px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700 cursor-pointer"
+                                title="Remove custom audio and restore original video"
+                              >
+                                <FaTimes />
+                              </button>
+                            )}
+                          </div>
                         )}
 
-                        {onRemoveAudio && item.type === 'video' && item.audioMix && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
-                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700"
-                            title="Remove custom audio and restore original video"
-                          >
-                            <FaTimes />
-                          </button>
-                        )}
-
-                        {/* Crop button (images only) */}
+                        {/* Bottom-Right: Crop (image) or 9:16 Auto-Fit (video) */}
                         {onCropMedia && item.type !== 'video' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
@@ -1523,24 +1539,16 @@ const PlatformEditor = ({
                           </button>
                         )}
 
-                        {/* Quick 9:16 auto-fit button */}
                         {onAutoFitMedia && (idealInfo?.label === '9:16' || isVideoPlatform) && (
                           <button
                             type="button"
                             disabled={Boolean(transformingMediaId)}
                             onClick={(e) => { e.stopPropagation(); onAutoFitMedia(idx, 'blur_pad'); }}
-                            className="absolute bottom-1 left-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
+                            className="absolute bottom-1 right-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
                             title="Auto-Fit to 9:16 with Blurred Background"
                           >
                             <FaBolt className="text-[8px]" /> 9:16
                           </button>
-                        )}
-
-                        {/* Position badge when multiple */}
-                        {mediaArray.length > 1 && (
-                          <div className={`absolute ${item.type === 'video' && item.audioMix && onRemoveAudio ? 'top-7 left-1' : item.type === 'video' && onEditAudio ? 'bottom-1 right-1' : 'bottom-1 left-1'} w-4 h-4 rounded bg-black/60 text-white text-[9px] flex items-center justify-center font-medium`}>
-                            {idx + 1}
-                          </div>
                         )}
                       </div>
                     ))}
@@ -1789,31 +1797,45 @@ const PlatformEditor = ({
                         ) : (
                           <img src={item.url} alt="" className="w-full h-full object-cover" />
                         )}
+                        {/* Top-Left: Audio badge */}
                         {item.type === 'video' && item.audioMix && (
-                          <div className="absolute left-1 top-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
-                            Audio
+                          <div
+                            className="absolute top-1 left-1 z-10 flex items-center gap-1 rounded-full bg-blue-600/95 px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm"
+                            title={item.audioMix?.source_label ? `Audio: ${item.audioMix.source_label}` : 'Custom audio added'}
+                          >
+                            <FaMusic className="text-[8px]" />
+                            <span>Audio</span>
                           </div>
                         )}
-                        {onEditAudio && item.type === 'video' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
-                            className="absolute bottom-1 left-1 z-10 flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600"
-                            title="Add or replace audio"
-                          >
-                            <FaMusic />
-                            Audio
-                          </button>
+
+                        {/* Bottom-Left: Audio actions (videos only) */}
+                        {item.type === 'video' && (
+                          <div className="absolute bottom-1 left-1 z-10 flex items-center gap-1">
+                            {onEditAudio && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onEditAudio(idx); }}
+                                className="flex h-5 items-center gap-1 rounded bg-black/80 px-1.5 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-600 cursor-pointer"
+                                title={item.audioMix ? "Edit or replace audio" : "Add audio to video"}
+                              >
+                                <FaMusic className="text-[9px]" />
+                                <span>Audio</span>
+                              </button>
+                            )}
+                            {onRemoveAudio && item.audioMix && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
+                                className="flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[9px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700 cursor-pointer"
+                                title="Remove custom audio and restore original video"
+                              >
+                                <FaTimes />
+                              </button>
+                            )}
+                          </div>
                         )}
-                        {onRemoveAudio && item.type === 'video' && item.audioMix && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onRemoveAudio(idx); }}
-                            className="absolute bottom-1 right-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-red-600/90 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-red-700"
-                            title="Remove custom audio and restore original video"
-                          >
-                            <FaTimes />
-                          </button>
-                        )}
-                        {/* Crop button for secondary platforms */}
+
+                        {/* Bottom-Right: Crop (image) or 9:16 Auto-Fit (video) */}
                         {onCropMedia && item.type !== 'video' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); onCropMedia(idx, idealInfo?.ratio ?? null); }}
@@ -1824,13 +1846,12 @@ const PlatformEditor = ({
                           </button>
                         )}
 
-                        {/* Quick 9:16 auto-fit button */}
                         {onAutoFitMedia && (idealInfo?.label === '9:16' || isVideoPlatform) && (
                           <button
                             type="button"
                             disabled={Boolean(transformingMediaId)}
                             onClick={(e) => { e.stopPropagation(); onAutoFitMedia(idx, 'blur_pad'); }}
-                            className="absolute bottom-1 left-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
+                            className="absolute bottom-1 right-1 px-1.5 h-5 rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-0.5 text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-xs cursor-pointer disabled:opacity-50"
                             title="Auto-Fit to 9:16 with Blurred Background"
                           >
                             <FaBolt className="text-[8px]" /> 9:16

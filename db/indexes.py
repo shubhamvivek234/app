@@ -136,6 +136,11 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.workspaces, [("owner_id", 1)])
     await _safe_create_index(db.workspace_members, [("workspace_id", 1), ("user_id", 1)], unique=True)
 
+    # posting_sets
+    await _safe_create_index(db.posting_sets, [("id", 1)], unique=True)
+    await _safe_create_index(db.posting_sets, [("workspace_id", 1), ("created_at", 1)])
+    await _safe_create_index(db.posting_sets, [("user_id", 1), ("created_at", 1)])
+
     logger.info("All MongoDB indexes created successfully")
 
 

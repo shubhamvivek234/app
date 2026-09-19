@@ -50,6 +50,9 @@ import AccountSelector from '@/components/composer/AccountSelector';
 import PlatformEditor from '@/components/composer/PlatformEditor';
 import AddAudioDialog from '@/components/composer/AddAudioDialog';
 import PreviewPanel from '@/components/composer/previews/PreviewPanel';
+import PostingSetsBar from '@/components/composer/PostingSetsBar';
+import StaggeredPublishingControl from '@/components/composer/StaggeredPublishingControl';
+import AutoPlugSection from '@/components/composer/AutoPlugSection';
 import { trackEvent } from '@/lib/analytics';
 
 // ── Timezone list (comprehensive IANA) ────────────────────────────────────────
@@ -598,6 +601,13 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
   const [googleBusinessTopicType,    setGoogleBusinessTopicType]    = useState('STANDARD');
   const [googleBusinessCallToAction, setGoogleBusinessCallToAction] = useState('LEARN_MORE');
   const [googleBusinessActionUrl,    setGoogleBusinessActionUrl]    = useState('');
+  const [staggerMinutes,             setStaggerMinutes]             = useState(0);
+  const [autoPlug,                   setAutoPlug]                   = useState({
+    enabled: false,
+    trigger_metric: 'likes',
+    threshold: 50,
+    content: '',
+  });
 
   const { user } = useAuth();
   const [requiresApproval, setRequiresApproval] = useState(false);
@@ -1053,6 +1063,12 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
     if (scheduledWallClock) {
       setScheduledDate(scheduledWallClock.date);
       setScheduledTime(scheduledWallClock.time);
+    }
+    if (editingPost.stagger_delay_minutes !== undefined) {
+      setStaggerMinutes(editingPost.stagger_delay_minutes);
+    }
+    if (editingPost.auto_plug) {
+      setAutoPlug(editingPost.auto_plug);
     }
 
     hydratedEditPostRef.current = editingPost.id;
@@ -2308,6 +2324,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         tiktok_allow_stitch: tiktokAllowStitch,
         tiktok_allow_comment: tiktokAllowComments,
         campaign_id: selectedCampaignId || undefined,
+        stagger_delay_minutes: Number(staggerMinutes) || 0,
+        stagger_order: selectedPlatforms,
+        auto_plug: autoPlug?.enabled ? autoPlug : null,
         platform_overrides: {
           google_business: {
             topic_type: googleBusinessTopicType,
@@ -2330,6 +2349,9 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
           title: fallbackTitle || null,
           timezone: selectedTimezone,
           campaign_id: selectedCampaignId || undefined,
+          stagger_delay_minutes: Number(staggerMinutes) || 0,
+          stagger_order: selectedPlatforms,
+          auto_plug: autoPlug?.enabled ? autoPlug : null,
           first_comment: commonFirstComment || firstComment || linkedinFirstComment || null,
           first_comment_enabled: Boolean((commonFirstComment && commonFirstComment.trim()) || (firstComment && firstComment.trim()) || (linkedinFirstComment && linkedinFirstComment.trim())),
           account_overrides: accountOverridesPayload,
@@ -2405,26 +2427,32 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
 
   /** Unified Account Selector & Action Bar (AI & Preview toggles on right side) */
   const accountStrip = (
-    <div className="bg-white/95 dark:bg-slate-900/95 border-b border-gray-200/80 dark:border-slate-800 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-4 flex-shrink-0 backdrop-blur-xs z-10">
-      {/* Left: Account Selector */}
-      <div className="min-w-0 flex-1 overflow-x-auto custom-scrollbar flex items-center">
-        <AccountSelector
-          accounts={availableAccounts}
-          loading={accountsLoading}
-          selectedAccounts={selectedAccounts}
-          onToggle={toggleAccountSelection}
-          platformIcons={platformIcons}
-          getAvatarColor={getAvatarColor}
-          onSetActive={(account) => {
-            setActivePreviewPlatform(account.platform);
-            setExpandedPlatform(account.platform);
-            setActiveAccountByPlatform((prev) => ({
-              ...prev,
-              [account.platform]: account.id,
-            }));
-          }}
-        />
-      </div>
+    <div className="bg-white/95 dark:bg-slate-900/95 border-b border-gray-200/80 dark:border-slate-800 px-4 sm:px-6 py-2.5 flex flex-col gap-2 flex-shrink-0 backdrop-blur-xs z-10">
+      <PostingSetsBar
+        accounts={availableAccounts}
+        selectedAccounts={selectedAccounts}
+        onSelectAccounts={setSelectedAccounts}
+      />
+      <div className="flex items-center justify-between gap-4">
+        {/* Left: Account Selector */}
+        <div className="min-w-0 flex-1 overflow-x-auto custom-scrollbar flex items-center">
+          <AccountSelector
+            accounts={availableAccounts}
+            loading={accountsLoading}
+            selectedAccounts={selectedAccounts}
+            onToggle={toggleAccountSelection}
+            platformIcons={platformIcons}
+            getAvatarColor={getAvatarColor}
+            onSetActive={(account) => {
+              setActivePreviewPlatform(account.platform);
+              setExpandedPlatform(account.platform);
+              setActiveAccountByPlatform((prev) => ({
+                ...prev,
+                [account.platform]: account.id,
+              }));
+            }}
+          />
+        </div>
 
       {/* Right: AI & Preview action toggles */}
       <div className="flex items-center gap-1.5 shrink-0">
@@ -2478,7 +2506,8 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
         )}
       </div>
     </div>
-  );
+  </div>
+);
 
   /** Left panel: stacked PlatformEditors */
   const leftPanel = (
@@ -2916,6 +2945,21 @@ const CreatePostForm = ({ postTypeOverride, asModal = false, onClose, editPostId
               )}
             </div>
           )}
+
+          {/* Staggered Cross-Posting Controls (when 2+ platforms selected) */}
+          <StaggeredPublishingControl
+            selectedPlatforms={selectedPlatforms}
+            staggerMinutes={staggerMinutes}
+            onChangeStaggerMinutes={setStaggerMinutes}
+            baseScheduledTime={scheduledDate && scheduledTime ? `${scheduledDate}T${scheduledTime}` : null}
+            platformIcons={platformIcons}
+          />
+
+          {/* Viral Auto-Plug Automation */}
+          <AutoPlugSection
+            autoPlug={autoPlug}
+            onChangeAutoPlug={setAutoPlug}
+          />
         </>
       )}
     </div>

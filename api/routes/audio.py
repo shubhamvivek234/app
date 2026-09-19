@@ -90,10 +90,28 @@ async def render_video_audio(
             detail="Audio mix would be silent. Increase selected audio volume or keep original video audio enabled.",
         )
 
+    from api.data.stock_audio import STOCK_AUDIO_CATALOG, get_stock_audio_by_id
+
     audio_doc = await db.media_assets.find_one(
-        {"media_id": mix["audio_media_id"], "user_id": user_id},
+        {"media_id": mix["audio_media_id"], "$or": [{"user_id": user_id}, {"is_stock": True}, {"user_id": "system"}]},
         {"_id": 0},
     )
+    if not audio_doc:
+        stock_track = get_stock_audio_by_id(mix["audio_media_id"])
+        if stock_track:
+            audio_doc = {
+                "media_id": stock_track["media_id"],
+                "user_id": user_id,
+                "status": MediaStatus.READY,
+                "asset_kind": "audio",
+                "mime_type": "audio/mpeg",
+                "storage_key": stock_track["storage_key"],
+                "media_url": stock_track["media_url"],
+                "source_label": stock_track["title"],
+                "duration_seconds": stock_track["duration_seconds"],
+                "waveform_peaks": stock_track.get("waveform_peaks"),
+                "is_stock": True,
+            }
     if not audio_doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio media not found")
     if audio_doc.get("status") != MediaStatus.READY:
@@ -199,3 +217,66 @@ async def cleanup_temporary_audio(
         composer_session_id=payload.composer_session_id,
         reason=payload.reason,
     )
+
+
+@router.get(
+    "/media/stock-audio",
+    dependencies=[require_permission("media:read")],
+)
+async def list_stock_audio_tracks(
+    current_user: CurrentUser,
+    category: str | None = None,
+) -> list[dict]:
+    """Return the curated list of royalty-free stock audio tracks."""
+    from api.data.stock_audio import STOCK_AUDIO_CATALOG
+    if category:
+        return [track for track in STOCK_AUDIO_CATALOG if track.get("category") == category]
+    return STOCK_AUDIO_CATALOG
+
+
+@router.get("/media/stock-audio/{track_id}/stream")
+async def stream_stock_audio_track(track_id: str):
+    """Stream a curated stock audio file directly to the browser."""
+    from api.data.stock_audio import get_stock_audio_by_id
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+
+    stock_track = get_stock_audio_by_id(track_id)
+    if not stock_track:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock track not found")
+
+    file_path = Path("static/stock_audio") / stock_track["filename"]
+    if not file_path.exists():
+        file_path = Path("frontend/public/stock_audio") / stock_track["filename"]
+    if not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock audio file not found on disk")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="audio/mpeg",
+        filename=stock_track["filename"],
+    )
+
+
+@router.post(
+    "/media/audio/{audio_id}/persist",
+    dependencies=[require_permission("media:upload")],
+)
+async def persist_audio_asset(
+    audio_id: str,
+    current_user: CurrentUser,
+    db: DB,
+) -> dict:
+    """Promote an uploaded composer temporary audio asset to the permanent user library."""
+    user_id = current_user["user_id"]
+    res = await db.media_assets.update_one(
+        {"media_id": audio_id, "user_id": user_id},
+        {
+            "$set": {"temporary": False},
+            "$unset": {"cleanup_after": "", "composer_session_id": "", "purpose": ""},
+        },
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio asset not found")
+    return {"status": "persisted", "media_id": audio_id}
+

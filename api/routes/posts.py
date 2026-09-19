@@ -1225,6 +1225,9 @@ async def create_post(
         "assigned_reviewer_id": approval_policy.get("auto_assign_reviewer_id") if requires_approval else None,
         "platform_overrides": normalized_platform_overrides,
         "account_overrides": normalized_account_overrides,
+        "stagger_delay_minutes": int(body.stagger_delay_minutes or 0),
+        "stagger_order": list(body.stagger_order or []),
+        "auto_plug": body.auto_plug.model_dump() if body.auto_plug else None,
         "created_at": now,
         "updated_at": now,
     }
@@ -1934,6 +1937,13 @@ async def update_post(
 
             normalized_account_overrides[account_id] = normalized_override
         updates["account_overrides"] = normalized_account_overrides
+
+    if body.stagger_delay_minutes is not None:
+        updates["stagger_delay_minutes"] = int(body.stagger_delay_minutes)
+    if body.stagger_order is not None:
+        updates["stagger_order"] = list(body.stagger_order)
+    if body.auto_plug is not None:
+        updates["auto_plug"] = body.auto_plug.model_dump()
 
     result = await db.posts.update_one(
         {

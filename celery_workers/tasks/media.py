@@ -293,9 +293,18 @@ async def _async_render_video_audio_mix(
             {"_id": 0},
         )
         audio_asset = await db.media_assets.find_one(
-            {"media_id": audio_media_id, "user_id": user_id},
+            {"media_id": audio_media_id, "$or": [{"user_id": user_id}, {"is_stock": True}, {"user_id": "system"}]},
             {"_id": 0},
         )
+        if not audio_asset:
+            from api.data.stock_audio import get_stock_audio_by_id
+            stock_match = get_stock_audio_by_id(audio_media_id)
+            if stock_match:
+                audio_asset = {
+                    **stock_match,
+                    "status": "ready",
+                    "user_id": user_id,
+                }
         if not video_asset or not audio_asset:
             raise ValueError("Source video or audio no longer exists")
         if video_asset.get("status") != "ready" or audio_asset.get("status") != "ready":
@@ -326,7 +335,18 @@ async def _async_render_video_audio_mix(
         output_path = os.path.join(tempfile.gettempdir(), f"audio-render-{rendered_media_id}.mp4")
 
         await download_file_to_path_async(_storage_ref(video_asset), video_path)
-        await download_file_to_path_async(_storage_ref(audio_asset), audio_path)
+
+        # Resolve stock audio locally if present to skip network download
+        local_stock_filename = audio_asset.get("filename") or pathlib.Path(audio_asset.get("storage_key") or "").name
+        local_stock_path = pathlib.Path("static/stock_audio") / local_stock_filename
+        if not local_stock_path.exists():
+            local_stock_path = pathlib.Path("frontend/public/stock_audio") / local_stock_filename
+
+        if local_stock_path.exists():
+            import shutil
+            shutil.copyfile(str(local_stock_path), audio_path)
+        else:
+            await download_file_to_path_async(_storage_ref(audio_asset), audio_path)
 
         video_metadata = await validate_media(video_path, video_asset.get("mime_type") or "video/mp4")
         audio_metadata = await validate_media(audio_path, audio_asset.get("mime_type") or "audio/mp4")

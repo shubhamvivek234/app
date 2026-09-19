@@ -7,17 +7,18 @@ Branch: main
 Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
 
 ## Last Session Completed
-Date: 2026-09-12
+Date: 2026-09-20
 Completed:
-- Reddit Integration & Responsible Builder Policy Compliance:
-  - Updated Reddit adapter User-Agent to standard format: `web:com.unravler.app:v1.0 (by /u/UnravlerApp)` with `REDDIT_USER_AGENT` environment override.
-  - Added unit test suite in `tests/test_reddit_social.py` verifying headers on all outbound requests.
-  - Configured `REDDIT_USER_AGENT` across `docker-compose.yml` and `docker-compose.prod.yml`.
+- Top 3 Postiz Parity Features Implemented & Tested End-to-End:
+  - Posting Sets (Saved Account Groups): CRUD endpoints at `/api/posting-sets`, quick 1-click select chips in Composer (`PostingSetsBar.js`).
+  - Staggered Cross-Posting: Option for spaced intervals (15m, 30m, 60m) across networks via Celery delayed task countdowns.
+  - Global Plugs (Viral Auto-Replies): Automated comment posting upon reaching engagement thresholds (likes/views) with Celery Beat polling worker (`auto_plug.py`).
+  - All automated test suites (`test_posting_sets.py`, `test_staggered_publishing.py`, `test_auto_plug.py`, dispatch & postiz expansions) and frontend production build verified clean.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy updates to production and submit Reddit appeal.
+- Deploy updates to production.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
