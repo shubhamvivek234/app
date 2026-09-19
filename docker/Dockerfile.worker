@@ -15,6 +15,7 @@ COPY celery_workers/ celery_workers/
 COPY backend/app/ backend/app/
 COPY media_pipeline/ media_pipeline/
 COPY platform_adapters/ platform_adapters/
+COPY static/ static/
 COPY utils/ utils/
 COPY db/ db/
 
