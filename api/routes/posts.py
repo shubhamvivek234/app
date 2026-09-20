@@ -39,6 +39,7 @@ from utils.ssrf_guard import assert_safe_url
 from utils.storage import public_url_for_key
 from utils.timeslots import normalize_timeslot_category, resolve_next_timeslot_for_account
 from utils.roles import has_permission
+from utils.plan_limits import check_twitter_post_limits, has_link
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["posts"])
@@ -935,6 +936,22 @@ async def create_post(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
+    # Twitter / X rate limits & link-post quota check
+    is_twitter_target = any(p in ("twitter", "x") for p in (body.platforms or [])) or any(
+        acc.get("platform") in ("twitter", "x") for acc in selected_accounts
+    )
+    if is_twitter_target and (body.publish_now or body.scheduled_time or body.timeslot_category):
+        user_plan = current_user.get("plan", "starter")
+        byok = current_user.get("twitter_byok_enabled", False)
+        check_content = body.content or ""
+        for acc in selected_accounts:
+            if acc.get("platform") in ("twitter", "x"):
+                override_content = _effective_override_for_account(body, acc["account_id"], "twitter").content
+                if override_content:
+                    check_content = override_content
+                    break
+        await check_twitter_post_limits(db, user_id, user_plan, check_content, byok_enabled=byok)
+
     # EC8 — Content policy check (local, fast)
     policy_warnings: list[str] = []
     for account in selected_accounts:
@@ -1177,6 +1194,7 @@ async def create_post(
         "campaign_id": body.campaign_id,
         "content": body.content,
         "title": body.title,
+        "has_link": has_link(body.content or ""),
         "platforms": body.platforms,
         "publish_targets": selected_accounts,
         "account_ids": social_account_ids,

@@ -8,6 +8,7 @@ import BrandMarkLoader from '@/components/BrandMarkLoader';
 
 // Pages
 import LandingPage from '@/pages/LandingPage';
+import Pricing from '@/pages/Pricing';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import ForgotPassword from '@/pages/ForgotPassword';
@@ -242,6 +243,7 @@ function App() {
             <Routes>
               {/* Public routes — redirect authenticated users to dashboard */}
               <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
+              <Route path="/pricing" element={<Pricing />} />
               <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
               <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
               <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />

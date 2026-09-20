@@ -23,48 +23,80 @@ router = APIRouter(tags=["payments"])
 
 _PRICING: dict[str, dict] = {
     "starter": {
-        "amount": 999,        # in paise / cents (₹999 or $9.99)
-        "currency": "INR",
+        "amount": 19,
+        "currency": "USD",
         "duration_days": 30,
         "label": "Starter Monthly",
     },
-    "creator": {
-        "amount": 1999,
-        "currency": "INR",
-        "duration_days": 30,
-        "label": "Creator Monthly",
-    },
-    "business": {
-        "amount": 3999,
-        "currency": "INR",
-        "duration_days": 30,
-        "label": "Business Monthly",
-    },
-    "monthly": {
-        "amount": 500,
-        "currency": "INR",
-        "duration_days": 30,
-        "label": "Monthly",
-    },
-    "yearly": {
-        "amount": 3000,
-        "currency": "INR",
+    "starter_annual": {
+        "amount": 192,
+        "currency": "USD",
         "duration_days": 365,
-        "label": "Yearly",
+        "label": "Starter Annual ($16/mo)",
     },
     "pro": {
-        "amount": 999,
-        "currency": "INR",
+        "amount": 45,
+        "currency": "USD",
         "duration_days": 30,
         "label": "Pro Monthly",
     },
+    "pro_annual": {
+        "amount": 468,
+        "currency": "USD",
+        "duration_days": 365,
+        "label": "Pro Annual ($39/mo)",
+    },
     "agency": {
-        "amount": 2999,
-        "currency": "INR",
+        "amount": 110,
+        "currency": "USD",
         "duration_days": 30,
         "label": "Agency Monthly",
     },
+    "agency_annual": {
+        "amount": 1188,
+        "currency": "USD",
+        "duration_days": 365,
+        "label": "Agency Annual ($99/mo)",
+    },
+    "twitter_link_booster": {
+        "amount": 15,
+        "currency": "USD",
+        "duration_days": 365,
+        "label": "Twitter 50 Link Posts Booster",
+    },
+    "twitter_byok": {
+        "amount": 5,
+        "currency": "USD",
+        "duration_days": 30,
+        "label": "Twitter BYOK Integration",
+    },
+    # Backwards compatibility aliases
+    "creator": {
+        "amount": 45,
+        "currency": "USD",
+        "duration_days": 30,
+        "label": "Pro Monthly",
+    },
+    "business": {
+        "amount": 110,
+        "currency": "USD",
+        "duration_days": 30,
+        "label": "Agency Monthly",
+    },
+    "monthly": {
+        "amount": 19,
+        "currency": "USD",
+        "duration_days": 30,
+        "label": "Starter Monthly",
+    },
+    "yearly": {
+        "amount": 192,
+        "currency": "USD",
+        "duration_days": 365,
+        "label": "Starter Annual",
+    },
 }
+
 
 
 # ── Request / response models ─────────────────────────────────────────────────

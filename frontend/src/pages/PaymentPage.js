@@ -27,52 +27,43 @@ const PaymentPage = () => {
   const [promoCode, setPromoCode] = useState('');
   const [showPromo, setShowPromo] = useState(false);
 
+  const billing = searchParams.get('billing') || searchParams.get('cycle') || 'monthly';
+  const isAnnual = billing === 'annual';
+
   const plans = {
     starter: {
       name: 'Starter',
-      price: 500,
-      currency: '₹',
-      trialDays: 7,
-    },
-    creator: {
-      name: 'Creator',
-      price: 1999,
-      currency: '₹',
-      trialDays: 7,
-    },
-    business: {
-      name: 'Business',
-      price: 3999,
-      currency: '₹',
-      trialDays: 7,
-    },
-    monthly: {
-      name: 'Monthly',
-      price: 500,
-      currency: '₹',
-      trialDays: 7,
-    },
-    yearly: {
-      name: 'Yearly',
-      price: 3000,
-      currency: '₹',
+      price: isAnnual ? 192 : 19,
+      currency: '$',
       trialDays: 7,
     },
     pro: {
       name: 'Pro',
-      price: 999,
-      currency: '₹',
+      price: isAnnual ? 468 : 45,
+      currency: '$',
       trialDays: 7,
     },
     agency: {
-      name: 'Agency',
-      price: 2999,
-      currency: '₹',
+      name: 'Agency / Scale',
+      price: isAnnual ? 1188 : 110,
+      currency: '$',
+      trialDays: 7,
+    },
+    creator: {
+      name: 'Pro',
+      price: isAnnual ? 468 : 45,
+      currency: '$',
+      trialDays: 7,
+    },
+    business: {
+      name: 'Agency / Scale',
+      price: isAnnual ? 1188 : 110,
+      currency: '$',
       trialDays: 7,
     },
   };
 
-  const selectedPlan = plans[plan] || plans.starter || plans.monthly;
+  const selectedPlan = plans[plan] || plans.starter || plans.pro;
   const tax = ((selectedPlan?.price || 0) * 0.1).toFixed(2);
   const total = ((selectedPlan?.price || 0) + parseFloat(tax)).toFixed(2);
   const trialEndDate = new Date(Date.now() + (selectedPlan?.trialDays || 7) * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });

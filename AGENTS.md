@@ -9,13 +9,14 @@ Focus: Full Postiz Feature Parity (Developer Settings, Scoped Webhooks, RSS Auto
 ## Last Session Completed
 Date: 2026-09-20
 Completed:
-- Postiz Feature Parity End-to-End:
-  - Developer Settings & Scoped Webhooks: OAuth2 Apps, token scopes, MCP JSON generator, account-filtered webhooks.
-  - Media & CLI Upload: Multipart upload API (`POST /api/public/media/upload`), `unravler upload <file>`, multi-thread `-c` parsing.
-  - Video Clipping & AI Media: YouTube viral moment clipper, Pollinations FLUX image generator exposed via Public API & MCP tools (`clipping.create`, `clipping.status`, `image.generate`).
-  - Analytics API & CLI: Platform & post analytics REST endpoints and CLI commands (`analytics:platform`, `analytics:post`).
-  - MCP Path Auth: Direct token URL routing (`/mcp/:apiKey`) for simple MCP client integration.
-  - All 427 backend tests passed, frontend CI build passed clean.
+- Production Pricing & Twitter Rate Limits Overhaul:
+  - Removed Free tier; implemented 3 paid tiers: Starter ($19/$16), Pro ($45/$39), Agency ($110/$99).
+  - Twitter / X API Cost Protections (`utils/plan_limits.py` + `posts.py`): daily throttle, monthly post caps, and link-post URL quotas ($0.20/link tweet).
+  - Added Twitter Link Booster ($15 for 50 link posts) and Twitter BYOK ($5/mo) in `payments.py`.
+  - Dedicated public `/pricing` page with feature matrix, Twitter limit breakdown, add-on boosters, and FAQ.
+  - Removed inline pricing section from `LandingPage.js`; top nav "Pricing" routes to `/pricing`.
+  - Synced in-app `Billing.js`, `PaymentPage.js`, and `OnboardingPricing.js`.
+  - All 434 backend tests passed, frontend production CI build passed clean.
 
 ## Active Work
 Currently implementing: None

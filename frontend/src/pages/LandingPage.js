@@ -161,6 +161,10 @@ const LandingPage = () => {
   const getStarted = () => navigate(user ? '/dashboard' : '/signup');
   const scrollToSection = (sectionId) => {
     setMenuOpen(false);
+    if (sectionId === 'pricing') {
+      navigate('/pricing');
+      return;
+    }
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -327,29 +331,6 @@ const LandingPage = () => {
               <button className="unravler-text-cta" onClick={() => navigate('/signup')}>Explore the analytics workspace <FaArrowRight /></button>
             </div>
             <SignalPanel />
-          </div>
-        </section>
-
-        <section id="pricing" className="unravler-pricing">
-          <div className="unravler-shell">
-            <div className="unravler-pricing__heading">
-              <p className="unravler-kicker"><span /> Start when you are ready</p>
-              <h2>Simple plans for a steadier publishing habit.</h2>
-            </div>
-            <div className="unravler-pricing__grid">
-              <article className="unravler-price-card">
-                <div><span>Monthly</span><b>₹500 <small>/ month</small></b></div>
-                <p>For consistent creators building their own rhythm.</p>
-                <ul><li><FaCheck /> Connect up to 3 social accounts</li><li><FaCheck /> Create and schedule posts</li><li><FaCheck /> AI writing support</li></ul>
-                <Button onClick={getStarted} data-testid="pricing-monthly-button" className="unravler-price-card__button">Choose monthly</Button>
-              </article>
-              <article className="unravler-price-card unravler-price-card--featured">
-                <div><span>Yearly <em>Best value</em></span><b>₹3,000 <small>/ year</small></b></div>
-                <p>For a calmer year of planned, connected work.</p>
-                <ul><li><FaCheck /> Everything in monthly</li><li><FaCheck /> Save 50% across the year</li><li><FaCheck /> Priority support</li></ul>
-                <Button onClick={getStarted} data-testid="pricing-yearly-button" className="unravler-price-card__button">Choose yearly</Button>
-              </article>
-            </div>
           </div>
         </section>
 
