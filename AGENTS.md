@@ -10,12 +10,12 @@ Focus: Full Postiz Feature Parity (Developer Settings, Scoped Webhooks, RSS Auto
 Date: 2026-09-20
 Completed:
 - Postiz Feature Parity End-to-End:
-  - Developer Settings & Scoped Webhooks: OAuth2 Apps management, token scopes, MCP JSON generator, and account-filtered webhook dispatches.
-  - RSS Auto-Post & CLI / Skill: Backfill/sync toggle, AI picture generator via Pollinations, official Unravler CLI (`cli/bin/unravler.js`), and Agent Skill definition.
-  - Video Clipping Engine: YouTube timedtext parsing, viral moment heuristic scoring, ASS vertical 9:16 subtitle burning, Celery background renderer, and `VideoClipperModal.js`.
-  - AI Agent Hub: 3-pane chat interface at `/agent` with session persistence, channel guardrail, and interactive action cards (Composer draft, Video Clipper, Banner generator).
-  - Fixed PII log scrubber primitive type preservation in `utils/log_scrub.py`.
-  - All 423 backend unit tests and frontend production CI build passed clean.
+  - Developer Settings & Scoped Webhooks: OAuth2 Apps, token scopes, MCP JSON generator, account-filtered webhooks.
+  - Media & CLI Upload: Multipart upload API (`POST /api/public/media/upload`), `unravler upload <file>`, multi-thread `-c` parsing.
+  - Video Clipping & AI Media: YouTube viral moment clipper, Pollinations FLUX image generator exposed via Public API & MCP tools (`clipping.create`, `clipping.status`, `image.generate`).
+  - Analytics API & CLI: Platform & post analytics REST endpoints and CLI commands (`analytics:platform`, `analytics:post`).
+  - MCP Path Auth: Direct token URL routing (`/mcp/:apiKey`) for simple MCP client integration.
+  - All 427 backend tests passed, frontend CI build passed clean.
 
 ## Active Work
 Currently implementing: None

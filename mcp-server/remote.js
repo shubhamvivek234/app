@@ -47,12 +47,28 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.post('/mcp', authMiddleware, async (req, res) => {
+async function handleMcpRequest(req, res, token) {
+  if (!token) {
+    return res.status(401).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Authentication required. Provide Bearer token or /mcp/:apiKey.' },
+      id: null,
+    });
+  }
+
+  try {
+    await verifier.verifyAccessToken(token);
+  } catch (error) {
+    const isInvalid = error instanceof InvalidTokenError || error?.name === 'InvalidTokenError';
+    return res.status(isInvalid ? 401 : 500).json({
+      jsonrpc: '2.0',
+      error: { code: isInvalid ? -32000 : -32603, message: getErrorMessage(error) },
+      id: null,
+    });
+  }
+
   const server = createUnravlerMcpServer({
-    getApi: (extra) => {
-      const token = extra?.authInfo?.token || req.auth?.token;
-      return createPublicApiClient({ token, baseUrl: BASE_URL });
-    },
+    getApi: () => createPublicApiClient({ token, baseUrl: BASE_URL }),
   });
 
   try {
@@ -78,15 +94,26 @@ app.post('/mcp', authMiddleware, async (req, res) => {
       });
     }
   }
+}
+
+app.post('/mcp', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+  await handleMcpRequest(req, res, token);
+});
+
+app.post('/mcp/:apiKey', async (req, res) => {
+  const token = req.params.apiKey;
+  await handleMcpRequest(req, res, token);
 });
 
 for (const method of ['get', 'delete']) {
-  app[method]('/mcp', (_req, res) => {
+  app[method](['/mcp', '/mcp/:apiKey'], (_req, res) => {
     res.status(405).json({
       jsonrpc: '2.0',
       error: {
         code: -32000,
-        message: 'Method not allowed.',
+        message: 'Method not allowed. Send POST requests.',
       },
       id: null,
     });

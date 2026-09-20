@@ -44,6 +44,7 @@ export default function McpConfigGenerator({ availableTokens = [], backendUrl })
 
   const generateSnippet = () => {
     const tokenPlaceholder = selectedToken || 'YOUR_UNRAVLER_TOKEN';
+    const mcpUrlWithKey = `${backendUrl || 'https://api.unravler.com'}/mcp/${tokenPlaceholder}`;
 
     switch (selectedClient) {
       case 'cursor':
@@ -51,10 +52,7 @@ export default function McpConfigGenerator({ availableTokens = [], backendUrl })
           {
             mcpServers: {
               unravler: {
-                url: mcpHttpUrl,
-                headers: {
-                  Authorization: `Bearer ${tokenPlaceholder}`,
-                },
+                url: mcpUrlWithKey,
               },
             },
           },
@@ -67,12 +65,7 @@ export default function McpConfigGenerator({ availableTokens = [], backendUrl })
           {
             mcpServers: {
               unravler: {
-                command: 'npx',
-                args: ['-y', '@unravler/mcp-server'],
-                env: {
-                  UNRAVLER_API_KEY: tokenPlaceholder,
-                  UNRAVLER_BACKEND_URL: backendUrl || 'https://api.unravler.com',
-                },
+                url: mcpUrlWithKey,
               },
             },
           },
@@ -81,15 +74,14 @@ export default function McpConfigGenerator({ availableTokens = [], backendUrl })
         );
 
       case 'claude_code':
-        return `claude mcp add unravler --url "${mcpHttpUrl}" --header "Authorization: Bearer ${tokenPlaceholder}"`;
+        return `claude mcp add unravler --transport http --url "${mcpUrlWithKey}"`;
 
       case 'remote_http':
         return JSON.stringify(
           {
-            endpoint: mcpHttpUrl,
-            transport: 'sse',
+            endpoint: mcpUrlWithKey,
+            transport: 'streamable-http',
             headers: {
-              Authorization: `Bearer ${tokenPlaceholder}`,
               'Content-Type': 'application/json',
             },
           },

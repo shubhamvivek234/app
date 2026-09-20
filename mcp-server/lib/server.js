@@ -359,6 +359,78 @@ export function createUnravlerMcpServer({ getApi }) {
         return data;
       }),
     },
+    {
+      name: 'clipping.create',
+      aliases: ['clippingTool', 'clip_video'],
+      description: 'Turn a long YouTube video into short vertical 9:16 clips with burned-in subtitles and optional draft posts.',
+      inputSchema: {
+        url: z.string().url().describe('URL of the YouTube video (youtube.com or youtu.be).'),
+        clips: z.number().int().min(1).max(10).optional().describe('Maximum number of clips, 1 to 10. Defaults to 3.'),
+        fit: z.enum(['blur', 'crop']).optional().describe('Video fit mode: "blur" (default) or "crop".'),
+        integrations: z.array(z.string()).optional().describe('Channel IDs to automatically create draft posts for each clip.'),
+      },
+      handler: async ({ url, clips = 3, fit = 'blur', integrations = [] }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.post('/clipping/jobs', {
+          youtube_url: url,
+          num_clips: clips,
+          fit_mode: fit,
+          target_account_ids: integrations,
+          auto_create_drafts: integrations.length > 0,
+        });
+        return data;
+      }),
+    },
+    {
+      name: 'clipping.status',
+      aliases: ['clippingStatusTool', 'get_clipping_status'],
+      description: 'Check progress, current step, and retrieve finished clips from a video clipping job.',
+      inputSchema: {
+        clipping_id: z.string().min(1).describe('The clippingId returned by clipping.create.'),
+      },
+      handler: async ({ clipping_id }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.get(`/clipping/jobs/${clipping_id}`);
+        return data;
+      }),
+    },
+    {
+      name: 'image.generate',
+      aliases: ['generateImageTool', 'generate_image'],
+      description: 'Generate a high-quality AI visual banner or social image from a text prompt.',
+      inputSchema: {
+        prompt: z.string().min(1).describe('Description of the image or visual banner to generate.'),
+        style: z.string().optional().describe('Optional visual style hint such as editorial, minimalist, 3d, vector.'),
+      },
+      handler: async ({ prompt, style = 'editorial' }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.post('/ai/generate-image', { prompt, style });
+        return data;
+      }),
+    },
+    {
+      name: 'analytics.platform',
+      aliases: ['get_platform_analytics'],
+      description: 'Get growth, followers, impressions, and engagement metrics for a connected social channel.',
+      inputSchema: {
+        account_id: z.string().min(1).describe('The social account / channel ID from accounts.list.'),
+        days: z.number().int().min(1).max(90).optional().describe('Number of days to look back, default 7.'),
+      },
+      handler: async ({ account_id, days = 7 }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.get(`/analytics/platform/${account_id}`, { params: { days } });
+        return data;
+      }),
+    },
+    {
+      name: 'analytics.post',
+      aliases: ['get_post_analytics'],
+      description: 'Get likes, comments, shares, and engagement performance for a specific published post.',
+      inputSchema: {
+        post_id: z.string().min(1).describe('The post ID.'),
+        days: z.number().int().min(1).max(90).optional().describe('Number of days to look back, default 7.'),
+      },
+      handler: async ({ post_id, days = 7 }, extra) => call(getApi, extra, async (api) => {
+        const { data } = await api.get(`/analytics/post/${post_id}`, { params: { days } });
+        return data;
+      }),
+    },
   ];
 
   for (const tool of tools) {
