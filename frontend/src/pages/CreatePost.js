@@ -8,7 +8,7 @@ const CreatePost = () => {
   const [searchParams] = useSearchParams();
   const editPostId = useMemo(() => searchParams.get('edit') || null, [searchParams]);
 
-  const initialContent = location.state?.initialContent || location.state?.initialCaption || location.state?.caption || '';
+  const initialContent = location.state?.initialContent || location.state?.prefillContent || location.state?.initialCaption || location.state?.caption || '';
 
   return (
     <DashboardLayout noPadding={true}>

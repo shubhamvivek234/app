@@ -207,8 +207,9 @@ export default function AgentHub() {
   const handleOpenInComposer = (card) => {
     const draftContent = card.payload?.content || '';
     const platforms = card.payload?.platforms || [];
-    navigate('/composer', {
+    navigate('/create-post', {
       state: {
+        initialContent: draftContent,
         prefillContent: draftContent,
         prefillPlatforms: platforms,
       },
