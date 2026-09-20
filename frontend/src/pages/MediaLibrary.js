@@ -7,9 +7,10 @@ import { validateMediaForPlatforms } from '@/lib/mediaValidation';
 import { format, parseISO } from 'date-fns';
 import {
   FaImages, FaUpload, FaSearch, FaCopy, FaTrash, FaVideo, FaImage,
-  FaTimes, FaCloudUploadAlt, FaMusic, FaPlay, FaPause,
+  FaTimes, FaCloudUploadAlt, FaMusic, FaPlay, FaPause, FaCut as FaScissors,
 } from 'react-icons/fa';
 import AddAudioDialog from '@/components/composer/AddAudioDialog';
+import VideoClipperModal from '@/components/clipping/VideoClipperModal';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -209,6 +210,7 @@ const MediaLibrary = () => {
   const [dragging, setDragging] = useState(false);
   const [mediaValidation, setMediaValidation] = useState(null); // { file, violations }
   const [audioDialogAsset, setAudioDialogAsset] = useState(null);
+  const [showClipper, setShowClipper] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -372,6 +374,12 @@ const MediaLibrary = () => {
         />
       )}
 
+      <VideoClipperModal
+        open={showClipper}
+        onClose={() => setShowClipper(false)}
+        onDraftCreated={fetchAssets}
+      />
+
       <div
         className="max-w-6xl mx-auto"
         onDragOver={handleDragOver}
@@ -399,14 +407,23 @@ const MediaLibrary = () => {
               {assets.length} asset{assets.length !== 1 ? 's' : ''} · {imageCount} image{imageCount !== 1 ? 's' : ''}, {videoCount} video{videoCount !== 1 ? 's' : ''}, {audioCount} audio
             </p>
           </div>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-60"
-          >
-            <FaUpload className="text-xs" />
-            {uploading ? `Uploading… ${uploadProgress}%` : 'Upload'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowClipper(true)}
+              className="flex items-center gap-2 px-3.5 py-2 text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors shadow-xs"
+            >
+              <FaScissors className="text-xs" />
+              AI Video Clipper
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-60"
+            >
+              <FaUpload className="text-xs" />
+              {uploading ? `Uploading… ${uploadProgress}%` : 'Upload'}
+            </button>
+          </div>
         </div>
 
         {/* Upload progress bar */}

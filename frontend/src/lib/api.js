@@ -1275,6 +1275,27 @@ export const getWebhookDeliveries = async (endpointId) => {
   return response.data;
 };
 
+// ── Developer OAuth Applications ──
+export const getOAuthApps = async () => {
+  const response = await axios.get(`${API}/developer/apps`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createOAuthApp = async (data) => {
+  const response = await axios.post(`${API}/developer/apps`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const rotateOAuthAppSecret = async (appId) => {
+  const response = await axios.post(`${API}/developer/apps/${appId}/rotate-secret`, {}, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteOAuthApp = async (appId) => {
+  const response = await axios.delete(`${API}/developer/apps/${appId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
 // ── Calendar Notes ──
 const CALENDAR_NOTE_COLOR_ALIASES = {
   '#4caf50': 'green',
@@ -1953,3 +1974,52 @@ export const deletePostingSet = async (setId) => {
   const response = await axios.delete(`${API}/posting-sets/${setId}`, { headers: getAuthHeaders() });
   return response.data;
 };
+
+// ── Video Clipping Engine ──
+export const getClippingJobs = async () => {
+  const response = await axios.get(`${API}/clipping/jobs`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createClippingJob = async (data) => {
+  const response = await axios.post(`${API}/clipping/jobs`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getClippingJob = async (jobId) => {
+  const response = await axios.get(`${API}/clipping/jobs/${jobId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteClippingJob = async (jobId) => {
+  const response = await axios.delete(`${API}/clipping/jobs/${jobId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+// ── AI Agent Hub ──
+export const getAgentSessions = async () => {
+  const response = await axios.get(`${API}/agent/sessions`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const createAgentSession = async (data = {}) => {
+  const response = await axios.post(`${API}/agent/sessions`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const getAgentSession = async (sessionId) => {
+  const response = await axios.get(`${API}/agent/sessions/${sessionId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const deleteAgentSession = async (sessionId) => {
+  const response = await axios.delete(`${API}/agent/sessions/${sessionId}`, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+export const sendAgentMessage = async (sessionId, data) => {
+  const response = await axios.post(`${API}/agent/sessions/${sessionId}/chat`, data, { headers: getAuthHeaders() });
+  return response.data;
+};
+
+

@@ -2,20 +2,20 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v7.0 shipped
+Stage: v7.1 shipped
 Branch: main
-Focus: Deep Codebase & Architecture Audit Remediation (Payments, Adapters, Media, Workspaces)
+Focus: Full Postiz Feature Parity (Developer Settings, Scoped Webhooks, RSS Auto-Post, Video Clipper, AI Agent Hub, CLI)
 
 ## Last Session Completed
 Date: 2026-09-20
 Completed:
-- Add Audio to Video Audit & End-to-End Implementation:
-  - Fixed button collisions between Audio and Auto-Fit in Composer (`PlatformEditor.js`).
-  - Added 6 curated royalty-free music tracks with pre-computed waveforms (`api/data/stock_audio.py`, `frontend/src/data/stockAudio.json`).
-  - Upgraded `AddAudioDialog.js`: interactive waveform scrubber, synchronized audio-video playback, volume balance sliders, and temporary upload library persistence.
-  - Integrated audio in Media Library (`MediaLibrary.js`): audio filter tab, direct upload, inline preview card, and one-click "Add Audio" action on videos.
-  - Dynamic audio attribution tags in TikTok and Instagram previews.
-  - All automated media/audio tests and frontend production build verified clean.
+- Postiz Feature Parity End-to-End:
+  - Developer Settings & Scoped Webhooks: OAuth2 Apps management, token scopes, MCP JSON generator, and account-filtered webhook dispatches.
+  - RSS Auto-Post & CLI / Skill: Backfill/sync toggle, AI picture generator via Pollinations, official Unravler CLI (`cli/bin/unravler.js`), and Agent Skill definition.
+  - Video Clipping Engine: YouTube timedtext parsing, viral moment heuristic scoring, ASS vertical 9:16 subtitle burning, Celery background renderer, and `VideoClipperModal.js`.
+  - AI Agent Hub: 3-pane chat interface at `/agent` with session persistence, channel guardrail, and interactive action cards (Composer draft, Video Clipper, Banner generator).
+  - Fixed PII log scrubber primitive type preservation in `utils/log_scrub.py`.
+  - All 423 backend unit tests and frontend production CI build passed clean.
 
 ## Active Work
 Currently implementing: None

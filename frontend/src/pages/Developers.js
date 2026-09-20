@@ -47,8 +47,12 @@ import {
   getWebhookDeliveries,
   getWebhookEndpoints,
   testWebhookEndpoint,
+  getSocialAccounts,
 } from '@/lib/api';
 import { hasWorkspacePermission } from '@/lib/workspacePermissions';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import McpConfigGenerator from '@/components/developer/McpConfigGenerator';
+import OAuthAppsSection from '@/components/developer/OAuthAppsSection';
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || 'https://api.unravler.com').replace(/\/$/, '');
 const PUBLIC_API_BASE = `${BACKEND_URL}/api/public`;
@@ -343,6 +347,7 @@ function CredentialSection({
 
 function WebhookSection({
   endpoints,
+  accounts = [],
   onRegister,
   onDelete,
   onTest,
@@ -355,6 +360,7 @@ function WebhookSection({
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
   const [selectedEvents, setSelectedEvents] = useState(['post.published', 'post.failed']);
+  const [selectedAccounts, setSelectedAccounts] = useState([]);
 
   const handleToggleEvent = (evtKey) => {
     setSelectedEvents((prev) =>
@@ -372,10 +378,16 @@ function WebhookSection({
       toast.error('Select at least one event');
       return;
     }
-    onRegister({ url, events: selectedEvents, description }, () => {
+    onRegister({
+      url,
+      events: selectedEvents,
+      description,
+      scoped_account_ids: selectedAccounts,
+    }, () => {
       setUrl('');
       setDescription('');
       setSelectedEvents(['post.published', 'post.failed']);
+      setSelectedAccounts([]);
     });
   };
 
@@ -532,6 +544,60 @@ function WebhookSection({
           </div>
         </div>
 
+        {accounts && accounts.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Channel Scoping (Optional)
+              </label>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {selectedAccounts.length === 0
+                  ? 'Fires for all channels (Global)'
+                  : `Restricted to ${selectedAccounts.length} channel${selectedAccounts.length > 1 ? 's' : ''}`}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Limit this webhook to specific social channels. Leave set to "All Channels" to receive events across every account in this workspace.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setSelectedAccounts([])}
+                className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors ${
+                  selectedAccounts.length === 0
+                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950 dark:text-indigo-300 font-semibold shadow-xs'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+              >
+                🌐 All Connected Channels
+              </button>
+              {accounts.map((acc) => {
+                const isSelected = selectedAccounts.includes(acc.id);
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedAccounts((prev) =>
+                        isSelected ? prev.filter((id) => id !== acc.id) : [...prev, acc.id]
+                      )
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950 dark:text-indigo-300 font-semibold shadow-xs'
+                        : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-300'
+                    }`}
+                  >
+                    <span>{acc.platform_username || acc.account_name || acc.platform}</span>
+                    <span className="text-[10px] opacity-70">({acc.platform})</span>
+                    {isSelected && <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="pt-2">
           <Button type="submit" disabled={busyRegister || !url.trim() || selectedEvents.length === 0} className="bg-indigo-600 text-white hover:bg-indigo-700 font-bold">
             {busyRegister ? <FaSpinner className="animate-spin mr-2" /> : <FaPlus className="mr-2 text-xs" />}
@@ -561,6 +627,15 @@ function WebhookSection({
                       {ep.description}
                     </span>
                   ) : null}
+                  {ep.scoped_account_ids && ep.scoped_account_ids.length > 0 ? (
+                    <span className="rounded-full bg-purple-50 text-purple-700 border border-purple-200 px-2.5 py-0.5 text-[10px] font-semibold dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800">
+                      🎯 Scoped ({ep.scoped_account_ids.length} channel{ep.scoped_account_ids.length > 1 ? 's' : ''})
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 text-slate-600 px-2.5 py-0.5 text-[10px] font-medium dark:bg-slate-800 dark:text-slate-300">
+                      🌐 All Channels
+                    </span>
+                  )}
                   {ep.last_delivery_status ? (
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                       ep.last_delivery_status < 400
@@ -954,6 +1029,8 @@ function DevelopersContent({ user, navigate }) {
   const [personalTokens, setPersonalTokens] = useState([]);
   const [workspaceKeys, setWorkspaceKeys] = useState([]);
   const [webhookEndpoints, setWebhookEndpoints] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [activeTab, setActiveTab] = useState('credentials');
   const [loading, setLoading] = useState(Boolean(user));
   const [personalName, setPersonalName] = useState('Claude personal token');
   const [workspaceName, setWorkspaceName] = useState('Workspace integration key');
@@ -982,11 +1059,12 @@ function DevelopersContent({ user, navigate }) {
     let active = true;
     const load = async () => {
       try {
-        const [scopesResponse, personalResponse, workspaceResponse, webhooksResponse] = await Promise.all([
+        const [scopesResponse, personalResponse, workspaceResponse, webhooksResponse, accountsResponse] = await Promise.all([
           getDeveloperScopes(),
           getPersonalTokens(),
           canManageWorkspaceKeys ? getApiKeys() : Promise.resolve([]),
           canManageWebhooks ? getWebhookEndpoints().catch(() => []) : Promise.resolve([]),
+          getSocialAccounts().catch(() => []),
         ]);
 
         if (!active) return;
@@ -995,6 +1073,7 @@ function DevelopersContent({ user, navigate }) {
         setPersonalTokens(Array.isArray(personalResponse) ? personalResponse : []);
         setWorkspaceKeys(Array.isArray(workspaceResponse) ? workspaceResponse : []);
         setWebhookEndpoints(Array.isArray(webhooksResponse) ? webhooksResponse : []);
+        setAccounts(Array.isArray(accountsResponse) ? accountsResponse : []);
         setPersonalScopes(scopesResponse.default_personal_scopes || []);
         setWorkspaceScopes(scopesResponse.default_workspace_scopes || []);
       } catch (error) {
@@ -1229,120 +1308,197 @@ function DevelopersContent({ user, navigate }) {
             Loading developer credentials...
           </section>
         ) : (
-          <div className="space-y-8">
-            {canManageWebhooks ? (
-              <WebhookSection
-                endpoints={webhookEndpoints}
-                onRegister={registerWebhook}
-                onDelete={revokeWebhook}
-                onTest={handleTestWebhook}
-                onViewDeliveries={handleOpenDeliveries}
-                testingEndpointId={testingEndpointId}
-                busyRegister={creatingWebhook}
-                generatedSecret={generatedWebhookSecret}
-                setGeneratedSecret={setGeneratedWebhookSecret}
-              />
-            ) : null}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-6">
+            <div className="border-b border-gray-200 dark:border-slate-800 pb-2">
+              <TabsList className="flex flex-wrap w-full justify-start gap-2 bg-transparent p-0 h-auto">
+                <TabsTrigger
+                  value="credentials"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold data-[state=active]:bg-indigo-600 data-[state=active]:text-white shadow-none transition-all"
+                >
+                  🔑 API Keys & Tokens
+                </TabsTrigger>
+                <TabsTrigger
+                  value="mcp"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold data-[state=active]:bg-indigo-600 data-[state=active]:text-white shadow-none transition-all"
+                >
+                  🤖 MCP & AI Agents
+                </TabsTrigger>
+                <TabsTrigger
+                  value="oauth"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold data-[state=active]:bg-indigo-600 data-[state=active]:text-white shadow-none transition-all"
+                >
+                  🌐 OAuth Applications
+                </TabsTrigger>
+                <TabsTrigger
+                  value="webhooks"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold data-[state=active]:bg-indigo-600 data-[state=active]:text-white shadow-none transition-all"
+                >
+                  🔌 Webhooks & Automations
+                </TabsTrigger>
+                <TabsTrigger
+                  value="rest"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold data-[state=active]:bg-indigo-600 data-[state=active]:text-white shadow-none transition-all"
+                >
+                  📖 REST API Docs
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <section className="space-y-4 rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-start gap-3">
-                <FaBolt className="mt-1 text-amber-500" />
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Inbound Automation Webhook (Zapier, Make, n8n, Airtable)</h2>
-                  <p className="text-sm text-gray-600 dark:text-slate-400">
-                    Trigger automatic social scheduling from external tools without writing SDK code. Point your Notion, Airtable, or WordPress automation to this endpoint:
-                  </p>
-                </div>
-              </div>
-              <CodeBlock label="Inbound Webhook Payload Example">{inboundPostSnippet}</CodeBlock>
-            </section>
-
-            <CredentialSection
-              title="Personal Tokens"
-              icon={FaLaptopCode}
-              copy="Use personal tokens for Claude Desktop, Cursor, local MCP clients, scripts, and direct REST calls. These inherit only the capabilities your workspace role already has."
-              createLabel="Create personal token"
-              name={personalName}
-              setName={setPersonalName}
-              scopes={personalScopes}
-              setScopes={setPersonalScopes}
-              allowedScopes={scopeMeta?.allowed_scopes || []}
-              items={personalTokens}
-              onCreate={createPersonal}
-              onDelete={revokePersonal}
-              busy={creatingPersonal}
-              generatedToken={generatedPersonalToken}
-            />
-
-            {canManageWorkspaceKeys ? (
+            {/* Tab 1: API Keys & Tokens */}
+            <TabsContent value="credentials" className="space-y-6">
               <CredentialSection
-                title="Workspace API Keys"
-                icon={FaServer}
-                copy="Use workspace API keys for admin-owned service integrations such as internal automation jobs or server-side orchestration. These keys are still scoped to the active workspace."
-                createLabel="Create workspace key"
-                name={workspaceName}
-                setName={setWorkspaceName}
-                scopes={workspaceScopes}
-                setScopes={setWorkspaceScopes}
+                title="Personal Tokens"
+                icon={FaLaptopCode}
+                copy="Use personal tokens for Claude Desktop, Cursor, local MCP clients, scripts, and direct REST calls. These inherit only the capabilities your workspace role already has."
+                createLabel="Create personal token"
+                name={personalName}
+                setName={setPersonalName}
+                scopes={personalScopes}
+                setScopes={setPersonalScopes}
                 allowedScopes={scopeMeta?.allowed_scopes || []}
-                items={workspaceKeys}
-                onCreate={createWorkspace}
-                onDelete={revokeWorkspace}
-                busy={creatingWorkspace}
-                generatedToken={generatedWorkspaceKey}
+                items={personalTokens}
+                onCreate={createPersonal}
+                onDelete={revokePersonal}
+                busy={creatingPersonal}
+                generatedToken={generatedPersonalToken}
               />
-            ) : (
-              <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Workspace API Keys</h2>
-                <p className="mt-2 text-sm text-gray-600 dark:text-slate-400">
-                  Admin or owner access is required to create shared workspace API keys. Personal tokens are still available above for your own agent and REST workflows.
-                </p>
-              </section>
-            )}
-          </div>
-        )
-      ) : null}
 
-      <AiAgentMcpHub
-        personalTokens={personalTokens}
-        generatedToken={generatedPersonalToken}
-        backendUrl={BACKEND_URL}
-        mcpEndpoint={MCP_HTTP_ENDPOINT}
-      />
+              {canManageWorkspaceKeys ? (
+                <CredentialSection
+                  title="Workspace API Keys"
+                  icon={FaServer}
+                  copy="Use workspace API keys for admin-owned service integrations such as internal automation jobs or server-side orchestration. These keys are still scoped to the active workspace."
+                  createLabel="Create workspace key"
+                  name={workspaceName}
+                  setName={setWorkspaceName}
+                  scopes={workspaceScopes}
+                  setScopes={setWorkspaceScopes}
+                  allowedScopes={scopeMeta?.allowed_scopes || []}
+                  items={workspaceKeys}
+                  onCreate={createWorkspace}
+                  onDelete={revokeWorkspace}
+                  busy={creatingWorkspace}
+                  generatedToken={generatedWorkspaceKey}
+                />
+              ) : (
+                <section className="rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Workspace API Keys</h2>
+                  <p className="mt-2 text-sm text-gray-600 dark:text-slate-400">
+                    Admin or owner access is required to create shared workspace API keys. Personal tokens are still available above for your own agent and REST workflows.
+                  </p>
+                </section>
+              )}
+            </TabsContent>
 
-      <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-start gap-3">
-          <FaGlobe className="mt-1 text-gray-400" />
-          <div className="space-y-2">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">REST reference</h2>
-            <p className="text-sm text-gray-600 dark:text-slate-400">
-              All write routes support <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">Idempotency-Key</code>. Public media URLs are validated with the same SSRF and content rules as the main composer flow.
-            </p>
-          </div>
-        </div>
-        <CodeBlock label="Create a scheduled post">{postCreateSnippet}</CodeBlock>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {REST_GROUPS.map((group) => (
-            <div key={group.title} className="rounded-2xl border border-gray-200 bg-offwhite p-4 dark:border-slate-800 dark:bg-slate-800/60">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{group.title}</h3>
-              <div className="mt-4 space-y-3">
-                {group.items.map((item) => (
-                  <div key={`${group.title}-${item.method}-${item.path}`} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${METHOD_STYLES[item.method]}`}>
-                        {item.method}
-                      </span>
-                      <code className="text-xs text-gray-700 dark:text-slate-300">{item.path}</code>
-                    </div>
-                    <p className="mt-2 text-sm text-gray-700 dark:text-slate-300">{item.description}</p>
-                    <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">Required scope: {item.scope}</p>
+            {/* Tab 2: MCP Config & Hub */}
+            <TabsContent value="mcp" className="space-y-6">
+              <McpConfigGenerator
+                availableTokens={personalTokens}
+                backendUrl={BACKEND_URL}
+              />
+              <AiAgentMcpHub
+                personalTokens={personalTokens}
+                generatedToken={generatedPersonalToken}
+                backendUrl={BACKEND_URL}
+                mcpEndpoint={MCP_HTTP_ENDPOINT}
+              />
+            </TabsContent>
+
+            {/* Tab 3: OAuth Applications */}
+            <TabsContent value="oauth" className="space-y-6">
+              <OAuthAppsSection />
+            </TabsContent>
+
+            {/* Tab 4: Webhooks & Automations */}
+            <TabsContent value="webhooks" className="space-y-6">
+              {canManageWebhooks ? (
+                <WebhookSection
+                  endpoints={webhookEndpoints}
+                  accounts={accounts}
+                  onRegister={registerWebhook}
+                  onDelete={revokeWebhook}
+                  onTest={handleTestWebhook}
+                  onViewDeliveries={handleOpenDeliveries}
+                  testingEndpointId={testingEndpointId}
+                  busyRegister={creatingWebhook}
+                  generatedSecret={generatedWebhookSecret}
+                  setGeneratedSecret={setGeneratedWebhookSecret}
+                />
+              ) : (
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 text-sm text-gray-500">
+                  Admin permissions required to configure webhooks.
+                </div>
+              )}
+
+              <section className="space-y-4 rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex items-start gap-3">
+                  <FaBolt className="mt-1 text-amber-500" />
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Inbound Automation Webhook (Zapier, Make, n8n, Airtable)</h2>
+                    <p className="text-sm text-gray-600 dark:text-slate-400">
+                      Trigger automatic social scheduling from external tools without writing SDK code. Point your Notion, Airtable, or WordPress automation to this endpoint:
+                    </p>
                   </div>
-                ))}
+                </div>
+                <CodeBlock label="Inbound Webhook Payload Example">{inboundPostSnippet}</CodeBlock>
+              </section>
+            </TabsContent>
+
+            {/* Tab 5: REST Reference */}
+            <TabsContent value="rest" className="space-y-6">
+              <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex items-start gap-3">
+                  <FaGlobe className="mt-1 text-gray-400" />
+                  <div className="space-y-2">
+                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white">REST reference</h2>
+                    <p className="text-sm text-gray-600 dark:text-slate-400">
+                      All write routes support <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">Idempotency-Key</code>. Public media URLs are validated with the same SSRF and content rules as the main composer flow.
+                    </p>
+                  </div>
+                </div>
+                <CodeBlock label="Create a scheduled post">{postCreateSnippet}</CodeBlock>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {REST_GROUPS.map((group) => (
+                    <div key={group.title} className="rounded-2xl border border-gray-200 bg-offwhite p-4 dark:border-slate-800 dark:bg-slate-800/60">
+                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{group.title}</h3>
+                      <div className="mt-4 space-y-3">
+                        {group.items.map((item) => (
+                          <div key={`${group.title}-${item.method}-${item.path}`} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${METHOD_STYLES[item.method]}`}>
+                                {item.method}
+                              </span>
+                              <code className="text-xs text-gray-700 dark:text-slate-300">{item.path}</code>
+                            </div>
+                            <p className="mt-2 text-sm text-gray-700 dark:text-slate-300">{item.description}</p>
+                            <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">Required scope: {item.scope}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </TabsContent>
+          </Tabs>
+        )
+      ) : (
+        <div className="space-y-6">
+          <McpConfigGenerator backendUrl={BACKEND_URL} />
+          <section className="space-y-6 rounded-[28px] border border-gray-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-start gap-3">
+              <FaGlobe className="mt-1 text-gray-400" />
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">REST reference</h2>
+                <p className="text-sm text-gray-600 dark:text-slate-400">
+                  All write routes support <code className="rounded bg-gray-100 px-1 dark:bg-slate-800">Idempotency-Key</code>.
+                </p>
               </div>
             </div>
-          ))}
+            <CodeBlock label="Create a scheduled post">{postCreateSnippet}</CodeBlock>
+          </section>
         </div>
-      </section>
+      )}
 
       <DeliveriesModal
         endpoint={selectedLogsEndpoint}

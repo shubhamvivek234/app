@@ -35,6 +35,7 @@ class WebhookEndpointCreate(BaseModel):
     url: HttpUrl
     events: list[str]
     description: str = ""
+    scoped_account_ids: list[str] = []
 
     @field_validator("events")
     @classmethod
@@ -60,6 +61,7 @@ class WebhookEndpointResponse(BaseModel):
     url: str
     events: list[str]
     description: str
+    scoped_account_ids: list[str] = []
     created_at: datetime
     active: bool
     signing_secret: str | None = None
@@ -190,6 +192,7 @@ async def register_webhook(
         "url": str(body.url),
         "events": body.events,
         "description": body.description,
+        "scoped_account_ids": body.scoped_account_ids or [],
         "signing_secret_hash": signing_secret_hash,
         "active": True,
         "created_at": now,
@@ -199,8 +202,8 @@ async def register_webhook(
     await db.webhook_endpoints.insert_one(doc)
 
     logger.info(
-        "Webhook endpoint registered: workspace=%s url=%s events=%s",
-        workspace_id, str(body.url), body.events,
+        "Webhook endpoint registered: workspace=%s url=%s events=%s scoped_accounts=%s",
+        workspace_id, str(body.url), body.events, body.scoped_account_ids,
     )
 
     # Return signing_secret strictly in creation response so user can store it
@@ -209,6 +212,7 @@ async def register_webhook(
         url=str(body.url),
         events=body.events,
         description=body.description,
+        scoped_account_ids=body.scoped_account_ids or [],
         created_at=now,
         active=True,
         signing_secret=signing_secret,
@@ -232,6 +236,7 @@ async def list_webhooks(current_user: CurrentUser, db: DB) -> list[WebhookEndpoi
             url=d["url"],
             events=d.get("events", []),
             description=d.get("description", ""),
+            scoped_account_ids=d.get("scoped_account_ids", []),
             created_at=d["created_at"],
             active=d.get("active", True),
             signing_secret=None,
@@ -415,6 +420,14 @@ async def dispatch_webhook_event(db, workspace_id: str, event: str, payload: dic
     }
 
     for endpoint in endpoints:
+        scoped = endpoint.get("scoped_account_ids") or []
+        if scoped:
+            post_accounts = payload.get("account_ids") or []
+            if payload.get("account_id"):
+                post_accounts = list(set(post_accounts + [payload["account_id"]]))
+            if post_accounts and not any(acc in scoped for acc in post_accounts):
+                continue
+
         url = endpoint.get("url", "")
         if not url or not is_safe_url(url):
             continue

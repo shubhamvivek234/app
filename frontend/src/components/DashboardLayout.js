@@ -37,6 +37,7 @@ import {
   FaSyncAlt,
   FaAddressBook,
   FaPaperPlane,
+  FaRobot,
 } from 'react-icons/fa';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -191,6 +192,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
       { name: 'Dashboard', path: '/dashboard', icon: FaLayerGroup, badge: 'Live', badgeBg: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
     ],
     growth: [
+      { name: 'AI Agent', path: '/agent', icon: FaRobot, badge: 'Agentic', badgeBg: 'bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300' },
       { name: 'Campaigns', path: '/campaigns', icon: FaBullhorn, badge: 'ROI Hub', badgeBg: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' },
       { name: 'Recurring Posts', path: '/recurring', icon: FaSyncAlt, badge: 'Evergreen', badgeBg: 'bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300' },
       { name: 'Viral Studio', path: '/viral-studio', icon: FaBolt, badge: 'Hooks & AI', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },

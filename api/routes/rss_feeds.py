@@ -55,6 +55,8 @@ class CreateFeedRequest(BaseModel):
     target_account_ids: list[str] = Field(default_factory=list)
     target_platforms: list[str] = Field(default_factory=list)
     auto_publish: bool = True
+    sync_current_latest: bool = False
+    generate_ai_image: bool = False
     post_status: str = "scheduled"  # "scheduled" | "draft" | "pending_approval"
     post_template: str = DEFAULT_POST_TEMPLATE
     use_ai_enhancement: bool = False
@@ -71,6 +73,8 @@ class UpdateFeedRequest(BaseModel):
     target_account_ids: list[str] | None = None
     target_platforms: list[str] | None = None
     auto_publish: bool | None = None
+    sync_current_latest: bool | None = None
+    generate_ai_image: bool | None = None
     post_status: str | None = None
     post_template: str | None = None
     use_ai_enhancement: bool | None = None
@@ -104,7 +108,13 @@ def _format_post_content(template: str, item: dict) -> str:
     return text.strip()
 
 
-async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> dict[str, int]:
+async def _sync_feed_items(
+    db,
+    feed: dict,
+    user_id: str,
+    workspace_id: str,
+    is_initial_sync: bool = False,
+) -> dict[str, int]:
     """Fetch feed and process new items according to automation rules."""
     feed_id = feed["id"]
     feed_url = feed["feed_url"]
@@ -157,6 +167,9 @@ async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> d
     target_accounts = await accounts_cursor.to_list(None)
     platforms = list(set(a["platform"] for a in target_accounts))
 
+    # Identify newest item guid for initial sync checking
+    newest_guid = (items[0].get("guid") or items[0].get("url")) if items else None
+
     for item in reversed(items[:20]):  # process oldest to newest
         guid = item.get("guid") or item.get("url")
         if not guid:
@@ -202,8 +215,18 @@ async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> d
             await db.rss_feed_items.insert_one(item_doc)
             continue
 
-        # Auto-publish if enabled
-        if feed.get("auto_publish") and target_accounts:
+        # Check auto-publish conditions
+        should_publish = bool(feed.get("auto_publish") and target_accounts)
+        if is_initial_sync:
+            if not feed.get("sync_current_latest", False):
+                # Backfill disabled: mark existing articles as discovered without scheduling
+                should_publish = False
+            else:
+                # Sync newest item only: only auto-schedule the newest article
+                if guid != newest_guid:
+                    should_publish = False
+
+        if should_publish:
             content = _format_post_content(feed.get("post_template", DEFAULT_POST_TEMPLATE), item)
             if feed.get("use_ai_enhancement") and item.get("title"):
                 try:
@@ -238,8 +261,21 @@ async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> d
                     scheduled_time = now
             elif post_status == "scheduled" and not scheduled_time:
                 scheduled_time = now
+
             post_id = str(uuid.uuid4())
-            media_list = item.get("media_urls") or []
+            media_list = list(item.get("media_urls") or [])
+
+            # Generate AI banner picture if requested and item lacks images
+            if feed.get("generate_ai_image") and not media_list:
+                try:
+                    from utils.ai_image_service import generate_banner_image
+                    ai_img = generate_banner_image(item.get("title") or "", item.get("summary") or "")
+                    if ai_img:
+                        media_list = [ai_img]
+                        item_doc["media_urls"] = media_list
+                except Exception as img_err:
+                    logger.warning("Failed to generate AI banner picture: %s", img_err)
+
             primary_media = media_list[0] if media_list else None
             inferred_type = "image" if primary_media else "text"
 
@@ -253,7 +289,7 @@ async def _sync_feed_items(db, feed: dict, user_id: str, workspace_id: str) -> d
                 "platforms": platforms,
                 "account_ids": [a["id"] for a in target_accounts],
                 "social_account_ids": [a["id"] for a in target_accounts],
-                "media_urls": item.get("media_urls", []),
+                "media_urls": media_list,
                 "media_url": primary_media,
                 "video_url": None,
                 "thumbnail_urls": [],
@@ -411,6 +447,8 @@ async def create_rss_feed(
         "timeslot_category": request.timeslot_category,
         "include_keywords": request.include_keywords,
         "exclude_keywords": request.exclude_keywords,
+        "sync_current_latest": request.sync_current_latest,
+        "generate_ai_image": request.generate_ai_image,
         "max_posts_per_day": request.max_posts_per_day,
         "created_at": now,
         "updated_at": now,
@@ -418,8 +456,8 @@ async def create_rss_feed(
 
     await db.rss_feeds.insert_one(feed_doc)
 
-    # Run initial sync
-    sync_stats = await _sync_feed_items(db, feed_doc, user_id, workspace_id)
+    # Run initial sync with is_initial_sync=True to respect sync_current_latest preference
+    sync_stats = await _sync_feed_items(db, feed_doc, user_id, workspace_id, is_initial_sync=True)
 
     feed_doc.pop("_id", None)
     return {"feed": feed_doc, "sync_stats": sync_stats}

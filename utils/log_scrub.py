@@ -52,8 +52,8 @@ class LogScrubFilter(logging.Filter):
 
     @classmethod
     def _scrub_value(cls, value):
-        if value is None:
-            return None
+        if value is None or isinstance(value, (int, float, bool)):
+            return value
         if isinstance(value, str):
             return cls._scrub(value)
         if isinstance(value, Mapping):

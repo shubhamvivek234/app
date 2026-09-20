@@ -1,0 +1,24 @@
+{
+  "name": "unravler",
+  "version": "1.0.0",
+  "description": "Official Command-Line Interface and Agent Toolkit for Unravler Social Media Management Platform",
+  "main": "bin/unravler.js",
+  "bin": {
+    "unravler": "./bin/unravler.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node bin/unravler.js",
+    "test": "node bin/unravler.js --help"
+  },
+  "keywords": [
+    "social-media",
+    "cli",
+    "mcp",
+    "ai-agent",
+    "scheduler",
+    "unravler"
+  ],
+  "author": "Unravler Team",
+  "license": "MIT"
+}

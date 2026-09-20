@@ -60,6 +60,7 @@ import LinkInBio from '@/pages/LinkInBio';
 import PublicBioPage from '@/pages/PublicBioPage';
 import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
 import ViralStudio from '@/pages/ViralStudio';
+import AgentHub from '@/pages/AgentHub';
 import Campaigns from '@/pages/Campaigns';
 import Audience from '@/pages/Audience';
 import Broadcast from '@/pages/Broadcast';
@@ -563,6 +564,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <ViralStudio />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/agent"
+                element={
+                  <PrivateRoute>
+                    <AgentHub />
                   </PrivateRoute>
                 }
               />

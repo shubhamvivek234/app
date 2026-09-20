@@ -79,6 +79,8 @@ export default function RSSFeeds() {
   const [useTimeslot, setUseTimeslot] = useState(true);
   const [timeslotCategory, setTimeslotCategory] = useState('Category 1');
   const [useAi, setUseAi] = useState(false);
+  const [syncCurrentLatest, setSyncCurrentLatest] = useState(false);
+  const [generateAiImage, setGenerateAiImage] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Share Item Modal State
@@ -100,11 +102,10 @@ export default function RSSFeeds() {
         getRssItems({ limit: 40 }),
       ]);
       setFeeds(feedsRes.feeds || []);
-      const accList = Array.isArray(accountsRes) ? accountsRes : accountsRes.accounts || [];
-      setAccounts(accList);
+      setAccounts(accountsRes || []);
       setItems(itemsRes.items || []);
-    } catch (err) {
-      toast.error('Failed to load RSS feeds');
+    } catch {
+      toast.error('Failed to load RSS feeds data');
     } finally {
       setLoading(false);
     }
@@ -134,7 +135,7 @@ export default function RSSFeeds() {
   const handleCreateFeed = async (e) => {
     e.preventDefault();
     if (!feedUrl.trim()) {
-      toast.error('Feed URL is required');
+      toast.error('Please enter a valid RSS feed URL');
       return;
     }
     if (autoPublish && selectedAccounts.length === 0) {
@@ -159,6 +160,8 @@ export default function RSSFeeds() {
         target_account_ids: selectedAccounts,
         target_platforms: targetPlatforms,
         auto_publish: autoPublish,
+        sync_current_latest: syncCurrentLatest,
+        generate_ai_image: generateAiImage,
         post_status: postStatus,
         post_template: postTemplate,
         use_timeslot: useTimeslot,
@@ -184,6 +187,8 @@ export default function RSSFeeds() {
     setValidatedData(null);
     setSelectedAccounts([]);
     setAutoPublish(true);
+    setSyncCurrentLatest(false);
+    setGenerateAiImage(false);
     setPostStatus('scheduled');
     setPostTemplate(DEFAULT_POST_TEMPLATE);
     setUseTimeslot(true);
@@ -827,6 +832,44 @@ export default function RSSFeeds() {
                         {'{author}'}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Postiz Parity: Sync Newest Item & AI Picture Options */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={syncCurrentLatest}
+                        onChange={(e) => setSyncCurrentLatest(e.target.checked)}
+                        className="rounded text-emerald-600 focus:ring-emerald-500 mt-0.5"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-slate-800 block">
+                          Sync newest item now
+                        </span>
+                        <span className="text-[11px] text-slate-500 block leading-tight">
+                          Schedule the latest article immediately instead of waiting for the next feed update.
+                        </span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={generateAiImage}
+                        onChange={(e) => setGenerateAiImage(e.target.checked)}
+                        className="rounded text-purple-600 focus:ring-purple-500 mt-0.5"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <FaWandMagicSparkles className="text-purple-600 text-xs" />
+                          Generate AI Picture
+                        </span>
+                        <span className="text-[11px] text-slate-500 block leading-tight">
+                          Auto-generate a 16:9 visual banner if the feed article has no image attached.
+                        </span>
+                      </div>
+                    </label>
                   </div>
                 </div>
 
