@@ -165,7 +165,7 @@ async def preview_voice_note(
     audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
     return {
         "voice_id": req.voice_id,
-        "media_type": "audio/mp3",
+        "media_type": "audio/wav" if cloner.is_mock else "audio/mp3",
         "audio_base64": audio_base64,
         "sample_lead": req.lead_sample,
         "interpolated_text": cloner.is_mock,

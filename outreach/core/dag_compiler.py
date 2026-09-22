@@ -10,6 +10,24 @@ class DAGValidationError(Exception):
     pass
 
 
+def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
+    """Replaces dynamic tags like {{first_name}} and {{company_name}} with lead attributes."""
+    first_name = lead.get("first_name") or "there"
+    last_name = lead.get("last_name") or ""
+    company = lead.get("company_name") or "your company"
+    title = lead.get("job_title") or ""
+
+    text = template_str.replace("{{first_name}}", first_name)
+    text = text.replace("{{last_name}}", last_name)
+    text = text.replace("{{company_name}}", company)
+    text = text.replace("{{job_title}}", title)
+
+    for k, v in lead.get("custom_variables", {}).items():
+        text = text.replace(f"{{{{{k}}}}}", str(v))
+
+    return text
+
+
 class DAGCompiler:
     """
     Compiles a directed acyclic graph (DAG) of sequence steps into a high-performance

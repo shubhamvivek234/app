@@ -134,6 +134,32 @@ class VoyagerClient:
 
         return {"status": "liked"}
 
+    async def send_voice_note(self, recipient_urn: str, audio_bytes: bytes, transcript: str = "") -> dict[str, Any]:
+        """
+        Dispatches an audio voice note to a prospect on LinkedIn.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Dispatched voice note to %s (%d bytes)", recipient_urn, len(audio_bytes))
+            return {
+                "status": "voice_note_sent",
+                "bytes": len(audio_bytes),
+                "transcript": transcript,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+        url = f"{VOYAGER_BASE_URL}/messaging/conversations"
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25.0) as client:
+                files = {"file": ("voicenote.wav", audio_bytes, "audio/wav")}
+                data = {"recipientUrn": recipient_urn, "messageType": "VOICE_NOTE"}
+                resp = await client.post(url, headers=self._get_headers(), data=data, files=files)
+                if resp.status_code in (200, 201):
+                    return {"status": "voice_note_sent"}
+                return {"status": "failed", "status_code": resp.status_code}
+        except Exception as exc:
+            logger.error("Voyager send_voice_note error: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
     async def fetch_conversations(self, count: int = 20) -> list[dict[str, Any]]:
         """
         Fetches active conversation threads for this LinkedIn account.

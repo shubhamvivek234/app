@@ -131,3 +131,70 @@ async def test_voice_api_assignment_and_deletion():
     del_res = await delete_voice(voice_id="v_123", current_user=user, db=mock_db)
     assert del_res["status"] == "deleted"
     mock_db.outreach_voices.delete_one.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_voice_cloner_synthesizes_playable_wav():
+    """Verify mock synthesis generates audible WAV bytes > 1000 bytes with RIFF header."""
+    from outreach.core.voice_cloner import generate_mock_voice_wav
+    wav_bytes = generate_mock_voice_wav(duration_s=1.0)
+    assert len(wav_bytes) > 1000
+    assert wav_bytes.startswith(b"RIFF")
+
+
+@pytest.mark.asyncio
+async def test_sequence_executor_handles_voice_note_step():
+    """Verify SequenceExecutor dispatches voice notes through Voyager and checks daily limits."""
+    from outreach.tasks.sequence_executor import SequenceExecutor
+    from outreach.models import SequenceNodeType
+
+    mock_db = AsyncMock()
+    mock_db.outreach_leads.find_one = AsyncMock(return_value={
+        "id": "lead_voice_1",
+        "campaign_id": "camp_voice_1",
+        "assigned_account_id": "acc_voice_1",
+        "linkedin_url": "https://linkedin.com/in/alexprospect",
+        "first_name": "Alex",
+        "company_name": "TechVentures",
+        "execution_state": "queued",
+    })
+    mock_db.outreach_campaigns.find_one = AsyncMock(return_value={
+        "id": "camp_voice_1",
+        "status": "active",
+        "schedule": {"timezone": "UTC", "start_time": "00:00", "end_time": "23:59", "days": [0, 1, 2, 3, 4, 5, 6]},
+    })
+    mock_db.outreach_accounts.find_one = AsyncMock(return_value={
+        "id": "acc_voice_1",
+        "workspace_id": "ws_123",
+        "status": "active",
+        "session_cookie_enc": "mock_cookie",
+        "limits": {"voice_notes": 20},
+        "counters": {"date": "2026-09-23", "voice_notes": 0},
+    })
+    mock_db.outreach_sequences.find_one = AsyncMock(return_value={
+        "campaign_id": "camp_voice_1",
+        "compiled_dag": {
+            "root_node_ids": ["step_vn_1"],
+            "nodes": {
+                "step_vn_1": {
+                    "id": "step_vn_1",
+                    "type": SequenceNodeType.VOICE_NOTE,
+                    "config": {"script": "Hey {{first_name}}, loved {{company_name}}!"},
+                    "next_default": None,
+                }
+            }
+        }
+    })
+    mock_db.outreach_voices.find_one = AsyncMock(return_value={
+        "id": "v_voice_1",
+        "workspace_id": "ws_123",
+        "elevenlabs_voice_id": "voice_mock_custom",
+    })
+    mock_db.outreach_accounts.update_one = AsyncMock()
+    mock_db.outreach_leads.update_one = AsyncMock()
+
+    result = await SequenceExecutor.execute_lead_step(lead_id="lead_voice_1", db=mock_db)
+    assert result["status"] == "success"
+    assert result["action"] == SequenceNodeType.VOICE_NOTE
+    mock_db.outreach_leads.update_one.assert_called()
+

@@ -11,27 +11,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from outreach.models import LeadExecutionState, SequenceNodeType, WorkingSchedule
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.proxy_manager import JITProxyManager
+from outreach.core.dag_compiler import interpolate_template
+from outreach.core.voice_cloner import VoiceCloner
 from outreach.engine.voyager_client import VoyagerClient
 
 logger = logging.getLogger(__name__)
-
-
-def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
-    """Replaces dynamic tags like {{first_name}} and {{company_name}} with lead attributes."""
-    first_name = lead.get("first_name") or "there"
-    last_name = lead.get("last_name") or ""
-    company = lead.get("company_name") or "your company"
-    title = lead.get("job_title") or ""
-
-    text = template_str.replace("{{first_name}}", first_name)
-    text = text.replace("{{last_name}}", last_name)
-    text = text.replace("{{company_name}}", company)
-    text = text.replace("{{job_title}}", title)
-
-    for k, v in lead.get("custom_variables", {}).items():
-        text = text.replace(f"{{{{{k}}}}}", str(v))
-
-    return text
 
 
 class SequenceExecutor:
@@ -139,6 +123,37 @@ class SequenceExecutor:
             if not await OutboundRateLimiter.check_and_increment_daily_limit(account, "post_likes", db):
                 return {"status": "rate_limited", "action": "post_likes"}
             await voyager.like_last_post(lead.get("linkedin_urn") or lead["linkedin_url"])
+            action_success = True
+
+        elif node_type == SequenceNodeType.VOICE_NOTE:
+            if not await OutboundRateLimiter.check_and_increment_daily_limit(account, "voice_notes", db):
+                return {"status": "rate_limited", "action": "voice_notes"}
+
+            # Resolve voice assigned to this account or workspace default
+            voice = await db.outreach_voices.find_one({
+                "workspace_id": account.get("workspace_id"),
+                "assigned_account_ids": account.get("id"),
+            })
+            if not voice:
+                voice = await db.outreach_voices.find_one({"workspace_id": account.get("workspace_id")})
+
+            script_template = node.get("config", {}).get(
+                "script", "Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!"
+            )
+            voice_id = voice.get("elevenlabs_voice_id", "voice_mock_default") if voice else "voice_mock_default"
+
+            cloner = VoiceCloner()
+            audio_bytes = await cloner.synthesize_voice_note(
+                voice_id=voice_id,
+                template_text=script_template,
+                lead=lead,
+            )
+
+            await voyager.send_voice_note(
+                recipient_urn=lead.get("linkedin_urn") or lead["linkedin_url"],
+                audio_bytes=audio_bytes,
+                transcript=interpolate_template(script_template, lead),
+            )
             action_success = True
 
         else:
