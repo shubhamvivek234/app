@@ -9,31 +9,24 @@ Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cl
 ## Last Session Completed
 Date: 2026-09-23
 Completed:
-- Locked right-side drawer to fixed viewport height (`h-full max-h-full overflow-hidden`) so it never stretches vertically when sequence canvas expands (`0681559`).
-- Deep architectural & visual audit of `media_1790103490135.png` implemented on Wizard Step 3:
-  - Heading and subheadings unboxed to background level matching Prosp layout.
-  - Interactive 30-min time slot dropdowns with clock badges, inline `✕` deletion, `+` range adder, and `📋` copy-to-all weekdays.
-  - Fine horizontal dividers between every weekday row (S-M-T-W-T-F-S).
-  - Timezone selector with UTC offset and local time previews.
-  - Safe defaults reset trigger and 8 daily limits stepper controls (`[-] [ 20 ] [+]`).
-  - Pre-flight review modal and Connect LinkedIn modal integration before launching (`1bc9fa6`).
-- Replaced top-left sidebar sparkle icon in `OutreachLayout.js` with official circular (`rounded-full`) Unravler logo mark (`UnravlerLogo` component with white color and hover scale/active feedback).
-- Full forensic parity & end-to-end audit for Voice Cloner (`media_1790020955632.png`):
-  - Added connected sender account selector on voice profiles with instant persistence.
-  - Implemented real volume/silence detection with Prosp error prompt on silent recordings.
-  - Fixed synthetic audio generator producing audible WAV bytes for browser preview.
-  - Integrated `SequenceNodeType.VOICE_NOTE` into `SequenceExecutor` with Voyager dispatch.
-- Full forensic parity & end-to-end verification for Connect LinkedIn (`media_1790104087386.png`, `media_1790020960165.png`):
-  - Screen 1 Mode Selection: Email/password and Session Cookie cards with soft purple & amber iconography.
-  - Screen 2 Session Cookie: `li_at session cookie`, `li_a cookie` optional, `Premium product` dropdown (Classic, Sales Navigator, Recruiter), and prefilled `Browser user agent`.
-  - Backend API: `ConnectCookieRequest` and `OutreachAccount` support for encrypted `li_a_enc`, `premium_product`, and `user_agent`.
-  - Settings Accounts page layout: `LinkedIn accounts` heading, dark `Connect account` trigger, and matching empty state card.
-- 40/40 outreach tests pass, 474/474 repo tests pass, frontend CI clean.
+- Campaign Auto-Drafting Engine:
+  - Added `POST /api/v1/outreach/campaigns/auto-draft` persisting drafts immediately on "+ New campaign" click so work is never lost on refresh or exit.
+  - Syncs `draft_step`, `draft_progress`, and `next_step_label` automatically during wizard navigation.
+- Dedicated Campaign Detail View (`media_1790104472298.png` – `media_1790104593259.png`):
+  - Created `OutreachCampaignDetail.js` with 4 forensic tabs: Analytics (4 KPI cards, Funnel, Audience, Sending from, Schedule, Step & Sender performance), Leads (lead counts, search, ImportLeadsModal), Sequence (empty state with "Open in builder"), and Settings (name, senders, schedule, 8 daily limit pills, "Edit in builder").
+  - Clicking any campaign in table opens detail view instead of directly opening wizard.
+- Campaigns Hub Parity (`media_1790104399010.png`):
+  - Rendered Draft Banner with dynamic progress bar and `[Resume draft]` trigger.
+  - Rendered LinkedIn Expert Consultation Banner (`Book a call` with Jack modal).
+  - Implemented reversible soft-delete (`DELETE /campaigns/{id}`) with undo alert banner (`POST /campaigns/{id}/restore`).
+  - Added Browse Winning Templates view (`media_1790104784825.png`) with one-click sequence adoption.
+- 44/44 outreach tests pass, 478/478 repo tests pass, frontend CI clean.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify live preview and campaign run with user.
+- Safe audit remediations implemented: Limiter proxy validation, platform coming soon badges, analytics health decoupling, cleanup audit logs, route-level code splitting (-553kB bundle), and GitHub CI workflow.
+- Deferred items for later: Firebase key rotation, owner MFA policy, sidebar restructuring, and login/signup variant consolidation.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -141,6 +141,11 @@ class OutreachCampaign(BaseModel):
     leads_contacted: int = 0
     replies_count: int = 0
     acceptances_count: int = 0
+    interested_count: int = 0
+    draft_step: int = 1
+    draft_progress: int = 20
+    next_step_label: str = "Next: add your leads"
+    is_deleted: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

@@ -91,20 +91,65 @@ def _connection_health(doc: dict, now: datetime) -> dict[str, object]:
         }
 
     if expires_at and (expires_at - now).total_seconds() <= 24 * 3600 and not has_refresh_token:
-        return {
+        base_state = {
             "connection_state": "expiring",
             "connection_message": "Access token expires soon. Reconnect proactively to avoid interruptions.",
             "requires_reconnect": False,
             "reconnect_reason": None,
             "reconnect_required_at": None,
         }
+    else:
+        base_state = {
+            "connection_state": "healthy",
+            "connection_message": "Connection is healthy.",
+            "requires_reconnect": False,
+            "reconnect_reason": None,
+            "reconnect_required_at": None,
+        }
+
+    # Analytics health check (decoupled from publishing token status)
+    analytics_error = doc.get("analytics_error")
+    scopes = doc.get("scopes") or doc.get("scope") or []
+    if isinstance(scopes, str):
+        scopes = [s.strip() for s in scopes.replace(",", " ").split() if s.strip()]
+
+    analytics_scopes_map = {
+        "youtube": {"https://www.googleapis.com/auth/yt-analytics.readonly"},
+        "instagram": {"instagram_manage_insights", "pages_read_engagement"},
+        "facebook": {"pages_read_engagement", "read_insights"},
+        "linkedin": {"r_organization_social", "r_basicprofile"},
+    }
+    platform_name = str(doc.get("platform") or "").lower()
+    req_scopes = analytics_scopes_map.get(platform_name, set())
+    missing_scopes = list(req_scopes - set(scopes)) if (req_scopes and scopes) else []
+
+    if analytics_error:
+        analytics_health = {
+            "status": "reconnect_required",
+            "message": str(analytics_error),
+            "missing_scopes": missing_scopes,
+        }
+    elif missing_scopes:
+        analytics_health = {
+            "status": "missing_scopes",
+            "message": f"Missing {len(missing_scopes)} required analytics permission(s).",
+            "missing_scopes": missing_scopes,
+        }
+    else:
+        analytics_health = {
+            "status": "healthy",
+            "message": "Analytics permissions active.",
+            "missing_scopes": [],
+        }
 
     return {
-        "connection_state": "healthy",
-        "connection_message": "Connection is healthy.",
-        "requires_reconnect": False,
-        "reconnect_reason": None,
-        "reconnect_required_at": None,
+        **base_state,
+        "publishing_health": {
+            "status": base_state["connection_state"],
+            "message": base_state["connection_message"],
+            "requires_reconnect": base_state["requires_reconnect"],
+        },
+        "analytics_health": analytics_health,
     }
 
 
@@ -224,6 +269,8 @@ class SocialAccountResponse(BaseModel):
     requires_reconnect: bool = False
     reconnect_reason: str | None = None
     reconnect_required_at: datetime | None = None
+    publishing_health: dict | None = None
+    analytics_health: dict | None = None
     publish_error_code: str | None = None
     publish_error_category: str | None = None
     publish_action_required: str | None = None
@@ -368,6 +415,8 @@ async def list_accounts(
                 requires_reconnect=bool(connection_health["requires_reconnect"]),
                 reconnect_reason=connection_health["reconnect_reason"],
                 reconnect_required_at=connection_health["reconnect_required_at"],
+                publishing_health=connection_health.get("publishing_health"),
+                analytics_health=connection_health.get("analytics_health"),
                 publish_error_code=doc.get("publish_error_code"),
                 publish_error_category=doc.get("publish_error_category"),
                 publish_action_required=doc.get("publish_action_required"),

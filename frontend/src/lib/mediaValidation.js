@@ -108,6 +108,20 @@ export const PLATFORM_LIMITS = {
   },
 };
 
+export const SUPPORTED_PUBLISH_PLATFORMS = new Set([
+  'instagram',
+  'facebook',
+  'youtube',
+  'twitter',
+  'linkedin',
+  'tiktok',
+  'threads',
+  'google_business',
+  'gbp',
+  'discord',
+  'telegram',
+]);
+
 export const COMMON_POST_UNSUPPORTED = {
   reddit: 'This platform is not supported in Common Post yet. Use platform-specific composition.',
   discord: 'This platform is not supported in Common Post yet. Use platform-specific composition.',

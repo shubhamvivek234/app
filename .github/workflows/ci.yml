@@ -1,0 +1,67 @@
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [main, "feature/**"]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Syntax & Compilation Check
+        run: |
+          python -m compileall api/ celery_workers/ platform_adapters/ utils/ db/
+
+      - name: Run Pytest
+        env:
+          DB_NAME: testdb
+          JWT_SECRET: test-secret-key-ci-environment-only-1234
+          ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktZGV2MSE=
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          python -m pytest -p pytest_asyncio.plugin tests/ -v -m "not sandbox" --maxfail=5
+
+  frontend-build:
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Production Frontend
+        env:
+          CI: "true"
+          GENERATE_SOURCEMAP: "false"
+        run: npm run build

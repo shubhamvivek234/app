@@ -8,10 +8,30 @@ Key function priority:
   2. X-Forwarded-For header  — real client IP when behind Cloudflare/Nginx
   3. request.client.host    — direct connection fallback
 """
+import ipaddress
 import os
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+_TRUSTED_PROXIES = {
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+}
+
+
+def _is_trusted_proxy(client_host: str | None) -> bool:
+    if not client_host:
+        return False
+    try:
+        ip = ipaddress.ip_address(client_host)
+        return any(ip in net for net in _TRUSTED_PROXIES)
+    except ValueError:
+        return False
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -19,10 +39,12 @@ def _rate_limit_key(request: Request) -> str:
     user_id = getattr(request.state, "user_id", None)
     if user_id:
         return f"user:{user_id}"
-    # Trust X-Forwarded-For when behind a reverse proxy
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    client_host = request.client.host if request.client else None
+    # Only trust X-Forwarded-For when connection originates from a trusted reverse proxy
+    if _is_trusted_proxy(client_host):
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
     return get_remote_address(request)
 
 

@@ -81,13 +81,13 @@ const PLATFORMS = [
   { id: 'youtube', name: 'YouTube', icon: FaYoutube, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
   { id: 'tiktok', name: 'TikTok', icon: FaTiktok, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
   { id: 'threads', name: 'Threads', icon: SiThreads, color: 'text-gray-900', bg: 'bg-gray-50', border: 'border-gray-300', btn: 'bg-gray-900 hover:bg-black' },
-  { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700' },
-  { id: 'reddit', name: 'Reddit', icon: SiReddit, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200', btn: 'bg-orange-500 hover:bg-orange-600' },
-  { id: 'snapchat', name: 'Snapchat', icon: SiSnapchat, color: 'text-yellow-500', bg: 'bg-yellow-50', border: 'border-yellow-200', btn: 'bg-yellow-400 hover:bg-yellow-500', badge: 'Spotlight only' },
-  { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', badge: 'App Password' },
+  { id: 'pinterest', name: 'Pinterest', icon: FaPinterest, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', btn: 'bg-red-600 hover:bg-red-700', comingSoon: true, badge: 'Coming Soon' },
+  { id: 'reddit', name: 'Reddit', icon: SiReddit, color: 'text-orange-500', bg: 'bg-orange-50', border: 'border-orange-200', btn: 'bg-orange-500 hover:bg-orange-600', comingSoon: true, badge: 'Coming Soon' },
+  { id: 'snapchat', name: 'Snapchat', icon: SiSnapchat, color: 'text-yellow-500', bg: 'bg-yellow-50', border: 'border-yellow-200', btn: 'bg-yellow-400 hover:bg-yellow-500', comingSoon: true, badge: 'Coming Soon' },
+  { id: 'bluesky', name: 'Bluesky', icon: SiBluesky, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', comingSoon: true, badge: 'Coming Soon' },
   { id: 'discord', name: 'Discord', icon: FaDiscord, color: 'text-indigo-500', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-500 hover:bg-indigo-600', badge: 'Webhook' },
   { id: 'telegram', name: 'Telegram', icon: SiTelegram, color: 'text-sky-500', bg: 'bg-sky-50', border: 'border-sky-200', btn: 'bg-sky-500 hover:bg-sky-600', badge: 'Bot Token' },
-  { id: 'mastodon', name: 'Mastodon', icon: SiMastodon, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-600 hover:bg-indigo-700', badge: 'Access token' },
+  { id: 'mastodon', name: 'Mastodon', icon: SiMastodon, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', btn: 'bg-indigo-600 hover:bg-indigo-700', comingSoon: true, badge: 'Coming Soon' },
 ];
 
 const getAvatarColor = (value = '') => {
@@ -457,20 +457,30 @@ const PlatformCard = ({
       </div>
 
       <div className="border-t border-gray-100 px-5 py-4">
-        <button
-          onClick={() => onPrimaryAction(platform.id)}
-          disabled={connecting === platform.id}
-          className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 ${platform.btn}`}
-        >
-          {connecting === platform.id ? (
-            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-          ) : accounts.length > 0 && accounts.some((account) => ATTENTION_STATES.has(getConnectionState(account))) ? (
-            <FaLink className="text-[11px]" />
-          ) : (
-            <FaPlus className="text-[11px]" />
-          )}
-          {connecting === platform.id ? 'Opening…' : `${getPrimaryActionLabel(accounts)} ${platform.name}`}
-        </button>
+        {platform.comingSoon && accounts.length === 0 ? (
+          <button
+            type="button"
+            disabled
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-200 dark:border-slate-700"
+          >
+            Coming Soon · Integration in Progress
+          </button>
+        ) : (
+          <button
+            onClick={() => onPrimaryAction(platform.id)}
+            disabled={connecting === platform.id}
+            className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 ${platform.btn}`}
+          >
+            {connecting === platform.id ? (
+              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            ) : accounts.length > 0 && accounts.some((account) => ATTENTION_STATES.has(getConnectionState(account))) ? (
+              <FaLink className="text-[11px]" />
+            ) : (
+              <FaPlus className="text-[11px]" />
+            )}
+            {connecting === platform.id ? 'Opening…' : `${getPrimaryActionLabel(accounts)} ${platform.name}`}
+          </button>
+        )}
       </div>
     </section>
   );

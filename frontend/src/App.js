@@ -37,37 +37,39 @@ import OnboardingPricing from '@/pages/OnboardingPricing';
 import SubscriptionExpired from '@/pages/SubscriptionExpired';
 import HashtagGroups from '@/pages/HashtagGroups';
 import PublicCalendar from '@/pages/PublicCalendar';
-import Analytics from '@/pages/Analytics';
-import MediaLibrary from '@/pages/MediaLibrary';
 import RecurringPosts from '@/pages/RecurringPosts';
-import BulkUpload from '@/pages/BulkUpload';
-import BulkVideoUpload from '@/pages/BulkVideoUpload';
 import BulkUploadGuide from '@/pages/BulkUploadGuide';
 import Timeslots from '@/pages/Timeslots';
 import ApprovalQueue from '@/pages/ApprovalQueue';
-import ThreadBuilder from '@/pages/ThreadBuilder';
-import SocialTools from '@/pages/SocialTools';
 import Inbox from '@/pages/Inbox';
 import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import MagicLogin from '@/pages/MagicLogin';
 import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
 import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
-import BulkCSVUpload from '@/pages/BulkCSVUpload';
-import RSSFeeds from '@/pages/RSSFeeds';
 import ShortLinks from '@/pages/ShortLinks';
 import PublicReview from '@/pages/PublicReview';
-import LinkInBio from '@/pages/LinkInBio';
-import PublicBioPage from '@/pages/PublicBioPage';
-import SocialGraphicStudio from '@/pages/SocialGraphicStudio';
-import ViralStudio from '@/pages/ViralStudio';
-import AgentHub from '@/pages/AgentHub';
-import Campaigns from '@/pages/Campaigns';
-import Audience from '@/pages/Audience';
-import Broadcast from '@/pages/Broadcast';
-import Automations from '@/pages/Automations';
-import OutreachApp from '@/outreach/OutreachApp';
 import CookieConsent from '@/components/CookieConsent';
+
+// Heavy modules dynamically loaded via React.lazy for code splitting
+const Analytics = React.lazy(() => import('@/pages/Analytics'));
+const MediaLibrary = React.lazy(() => import('@/pages/MediaLibrary'));
+const BulkUpload = React.lazy(() => import('@/pages/BulkUpload'));
+const BulkVideoUpload = React.lazy(() => import('@/pages/BulkVideoUpload'));
+const BulkCSVUpload = React.lazy(() => import('@/pages/BulkCSVUpload'));
+const ThreadBuilder = React.lazy(() => import('@/pages/ThreadBuilder'));
+const SocialTools = React.lazy(() => import('@/pages/SocialTools'));
+const RSSFeeds = React.lazy(() => import('@/pages/RSSFeeds'));
+const LinkInBio = React.lazy(() => import('@/pages/LinkInBio'));
+const PublicBioPage = React.lazy(() => import('@/pages/PublicBioPage'));
+const SocialGraphicStudio = React.lazy(() => import('@/pages/SocialGraphicStudio'));
+const ViralStudio = React.lazy(() => import('@/pages/ViralStudio'));
+const AgentHub = React.lazy(() => import('@/pages/AgentHub'));
+const Campaigns = React.lazy(() => import('@/pages/Campaigns'));
+const Audience = React.lazy(() => import('@/pages/Audience'));
+const Broadcast = React.lazy(() => import('@/pages/Broadcast'));
+const Automations = React.lazy(() => import('@/pages/Automations'));
+const OutreachApp = React.lazy(() => import('@/outreach/OutreachApp'));
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
 class ErrorBoundary extends Component {
@@ -241,6 +243,7 @@ function App() {
         <AuthProvider>
           <ThemeApplier />
           <div className="App flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
+            <React.Suspense fallback={<BrandMarkLoader />}>
             <Routes>
               {/* Public routes — redirect authenticated users to dashboard */}
               <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
@@ -603,6 +606,7 @@ function App() {
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </React.Suspense>
             <Toaster />
             <CookieConsent />
           </div>

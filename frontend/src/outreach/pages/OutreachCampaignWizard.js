@@ -47,8 +47,11 @@ const TIMEZONE_OPTIONS = [
   { value: 'Australia/Sydney', label: 'Australian Eastern Time (AET)', detail: 'UTC+10:00 · 4:57 am' },
 ];
 
-export default function OutreachCampaignWizard({ campaignId = 'new_campaign', onBack, onComplete }) {
-  const [currentStep, setCurrentStep] = useState(2); // Default to Step 2 (Sequence Canvas)
+export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 2, onBack, onComplete }) {
+  const [activeCampaignId, setActiveCampaignId] = useState(
+    campaignId && campaignId !== 'new' && campaignId !== 'new_campaign' ? campaignId : null
+  );
+  const [currentStep, setCurrentStep] = useState(initialStep || 2);
   const [campaignName, setCampaignName] = useState('Connect and follow up');
   const [senders, setSenders] = useState([]);
   const [selectedSenders, setSelectedSenders] = useState([]);
@@ -165,8 +168,107 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
     showToast('Working hours copied to all weekdays');
   };
 
+  const syncDraft = async (overrideName, overrideStep) => {
+    if (!activeCampaignId) return;
+    try {
+      const token = localStorage.getItem('token');
+      const step = overrideStep !== undefined ? overrideStep : currentStep;
+      const progress = step === 1 ? 20 : step === 2 ? 60 : 80;
+      const nextLabel =
+        step === 1
+          ? 'Next: add your leads'
+          : step === 2
+          ? 'Next: configure sequence'
+          : 'Next: review and launch';
+
+      await fetch('/api/v1/outreach/campaigns/auto-draft', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          campaign_id: activeCampaignId,
+          name: overrideName || campaignName,
+          draft_step: step,
+          draft_progress: progress,
+          next_step_label: nextLabel,
+          sender_account_ids: selectedSenders,
+          schedule: {
+            timezone,
+            days: schedule,
+          },
+          limits,
+        }),
+      });
+    } catch (err) {
+      console.error('Draft auto-save failed:', err);
+    }
+  };
+
+  // Initial load / create draft
+  useEffect(() => {
+    const initCampaign = async () => {
+      const token = localStorage.getItem('token');
+      if (campaignId && campaignId !== 'new' && campaignId !== 'new_campaign') {
+        try {
+          const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
+            headers: { Authorization: token ? `Bearer ${token}` : '' },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setActiveCampaignId(data.id);
+            if (data.name) setCampaignName(data.name);
+            if (data.schedule?.days) setSchedule(data.schedule.days);
+            if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
+            if (data.limits) setLimits(data.limits);
+            if (data.sender_account_ids?.length) setSelectedSenders(data.sender_account_ids);
+            if (initialStep) setCurrentStep(initialStep);
+            else if (data.draft_step) setCurrentStep(data.draft_step);
+          }
+        } catch (err) {
+          console.error('Failed to load campaign:', err);
+        }
+      } else {
+        // Auto-create draft immediately in MongoDB
+        try {
+          const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: token ? `Bearer ${token}` : '',
+            },
+            body: JSON.stringify({
+              name: campaignName || 'Connect and follow up',
+              draft_step: initialStep || 2,
+              draft_progress: initialStep === 1 ? 20 : initialStep === 2 ? 60 : 80,
+              next_step_label:
+                initialStep === 1
+                  ? 'Next: add your leads'
+                  : initialStep === 2
+                  ? 'Next: configure sequence'
+                  : 'Next: review and launch',
+              schedule: { timezone, days: schedule },
+              limits,
+            }),
+          });
+          if (res.ok) {
+            const doc = await res.json();
+            setActiveCampaignId(doc.id);
+            if (doc.name) setCampaignName(doc.name);
+          }
+        } catch (err) {
+          console.error('Auto-draft creation failed:', err);
+        }
+      }
+    };
+    initCampaign();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, initialStep]);
+
   const handleLaunch = async () => {
     setIsLaunching(true);
+    const targetId = activeCampaignId || campaignId;
     try {
       const token = localStorage.getItem('token');
       const payload = {
@@ -177,7 +279,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
         daily_limits: limits,
         status: 'active',
       };
-      await fetch(`/api/v1/outreach/campaigns/${campaignId}/launch`, {
+      await fetch(`/api/v1/outreach/campaigns/${targetId}/launch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -215,13 +317,16 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
         if (res.ok) {
           const data = await res.json();
           setSenders(data);
-          if (data.length > 0) setSelectedSenders([data[0].id]);
+          if (data.length > 0 && selectedSenders.length === 0) {
+            setSelectedSenders([data[0].id]);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch senders:', err);
       }
     };
     fetchSenders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -262,11 +367,20 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
 
           {/* Right Actions */}
           <div className="flex items-center gap-3">
-            <button className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs">
+            <button
+              onClick={() => {
+                syncDraft();
+                showToast('Saved as template');
+              }}
+              className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
+            >
               Save as template
             </button>
             <button
-              onClick={onBack}
+              onClick={async () => {
+                await syncDraft();
+                if (onBack) onBack();
+              }}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >
               Save and close
@@ -275,19 +389,29 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
             {/* Ready indicator */}
             <div className="hidden sm:flex items-center gap-2 pl-2">
               <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-600 rounded-full w-[40%]" />
+                <div
+                  className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                  style={{ width: `${currentStep === 1 ? 20 : currentStep === 2 ? 60 : 80}%` }}
+                />
               </div>
-              <span className="text-[11px] font-semibold text-gray-500">40% ready</span>
+              <span className="text-[11px] font-semibold text-gray-500">
+                {currentStep === 1 ? '20%' : currentStep === 2 ? '60%' : '80%'} ready
+              </span>
             </div>
 
             <button
-              onClick={() => {
+              onClick={async () => {
+                await syncDraft();
                 if (currentStep < 3) setCurrentStep((s) => s + 1);
-                else if (onComplete) onComplete();
+                else setReviewModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors"
             >
-              {currentStep === 3 ? 'Launch Campaign' : 'Next: Launch →'}
+              {currentStep === 1
+                ? 'Next: Sequence →'
+                : currentStep === 2
+                ? 'Next: Launch →'
+                : 'Launch Campaign'}
             </button>
           </div>
         </div>
@@ -364,7 +488,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
 
         {/* Step 2: Visual Canvas (Part 1, Image 4) */}
         {currentStep === 2 && (
-          <SequenceCanvas campaignId={campaignId} />
+          <SequenceCanvas campaignId={activeCampaignId || campaignId} />
         )}
 
         {/* Step 3: Launch, Multi-Sender Pooling & Safe Defaults (media_1790103490135.png) */}
@@ -797,7 +921,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
       <ImportLeadsModal
         isOpen={leadsModalOpen}
         onClose={() => setLeadsModalOpen(false)}
-        campaignId={campaignId}
+        campaignId={activeCampaignId || campaignId}
       />
 
       {/* Toast Notification */}

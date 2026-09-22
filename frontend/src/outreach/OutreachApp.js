@@ -12,9 +12,11 @@ export default function OutreachApp({ initialTab = 'home' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardCampaignId, setWizardCampaignId] = useState('new');
+  const [wizardStep, setWizardStep] = useState(2);
 
-  const handleOpenWizard = (campaignId = 'new') => {
+  const handleOpenWizard = (campaignId = 'new', step = 2) => {
     setWizardCampaignId(campaignId);
+    setWizardStep(step);
     setIsWizardOpen(true);
   };
 
@@ -29,13 +31,14 @@ export default function OutreachApp({ initialTab = 'home' }) {
         setIsWizardOpen(false);
         setActiveTab(tab);
       }}
-      onOpenWizard={() => handleOpenWizard('new')}
+      onOpenWizard={() => handleOpenWizard('new', 2)}
       hideTopHeader={isWizardOpen}
       isFullBleed={isWizardOpen}
     >
       {isWizardOpen ? (
         <OutreachCampaignWizard
           campaignId={wizardCampaignId}
+          initialStep={wizardStep}
           onBack={handleCloseWizard}
           onClose={handleCloseWizard}
           onComplete={() => {
@@ -48,11 +51,13 @@ export default function OutreachApp({ initialTab = 'home' }) {
           {activeTab === 'home' && (
             <OutreachHome
               onNavigate={(tab) => setActiveTab(tab)}
-              onOpenWizard={() => handleOpenWizard('new')}
+              onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
             />
           )}
           {activeTab === 'campaigns' && (
-            <OutreachCampaigns onOpenWizard={() => handleOpenWizard('new')} />
+            <OutreachCampaigns
+              onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
+            />
           )}
           {activeTab === 'leads' && <OutreachLeads />}
           {activeTab === 'inbox' && <OutreachInbox />}

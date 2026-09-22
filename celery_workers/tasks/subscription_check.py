@@ -205,6 +205,15 @@ async def _async_check() -> dict:
                 {"user_id": user_id},
                 {"$set": {"subscription_cleanup_date": None}},
             )
+            # Record immutable audit trail
+            await db.audit_logs.insert_one({
+                "action": "subscription.posts_purged",
+                "user_id": user_id,
+                "posts_purged_count": user_cleanup_posts,
+                "media_deleted_count": user_media_deleted,
+                "timestamp": now,
+                "reason": "cleanup_after_20day_grace",
+            })
             await _emit_account_expiring_notifications(
                 db,
                 user_id=user_id,
