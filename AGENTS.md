@@ -2,31 +2,27 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v8.0 LinkedIn Outbound & AI Sequence Engine Shipped (Option A Prosp Parity)
+Stage: v8.5 LinkedIn Engage & Grow + Swipe Files Engine Shipped (Supergrow Parity)
 Branch: main
-Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cloning, Unified Inbox
+Focus: Pre-Outreach Engagement Warmup, Tabless Feed, AI Comment Presets, Swipe Files & 1-Click Repurposer
 
 ## Last Session Completed
 Date: 2026-09-23
 Completed:
-- Unified Inbox Forensic Parity (`media_1790103710555.png`):
-  - Two-pane split layout: Left thread panel (`w-[380px]`) & Right thread detail / empty state.
-  - Rendered `[ Prosp | All ]` segmented pill toggle with default on `All`.
-  - Added rounded search input `Search conversations`.
-  - Implemented Accounts Dropdown with open state showing `All accounts` and *"No connected accounts. Connect one in Settings to see conversations."* notice when empty, or sender account switcher.
-  - Centered left empty state: *"No conversations yet."*.
-  - Centered right empty state: Lavender rounded-2xl icon box + *"Select a conversation / Choose a thread from the list to read the conversation and reply."*.
-  - Full chat thread view with inbound/outbound bubbles, voice note player, AI quick-replies, and Voyager message reply dispatch.
-- Backend Inbox Engine:
-  - Multi-field user filter `{"$or": [{"user_id": user_id}, {"workspace_id": user_id}]}` on threads and replies.
-  - Added `source` filter (`outreach` vs `all`) and `POST /inbox/{id}/ai-reply` suggestions endpoint.
-- 53/53 outreach tests pass, 482/482 repo tests pass, frontend CI clean.
+- Supergrow Video Forensic Analysis & MVP Implementation (`cuDI0NmpIh0`):
+  - In-app 2-column Engage & Grow studio (`/outreach/engage`) with list management & CSV/URL prospect ingestion.
+  - In-line post feed with 1-click Like, Comment, Discard, and Auto-Like pairing (`auto_like_and_comment`).
+  - Contextual AI Comment Generator with 5 tone archetypes (*Insightful, Supportive, Humorous, Questioning, Challenger*).
+  - Swipe Files gallery (`/outreach/swipe-files`) with tag filtering, search, and 1-click AI repurposing to outbound hooks/posts.
+  - Backend models & endpoints in `outreach/api/engage.py`, `styles.py`, `swipe.py`, and `voyager_client.py`.
+- 53/53 outreach tests pass, frontend CI clean (807 kB gzip main bundle).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Safe audit remediations implemented: Limiter proxy validation, platform coming soon badges, analytics health decoupling, cleanup audit logs, route-level code splitting (-553kB bundle), and GitHub CI workflow.
-- Deferred items for later: Firebase key rotation, owner MFA policy, sidebar restructuring, and login/signup variant consolidation.
+- Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).
+- Content Writing Styles UI (`OutreachStyles.js`).
+- Auto-Plug scheduled first comments in post composer.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
