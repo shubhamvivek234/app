@@ -11,34 +11,54 @@ import OutreachCampaignWizard from './pages/OutreachCampaignWizard';
 export default function OutreachApp({ initialTab = 'home' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardCampaignId, setWizardCampaignId] = useState('new');
+
+  const handleOpenWizard = (campaignId = 'new') => {
+    setWizardCampaignId(campaignId);
+    setIsWizardOpen(true);
+  };
+
+  const handleCloseWizard = () => {
+    setIsWizardOpen(false);
+  };
 
   return (
     <OutreachLayout
-      activeTab={activeTab}
-      onNavigate={(tab) => setActiveTab(tab)}
-      onOpenWizard={() => setIsWizardOpen(true)}
+      activeTab={isWizardOpen ? 'campaigns' : activeTab}
+      onNavigate={(tab) => {
+        setIsWizardOpen(false);
+        setActiveTab(tab);
+      }}
+      onOpenWizard={() => handleOpenWizard('new')}
+      hideTopHeader={isWizardOpen}
+      isFullBleed={isWizardOpen}
     >
-      {activeTab === 'home' && (
-        <OutreachHome
-          onNavigate={(tab) => setActiveTab(tab)}
-          onOpenWizard={() => setIsWizardOpen(true)}
-        />
-      )}
-      {activeTab === 'campaigns' && <OutreachCampaigns />}
-      {activeTab === 'leads' && <OutreachLeads />}
-      {activeTab === 'inbox' && <OutreachInbox />}
-      {activeTab === 'voice' && <OutreachVoice />}
-      {activeTab === 'settings' && <OutreachSettings />}
-
-      {/* Campaign Wizard Overlay Modal */}
-      {isWizardOpen && (
+      {isWizardOpen ? (
         <OutreachCampaignWizard
-          onClose={() => setIsWizardOpen(false)}
-          onSuccess={() => {
+          campaignId={wizardCampaignId}
+          onBack={handleCloseWizard}
+          onClose={handleCloseWizard}
+          onComplete={() => {
             setIsWizardOpen(false);
             setActiveTab('campaigns');
           }}
         />
+      ) : (
+        <>
+          {activeTab === 'home' && (
+            <OutreachHome
+              onNavigate={(tab) => setActiveTab(tab)}
+              onOpenWizard={() => handleOpenWizard('new')}
+            />
+          )}
+          {activeTab === 'campaigns' && (
+            <OutreachCampaigns onOpenWizard={() => handleOpenWizard('new')} />
+          )}
+          {activeTab === 'leads' && <OutreachLeads />}
+          {activeTab === 'inbox' && <OutreachInbox />}
+          {activeTab === 'voice' && <OutreachVoice />}
+          {activeTab === 'settings' && <OutreachSettings />}
+        </>
       )}
     </OutreachLayout>
   );

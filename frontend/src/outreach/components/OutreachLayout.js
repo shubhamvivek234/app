@@ -11,7 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, children }) {
+export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hideTopHeader = false, isFullBleed = false, children }) {
   const [workspaceName, setWorkspaceName] = useState('My First Workspace');
   const [accountsCount, setAccountsCount] = useState(0);
   const [trialDays, setTrialDays] = useState(4);
@@ -117,47 +117,51 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, ch
       {/* Main App Container */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Header Bar matching Prosp screenshots */}
-        <header className="h-16 px-6 border-b border-gray-200/80 bg-white flex items-center justify-between shrink-0 z-10">
-          <div className="flex items-center gap-3">
-            {/* Workspace Switcher Pill */}
-            <div
-              onClick={() => onNavigate('settings')}
-              className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer transition-colors shadow-2xs"
-            >
-              <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
-                M
+        {!hideTopHeader && (
+          <header className="h-16 px-6 border-b border-gray-200/80 bg-white flex items-center justify-between shrink-0 z-10">
+            <div className="flex items-center gap-3">
+              {/* Workspace Switcher Pill */}
+              <div
+                onClick={() => onNavigate('settings')}
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer transition-colors shadow-2xs"
+              >
+                <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
+                  M
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-bold text-gray-900 leading-tight flex items-center gap-1">
+                    {workspaceName}
+                    <ChevronDown className="w-3 h-3 text-gray-400" />
+                  </p>
+                  <p className="text-[10px] text-gray-400 leading-none">
+                    {accountsCount} {accountsCount === 1 ? 'account' : 'accounts'}
+                  </p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="text-xs font-bold text-gray-900 leading-tight flex items-center gap-1">
-                  {workspaceName}
-                  <ChevronDown className="w-3 h-3 text-gray-400" />
-                </p>
-                <p className="text-[10px] text-gray-400 leading-none">
-                  {accountsCount} {accountsCount === 1 ? 'account' : 'accounts'}
-                </p>
+
+              {/* Trial Status Pill */}
+              <div className="hidden sm:flex items-center px-2.5 py-1 rounded-full border border-indigo-100 bg-indigo-50/60 text-indigo-700 text-[11px] font-medium">
+                Trial ends in {trialDays} days
               </div>
             </div>
 
-            {/* Trial Status Pill */}
-            <div className="hidden sm:flex items-center px-2.5 py-1 rounded-full border border-indigo-100 bg-indigo-50/60 text-indigo-700 text-[11px] font-medium">
-              Trial ends in {trialDays} days
+            {/* Primary Action Button */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onOpenWizard}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors active:scale-98"
+              >
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                Create campaign
+              </button>
             </div>
-          </div>
-
-          {/* Primary Action Button */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onOpenWizard}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors active:scale-98"
-            >
-              <Plus className="w-4 h-4 stroke-[2.5]" />
-              Create campaign
-            </button>
-          </div>
-        </header>
+          </header>
+        )}
 
         {/* Page Content Scroll Area */}
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className={`flex-1 ${isFullBleed ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
+          {children}
+        </main>
       </div>
     </div>
   );

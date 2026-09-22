@@ -42,34 +42,86 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
   }, []);
 
   return (
-    <div className="flex flex-col h-screen bg-white">
-      {/* Top Navigation Bar (Part 1, Image 4) */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-gray-200 bg-white z-20 shrink-0">
-        <div className="flex items-center gap-4">
-          <button onClick={onBack} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Name your campaign</span>
-            <input
-              type="text"
-              value={campaignName}
-              onChange={(e) => setCampaignName(e.target.value)}
-              className="block font-bold text-gray-900 text-base focus:outline-none focus:border-b-2 focus:border-indigo-600 pb-0.5"
-            />
+    <div className="flex flex-col h-full min-h-0 bg-white overflow-hidden">
+      {/* Top Navigation Bar matching Prosp (media_1790088159049.png) */}
+      <div className="border-b border-gray-200/80 bg-white z-20 shrink-0">
+        {/* Row 1: Workspace info & Main title actions */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
+          {/* Left: Back button + Campaign Name */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onBack}
+              title="Back to campaigns"
+              className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors shadow-2xs"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block leading-tight">
+                Name your campaign
+              </span>
+              <input
+                type="text"
+                value={campaignName}
+                onChange={(e) => setCampaignName(e.target.value)}
+                className="font-bold text-gray-900 text-base focus:outline-none focus:border-b-2 focus:border-indigo-600 pb-0.5 bg-transparent"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 ml-1">
+              <span className="text-[10px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                draft
+              </span>
+              <span className="text-[11px] text-gray-400 font-normal">
+                never published
+              </span>
+            </div>
           </div>
-          <span className="text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-            draft
-          </span>
+
+          {/* Right Actions */}
+          <div className="flex items-center gap-3">
+            <button className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs">
+              Save as template
+            </button>
+            <button
+              onClick={onBack}
+              className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
+            >
+              Save and close
+            </button>
+
+            {/* Ready indicator */}
+            <div className="hidden sm:flex items-center gap-2 pl-2">
+              <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-600 rounded-full w-[40%]" />
+              </div>
+              <span className="text-[11px] font-semibold text-gray-500">40% ready</span>
+            </div>
+
+            <button
+              onClick={() => {
+                if (currentStep < 3) setCurrentStep((s) => s + 1);
+                else if (onComplete) onComplete();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs transition-colors"
+            >
+              {currentStep === 3 ? 'Launch Campaign' : 'Next: Launch →'}
+            </button>
+          </div>
         </div>
 
-        {/* Step Indicator Tabs */}
-        <div className="flex items-center gap-6 text-xs font-semibold">
+        {/* Row 2: Step Indicator Tabs */}
+        <div className="flex items-center gap-8 px-6 py-2.5 text-xs font-semibold bg-gray-50/40">
           <button
             onClick={() => setCurrentStep(1)}
-            className={`flex items-center gap-1.5 ${currentStep === 1 ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+            className={`flex items-center gap-2 transition-colors ${
+              currentStep === 1 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
+            }`}
           >
-            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${currentStep === 1 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                currentStep === 1 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
+              }`}
+            >
               1
             </span>
             Leads
@@ -77,9 +129,15 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
 
           <button
             onClick={() => setCurrentStep(2)}
-            className={`flex items-center gap-1.5 ${currentStep === 2 ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+            className={`flex items-center gap-2 transition-colors ${
+              currentStep === 2 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
+            }`}
           >
-            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${currentStep === 2 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                currentStep === 2 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
+              }`}
+            >
               2
             </span>
             Sequence
@@ -87,29 +145,18 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
 
           <button
             onClick={() => setCurrentStep(3)}
-            className={`flex items-center gap-1.5 ${currentStep === 3 ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}
+            className={`flex items-center gap-2 transition-colors ${
+              currentStep === 3 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
+            }`}
           >
-            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${currentStep === 3 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                currentStep === 3 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
+              }`}
+            >
               3
             </span>
             Launch & Senders
-          </button>
-        </div>
-
-        {/* Right Actions */}
-        <div className="flex items-center gap-2.5">
-          <button className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50">
-            Save as template
-          </button>
-          <button
-            onClick={() => {
-              if (currentStep < 3) setCurrentStep((s) => s + 1);
-              else if (onComplete) onComplete();
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm"
-          >
-            {currentStep === 3 ? 'Review & Launch' : 'Next: Launch'}
-            <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

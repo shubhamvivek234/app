@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Sparkles, Play, Pause, MoreVertical, RefreshCw, Users, MessageSquare } from 'lucide-react';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 
-export default function OutreachCampaigns() {
+export default function OutreachCampaigns({ onOpenWizard }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -99,8 +99,12 @@ export default function OutreachCampaigns() {
           </button>
           <button
             onClick={() => {
-              setActiveCampaignId(null);
-              setIsWizardOpen(true);
+              if (onOpenWizard) {
+                onOpenWizard('new');
+              } else {
+                setActiveCampaignId(null);
+                setIsWizardOpen(true);
+              }
             }}
             className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm transition-colors"
           >
@@ -150,7 +154,10 @@ export default function OutreachCampaigns() {
           <div className="p-12 text-center text-gray-500">
             <p className="text-sm font-medium">No campaigns found in this view.</p>
             <button
-              onClick={() => setIsWizardOpen(true)}
+              onClick={() => {
+                if (onOpenWizard) onOpenWizard('new');
+                else setIsWizardOpen(true);
+              }}
               className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
             >
               + Create your first outreach campaign
@@ -184,8 +191,12 @@ export default function OutreachCampaigns() {
                   <td className="py-3.5 px-4 font-bold text-gray-900">
                     <button
                       onClick={() => {
-                        setActiveCampaignId(camp.id);
-                        setIsWizardOpen(true);
+                        if (onOpenWizard) {
+                          onOpenWizard(camp.id);
+                        } else {
+                          setActiveCampaignId(camp.id);
+                          setIsWizardOpen(true);
+                        }
                       }}
                       className="hover:text-indigo-600 hover:underline text-left"
                     >
