@@ -7,20 +7,21 @@ Branch: main
 Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cloning, Unified Inbox
 
 ## Last Session Completed
-Date: 2026-09-22
+Date: 2026-09-23
 Completed:
-- Shipped Dynamic Recursive Sequence Tree Engine (Prosp Parity):
-  - Full recursive hierarchy matching screenshots (`media_1790088300707.png`, `media_1790088397090.png`, `media_1790088446398.png`).
-  - Condition nodes (`If connected` -> `✕ not connected` vs `✓ connected`) with amber chain styling.
-  - Inline card header delay editor (`🕒 [ 4 ] [ days ▾ ] [ ✓ ]`).
-  - Card context menu (`⋮` -> `Edit step`, `Delete step`).
-  - Dynamic step/condition insertion at any `+` point, live toast banners, and right drawer inspector.
-- 38/38 unit tests pass, frontend CI build clean, pushed to `main` (`2c2d52a`).
+- Locked right-side drawer to fixed viewport height (`h-full max-h-full overflow-hidden`) so it never stretches vertically when sequence canvas expands (`0681559`).
+- Shipped pixel-perfect Prosp parity for Wizard Step 3 (Launch & Senders) per `media_1790103490135.png`:
+  - Campaign name card, multi-sender account picker with `Select all` / `Clear`.
+  - Weekly hours schedule editor (S-M-T-W-T-F-S) with inline time ranges, copy-to-all weekdays, timezone selector.
+  - Daily limits per sender with safe defaults badge and 8 item counters (`[-] [ 20 ] [+]`).
+  - Full-width `Review and launch →` action.
+- Pixel-matched Leads CRM (`media_1790103640399.png`) and Inbox empty states/account cards (`media_1790103710555.png`).
+- 38/38 unit tests pass, frontend CI build clean, deployed to `main` (`8d4fb36`), EC2 synced.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Verify live Vercel deployment preview with user.
+- Verify live preview and campaign run with user.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
