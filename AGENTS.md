@@ -9,22 +9,19 @@ Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cl
 ## Last Session Completed
 Date: 2026-09-22
 Completed:
-- Enterprise LinkedIn Cold Outbound Automation Engine (Prosp Option A Architecture):
-  - Decoupled `outreach/` backend: Pydantic v2 models, JIT Proxy Manager (Webshare zero-idle cost), AES-256 session cookie encryption.
-  - Hybrid Engine: 80% Voyager private REST client + DOM/voice fallback, OutboundRateLimiter with human jitter.
-  - Visual Sequence DAG Compiler & Canvas: 10 actions + 4 conditions, Kahn's algorithm cycle detection, prebuilt templates.
-  - Lead CRM & Deduplication: CSV ingestion, smart header inference, 4-tier deduplication, blacklist enforcement.
-  - ElevenLabs Voice Cloning Pipeline: 30s instant clone, token interpolation (`{{first_name}}`, `{{company_name}}`), dynamic preview synthesis.
-  - Multi-Account Unified Inbox: Voyager sync worker, automatic reply detection & CRM sequence cessation, thread reply dispatch.
-  - Anti-Ban Safety Shield: 5->10->15->20 warm-up governor, circuit breaker on 403/429/checkpoints, 21-day invite withdrawal.
-  - Stripe Billing & Rate Cards: 1-5 ($79.99), 6-30 ($59.99), >30 ($39.99), 4-day trial, auto-release proxy teardown on cancel.
-  - Prosp Minimalist UI: Home dashboard, Campaigns, Leads CRM, Unified Inbox, Voice Studio, Settings/Billing, Campaign Wizard.
-  - 38/38 outreach unit tests passed, 472/472 full regression tests passed clean, frontend CI build clean.
+- Fixed Campaign Wizard View Isolation:
+  - Wizard opens as a dedicated full-page screen instead of stacking at the bottom of the Home dashboard.
+  - Added Prosp top bar (`← Back`, campaign name input, `Save as template`, `Save and close`, progress bar, `Next: Launch →`).
+- Fixed Flowchart Connecting Lines in Sequence Canvas:
+  - Built crisp SVG orthogonal connector lines (`#cbd5e1`), vertical trunks, and branch splitters.
+  - Implemented condition pills (`✓ accepted` vs `✕ not accepted yet`, `✓ replied` vs `✕ no reply`), centered `+` insertion nodes, `[End]` pills.
+  - Added Prosp step inspector right drawers for Voice Note (voice cloner pills, 490 char script, token insertion), InMail, and connection notes.
+- 38/38 unit tests pass, frontend CI build clean, pushed to `main` (`9699747`).
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy v8.0 to production.
+- Verify live Vercel deployment preview with user.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.
