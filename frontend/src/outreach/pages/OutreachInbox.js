@@ -177,26 +177,28 @@ export default function OutreachInbox() {
   const selectedAccountObj = accounts.find((a) => a.id === selectedAccountId);
 
   return (
-    <div className="h-[calc(100vh-64px)] flex bg-white overflow-hidden">
-      {/* Left Panel: Conversation Thread List matching Part 3 Image 1 */}
-      <div className="w-80 md:w-96 border-r border-gray-200 flex flex-col shrink-0 bg-neutral-50/40">
+    <div className="h-full max-h-full min-h-0 flex bg-white overflow-hidden">
+      {/* Left Panel: Conversation Thread List matching media_1790103710555.png */}
+      <div className="w-80 md:w-96 border-r border-gray-200/90 flex flex-col shrink-0 bg-white">
         {/* Header with Title & Filter Pill */}
-        <div className="p-4 border-b border-gray-200/80 bg-white">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-bold text-gray-900">Inbox</h1>
-            <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-lg text-xs font-semibold text-gray-600">
+        <div className="p-4 border-b border-gray-100 bg-white space-y-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Inbox</h1>
+            <div className="flex items-center gap-1 bg-gray-100/80 p-0.5 rounded-lg text-xs font-semibold text-gray-500">
               <button
+                type="button"
                 onClick={() => setFilterMode('outreach')}
-                className={`px-2 py-0.5 rounded-md transition-all ${
-                  filterMode === 'outreach' ? 'bg-white shadow-xs text-indigo-600' : ''
+                className={`px-3 py-1 rounded-md transition-all ${
+                  filterMode === 'outreach' ? 'bg-white shadow-2xs text-gray-900 font-bold' : 'hover:text-gray-900'
                 }`}
               >
-                Outreach
+                Prosp
               </button>
               <button
+                type="button"
                 onClick={() => setFilterMode('all')}
-                className={`px-2 py-0.5 rounded-md transition-all ${
-                  filterMode === 'all' ? 'bg-white shadow-xs text-indigo-600' : ''
+                className={`px-3 py-1 rounded-md transition-all ${
+                  filterMode === 'all' ? 'bg-white shadow-2xs text-gray-900 font-bold' : 'hover:text-gray-900'
                 }`}
               >
                 All
@@ -205,26 +207,27 @@ export default function OutreachInbox() {
           </div>
 
           {/* Search Input */}
-          <div className="relative mb-2.5">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3.5 top-3" />
             <input
               type="text"
               placeholder="Search conversations"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full pl-9 pr-3.5 py-2 text-xs bg-gray-100/70 border-0 rounded-xl placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 focus:bg-white transition-all"
             />
           </div>
 
-          {/* Account Selector Dropdown */}
+          {/* Account Selector Accordion / Dropdown */}
           <div className="relative">
             <button
+              type="button"
               onClick={() => setIsAccountDropdownOpen(!isAccountDropdownOpen)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-gray-800 bg-white border border-gray-200 rounded-xl hover:bg-gray-50/80 transition-colors shadow-2xs"
             >
               <div className="flex items-center gap-2 truncate">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span className="truncate">
+                <Mail className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="font-semibold text-xs text-gray-800 truncate">
                   {selectedAccountId === 'all'
                     ? 'All accounts'
                     : selectedAccountObj?.name || 'Selected Account'}
@@ -238,32 +241,47 @@ export default function OutreachInbox() {
             </button>
 
             {isAccountDropdownOpen && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-gray-100 text-xs">
+              <div className="mt-2 p-3 bg-white border border-gray-200 rounded-xl shadow-lg space-y-2 text-left z-20">
                 <button
+                  type="button"
                   onClick={() => {
                     setSelectedAccountId('all');
                     setIsAccountDropdownOpen(false);
                   }}
-                  className={`w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between ${
-                    selectedAccountId === 'all' ? 'text-indigo-600 font-semibold bg-indigo-50/50' : 'text-gray-700'
-                  }`}
+                  className="w-full p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/50 text-left transition-all"
                 >
-                  <span>All accounts</span>
-                  {selectedAccountId === 'all' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-3.5 h-3.5 text-indigo-600" />
+                      <span className="text-xs font-bold text-indigo-900">All accounts</span>
+                    </div>
+                    {selectedAccountId === 'all' && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />}
+                  </div>
+                  {accounts.length === 0 && (
+                    <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                      No connected accounts. Connect one in Settings to see conversations.
+                    </p>
+                  )}
                 </button>
+
                 {accounts.map((acc) => (
                   <button
                     key={acc.id}
+                    type="button"
                     onClick={() => {
                       setSelectedAccountId(acc.id);
                       setIsAccountDropdownOpen(false);
                     }}
-                    className={`w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between ${
-                      selectedAccountId === acc.id ? 'text-indigo-600 font-semibold bg-indigo-50/50' : 'text-gray-700'
+                    className={`w-full p-2.5 rounded-lg border text-left transition-all ${
+                      selectedAccountId === acc.id
+                        ? 'border-indigo-200 bg-indigo-50/50'
+                        : 'border-gray-100 hover:bg-gray-50'
                     }`}
                   >
-                    <span className="truncate">{acc.name}</span>
-                    {selectedAccountId === acc.id && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-gray-800 truncate">{acc.name}</span>
+                      {selectedAccountId === acc.id && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -448,13 +466,13 @@ export default function OutreachInbox() {
             </div>
           </>
         ) : (
-          /* Empty State exactly matching Part 3 Image 1 */
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-neutral-50/20">
-            <div className="w-14 h-14 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3">
-              <Mail className="w-6 h-6" />
+          /* Empty State exactly matching media_1790103710555.png */
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-neutral-50/10">
+            <div className="w-14 h-14 rounded-full bg-indigo-50/80 border border-indigo-100/60 text-indigo-500 flex items-center justify-center mb-4 shadow-2xs">
+              <Mail className="w-6 h-6 stroke-[1.75]" />
             </div>
             <h3 className="font-bold text-gray-900 text-base">Select a conversation</h3>
-            <p className="text-xs text-gray-500 max-w-sm mt-1">
+            <p className="text-xs text-gray-400 max-w-sm mt-1">
               Choose a thread from the list to read the conversation and reply.
             </p>
           </div>
