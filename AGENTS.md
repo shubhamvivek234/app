@@ -2,26 +2,29 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v7.1 shipped
+Stage: v8.0 LinkedIn Outbound & AI Sequence Engine Shipped (Option A Prosp Parity)
 Branch: main
-Focus: Full Postiz Feature Parity (Developer Settings, Scoped Webhooks, RSS Auto-Post, Video Clipper, AI Agent Hub, CLI)
+Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cloning, Unified Inbox
 
 ## Last Session Completed
-Date: 2026-09-20
+Date: 2026-09-22
 Completed:
-- Production Pricing & Twitter Rate Limits Overhaul:
-  - Removed Free tier; implemented 3 paid tiers: Starter ($19/$16), Pro ($45/$39), Agency ($110/$99).
-  - Twitter / X API Cost Protections (`utils/plan_limits.py` + `posts.py`): daily throttle, monthly post caps, and link-post URL quotas ($0.20/link tweet).
-  - Added Twitter Link Booster ($15 for 50 link posts) and Twitter BYOK ($5/mo) in `payments.py`.
-  - Dedicated public `/pricing` page with feature matrix, Twitter limit breakdown, add-on boosters, and FAQ.
-  - Removed inline pricing section from `LandingPage.js`; top nav "Pricing" routes to `/pricing`.
-  - Synced in-app `Billing.js`, `PaymentPage.js`, and `OnboardingPricing.js`.
-  - All 434 backend tests passed, frontend production CI build passed clean.
+- Enterprise LinkedIn Cold Outbound Automation Engine (Prosp Option A Architecture):
+  - Decoupled `outreach/` backend: Pydantic v2 models, JIT Proxy Manager (Webshare zero-idle cost), AES-256 session cookie encryption.
+  - Hybrid Engine: 80% Voyager private REST client + DOM/voice fallback, OutboundRateLimiter with human jitter.
+  - Visual Sequence DAG Compiler & Canvas: 10 actions + 4 conditions, Kahn's algorithm cycle detection, prebuilt templates.
+  - Lead CRM & Deduplication: CSV ingestion, smart header inference, 4-tier deduplication, blacklist enforcement.
+  - ElevenLabs Voice Cloning Pipeline: 30s instant clone, token interpolation (`{{first_name}}`, `{{company_name}}`), dynamic preview synthesis.
+  - Multi-Account Unified Inbox: Voyager sync worker, automatic reply detection & CRM sequence cessation, thread reply dispatch.
+  - Anti-Ban Safety Shield: 5->10->15->20 warm-up governor, circuit breaker on 403/429/checkpoints, 21-day invite withdrawal.
+  - Stripe Billing & Rate Cards: 1-5 ($79.99), 6-30 ($59.99), >30 ($39.99), 4-day trial, auto-release proxy teardown on cancel.
+  - Prosp Minimalist UI: Home dashboard, Campaigns, Leads CRM, Unified Inbox, Voice Studio, Settings/Billing, Campaign Wizard.
+  - 38/38 outreach unit tests passed, 472/472 full regression tests passed clean, frontend CI build clean.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Deploy updates to production.
+- Deploy v8.0 to production.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -80,6 +80,8 @@ x-common-env: &common-env
   SUPPORT_EMAIL: ${SUPPORT_EMAIL:-contact@unravler.com}
   RESEND_API_KEY: ${RESEND_API_KEY:-}
   STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+  WEBSHARE_API_KEY: ${WEBSHARE_API_KEY:-mock}
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-mock}
   RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
   RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
   GOOGLE_AI_KEY: ${GOOGLE_AI_KEY:-}
@@ -231,7 +233,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.worker
     restart: unless-stopped
-    command: celery -A celery_workers.celery_app worker --loglevel=info --autoscale=${WORKER_LIGHT_AUTOSCALE:-12,2} --max-tasks-per-child=100 --queues=high_priority,default,publish_light,dead_letter
+    command: celery -A celery_workers.celery_app worker --loglevel=info --autoscale=${WORKER_LIGHT_AUTOSCALE:-12,2} --max-tasks-per-child=100 --queues=high_priority,default,publish_light,dead_letter,outreach
     environment:
       <<: *common-env
     volumes:

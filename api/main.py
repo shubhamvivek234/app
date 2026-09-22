@@ -67,6 +67,7 @@ from api.routes.posting_sets import router as posting_sets_router
 from api.routes.oauth_apps import router as oauth_apps_router
 from api.routes.clipping import router as clipping_router
 from api.routes.agent import router as agent_router
+from outreach.api.router import router as outreach_router
 from db.mongo import close_client
 from db.redis_client import close_pools
 from db.indexes import create_all_indexes
@@ -206,6 +207,7 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     app.include_router(oauth_apps_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(clipping_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(agent_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(outreach_router, prefix=prefix, include_in_schema=include_in_schema)
 
 
 def create_app() -> FastAPI:

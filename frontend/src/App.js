@@ -66,6 +66,7 @@ import Campaigns from '@/pages/Campaigns';
 import Audience from '@/pages/Audience';
 import Broadcast from '@/pages/Broadcast';
 import Automations from '@/pages/Automations';
+import OutreachApp from '@/outreach/OutreachApp';
 import CookieConsent from '@/components/CookieConsent';
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -582,6 +583,14 @@ function App() {
                 element={
                   <PrivateRoute>
                     <AgentHub />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/outreach/*"
+                element={
+                  <PrivateRoute>
+                    <OutreachApp />
                   </PrivateRoute>
                 }
               />

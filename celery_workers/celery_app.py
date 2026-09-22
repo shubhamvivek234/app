@@ -103,6 +103,8 @@ CELERY_QUEUES = (
     Queue("publish_video", default_exchange, routing_key="publish_video"),
     # SLA: < 2 minutes — media workers only
     Queue("media_processing", default_exchange, routing_key="media_processing"),
+    # SLA: LinkedIn Outbound & Sequence Engine worker pool
+    Queue("outreach", default_exchange, routing_key="outreach"),
     # Manual / admin review
     Queue("dead_letter", default_exchange, routing_key="dead_letter"),
 )
