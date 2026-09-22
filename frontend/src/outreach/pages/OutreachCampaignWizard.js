@@ -13,9 +13,39 @@ import {
   Copy,
   Calendar,
   ChevronDown,
+  Sparkles,
+  AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import SequenceCanvas from '../components/sequence/SequenceCanvas';
 import ImportLeadsModal from '../components/ImportLeadsModal';
+import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
+
+const TIME_OPTIONS = [
+  '12:00 AM', '12:30 AM', '01:00 AM', '01:30 AM', '02:00 AM', '02:30 AM',
+  '03:00 AM', '03:30 AM', '04:00 AM', '04:30 AM', '05:00 AM', '05:30 AM',
+  '06:00 AM', '06:30 AM', '07:00 AM', '07:30 AM', '08:00 AM', '08:30 AM',
+  '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
+  '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM',
+  '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM',
+  '06:00 PM', '06:30 PM', '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM',
+  '09:00 PM', '09:30 PM', '10:00 PM', '10:30 PM', '11:00 PM', '11:30 PM',
+];
+
+const TIMEZONE_OPTIONS = [
+  { value: 'UTC', label: 'Coordinated Universal Time (UTC)', detail: 'UTC+00:00 · 6:57 pm' },
+  { value: 'America/New_York', label: 'Eastern Time (US & Canada) (ET)', detail: 'UTC-05:00 · 2:57 pm' },
+  { value: 'America/Chicago', label: 'Central Time (US & Canada) (CT)', detail: 'UTC-06:00 · 1:57 pm' },
+  { value: 'America/Denver', label: 'Mountain Time (US & Canada) (MT)', detail: 'UTC-07:00 · 12:57 pm' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (US & Canada) (PT)', detail: 'UTC-08:00 · 11:57 am' },
+  { value: 'Europe/London', label: 'Greenwich Mean Time (GMT)', detail: 'UTC+00:00 · 7:57 pm' },
+  { value: 'Europe/Paris', label: 'Central European Time (CET)', detail: 'UTC+01:00 · 8:57 pm' },
+  { value: 'Asia/Kolkata', label: 'India Standard Time (IST)', detail: 'UTC+05:30 · 12:27 am' },
+  { value: 'Asia/Dubai', label: 'Gulf Standard Time (GST)', detail: 'UTC+04:00 · 10:57 pm' },
+  { value: 'Asia/Singapore', label: 'Singapore Standard Time (SGT)', detail: 'UTC+08:00 · 2:57 am' },
+  { value: 'Asia/Tokyo', label: 'Japan Standard Time (JST)', detail: 'UTC+09:00 · 3:57 am' },
+  { value: 'Australia/Sydney', label: 'Australian Eastern Time (AET)', detail: 'UTC+10:00 · 4:57 am' },
+];
 
 export default function OutreachCampaignWizard({ campaignId = 'new_campaign', onBack, onComplete }) {
   const [currentStep, setCurrentStep] = useState(2); // Default to Step 2 (Sequence Canvas)
@@ -23,6 +53,8 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
   const [senders, setSenders] = useState([]);
   const [selectedSenders, setSelectedSenders] = useState([]);
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [isLaunching, setIsLaunching] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
@@ -55,9 +87,63 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
     }));
   };
 
+  const resetSafeDefaults = () => {
+    setLimits({
+      connection_invites: 20,
+      messages: 20,
+      voice_notes: 20,
+      inmails: 20,
+      profile_visits: 20,
+      follows: 20,
+      post_likes: 20,
+      comments: 20,
+    });
+    showToast('Reset to safe defaults (20/day)');
+  };
+
   const toggleDayEnabled = (idx) => {
     setSchedule((prev) =>
       prev.map((d, i) => (i === idx ? { ...d, enabled: !d.enabled } : d))
+    );
+  };
+
+  const updateRangeTime = (dIdx, rIdx, field, val) => {
+    setSchedule((prev) =>
+      prev.map((dayItem, i) => {
+        if (i !== dIdx) return dayItem;
+        const newRanges = dayItem.ranges.map((rng, j) => {
+          if (j !== rIdx) return rng;
+          return { ...rng, [field]: val };
+        });
+        return { ...dayItem, ranges: newRanges };
+      })
+    );
+  };
+
+  const addRange = (dIdx) => {
+    setSchedule((prev) =>
+      prev.map((dayItem, i) => {
+        if (i !== dIdx) return dayItem;
+        return {
+          ...dayItem,
+          ranges: [...dayItem.ranges, { start: '01:00 PM', end: '05:00 PM' }],
+        };
+      })
+    );
+  };
+
+  const removeRange = (dIdx, rIdx) => {
+    setSchedule((prev) =>
+      prev.map((dayItem, i) => {
+        if (i !== dIdx) return dayItem;
+        if (dayItem.ranges.length <= 1) {
+          return { ...dayItem, enabled: false };
+        }
+        return {
+          ...dayItem,
+          ranges: dayItem.ranges.filter((_, j) => j !== rIdx),
+        };
+      })
     );
   };
 
@@ -99,6 +185,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
         },
         body: JSON.stringify(payload),
       });
+      setReviewModalOpen(false);
       showToast('Campaign successfully launched!');
       setTimeout(() => {
         if (onComplete) onComplete();
@@ -106,6 +193,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
       }, 1000);
     } catch (err) {
       console.error('Launch failed:', err);
+      setReviewModalOpen(false);
       showToast('Campaign launched successfully!');
       setTimeout(() => {
         if (onComplete) onComplete();
@@ -281,63 +369,79 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
 
         {/* Step 3: Launch, Multi-Sender Pooling & Safe Defaults (media_1790103490135.png) */}
         {currentStep === 3 && (
-          <div className="flex-1 min-h-0 overflow-y-auto bg-[#fafafa] py-10 px-4">
-            <div className="max-w-3xl mx-auto space-y-6 pb-20">
-              {/* Campaign name Card */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-6 shadow-2xs">
-                <h3 className="text-base font-bold text-gray-900">Campaign name</h3>
+          <div className="flex-1 min-h-0 overflow-y-auto bg-[#f8f9fa] py-8 px-6">
+            <div className="max-w-3xl mx-auto space-y-6 pb-24">
+              {/* Top Status Pill matching media_1790103490135.png */}
+              <div className="flex items-center">
+                <div className="inline-flex items-center px-3 py-1 rounded-full border border-indigo-100 bg-indigo-50/80 text-indigo-700 text-xs font-semibold shadow-2xs">
+                  Trial ends in 4 days
+                </div>
+              </div>
+
+              {/* Card 1: Campaign name */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
+                <h3 className="text-base font-bold text-gray-900 tracking-tight">Campaign name</h3>
                 <input
                   type="text"
                   value={campaignName}
                   onChange={(e) => setCampaignName(e.target.value)}
-                  placeholder="e.g. test1"
+                  placeholder="test1"
                   className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white transition-all shadow-2xs"
                 />
-                <p className="text-xs text-gray-400 mt-2">
+                <p className="text-xs text-gray-500 mt-2.5">
                   Pick a name your team will recognize in the campaign list.
                 </p>
               </div>
 
-              {/* Who is sending? Card */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-6 shadow-2xs">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="text-base font-bold text-gray-900">Who is sending?</h3>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Pick the accounts that send this campaign. We spread the work to keep each account safe.
-                    </p>
-                  </div>
+              {/* Section 2: Who is sending? (Heading on background, not in card) */}
+              <div className="space-y-3">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 tracking-tight">Who is sending?</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Pick the accounts that send this campaign. We spread the work to keep each account safe.
+                  </p>
                 </div>
 
-                <div className="flex items-center justify-between mt-4 pb-2 border-b border-gray-100">
-                  <span className="text-xs font-semibold text-gray-800">
+                {/* Control bar above the card */}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs font-bold text-gray-900">
                     {selectedSenders.length} of {senders.length} selected
                   </span>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setSelectedSenders(senders.map((s) => s.id))}
-                      className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
+                      className="rounded-lg border border-gray-200 bg-white px-3.5 py-1 text-xs font-semibold text-indigo-600 hover:bg-gray-50 transition-colors shadow-2xs"
                     >
                       Select all
                     </button>
                     <button
                       type="button"
                       onClick={() => setSelectedSenders([])}
-                      className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
+                      className="rounded-lg border border-gray-200 bg-white px-3.5 py-1 text-xs font-semibold text-gray-500 hover:bg-gray-50 transition-colors shadow-2xs"
                     >
                       Clear
                     </button>
                   </div>
                 </div>
 
-                <div className="mt-4">
+                {/* Accounts Card */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-xs">
                   {senders.length === 0 ? (
-                    <div className="rounded-xl border border-gray-200/80 bg-white p-8 text-center text-xs text-gray-500 leading-relaxed">
-                      No LinkedIn account is connected to this workspace yet. Connect one in Settings, then come back and pick it here.
+                    <div className="py-6 text-center text-xs text-gray-500 leading-relaxed">
+                      <p>
+                        No LinkedIn account is connected to this workspace yet. Connect one in Settings, then come back and pick it here.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setConnectModalOpen(true)}
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                      >
+                        + Connect an account now
+                      </button>
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {senders.map((s) => {
                         const isChecked = selectedSenders.includes(s.id);
                         return (
@@ -360,9 +464,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
                                 className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                               />
                               <div>
-                                <span className="font-semibold text-xs text-gray-900 block">
-                                  {s.account_name}
-                                </span>
+                                <span className="font-bold text-xs text-gray-900 block">{s.account_name}</span>
                                 <span className="text-[11px] text-gray-400">
                                   {s.country_code ? `${s.country_code} Residential Proxy` : 'Assigned Proxy'}
                                 </span>
@@ -379,151 +481,177 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
                 </div>
               </div>
 
-              {/* When should it run? Card */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-6 shadow-2xs space-y-5">
+              {/* Section 3: When should it run? (Heading on background, not in card) */}
+              <div className="space-y-3">
                 <div>
-                  <h3 className="text-base font-bold text-gray-900">When should it run?</h3>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <h2 className="text-xl font-bold text-gray-900 tracking-tight">When should it run?</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
                     Choose the local hours when this campaign may send. One campaign timezone applies to every enrolled lead.
                   </p>
                 </div>
 
-                <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-6">
                   <div>
-                    <div className="flex items-center gap-2 text-xs font-bold text-gray-900">
-                      <Calendar className="w-4 h-4 text-gray-500" />
+                    <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+                      <Calendar className="w-4 h-4 text-gray-600" />
                       <span>Weekly hours</span>
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-0.5">
+                    <p className="text-xs text-gray-500 mt-0.5">
                       Turn a day off to make it unavailable, or add another time range.
                     </p>
                   </div>
 
-                  {/* Day rows */}
-                  <div className="space-y-2.5 pt-1">
-                    {schedule.map((item, idx) => (
-                      <div key={item.day} className="flex items-center justify-between text-xs py-1">
+                  {/* Day rows with fine horizontal dividers matching screenshot */}
+                  <div className="divide-y divide-gray-100 border-t border-b border-gray-100">
+                    {schedule.map((dayItem, dIdx) => (
+                      <div key={dayItem.day} className="flex items-center justify-between py-3 text-xs">
                         <div className="flex items-center gap-3">
+                          {/* Day Circle Button */}
                           <button
                             type="button"
-                            onClick={() => toggleDayEnabled(idx)}
+                            onClick={() => toggleDayEnabled(dIdx)}
+                            title={`Toggle ${dayItem.day}`}
                             className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all ${
-                              item.enabled
-                                ? 'bg-neutral-900 text-white'
-                                : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                              dayItem.enabled
+                                ? 'bg-black text-white'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                             }`}
                           >
-                            {item.key}
+                            {dayItem.key}
                           </button>
 
-                          {item.enabled ? (
+                          {dayItem.enabled ? (
                             <div className="flex items-center gap-2">
-                              {item.ranges.map((rng, rIdx) => (
+                              {dayItem.ranges.map((rng, rIdx) => (
                                 <div key={rIdx} className="flex items-center gap-2">
-                                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-gray-50/60 text-gray-700 text-xs font-medium">
-                                    <span>{rng.start}</span>
-                                    <Clock className="w-3 h-3 text-gray-400" />
+                                  {/* Start Time Select */}
+                                  <div className="relative inline-flex items-center">
+                                    <select
+                                      value={rng.start}
+                                      onChange={(e) => updateRangeTime(dIdx, rIdx, 'start', e.target.value)}
+                                      className="appearance-none bg-gray-50/80 border border-gray-200 rounded-lg px-2.5 py-1.5 pr-7 text-xs font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                                    >
+                                      {TIME_OPTIONS.map((t) => (
+                                        <option key={t} value={t}>{t}</option>
+                                      ))}
+                                    </select>
+                                    <Clock className="w-3 h-3 text-gray-400 absolute right-2 pointer-events-none" />
                                   </div>
-                                  <span className="text-gray-400 text-xs">to</span>
-                                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-gray-50/60 text-gray-700 text-xs font-medium">
-                                    <span>{rng.end}</span>
-                                    <Clock className="w-3 h-3 text-gray-400" />
+
+                                  <span className="text-xs text-gray-400 font-medium">to</span>
+
+                                  {/* End Time Select */}
+                                  <div className="relative inline-flex items-center">
+                                    <select
+                                      value={rng.end}
+                                      onChange={(e) => updateRangeTime(dIdx, rIdx, 'end', e.target.value)}
+                                      className="appearance-none bg-gray-50/80 border border-gray-200 rounded-lg px-2.5 py-1.5 pr-7 text-xs font-semibold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                                    >
+                                      {TIME_OPTIONS.map((t) => (
+                                        <option key={t} value={t}>{t}</option>
+                                      ))}
+                                    </select>
+                                    <Clock className="w-3 h-3 text-gray-400 absolute right-2 pointer-events-none" />
                                   </div>
+
+                                  {/* Inline Remove range button (✕) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeRange(dIdx, rIdx)}
+                                    title="Remove range"
+                                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors ml-0.5"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               ))}
                             </div>
                           ) : (
-                            <span className="text-xs text-gray-400 font-medium">Unavailable</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-400 font-normal">Unavailable</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleDayEnabled(dIdx)}
+                                title="Make available"
+                                className="p-0.5 border border-gray-200 rounded-md text-gray-500 hover:text-gray-800 hover:bg-gray-50 shadow-2xs"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1.5">
-                          {item.enabled ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => toggleDayEnabled(idx)}
-                                title="Remove / Disable day"
-                                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {}}
-                                title="Add time range"
-                                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => copyToAllWeekdays(idx)}
-                                title="Copy to all weekdays"
-                                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                              >
-                                <Copy className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          ) : (
+                        {/* Right Action Icons for Enabled Days (+ and Copy) */}
+                        {dayItem.enabled && (
+                          <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              onClick={() => toggleDayEnabled(idx)}
-                              title="Enable day"
-                              className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                              onClick={() => addRange(dIdx)}
+                              title="Add another time range"
+                              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
                             >
                               <Plus className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => copyToAllWeekdays(dIdx)}
+                              title="Copy schedule to all weekdays"
+                              className="p-1 text-gray-400 hover:text-gray-700 transition-colors"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
 
                   {/* Timezone Section */}
-                  <div className="pt-4 border-t border-gray-100">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1.5">
+                  <div className="pt-2">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
                       TIMEZONE
-                    </label>
+                    </p>
                     <div className="relative">
                       <select
                         value={timezone}
                         onChange={(e) => setTimezone(e.target.value)}
-                        className="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-800 pr-8 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                        className="w-full appearance-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-semibold text-gray-900 pr-10 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs cursor-pointer"
                       >
-                        <option value="UTC">Coordinated Universal Time (UTC) UTC+00:00</option>
-                        <option value="America/New_York">Eastern Time (US & Canada) (ET) UTC-05:00</option>
-                        <option value="America/Chicago">Central Time (US & Canada) (CT) UTC-06:00</option>
-                        <option value="America/Los_Angeles">Pacific Time (US & Canada) (PT) UTC-08:00</option>
-                        <option value="Europe/London">Greenwich Mean Time (GMT) UTC+00:00</option>
-                        <option value="Europe/Paris">Central European Time (CET) UTC+01:00</option>
-                        <option value="Asia/Kolkata">India Standard Time (IST) UTC+05:30</option>
-                        <option value="Asia/Singapore">Singapore Standard Time (SGT) UTC+08:00</option>
+                        {TIMEZONE_OPTIONS.map((tz) => (
+                          <option key={tz.value} value={tz.value}>
+                            {tz.label} · {tz.detail}
+                          </option>
+                        ))}
                       </select>
-                      <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-3 pointer-events-none" />
+                      <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3.5 top-3.5 pointer-events-none" />
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-1.5">
+                    <p className="text-[11px] text-gray-400 mt-2">
                       This timezone applies to the whole campaign, not separately to each lead or sender.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Daily limits, applied per sender Card */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-6 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between">
+              {/* Section 4: Daily limits, applied per sender Card */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-100">
                   <div>
-                    <h3 className="text-base font-bold text-gray-900">Daily limits, applied per sender</h3>
+                    <h3 className="text-sm font-bold text-gray-900">Daily limits, applied per sender</h3>
                     <p className="text-xs text-gray-500 mt-0.5">
                       Daily action limits applied per sending account. Higher limits can increase account risk.
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 uppercase">
+                  <button
+                    type="button"
+                    onClick={resetSafeDefaults}
+                    className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 hover:bg-emerald-100 transition-colors uppercase cursor-pointer"
+                  >
                     safe defaults
-                  </span>
+                  </button>
                 </div>
 
-                <div className="divide-y divide-gray-100 pt-1">
+                {/* 8 Rows with dividers matching media_1790103490135.png */}
+                <div className="divide-y divide-gray-100">
                   {[
                     { key: 'connection_invites', label: 'Connection invites', def: 20 },
                     { key: 'messages', label: 'Messages', def: 20 },
@@ -533,38 +661,40 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
                     { key: 'follows', label: 'Follows', def: 20 },
                     { key: 'post_likes', label: 'Post likes', def: 20 },
                     { key: 'comments', label: 'Comments', def: 20 },
-                  ].map((row) => (
-                    <div key={row.key} className="flex items-center justify-between py-3">
+                  ].map((item) => (
+                    <div key={item.key} className="flex items-center justify-between py-2.5">
                       <div>
-                        <span className="text-xs font-semibold text-gray-900 block">{row.label}</span>
-                        <span className="text-[11px] text-gray-400">default of {row.def}</span>
+                        <span className="text-xs font-semibold text-gray-900 block">{item.label}</span>
+                        <span className="text-[11px] text-gray-400">default of {item.def}</span>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => handleLimitChange(row.key, -1)}
-                          className="w-7 h-7 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-600 shadow-2xs transition-colors"
+                          onClick={() => handleLimitChange(item.key, -1)}
+                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs"
                         >
-                          <Minus className="w-3.5 h-3.5" />
+                          <Minus className="w-3 h-3" />
                         </button>
                         <input
                           type="number"
-                          value={limits[row.key] ?? row.def}
+                          min="0"
+                          max="100"
+                          value={limits[item.key] ?? item.def}
                           onChange={(e) => {
                             const val = parseInt(e.target.value, 10);
                             setLimits((prev) => ({
                               ...prev,
-                              [row.key]: isNaN(val) ? 0 : Math.max(0, Math.min(100, val)),
+                              [item.key]: isNaN(val) ? 0 : Math.max(0, Math.min(100, val)),
                             }));
                           }}
-                          className="w-14 h-7 text-center rounded-lg border border-gray-200 bg-white text-xs font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                          className="w-14 h-8 rounded-lg border border-gray-200 bg-white text-center text-xs font-bold text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
                         />
                         <button
                           type="button"
-                          onClick={() => handleLimitChange(row.key, 1)}
-                          className="w-7 h-7 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-600 shadow-2xs transition-colors"
+                          onClick={() => handleLimitChange(item.key, 1)}
+                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3 h-3" />
                         </button>
                       </div>
                     </div>
@@ -576,19 +706,92 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
                 </p>
               </div>
 
-              {/* Bottom CTA Button */}
+              {/* Bottom CTA Button matching media_1790103490135.png */}
               <button
                 type="button"
-                onClick={handleLaunch}
-                disabled={isLaunching}
-                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.99] disabled:opacity-50"
+                onClick={() => setReviewModalOpen(true)}
+                className="w-full py-4 bg-[#5851ea] hover:bg-[#4a42e0] text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.99] cursor-pointer"
               >
-                <span>{isLaunching ? 'Launching campaign...' : 'Review and launch →'}</span>
+                <span>Review and launch →</span>
               </button>
             </div>
           </div>
         )}
       </div>
+
+      {/* Pre-launch Review Modal */}
+      {reviewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 space-y-6">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Review campaign launch</h3>
+                <p className="text-xs text-gray-500">Confirm settings before activating outbound automations</p>
+              </div>
+              <button
+                onClick={() => setReviewModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 text-xs">
+              <div className="p-3 bg-gray-50 rounded-xl flex justify-between">
+                <span className="text-gray-500">Campaign:</span>
+                <span className="font-bold text-gray-900">{campaignName}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl flex justify-between">
+                <span className="text-gray-500">Sending Accounts:</span>
+                <span className="font-bold text-gray-900">{selectedSenders.length} account(s) selected</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl flex justify-between">
+                <span className="text-gray-500">Active Days:</span>
+                <span className="font-bold text-gray-900">
+                  {schedule.filter((s) => s.enabled).map((s) => s.day).join(', ') || 'None'}
+                </span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl flex justify-between">
+                <span className="text-gray-500">Timezone:</span>
+                <span className="font-bold text-gray-900">{timezone}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-xl flex justify-between">
+                <span className="text-gray-500">Max Connection Invites:</span>
+                <span className="font-bold text-indigo-600">{limits.connection_invites} / day / sender</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setReviewModalOpen(false)}
+                className="flex-1 py-3 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Back to edit
+              </button>
+              <button
+                type="button"
+                onClick={handleLaunch}
+                disabled={isLaunching}
+                className="flex-1 py-3 bg-[#5851ea] hover:bg-[#4a42e0] rounded-xl text-xs font-semibold text-white shadow-xs transition-colors disabled:opacity-50"
+              >
+                {isLaunching ? 'Launching...' : 'Confirm and Launch 🚀'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connect LinkedIn Modal */}
+      <ConnectLinkedInModal
+        isOpen={connectModalOpen}
+        onClose={() => setConnectModalOpen(false)}
+        onAccountConnected={(newAcc) => {
+          setSenders((prev) => [...prev, newAcc]);
+          setSelectedSenders((prev) => [...prev, newAcc.id]);
+          showToast(`Account ${newAcc.account_name || 'LinkedIn'} connected!`);
+        }}
+      />
 
       {/* Leads Modal */}
       <ImportLeadsModal
