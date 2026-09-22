@@ -51,9 +51,9 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
   ];
 
   return (
-    <div className="min-h-screen flex bg-neutral-50/50 font-sans text-gray-900 selection:bg-indigo-500 selection:text-white">
+    <div className="h-screen max-h-screen flex bg-neutral-50/50 font-sans text-gray-900 selection:bg-indigo-500 selection:text-white overflow-hidden">
       {/* Prosp Minimal Left Nav Sidebar matching all user screenshots */}
-      <aside className="w-16 md:w-20 border-r border-gray-200/80 bg-white flex flex-col items-center py-5 justify-between shrink-0 z-20">
+      <aside className="w-16 md:w-20 h-full max-h-screen border-r border-gray-200/80 bg-white flex flex-col items-center py-5 justify-between shrink-0 z-20">
         <div className="flex flex-col items-center gap-7 w-full">
           {/* Logo */}
           <div
@@ -115,7 +115,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
       </aside>
 
       {/* Main App Container */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 h-full max-h-screen overflow-hidden">
         {/* Top Header Bar matching Prosp screenshots */}
         {!hideTopHeader && (
           <header className="h-16 px-6 border-b border-gray-200/80 bg-white flex items-center justify-between shrink-0 z-10">
@@ -159,7 +159,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
         )}
 
         {/* Page Content Scroll Area */}
-        <main className={`flex-1 ${isFullBleed ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'}`}>
+        <main className={`flex-1 min-h-0 h-full overflow-hidden ${isFullBleed ? 'flex flex-col' : 'overflow-y-auto'}`}>
           {children}
         </main>
       </div>

@@ -796,7 +796,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
   return (
     <div
-      className="relative flex h-full w-full bg-[#f8fafc] overflow-hidden select-none"
+      className="relative flex flex-1 h-full max-h-full min-h-0 w-full bg-[#f8fafc] overflow-hidden select-none"
       onClick={() => {
         setContextMenuStepId(null);
         setSelectedStepId(null);
@@ -870,8 +870,8 @@ export default function SequenceCanvas({ campaignId, onSave }) {
         <span className="px-2 text-xs font-semibold text-gray-700">{zoomLevel}%</span>
       </div>
 
-      {/* Main Flowchart Tree Canvas Area (Scrollable) */}
-      <div className="flex-1 overflow-auto flex flex-col items-center pt-24 pb-48 px-10">
+      {/* Main Flowchart Tree Canvas Area (Scrollable independently from drawers) */}
+      <div className="flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10">
         <div
           className="flex flex-col items-center transition-transform duration-150 origin-top"
           style={{ transform: `scale(${zoomLevel / 100})` }}
@@ -900,10 +900,10 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       {selectedStep && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-0 right-0 bottom-0 w-96 max-w-[90vw] bg-white border-l border-gray-200 shadow-2xl z-30 flex flex-col animate-slide-left"
+          className="absolute top-0 right-0 bottom-0 w-96 max-w-[90vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-30 flex flex-col overflow-hidden animate-slide-left"
         >
           {/* Drawer Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
                 {React.createElement(getNodeVisuals(selectedStep.type).icon, { className: 'w-5 h-5' })}
@@ -924,7 +924,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           </div>
 
           {/* Drawer Content */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-5 text-left">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5 text-left">
             {/* Timing Stepper */}
             <div>
               <label className="block text-xs font-bold text-gray-900 mb-1">Wait before this step</label>
@@ -1268,9 +1268,9 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       {paletteOpen && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-0 right-0 bottom-0 w-84 bg-white border-l border-gray-200 shadow-2xl z-40 flex flex-col animate-slide-left"
+          className="absolute top-0 right-0 bottom-0 w-96 max-w-[90vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-40 flex flex-col overflow-hidden animate-slide-left"
         >
-          <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
             <div>
               <h3 className="font-bold text-gray-900 text-sm">Add a step</h3>
               <p className="text-xs text-gray-400">Pick what happens next in this path.</p>
@@ -1286,7 +1286,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 text-left">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6 text-left">
             {/* LinkedIn Actions */}
             <div>
               <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400 block mb-2">

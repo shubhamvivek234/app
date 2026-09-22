@@ -42,7 +42,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
   }, []);
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-white overflow-hidden">
+    <div className="flex flex-col h-full max-h-full min-h-0 bg-white overflow-hidden">
       {/* Top Navigation Bar matching Prosp (media_1790088159049.png) */}
       <div className="border-b border-gray-200/80 bg-white z-20 shrink-0">
         {/* Row 1: Workspace info & Main title actions */}
@@ -162,7 +162,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', on
       </div>
 
       {/* Main Wizard Area */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 h-full overflow-hidden relative flex flex-col">
         {/* Step 1: Leads Setup */}
         {currentStep === 1 && (
           <div className="max-w-4xl mx-auto px-6 py-12 text-center">
