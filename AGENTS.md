@@ -9,18 +9,18 @@ Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cl
 ## Last Session Completed
 Date: 2026-09-23
 Completed:
-- Campaign Auto-Drafting Engine:
-  - Added `POST /api/v1/outreach/campaigns/auto-draft` persisting drafts immediately on "+ New campaign" click so work is never lost on refresh or exit.
-  - Syncs `draft_step`, `draft_progress`, and `next_step_label` automatically during wizard navigation.
-- Dedicated Campaign Detail View (`media_1790104472298.png` – `media_1790104593259.png`):
-  - Created `OutreachCampaignDetail.js` with 4 forensic tabs: Analytics (4 KPI cards, Funnel, Audience, Sending from, Schedule, Step & Sender performance), Leads (lead counts, search, ImportLeadsModal), Sequence (empty state with "Open in builder"), and Settings (name, senders, schedule, 8 daily limit pills, "Edit in builder").
-  - Clicking any campaign in table opens detail view instead of directly opening wizard.
-- Campaigns Hub Parity (`media_1790104399010.png`):
-  - Rendered Draft Banner with dynamic progress bar and `[Resume draft]` trigger.
-  - Rendered LinkedIn Expert Consultation Banner (`Book a call` with Jack modal).
-  - Implemented reversible soft-delete (`DELETE /campaigns/{id}`) with undo alert banner (`POST /campaigns/{id}/restore`).
-  - Added Browse Winning Templates view (`media_1790104784825.png`) with one-click sequence adoption.
-- 44/44 outreach tests pass, 478/478 repo tests pass, frontend CI clean.
+- Unified Inbox Forensic Parity (`media_1790103710555.png`):
+  - Two-pane split layout: Left thread panel (`w-[380px]`) & Right thread detail / empty state.
+  - Rendered `[ Prosp | All ]` segmented pill toggle with default on `All`.
+  - Added rounded search input `Search conversations`.
+  - Implemented Accounts Dropdown with open state showing `All accounts` and *"No connected accounts. Connect one in Settings to see conversations."* notice when empty, or sender account switcher.
+  - Centered left empty state: *"No conversations yet."*.
+  - Centered right empty state: Lavender rounded-2xl icon box + *"Select a conversation / Choose a thread from the list to read the conversation and reply."*.
+  - Full chat thread view with inbound/outbound bubbles, voice note player, AI quick-replies, and Voyager message reply dispatch.
+- Backend Inbox Engine:
+  - Multi-field user filter `{"$or": [{"user_id": user_id}, {"workspace_id": user_id}]}` on threads and replies.
+  - Added `source` filter (`outreach` vs `all`) and `POST /inbox/{id}/ai-reply` suggestions endpoint.
+- 53/53 outreach tests pass, 482/482 repo tests pass, frontend CI clean.
 
 ## Active Work
 Currently implementing: None

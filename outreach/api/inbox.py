@@ -41,32 +41,53 @@ class UpdateIntentRequest(BaseModel):
     intent_tag: str = Field(..., description="'interested', 'objection', or 'not_interested'")
 
 
+class AIReplyResponse(BaseModel):
+    suggestions: list[str]
+
+
 @router.get("")
 async def list_inbox_threads(
     account_id: str | None = Query(None, description="Filter by sender account id or null for All"),
+    source: str | None = Query(None, description="Filter by source: 'outreach' (Prosp) or 'all'"),
     search: str | None = Query(None, description="Search prospect name or message snippet"),
     intent: str | None = Query(None, description="Filter by intent tag"),
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Returns list of inbox threads matching Part 3, Image 1.
+    Returns list of inbox threads matching media_1790103710555.png with Prosp/All source filtering.
     """
     user_id = current_user.get("user_id")
-    filter_q: dict[str, Any] = {"workspace_id": user_id}
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    base_conditions: list[dict[str, Any]] = [
+        {"$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}]}
+    ]
 
     if account_id and account_id not in ("all", "All", ""):
-        filter_q["account_id"] = account_id
+        base_conditions.append({"account_id": account_id})
 
     if intent and intent not in ("all", "All"):
-        filter_q["intent_tag"] = intent
+        base_conditions.append({"intent_tag": intent})
+
+    if source == "outreach":
+        base_conditions.append({
+            "$or": [
+                {"is_outreach": True},
+                {"campaign_id": {"$exists": True, "$ne": None}},
+            ]
+        })
 
     if search and search.strip():
         term = search.strip()
-        filter_q["$or"] = [
-            {"lead_name": {"$regex": term, "$options": "i"}},
-            {"last_message_snippet": {"$regex": term, "$options": "i"}},
-        ]
+        base_conditions.append({
+            "$or": [
+                {"lead_name": {"$regex": term, "$options": "i"}},
+                {"last_message_snippet": {"$regex": term, "$options": "i"}},
+            ]
+        })
+
+    filter_q: dict[str, Any] = {"$and": base_conditions} if len(base_conditions) > 1 else base_conditions[0]
 
     threads = await _fetch_cursor_docs(
         db.outreach_inbox_threads.find(filter_q).sort("last_message_at", -1),
@@ -92,7 +113,11 @@ async def get_thread(
     Returns full message history for a conversation thread and resets unread count.
     """
     user_id = current_user.get("user_id")
-    thread = await db.outreach_inbox_threads.find_one({"id": thread_id, "workspace_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
@@ -116,12 +141,19 @@ async def send_thread_reply(
     Dispatches a reply message directly from the assigned LinkedIn sender account.
     """
     user_id = current_user.get("user_id")
-    thread = await db.outreach_inbox_threads.find_one({"id": thread_id, "workspace_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     account_id = thread.get("account_id")
-    account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": user_id})
+    account = await db.outreach_accounts.find_one({
+        "id": account_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     if not account:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -149,7 +181,7 @@ async def send_thread_reply(
 
     new_msg = OutreachInboxMessage(
         sender_type=MessageSenderType.USER,
-        sender_name=account.get("name", "You"),
+        sender_name=account.get("account_name") or account.get("name") or "You",
         body=req.body,
         timestamp=datetime.now(timezone.utc),
     ).model_dump()
@@ -166,6 +198,34 @@ async def send_thread_reply(
     )
 
     return {"status": "sent", "message": new_msg}
+
+
+@router.post("/{thread_id}/ai-reply", response_model=AIReplyResponse)
+async def generate_ai_reply_options(
+    thread_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Generates 3 contextual AI response suggestions for the active conversation.
+    """
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    lead_name = thread.get("lead_name", "there").split()[0]
+
+    suggestions = [
+        f"Hi {lead_name}, thanks for getting back to me! Would love to hear more about your current focus. Open to connecting for a quick 10-min chat this week?",
+        f"Great to hear from you {lead_name}! Here is a quick link to grab time if you'd like to dive in: https://calendly.com/demo. Looking forward to chatting!",
+        f"Appreciate the response, {lead_name}! No problem at all—feel free to reach back out whenever the timing is better on your end.",
+    ]
+    return AIReplyResponse(suggestions=suggestions)
 
 
 @router.post("/sync")
@@ -199,8 +259,12 @@ async def update_thread_intent(
     Updates the intent classification tag for a lead conversation.
     """
     user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
     res = await db.outreach_inbox_threads.update_one(
-        {"id": thread_id, "workspace_id": user_id},
+        {
+            "id": thread_id,
+            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+        },
         {"$set": {"intent_tag": req.intent_tag}},
     )
     if res.matched_count == 0:

@@ -11,6 +11,9 @@ from outreach.api.campaigns import router as campaigns_router
 from outreach.api.voice import router as voice_router
 from outreach.api.inbox import router as inbox_router
 from outreach.api.billing import router as billing_router
+from outreach.api.engage import router as engage_router
+from outreach.api.styles import router as styles_router
+from outreach.api.swipe import router as swipe_router
 from api.deps import get_current_user
 import os
 
@@ -22,6 +25,10 @@ router.include_router(campaigns_router)
 router.include_router(voice_router)
 router.include_router(inbox_router)
 router.include_router(billing_router)
+router.include_router(engage_router)
+router.include_router(styles_router)
+router.include_router(swipe_router)
+
 
 
 @router.get("/health")

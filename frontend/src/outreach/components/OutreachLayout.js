@@ -8,6 +8,8 @@ import {
   Settings as SettingsIcon,
   Plus,
   ChevronDown,
+  Sparkles,
+  Bookmark,
 } from 'lucide-react';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -45,10 +47,13 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
   const navItems = [
     { id: 'home', label: 'Home', icon: LayoutGrid },
     { id: 'campaigns', label: 'Campaigns', icon: Send },
+    { id: 'engage', label: 'Engage', icon: Sparkles },
     { id: 'leads', label: 'Leads', icon: Users },
     { id: 'inbox', label: 'Inbox', icon: Mail },
     { id: 'voice', label: 'Voice', icon: Mic },
+    { id: 'swipe', label: 'Swipe', icon: Bookmark },
   ];
+
 
   return (
     <div className="h-screen max-h-screen flex bg-neutral-50/50 font-sans text-gray-900 selection:bg-indigo-500 selection:text-white overflow-hidden">

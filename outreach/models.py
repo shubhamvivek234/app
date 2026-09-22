@@ -276,14 +276,113 @@ class OutreachInboxThread(BaseModel):
 
     id: str = Field(default_factory=generate_uuid)
     workspace_id: str
+    user_id: str | None = None
     account_id: str  # Connected sender account that received it
     lead_id: str | None = None
     lead_name: str
     lead_avatar: str | None = None
     lead_headline: str | None = None
+    lead_company: str | None = None
+    lead_title: str | None = None
     lead_urn: str
+    is_outreach: bool = False
+    campaign_id: str | None = None
+    campaign_name: str | None = None
     last_message_snippet: str = ""
     last_message_at: datetime = Field(default_factory=utc_now)
     unread_count: int = 0
     intent_tag: str | None = None  # "interested", "objection", "not_interested"
     messages: list[OutreachInboxMessage] = Field(default_factory=list)
+
+
+# ── Engage & Warm Outreach Models ──────────────────────────────────────────
+
+class EngageList(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    name: str
+    emoji: str = "🎯"
+    description: str = ""
+    contacts_count: int = 0
+    pending_posts_count: int = 0
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class EngageContact(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    list_id: str
+    workspace_id: str
+    profile_url: str
+    vanity_name: str = ""
+    full_name: str = ""
+    headline: str = ""
+    avatar_url: str = ""
+    profile_urn: str = ""
+    last_fetched_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class EngagePost(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    list_id: str
+    contact_id: str
+    workspace_id: str
+    author_name: str
+    author_headline: str = ""
+    author_avatar: str = ""
+    author_profile_url: str = ""
+    author_urn: str = ""
+    post_urn: str
+    post_url: str = ""
+    published_at: str = ""
+    content_text: str = ""
+    reactions_count: int = 0
+    comments_count: int = 0
+    media_urls: list[str] = Field(default_factory=list)
+    status: str = "pending"  # pending, liked, commented, discarded
+    user_comment: str = ""
+    commented_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+# ── Content Writing Styles & Swipe Files ───────────────────────────────────
+
+class WritingStyle(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    name: str
+    sample_posts: list[str] = Field(default_factory=list)
+    extracted_style_prompt: str = ""
+    tone_keywords: list[str] = Field(default_factory=list)
+    is_default: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class SwipeFileItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    author_name: str = ""
+    author_avatar: str = ""
+    content_text: str = ""
+    tags: list[str] = Field(default_factory=list)
+    post_url: str = ""
+    reactions_count: int = 0
+    comments_count: int = 0
+    is_archived: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+

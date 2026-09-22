@@ -7,6 +7,8 @@ import OutreachInbox from './pages/OutreachInbox';
 import OutreachVoice from './pages/OutreachVoice';
 import OutreachSettings from './pages/OutreachSettings';
 import OutreachCampaignWizard from './pages/OutreachCampaignWizard';
+import OutreachEngage from './pages/OutreachEngage';
+import OutreachSwipeFiles from './pages/OutreachSwipeFiles';
 
 export default function OutreachApp({ initialTab = 'home' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -59,12 +61,15 @@ export default function OutreachApp({ initialTab = 'home' }) {
               onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
             />
           )}
+          {activeTab === 'engage' && <OutreachEngage />}
           {activeTab === 'leads' && <OutreachLeads />}
           {activeTab === 'inbox' && <OutreachInbox />}
           {activeTab === 'voice' && <OutreachVoice />}
+          {activeTab === 'swipe' && <OutreachSwipeFiles />}
           {activeTab === 'settings' && <OutreachSettings />}
         </>
       )}
     </OutreachLayout>
   );
 }
+
