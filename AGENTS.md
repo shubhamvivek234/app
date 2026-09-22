@@ -9,14 +9,13 @@ Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cl
 ## Last Session Completed
 Date: 2026-09-22
 Completed:
-- Fixed Campaign Wizard View Isolation:
-  - Wizard opens as a dedicated full-page screen instead of stacking at the bottom of the Home dashboard.
-  - Added Prosp top bar (`← Back`, campaign name input, `Save as template`, `Save and close`, progress bar, `Next: Launch →`).
-- Fixed Flowchart Connecting Lines in Sequence Canvas:
-  - Built crisp SVG orthogonal connector lines (`#cbd5e1`), vertical trunks, and branch splitters.
-  - Implemented condition pills (`✓ accepted` vs `✕ not accepted yet`, `✓ replied` vs `✕ no reply`), centered `+` insertion nodes, `[End]` pills.
-  - Added Prosp step inspector right drawers for Voice Note (voice cloner pills, 490 char script, token insertion), InMail, and connection notes.
-- 38/38 unit tests pass, frontend CI build clean, pushed to `main` (`9699747`).
+- Shipped Dynamic Recursive Sequence Tree Engine (Prosp Parity):
+  - Full recursive hierarchy matching screenshots (`media_1790088300707.png`, `media_1790088397090.png`, `media_1790088446398.png`).
+  - Condition nodes (`If connected` -> `✕ not connected` vs `✓ connected`) with amber chain styling.
+  - Inline card header delay editor (`🕒 [ 4 ] [ days ▾ ] [ ✓ ]`).
+  - Card context menu (`⋮` -> `Edit step`, `Delete step`).
+  - Dynamic step/condition insertion at any `+` point, live toast banners, and right drawer inspector.
+- 38/38 unit tests pass, frontend CI build clean, pushed to `main` (`2c2d52a`).
 
 ## Active Work
 Currently implementing: None
