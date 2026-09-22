@@ -8,8 +8,8 @@ import {
   Settings as SettingsIcon,
   Plus,
   ChevronDown,
-  Sparkles,
 } from 'lucide-react';
+import UnravlerLogo from '@/components/UnravlerLogo';
 
 export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hideTopHeader = false, isFullBleed = false, children }) {
   const [workspaceName, setWorkspaceName] = useState('My First Workspace');
@@ -58,9 +58,11 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
           {/* Logo */}
           <div
             onClick={() => onNavigate('home')}
-            className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-400 flex items-center justify-center cursor-pointer shadow-xs hover:opacity-90 transition-opacity"
+            className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-400 text-white flex items-center justify-center cursor-pointer shadow-xs hover:opacity-95 hover:scale-105 active:scale-95 transition-all p-2 focus:outline-none"
+            title="Unravler Outreach - Home"
+            aria-label="Unravler Outreach - Home"
           >
-            <Sparkles className="w-5 h-5 text-white" />
+            <UnravlerLogo size="small" showText={false} color="white" />
           </div>
 
           {/* Navigation Items */}

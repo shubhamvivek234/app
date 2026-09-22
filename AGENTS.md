@@ -17,6 +17,7 @@ Completed:
   - Timezone selector with UTC offset and local time previews.
   - Safe defaults reset trigger and 8 daily limits stepper controls (`[-] [ 20 ] [+]`).
   - Pre-flight review modal and Connect LinkedIn modal integration before launching (`1bc9fa6`).
+- Replaced top-left sidebar sparkle icon in `OutreachLayout.js` with official circular (`rounded-full`) Unravler logo mark (`UnravlerLogo` component with white color and hover scale/active feedback).
 - 38/38 unit tests pass, frontend CI build clean, pushed to `main`, EC2 synced.
 
 ## Active Work
