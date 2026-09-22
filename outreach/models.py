@@ -93,6 +93,9 @@ class OutreachAccount(BaseModel):
     vanity_name: str | None = None
     auth_mode: AccountAuthMode = AccountAuthMode.COOKIE
     session_cookie_enc: str = ""  # Encrypted li_at
+    li_a_enc: str = ""            # Encrypted li_a (Sales Nav / Recruiter)
+    premium_product: str = "classic"  # classic, sales_navigator, recruiter
+    user_agent: str = ""
     jsession_id: str = ""
     status: AccountStatus = AccountStatus.ACTIVE
     country_code: str = "US"

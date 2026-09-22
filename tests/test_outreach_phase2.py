@@ -80,6 +80,9 @@ async def test_connect_via_cookie_endpoint_end_to_end():
 
     req = ConnectCookieRequest(
         li_at="mock_li_at_sample_99",
+        li_a="mock_li_a_nav_99",
+        premium_product="sales_navigator",
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         jsession_id="ajax:12345",
         country_code="US",
         workspace_id="ws_test",
@@ -90,11 +93,17 @@ async def test_connect_via_cookie_endpoint_end_to_end():
 
     assert result["account_name"] != ""
     assert result["country_code"] == "US"
+    assert result["premium_product"] == "sales_navigator"
+    assert result["user_agent"] == "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     assert "session_cookie_enc" not in result  # Sanitized!
+    assert "li_a_enc" not in result  # Sanitized!
     assert result["proxy"]["host"] == "127.0.0.1"
     assert "password_enc" not in result["proxy"]  # Sanitized!
     assert len(inserted_docs) == 1
     assert inserted_docs[0]["session_cookie_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
+    assert inserted_docs[0]["li_a_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
+    assert inserted_docs[0]["premium_product"] == "sales_navigator"
+
 
 
 @pytest.mark.asyncio

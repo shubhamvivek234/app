@@ -40,6 +40,8 @@ class SessionAuthenticator:
         li_at: str,
         jsession_id: str = "",
         proxy_url: str | None = None,
+        user_agent: str | None = None,
+        li_a: str | None = None,
     ) -> dict[str, Any]:
         """
         Validates the li_at session cookie against LinkedIn's voyager /me endpoint.
@@ -62,9 +64,16 @@ class SessionAuthenticator:
             }
 
         # Live Voyager API validation
+        cookie_parts = [f'li_at={clean_cookie}']
+        if li_a and li_a.strip():
+            clean_li_a = li_a.strip().strip('"')
+            cookie_parts.append(f'li_a="{clean_li_a}"')
+        cookie_parts.append(f'JSESSIONID="{jsession_id or "ajax:123456789"}"')
+
+        default_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Cookie": f'li_at={clean_cookie}; JSESSIONID="{jsession_id or "ajax:123456789"}"',
+            "User-Agent": (user_agent.strip() if user_agent and user_agent.strip() else default_ua),
+            "Cookie": "; ".join(cookie_parts),
             "Csrf-Token": jsession_id or "ajax:123456789",
             "X-RestLi-Protocol-Version": "2.0.0",
         }

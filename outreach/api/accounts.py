@@ -35,6 +35,9 @@ router = APIRouter(prefix="/accounts", tags=["LinkedIn Outreach Accounts"])
 
 class ConnectCookieRequest(BaseModel):
     li_at: str = Field(..., description="LinkedIn session cookie li_at")
+    li_a: str | None = Field(default="", description="Optional li_a cookie for Sales Navigator or Recruiter")
+    premium_product: str = Field(default="classic", description="classic, sales_navigator, or recruiter")
+    user_agent: str | None = Field(default="", description="Browser user agent string")
     jsession_id: str | None = Field(default="", description="Optional JSESSIONID cookie")
     country_code: str = Field(default="US", description="2-letter ISO country code for proxy matching")
     workspace_id: str | None = None
@@ -69,6 +72,7 @@ def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
     """Strips secret tokens from response payloads."""
     clean = dict(acc)
     clean.pop("session_cookie_enc", None)
+    clean.pop("li_a_enc", None)
     clean.pop("_id", None)
     if clean.get("proxy"):
         clean["proxy"] = dict(clean["proxy"])
@@ -121,6 +125,8 @@ async def connect_via_cookie(
             li_at=req.li_at,
             jsession_id=req.jsession_id or "",
             proxy_url=proxy_url,
+            user_agent=req.user_agent,
+            li_a=req.li_a,
         )
     except InvalidSessionError as exc:
         # Release the proxy if cookie validation fails
@@ -129,6 +135,7 @@ async def connect_via_cookie(
 
     # 3. Encrypt session tokens
     enc_cookie = encrypt_secret(req.li_at)
+    enc_li_a = encrypt_secret(req.li_a.strip()) if req.li_a and req.li_a.strip() else ""
     account_doc = OutreachAccount(
         workspace_id=workspace_id,
         user_id=user_id,
@@ -138,6 +145,9 @@ async def connect_via_cookie(
         vanity_name=profile_data.get("vanity_name"),
         auth_mode=AccountAuthMode.COOKIE,
         session_cookie_enc=enc_cookie,
+        li_a_enc=enc_li_a,
+        premium_product=req.premium_product or "classic",
+        user_agent=req.user_agent or "",
         jsession_id=req.jsession_id or "",
         status=AccountStatus.ACTIVE,
         country_code=req.country_code,

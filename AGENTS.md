@@ -23,7 +23,12 @@ Completed:
   - Implemented real volume/silence detection with Prosp error prompt on silent recordings.
   - Fixed synthetic audio generator producing audible WAV bytes for browser preview.
   - Integrated `SequenceNodeType.VOICE_NOTE` into `SequenceExecutor` with Voyager dispatch.
-- 40/40 unit tests pass, frontend CI build clean, pushed to `main`, EC2 synced.
+- Full forensic parity & end-to-end verification for Connect LinkedIn (`media_1790104087386.png`, `media_1790020960165.png`):
+  - Screen 1 Mode Selection: Email/password and Session Cookie cards with soft purple & amber iconography.
+  - Screen 2 Session Cookie: `li_at session cookie`, `li_a cookie` optional, `Premium product` dropdown (Classic, Sales Navigator, Recruiter), and prefilled `Browser user agent`.
+  - Backend API: `ConnectCookieRequest` and `OutreachAccount` support for encrypted `li_a_enc`, `premium_product`, and `user_agent`.
+  - Settings Accounts page layout: `LinkedIn accounts` heading, dark `Connect account` trigger, and matching empty state card.
+- 40/40 outreach tests pass, 474/474 repo tests pass, frontend CI clean.
 
 ## Active Work
 Currently implementing: None

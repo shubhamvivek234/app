@@ -72,45 +72,33 @@ export default function OutreachAccounts() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">LinkedIn Accounts</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage your connected LinkedIn senders. Each account is isolated on its own static residential proxy.
-          </p>
-        </div>
+    <div className="max-w-6xl mx-auto">
+      {/* Header matching Prosp media_1790020960165.png */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-base font-bold text-gray-900">LinkedIn accounts</h2>
         <button
           onClick={() => setModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors shadow-sm"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-[#2e266f] hover:bg-[#251e5c] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
         >
-          <Plus className="h-4 w-4" />
           Connect account
         </button>
       </div>
 
-      {/* Account Cards */}
+      {/* Account Cards or Empty State */}
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400">
           <RefreshCw className="h-6 w-6 animate-spin" />
         </div>
       ) : accounts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 p-12 text-center bg-gray-50/50">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 mb-4">
-            <Shield className="h-6 w-6" />
-          </div>
-          <h3 className="text-base font-semibold text-gray-900">No accounts connected yet</h3>
-          <p className="text-sm text-gray-500 mt-1 max-w-sm mx-auto">
-            Connect your first LinkedIn account to start launching automated connection requests and voice notes.
-          </p>
+        <div className="rounded-xl border border-gray-200/80 bg-gray-50/50 p-6 text-xs sm:text-sm text-gray-500">
+          No accounts connected yet. Click{' '}
           <button
             onClick={() => setModalOpen(true)}
-            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+            className="font-semibold text-gray-800 hover:underline"
           >
-            <Plus className="h-4 w-4" />
             Connect account
-          </button>
+          </button>{' '}
+          to add one.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
