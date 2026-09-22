@@ -8,18 +8,21 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
   const [cookieValue, setCookieValue] = useState('');
   const [liAValue, setLiAValue] = useState('');
   const [premiumProduct, setPremiumProduct] = useState('classic');
-  const [userAgent, setUserAgent] = useState('');
+  const [userAgent, setUserAgent] = useState(() => (
+    typeof window !== 'undefined' && typeof navigator !== 'undefined' ? (navigator.userAgent || '') : ''
+  ));
   const [countryCode, setCountryCode] = useState('US');
   const [twoFactorSession, setTwoFactorSession] = useState(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Sync userAgent on mount if empty
   useEffect(() => {
-    if (typeof navigator !== 'undefined') {
+    if (!userAgent && typeof navigator !== 'undefined') {
       setUserAgent(navigator.userAgent || '');
     }
-  }, []);
+  }, [userAgent]);
 
   // Reset internal states when opened
   useEffect(() => {
@@ -33,10 +36,37 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
 
   if (!isOpen) return null;
 
+  // Smart cookie extractors in case user copies full cookie strings
+  const handleCookieChange = (val) => {
+    if (val.includes('li_at=')) {
+      const match = val.match(/li_at=([^;]+)/);
+      if (match) {
+        setCookieValue(match[1].trim().replace(/^["']|["']$/g, ''));
+      }
+      const matchLiA = val.match(/li_a=([^;]+)/);
+      if (matchLiA && !liAValue) {
+        setLiAValue(matchLiA[1].trim().replace(/^["']|["']$/g, ''));
+      }
+      return;
+    }
+    setCookieValue(val.trim().replace(/^["']|["']$/g, ''));
+  };
+
+  const handleLiAChange = (val) => {
+    if (val.includes('li_a=')) {
+      const match = val.match(/li_a=([^;]+)/);
+      if (match) {
+        setLiAValue(match[1].trim().replace(/^["']|["']$/g, ''));
+        return;
+      }
+    }
+    setLiAValue(val.trim().replace(/^["']|["']$/g, ''));
+  };
+
   const handleConnectCookie = async (e) => {
     e.preventDefault();
     if (!cookieValue.trim()) {
-      setError('Please enter your li_at session cookie');
+      setError('Please paste your li_at session cookie');
       return;
     }
     setLoading(true);
@@ -152,11 +182,11 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-      <div className="relative w-full max-w-[480px] rounded-2xl bg-white p-7 shadow-2xl border border-gray-100 transition-all">
-        {/* Close Button top right */}
+      <div className="relative w-full max-w-[490px] rounded-2xl bg-white p-7 sm:p-8 shadow-2xl border border-gray-100 transition-all">
+        {/* Close Button matching Prosp media_1790104087386.png */}
         <button
           onClick={onClose}
-          className="absolute right-5 top-5 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 border border-gray-200/80 transition-colors"
+          className="absolute right-6 top-6 rounded-md border border-gray-200 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
           aria-label="Close"
         >
           <X className="h-4 w-4" />
@@ -236,12 +266,12 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                 <input
                   type="text"
                   value={cookieValue}
-                  onChange={(e) => setCookieValue(e.target.value)}
+                  onChange={(e) => handleCookieChange(e.target.value)}
                   placeholder="Value of the li_at cookie"
-                  className="w-full rounded-xl border border-gray-200/90 px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-colors"
                 />
                 <p className="mt-1 text-[11px] text-gray-500 leading-normal">
-                  From linkedin.com → DevTools → Application → Cookies → copy the <span className="text-gray-700 font-mono">li_at</span> value.
+                  From linkedin.com → DevTools → Application → Cookies → copy the <code className="bg-gray-100 text-gray-700 px-1 py-0.5 rounded text-[10px] font-mono">li_at</code> value.
                 </p>
               </div>
 
@@ -253,8 +283,8 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                 <input
                   type="text"
                   value={liAValue}
-                  onChange={(e) => setLiAValue(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200/90 px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                  onChange={(e) => handleLiAChange(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-colors"
                 />
               </div>
 
@@ -267,7 +297,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                   <select
                     value={premiumProduct}
                     onChange={(e) => setPremiumProduct(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200/90 bg-white px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 appearance-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 pr-10 cursor-pointer"
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-xs sm:text-sm text-gray-900 appearance-none focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 pr-10 cursor-pointer"
                   >
                     <option value="classic">Classic only</option>
                     <option value="sales_navigator">Sales Navigator</option>
@@ -289,7 +319,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                   type="text"
                   value={userAgent}
                   onChange={(e) => setUserAgent(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200/90 px-3.5 py-2.5 text-xs text-gray-700 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors font-mono truncate"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-xs text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-colors font-mono truncate"
                 />
                 <p className="mt-1 text-[11px] text-gray-500 leading-normal">
                   Prefilled from this browser. Use the same browser you copied the cookie from.
@@ -297,12 +327,12 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
               </div>
             </div>
 
-            {/* Bottom Actions */}
-            <div className="flex items-center gap-3 pt-6 mt-6">
+            {/* Bottom Actions matching Prosp media_1790104087386.png */}
+            <div className="flex items-center gap-3 pt-5 mt-6 border-t border-transparent">
               <button
                 type="button"
                 onClick={() => { setAuthMode(null); setError(null); }}
-                className="flex-1 rounded-xl border border-gray-200 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-2xs"
+                className="flex-1 rounded-xl border border-gray-300 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors shadow-2xs"
               >
                 Cancel
               </button>
@@ -338,7 +368,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="w-full rounded-xl border border-gray-200/90 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
 
@@ -351,17 +381,17 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full rounded-xl border border-gray-200/90 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
             </div>
 
             {/* Bottom Actions */}
-            <div className="flex items-center gap-3 pt-6 mt-6">
+            <div className="flex items-center gap-3 pt-5 mt-6">
               <button
                 type="button"
                 onClick={() => { setAuthMode(null); setError(null); }}
-                className="flex-1 rounded-xl border border-gray-200 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-2xs"
+                className="flex-1 rounded-xl border border-gray-300 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors shadow-2xs"
               >
                 Cancel
               </button>
@@ -397,15 +427,15 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                 value={twoFactorCode}
                 onChange={(e) => setTwoFactorCode(e.target.value)}
                 placeholder="123456"
-                className="w-full text-center tracking-widest text-2xl font-bold rounded-xl border border-gray-300 py-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                className="w-full text-center tracking-widest text-2xl font-bold rounded-xl border border-gray-300 py-3 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
               />
             </div>
 
-            <div className="flex items-center gap-3 pt-6 mt-4">
+            <div className="flex items-center gap-3 pt-5 mt-4">
               <button
                 type="button"
                 onClick={() => { setTwoFactorSession(null); setError(null); }}
-                className="flex-1 rounded-xl border border-gray-200 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-2xs"
+                className="flex-1 rounded-xl border border-gray-300 bg-white py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors shadow-2xs"
               >
                 Cancel
               </button>

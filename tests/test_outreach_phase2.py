@@ -77,6 +77,7 @@ async def test_connect_via_cookie_endpoint_end_to_end():
         return AsyncMock(inserted_id="mock_id_1")
 
     mock_db.outreach_accounts.insert_one = AsyncMock(side_effect=fake_insert)
+    mock_db.outreach_accounts.find_one = AsyncMock(return_value=None)
 
     req = ConnectCookieRequest(
         li_at="mock_li_at_sample_99",
@@ -103,6 +104,31 @@ async def test_connect_via_cookie_endpoint_end_to_end():
     assert inserted_docs[0]["session_cookie_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
     assert inserted_docs[0]["li_a_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
     assert inserted_docs[0]["premium_product"] == "sales_navigator"
+
+
+@pytest.mark.asyncio
+async def test_connect_via_cookie_reconnect_existing():
+    """Verify connect_via_cookie updates existing account when same URN is reconnected."""
+    existing_acc = {
+        "id": "acc_existing_123",
+        "user_id": "user_p2_123",
+        "linkedin_urn": "urn:li:fsd_profile:sample_99",
+        "account_name": "Old Name",
+        "session_cookie_enc": "old_enc",
+    }
+    mock_db = AsyncMock()
+    mock_db.outreach_accounts.find_one = AsyncMock(side_effect=[existing_acc, {**existing_acc, "account_name": "LinkedIn Professional (ample_99)"}])
+    mock_db.outreach_accounts.update_one = AsyncMock()
+
+    req = ConnectCookieRequest(
+        li_at="mock_li_at_sample_99",
+        premium_product="sales_navigator",
+        country_code="US",
+    )
+    user = {"user_id": "user_p2_123"}
+    res = await connect_via_cookie(req=req, current_user=user, db=mock_db)
+    assert res["id"] == "acc_existing_123"
+    mock_db.outreach_accounts.update_one.assert_awaited_once()
 
 
 

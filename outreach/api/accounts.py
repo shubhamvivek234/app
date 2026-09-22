@@ -157,7 +157,32 @@ async def connect_via_cookie(
         updated_at=datetime.now(timezone.utc),
     ).model_dump()
 
-    # 4. Save to MongoDB
+    # 4. Save to MongoDB (update if already exists for this user, otherwise insert)
+    existing = await db.outreach_accounts.find_one({
+        "user_id": user_id,
+        "linkedin_urn": profile_data.get("linkedin_urn"),
+    }) if profile_data.get("linkedin_urn") else None
+
+    if existing and isinstance(existing, dict):
+        await db.outreach_accounts.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "account_name": profile_data["account_name"],
+                "avatar_url": profile_data.get("avatar_url") or existing.get("avatar_url"),
+                "vanity_name": profile_data.get("vanity_name") or existing.get("vanity_name"),
+                "session_cookie_enc": enc_cookie,
+                "li_a_enc": enc_li_a,
+                "premium_product": req.premium_product or "classic",
+                "user_agent": req.user_agent or "",
+                "status": AccountStatus.ACTIVE,
+                "proxy": proxy_config.model_dump(),
+                "updated_at": datetime.now(timezone.utc),
+            }}
+        )
+        updated = await db.outreach_accounts.find_one({"id": existing["id"]})
+        logger.info("Successfully refreshed session for existing LinkedIn account %s", existing["id"])
+        return _sanitize_account(updated)
+
     await db.outreach_accounts.insert_one(account_doc)
     logger.info("Successfully connected LinkedIn account %s for user %s", account_doc["id"], user_id)
     return _sanitize_account(account_doc)

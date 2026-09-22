@@ -147,13 +147,13 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
               </div>
             </div>
 
-            {/* Primary Action Button */}
+            {/* Primary Action Button matching media_1790104087386.png */}
             <div className="flex items-center gap-3">
               <button
                 onClick={onOpenWizard}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-xs transition-colors active:scale-98"
+                className="px-4 py-2 bg-[#2f2b60] hover:bg-[#252250] text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors active:scale-98"
               >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                 Create campaign
               </button>
             </div>
