@@ -10,13 +10,14 @@ Focus: Decoupled Cold Outbound Automation, 1:1 JIT Residential Proxies, Voice Cl
 Date: 2026-09-23
 Completed:
 - Locked right-side drawer to fixed viewport height (`h-full max-h-full overflow-hidden`) so it never stretches vertically when sequence canvas expands (`0681559`).
-- Shipped pixel-perfect Prosp parity for Wizard Step 3 (Launch & Senders) per `media_1790103490135.png`:
-  - Campaign name card, multi-sender account picker with `Select all` / `Clear`.
-  - Weekly hours schedule editor (S-M-T-W-T-F-S) with inline time ranges, copy-to-all weekdays, timezone selector.
-  - Daily limits per sender with safe defaults badge and 8 item counters (`[-] [ 20 ] [+]`).
-  - Full-width `Review and launch →` action.
-- Pixel-matched Leads CRM (`media_1790103640399.png`) and Inbox empty states/account cards (`media_1790103710555.png`).
-- 38/38 unit tests pass, frontend CI build clean, deployed to `main` (`8d4fb36`), EC2 synced.
+- Deep architectural & visual audit of `media_1790103490135.png` implemented on Wizard Step 3:
+  - Heading and subheadings unboxed to background level matching Prosp layout.
+  - Interactive 30-min time slot dropdowns with clock badges, inline `✕` deletion, `+` range adder, and `📋` copy-to-all weekdays.
+  - Fine horizontal dividers between every weekday row (S-M-T-W-T-F-S).
+  - Timezone selector with UTC offset and local time previews.
+  - Safe defaults reset trigger and 8 daily limits stepper controls (`[-] [ 20 ] [+]`).
+  - Pre-flight review modal and Connect LinkedIn modal integration before launching (`1bc9fa6`).
+- 38/38 unit tests pass, frontend CI build clean, pushed to `main`, EC2 synced.
 
 ## Active Work
 Currently implementing: None
