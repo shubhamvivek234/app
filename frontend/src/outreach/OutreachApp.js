@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import OutreachLayout from './components/OutreachLayout';
 import OutreachHome from './pages/OutreachHome';
 import OutreachCampaigns from './pages/OutreachCampaigns';
+import OutreachAnalytics from './pages/OutreachAnalytics';
 import OutreachLeads from './pages/OutreachLeads';
 import OutreachInbox from './pages/OutreachInbox';
 import OutreachVoice from './pages/OutreachVoice';
@@ -61,6 +62,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
               onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
             />
           )}
+          {activeTab === 'analytics' && <OutreachAnalytics />}
           {activeTab === 'engage' && <OutreachEngage />}
           {activeTab === 'leads' && <OutreachLeads />}
           {activeTab === 'inbox' && <OutreachInbox />}

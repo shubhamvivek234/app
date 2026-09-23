@@ -226,6 +226,8 @@ class OutreachLead(BaseModel):
     location: str = ""
     email: str | None = None
     phone: str | None = None
+    country_code: str = "us"
+    pipeline_stage: str = "unassigned"  # unassigned, in_campaign, contacted, replied, call_booked
     custom_variables: dict[str, str] = Field(default_factory=dict)
     
     # State tracking
@@ -292,7 +294,65 @@ class OutreachInboxThread(BaseModel):
     last_message_at: datetime = Field(default_factory=utc_now)
     unread_count: int = 0
     intent_tag: str | None = None  # "interested", "objection", "not_interested"
+    tags: list[str] = Field(default_factory=list)
+    remind_at: datetime | None = None
+    reminder_note: str | None = None
     messages: list[OutreachInboxMessage] = Field(default_factory=list)
+
+
+# ── Inbox Reminders, Snippets & Tags Models ────────────────────────────────
+
+class InboxReminder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    thread_id: str
+    workspace_id: str
+    user_id: str
+    remind_at: datetime
+    note: str = ""
+    is_completed: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class InboxSnippet(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    title: str
+    body: str
+    shortcut: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class InboxTag(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    name: str
+    color: str = "#6366f1"
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+# ── AI Prompt Library Models ───────────────────────────────────────────────
+
+class AIPrompt(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    user_id: str
+    name: str
+    prompt_text: str
+    description: str = ""
+    author_name: str = "User"
+    runs_count: int = 0
+    is_system: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 # ── Engage & Warm Outreach Models ──────────────────────────────────────────

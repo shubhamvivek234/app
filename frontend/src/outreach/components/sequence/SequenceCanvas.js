@@ -3,7 +3,7 @@ import {
   Eye, UserPlus, MessageSquare, Mic, Mail, UserCheck, ThumbsUp, MessageCircle,
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
   CheckCircle2, Sparkles, ChevronRight, Edit3, Trash2, MoreVertical, Navigation,
-  Link2, Check
+  Link2, Check, Search, ExternalLink, Play, Copy, RefreshCw, ChevronDown
 } from 'lucide-react';
 
 const ACTION_DEFINITIONS = [
@@ -177,6 +177,106 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   const [showTip, setShowTip] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const hasLoaded = useRef(false);
+
+  // Prosp AI Parity: AI Prompt Library & Preview State
+  const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
+  const [promptsList, setPromptsList] = useState([]);
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showVariablePicker, setShowVariablePicker] = useState(false);
+  const [showCreatePrompt, setShowCreatePrompt] = useState(false);
+  const [newPromptName, setNewPromptName] = useState('');
+  const [newPromptText, setNewPromptText] = useState('');
+  const [promptSearch, setPromptSearch] = useState('');
+
+  const fetchPrompts = async () => {
+    setPromptsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/prompts', {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPromptsList(data);
+      }
+    } catch (err) {
+      console.error('Failed to load prompts:', err);
+    } finally {
+      setPromptsLoading(false);
+    }
+  };
+
+  const openPromptLibrary = () => {
+    setPromptDrawerOpen(true);
+    fetchPrompts();
+  };
+
+  const insertPromptToken = (promptName) => {
+    insertVariable(`✨ [${promptName}]`);
+    setPromptDrawerOpen(false);
+  };
+
+  const handleCreatePrompt = async () => {
+    if (!newPromptName.trim() || !newPromptText.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/prompts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          name: newPromptName.trim(),
+          prompt_text: newPromptText.trim(),
+          author_name: 'You',
+        }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setPromptsList((prev) => [created, ...prev]);
+        setNewPromptName('');
+        setNewPromptText('');
+        setShowCreatePrompt(false);
+      }
+    } catch (err) {
+      console.error('Failed to create prompt:', err);
+    }
+  };
+
+  const handleOpenPreview = async (step) => {
+    if (!step) return;
+    const template =
+      step.config?.script ||
+      step.config?.body ||
+      step.config?.message ||
+      step.config?.note ||
+      '';
+    setPreviewModalOpen(true);
+    setPreviewLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/prompts/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ template }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPreviewData(data);
+      }
+    } catch (err) {
+      console.error('Failed to preview message:', err);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   // Load existing sequence if campaignId is provided
   useEffect(() => {
@@ -489,6 +589,81 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     if (cond) return { icon: cond.icon, color: cond.color };
     return { icon: Eye, color: 'text-indigo-600 bg-indigo-50' };
   };
+
+  const renderEditorToolbar = () => (
+    <div className="flex flex-col gap-2 mb-2">
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+        <button
+          type="button"
+          onClick={openPromptLibrary}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 shadow-2xs transition-colors shrink-0"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+          AI Prompt
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowVariablePicker(!showVariablePicker)}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200 transition-colors shrink-0"
+        >
+          + Contact Variables
+        </button>
+        <button
+          type="button"
+          onClick={() => handleOpenPreview(selectedStep)}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold border border-indigo-200 shadow-2xs transition-colors ml-auto shrink-0"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          Preview
+        </button>
+      </div>
+
+      {showVariablePicker && (
+        <div className="p-2.5 bg-gray-50/90 rounded-xl border border-gray-200 animate-in fade-in duration-150">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
+            Click variable to insert
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {VARIABLE_PILLS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => insertVariable(v)}
+                className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-white hover:bg-indigo-50 text-indigo-700 text-[11px] font-mono transition-colors shadow-2xs"
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderConditionRuleSelector = () => (
+    <div className="pt-3 border-t border-gray-100">
+      <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">
+        Execution Condition
+      </label>
+      <select
+        value={selectedStep?.config?.condition_rule || 'never_sent_message'}
+        onChange={(e) =>
+          setTree((prev) =>
+            updateNode(prev, selectedStep.id, {
+              config: { ...selectedStep.config, condition_rule: e.target.value },
+            })
+          )
+        }
+        className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+      >
+        <option value="never_sent_message">Send only if recipient has never sent a message</option>
+        <option value="always_send">Always send regardless of recipient replies</option>
+        <option value="only_if_connected">Send only if 1st-degree connected</option>
+        <option value="only_open_profile">Send only if open-profile (Free InMail)</option>
+      </select>
+    </div>
+  );
+
 
   // Render a Single Step Card matching Prosp (media_1790088397090.png)
   const renderCard = (step) => {
@@ -1022,6 +1197,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                 </div>
 
                 <div>
+                  {renderEditorToolbar()}
                   <div className="flex items-center justify-between text-xs font-bold text-gray-900 mb-1">
                     <span>Voice script (490 characters)</span>
                     <span className="text-[11px] font-normal text-gray-400">
@@ -1050,23 +1226,6 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                    Insert variable
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {VARIABLE_PILLS.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => insertVariable(v)}
-                        className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-mono transition-colors"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
                   <label className="block text-xs font-bold text-gray-900 mb-1">
                     Fallback if a variable is missing (490 characters)
                   </label>
@@ -1085,6 +1244,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
                 </div>
+                {renderConditionRuleSelector()}
               </div>
             )}
 
@@ -1109,6 +1269,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                 </div>
 
                 <div>
+                  {renderEditorToolbar()}
                   <div className="flex items-center justify-between text-xs font-bold text-gray-900 mb-1">
                     <span>Message</span>
                     <span className="text-[11px] font-normal text-gray-400">
@@ -1134,23 +1295,6 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                    Insert variable
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {VARIABLE_PILLS.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => insertVariable(v)}
-                        className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-mono transition-colors"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
                   <label className="block text-xs font-bold text-gray-900 mb-1">
                     Fallback if a variable is missing
                   </label>
@@ -1168,6 +1312,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
                 </div>
+                {renderConditionRuleSelector()}
               </div>
             )}
 
@@ -1175,6 +1320,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             {selectedStep.type === 'reply_to_comment' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div>
+                  {renderEditorToolbar()}
                   <label className="block text-xs font-bold text-gray-900 mb-1">
                     AI Reply Template or Comment
                   </label>
@@ -1194,23 +1340,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
-
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                    Insert variable
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {VARIABLE_PILLS.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => insertVariable(v)}
-                        className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-mono transition-colors"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {renderConditionRuleSelector()}
               </div>
             )}
 
@@ -1218,6 +1348,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             {selectedStep.type === 'send_message' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div>
+                  {renderEditorToolbar()}
                   <label className="block text-xs font-bold text-gray-900 mb-1">Direct Message Copy</label>
                   <textarea
                     rows={4}
@@ -1235,23 +1366,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
-
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                    Insert variable
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {VARIABLE_PILLS.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => insertVariable(v)}
-                        className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-mono transition-colors"
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {renderConditionRuleSelector()}
               </div>
             )}
 
@@ -1262,6 +1377,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                   <strong>Prosp Tip:</strong> Connection invites without notes often get 15-20% higher acceptance rates.
                 </div>
                 <div>
+                  {renderEditorToolbar()}
                   <label className="block text-xs font-bold text-gray-900 mb-1">
                     Invite Note (Optional, 300 chars)
                   </label>
@@ -1280,6 +1396,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
+                {renderConditionRuleSelector()}
               </div>
             )}
           </div>
@@ -1392,6 +1509,235 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           </div>
         </div>
       )}
+
+      {/* AI PROMPT LIBRARY DRAWER (Matching seq_180s.jpg, seq_200s.jpg) */}
+      {promptDrawerOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-0 right-0 bottom-0 w-[420px] max-w-[95vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-left"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-purple-100 text-purple-700">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm">AI Prompt Library</h3>
+                <p className="text-[11px] text-gray-400">Insert hyper-personalized prompt instructions</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setPromptDrawerOpen(false)}
+              className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Search & Actions */}
+          <div className="p-4 border-b border-gray-100 space-y-3 shrink-0 bg-gray-50/50">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                value={promptSearch}
+                onChange={(e) => setPromptSearch(e.target.value)}
+                placeholder="Search templates or instructions..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-gray-200 focus:border-purple-600 focus:ring-1 focus:ring-purple-600 bg-white"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                {promptsList.length} Prompts Available
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCreatePrompt(!showCreatePrompt)}
+                className="text-xs font-semibold text-purple-600 hover:text-purple-700"
+              >
+                {showCreatePrompt ? '– Cancel' : '+ Create Custom Prompt'}
+              </button>
+            </div>
+
+            {showCreatePrompt && (
+              <div className="p-3 bg-white rounded-xl border border-purple-200 space-y-2.5 shadow-2xs">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-700 block mb-0.5">Prompt Name</label>
+                  <input
+                    type="text"
+                    value={newPromptName}
+                    onChange={(e) => setNewPromptName(e.target.value)}
+                    placeholder="e.g. Website designer personalised first line"
+                    className="w-full text-xs rounded-lg border border-gray-200 px-2.5 py-1 focus:border-purple-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-700 block mb-0.5">Instruction for AI</label>
+                  <textarea
+                    rows={2}
+                    value={newPromptText}
+                    onChange={(e) => setNewPromptText(e.target.value)}
+                    placeholder="Describe how the LLM should analyze lead profile and what to generate..."
+                    className="w-full text-xs rounded-lg border border-gray-200 p-2 focus:border-purple-600 resize-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreatePrompt}
+                  disabled={!newPromptName.trim() || !newPromptText.trim()}
+                  className="w-full py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-2xs disabled:opacity-50"
+                >
+                  Save Prompt
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Prompts Cards */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+            {promptsLoading ? (
+              <div className="flex items-center justify-center py-12 text-gray-400 text-xs">
+                Loading prompt templates...
+              </div>
+            ) : promptsList
+                .filter((p) =>
+                  !promptSearch ||
+                  p.name.toLowerCase().includes(promptSearch.toLowerCase()) ||
+                  p.prompt_text.toLowerCase().includes(promptSearch.toLowerCase())
+                )
+                .map((prompt) => (
+                  <div
+                    key={prompt.id || prompt.name}
+                    className="p-3.5 rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/20 bg-white transition-all space-y-2 text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-xs text-gray-900">{prompt.name}</span>
+                        {prompt.is_system && (
+                          <span className="text-[9px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.2 rounded">
+                            Curated
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                        {prompt.runs_count ? `${prompt.runs_count} runs` : 'Curated'}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-gray-500 line-clamp-2 leading-relaxed">
+                      {prompt.prompt_text}
+                    </p>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[10px] text-gray-400">By {prompt.author_name || 'Prosp'}</span>
+                      <button
+                        type="button"
+                        onClick={() => insertPromptToken(prompt.name)}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-2xs transition-colors"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        Insert Token
+                      </button>
+                    </div>
+                  </div>
+                ))}
+          </div>
+        </div>
+      )}
+
+      {/* MESSAGE PERSONALIZATION PREVIEW MODAL (Matching seq_240s.jpg) */}
+      {previewModalOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        >
+          <div className="relative w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/60">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-100 text-indigo-700">
+                  <Eye className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Message Personalization Preview</h3>
+                  <p className="text-[11px] text-gray-400">Dynamic AI evaluation against real lead attributes</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPreviewModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-4">
+              {previewLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <RefreshCw className="h-6 w-6 animate-spin text-indigo-600 mb-2" />
+                  <span className="text-xs">Evaluating dynamic AI tokens & variables...</span>
+                </div>
+              ) : previewData ? (
+                <>
+                  {/* Lead Card Context */}
+                  <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 text-white font-bold flex items-center justify-center text-sm shadow-xs">
+                        {previewData.lead_preview?.first_name?.[0]}
+                        {previewData.lead_preview?.last_name?.[0]}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-gray-900">
+                          {previewData.lead_preview?.first_name} {previewData.lead_preview?.last_name}
+                        </h4>
+                        <p className="text-xs text-gray-500 font-medium">
+                          {previewData.lead_preview?.job_title} at{' '}
+                          <span className="text-indigo-600 font-semibold">{previewData.lead_preview?.company_name}</span>
+                        </p>
+                        <p className="text-[10px] text-gray-400">{previewData.lead_preview?.location}</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      Sample Lead
+                    </span>
+                  </div>
+
+                  {/* Evaluated Rendered Message */}
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
+                      Evaluated Output (What prospect receives)
+                    </label>
+                    <div className="p-4 rounded-xl bg-white border border-indigo-200 shadow-xs text-xs text-gray-800 leading-relaxed font-sans whitespace-pre-wrap">
+                      {previewData.evaluated_text || 'No copy written for this step yet.'}
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] text-purple-900 flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+                    <span>
+                      Variables and AI tokens (<code>✨ [...]</code>) will be uniquely computed per lead upon sequence execution.
+                    </span>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 border-t border-gray-100 bg-gray-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPreviewModalOpen(false)}
+                className="px-5 py-2 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

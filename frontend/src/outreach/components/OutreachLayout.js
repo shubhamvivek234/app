@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid,
   Send,
+  BarChart3,
   Users,
   Mail,
   Mic,
@@ -47,6 +48,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
   const navItems = [
     { id: 'home', label: 'Home', icon: LayoutGrid },
     { id: 'campaigns', label: 'Campaigns', icon: Send },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'engage', label: 'Engage', icon: Sparkles },
     { id: 'leads', label: 'Leads', icon: Users },
     { id: 'inbox', label: 'Inbox', icon: Mail },

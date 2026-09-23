@@ -14,6 +14,8 @@ from outreach.api.billing import router as billing_router
 from outreach.api.engage import router as engage_router
 from outreach.api.styles import router as styles_router
 from outreach.api.swipe import router as swipe_router
+from outreach.api.prompts import router as prompts_router
+from outreach.api.analytics import router as analytics_router
 from api.deps import get_current_user
 import os
 
@@ -28,6 +30,8 @@ router.include_router(billing_router)
 router.include_router(engage_router)
 router.include_router(styles_router)
 router.include_router(swipe_router)
+router.include_router(prompts_router)
+router.include_router(analytics_router)
 
 
 

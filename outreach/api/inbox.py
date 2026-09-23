@@ -286,3 +286,339 @@ async def update_thread_intent(
 
     return {"status": "updated", "thread_id": thread_id, "intent_tag": req.intent_tag}
 
+
+# ── Reminders, Snippets & Tags DTOs ────────────────────────────────────────
+
+class CreateReminderRequest(BaseModel):
+    remind_at: datetime
+    note: str = ""
+
+
+class CreateSnippetRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+    shortcut: str = ""
+
+
+class CreateTagRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    color: str = "#6366f1"
+
+
+class ToggleTagRequest(BaseModel):
+    tag_name: str
+
+
+# ── Reminders Endpoints ───────────────────────────────────────────────────
+
+@router.post("/{thread_id}/reminders")
+async def create_thread_reminder(
+    thread_id: str,
+    req: CreateReminderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Schedules a follow-up reminder for a conversation thread."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    import uuid
+    reminder_id = f"rem_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "id": reminder_id,
+        "thread_id": thread_id,
+        "user_id": user_id,
+        "workspace_id": ws_id,
+        "remind_at": req.remind_at,
+        "note": req.note,
+        "is_completed": False,
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await db.outreach_inbox_reminders.insert_one(doc)
+    await db.outreach_inbox_threads.update_one(
+        {"id": thread_id},
+        {"$set": {"remind_at": req.remind_at, "reminder_note": req.note}},
+    )
+
+    doc.pop("_id", None)
+    return {"status": "created", "reminder": doc}
+
+
+@router.get("/{thread_id}/reminders")
+async def list_thread_reminders(
+    thread_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Fetches reminders for a specific thread."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    cursor = db.outreach_inbox_reminders.find({
+        "thread_id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    }).sort("remind_at", 1)
+
+    items = await _fetch_cursor_docs(cursor, length=50)
+    for it in items:
+        it.pop("_id", None)
+    return items
+
+
+@router.delete("/reminders/{reminder_id}")
+async def delete_thread_reminder(
+    reminder_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Deletes or cancels a reminder."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    rem = await db.outreach_inbox_reminders.find_one({
+        "id": reminder_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if not rem:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reminder not found")
+
+    await db.outreach_inbox_reminders.delete_one({"id": reminder_id})
+    await db.outreach_inbox_threads.update_one(
+        {"id": rem["thread_id"]},
+        {"$unset": {"remind_at": "", "reminder_note": ""}},
+    )
+    return {"status": "deleted", "reminder_id": reminder_id}
+
+
+# ── Snippets Endpoints ────────────────────────────────────────────────────
+
+DEFAULT_SNIPPETS = [
+    {
+        "title": "Calendar link",
+        "body": "Let's do it. Here's my calendar link: https://calendly.com/unravler/30min",
+        "shortcut": "cal",
+    },
+    {
+        "title": "Pricing list",
+        "body": "Here's our pricing: Starter is $49/mo, Pro is $99/mo with unlimited sender accounts.",
+        "shortcut": "price",
+    },
+    {
+        "title": "More info",
+        "body": "No problem! Here's a brief overview of how our automated LinkedIn sequences and pre-warming work: https://unravler.com/features",
+        "shortcut": "info",
+    },
+]
+
+@router.get("/snippets/list")
+async def list_snippets(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Lists saved reply snippets. Seeds standard defaults if empty."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    cursor = db.outreach_inbox_snippets.find({
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    }).sort("created_at", 1)
+
+    items = await _fetch_cursor_docs(cursor, length=100)
+    if not items:
+        # Seed defaults
+        import uuid
+        seeded = []
+        for def_s in DEFAULT_SNIPPETS:
+            doc = {
+                "id": f"snp_{uuid.uuid4().hex[:12]}",
+                "user_id": user_id,
+                "workspace_id": ws_id,
+                **def_s,
+                "created_at": datetime.now(timezone.utc),
+            }
+            await db.outreach_inbox_snippets.insert_one(doc)
+            doc.pop("_id", None)
+            seeded.append(doc)
+        return seeded
+
+    for it in items:
+        it.pop("_id", None)
+    return items
+
+
+@router.post("/snippets")
+async def create_snippet(
+    req: CreateSnippetRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Creates a new reusable saved reply snippet."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    import uuid
+    doc = {
+        "id": f"snp_{uuid.uuid4().hex[:12]}",
+        "user_id": user_id,
+        "workspace_id": ws_id,
+        "title": req.title.strip(),
+        "body": req.body.strip(),
+        "shortcut": req.shortcut.strip(),
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await db.outreach_inbox_snippets.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.delete("/snippets/{snippet_id}")
+async def delete_snippet(
+    snippet_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Deletes a saved snippet."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    res = await db.outreach_inbox_snippets.delete_one({
+        "id": snippet_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snippet not found")
+    return {"status": "deleted", "snippet_id": snippet_id}
+
+
+# ── Tags Endpoints ────────────────────────────────────────────────────────
+
+DEFAULT_TAGS = [
+    {"name": "Wants to speak later", "color": "#a855f7"},
+    {"name": "Hot lead", "color": "#ef4444"},
+    {"name": "Potential Partner", "color": "#3b82f6"},
+    {"name": "Sequence 1", "color": "#ec4899"},
+    {"name": "Sequence 2", "color": "#06b6d4"},
+]
+
+@router.get("/tags/list")
+async def list_tags(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Lists inbox tags with colored indicators. Seeds defaults if empty."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    cursor = db.outreach_inbox_tags.find({
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    }).sort("created_at", 1)
+
+    items = await _fetch_cursor_docs(cursor, length=100)
+    if not items:
+        import uuid
+        seeded = []
+        for def_t in DEFAULT_TAGS:
+            doc = {
+                "id": f"tag_{uuid.uuid4().hex[:12]}",
+                "user_id": user_id,
+                "workspace_id": ws_id,
+                **def_t,
+                "created_at": datetime.now(timezone.utc),
+            }
+            await db.outreach_inbox_tags.insert_one(doc)
+            doc.pop("_id", None)
+            seeded.append(doc)
+        return seeded
+
+    for it in items:
+        it.pop("_id", None)
+    return items
+
+
+@router.post("/tags")
+async def create_tag(
+    req: CreateTagRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Creates a custom lead tag with color."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    import uuid
+    doc = {
+        "id": f"tag_{uuid.uuid4().hex[:12]}",
+        "user_id": user_id,
+        "workspace_id": ws_id,
+        "name": req.name.strip(),
+        "color": req.color,
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    await db.outreach_inbox_tags.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.delete("/tags/{tag_id}")
+async def delete_tag(
+    tag_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Deletes an inbox tag."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    res = await db.outreach_inbox_tags.delete_one({
+        "id": tag_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+    return {"status": "deleted", "tag_id": tag_id}
+
+
+@router.patch("/{thread_id}/tags")
+async def toggle_thread_tag(
+    thread_id: str,
+    req: ToggleTagRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Toggles a tag on or off a thread."""
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    existing_tags = thread.get("tags") or []
+    tag_name = req.tag_name.strip()
+
+    if tag_name in existing_tags:
+        new_tags = [t for t in existing_tags if t != tag_name]
+    else:
+        new_tags = existing_tags + [tag_name]
+
+    await db.outreach_inbox_threads.update_one(
+        {"id": thread_id},
+        {"$set": {"tags": new_tags}},
+    )
+
+    return {"status": "updated", "thread_id": thread_id, "tags": new_tags}
+
+

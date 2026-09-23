@@ -13,6 +13,15 @@ import {
   Play,
   Pause,
   User,
+  Clock,
+  Tag,
+  Bookmark,
+  Check,
+  Plus,
+  Trash2,
+  Calendar,
+  FileText,
+  X,
 } from 'lucide-react';
 
 export default function OutreachInbox() {
@@ -30,6 +39,27 @@ export default function OutreachInbox() {
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [loadingAi, setLoadingAi] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState(null);
+
+  // Prosp AI Parity: Reminders, Snippets & Tags State
+  const [remindersOpen, setRemindersOpen] = useState(false);
+  const [remindersList, setRemindersList] = useState([]);
+  const [reminderNote, setReminderNote] = useState('');
+  const [reminderDate, setReminderDate] = useState('');
+  const [loadingReminders, setLoadingReminders] = useState(false);
+
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [snippetsList, setSnippetsList] = useState([]);
+  const [snippetSearch, setSnippetSearch] = useState('');
+  const [showCreateSnippet, setShowCreateSnippet] = useState(false);
+  const [newSnippetTitle, setNewSnippetTitle] = useState('');
+  const [newSnippetBody, setNewSnippetBody] = useState('');
+  const [newSnippetShortcut, setNewSnippetShortcut] = useState('');
+
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [tagsList, setTagsList] = useState([]);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#3b82f6');
+  const [showCreateTag, setShowCreateTag] = useState(false);
 
   const messagesEndRef = useRef(null);
 
@@ -79,8 +109,241 @@ export default function OutreachInbox() {
 
   useEffect(() => {
     fetchAccounts();
+    fetchSnippets();
+    fetchTags();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Hotkey listener for [S] Reminders, [C] Snippets, [T] Tags
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        setRemindersOpen((prev) => !prev);
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        setSnippetsOpen((prev) => !prev);
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        setTagsOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const fetchReminders = async (threadId) => {
+    if (!threadId) return;
+    setLoadingReminders(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/inbox/${threadId}/reminders`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRemindersList(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load reminders:', err);
+    } finally {
+      setLoadingReminders(false);
+    }
+  };
+
+  const handleSetReminder = async (quickDays = null) => {
+    if (!selectedThread) return;
+    try {
+      const token = localStorage.getItem('token');
+      let targetDate;
+      if (quickDays !== null) {
+        const d = new Date();
+        d.setDate(d.getDate() + quickDays);
+        d.setHours(9, 0, 0, 0);
+        targetDate = d.toISOString();
+      } else if (reminderDate) {
+        targetDate = new Date(reminderDate).toISOString();
+      } else {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+        targetDate = d.toISOString();
+      }
+
+      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/reminders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          remind_at: targetDate,
+          note: reminderNote.trim() || 'Follow up on conversation',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRemindersList((prev) => [data.reminder, ...prev]);
+        setSelectedThread((prev) => ({
+          ...prev,
+          remind_at: targetDate,
+          reminder_note: reminderNote.trim(),
+        }));
+        setReminderNote('');
+        setReminderDate('');
+        setRemindersOpen(false);
+      }
+    } catch (err) {
+      console.error('Failed to set reminder:', err);
+    }
+  };
+
+  const handleDeleteReminder = async (remId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/inbox/reminders/${remId}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        setRemindersList((prev) => prev.filter((r) => r.id !== remId));
+        setSelectedThread((prev) => ({ ...prev, remind_at: null, reminder_note: null }));
+      }
+    } catch (err) {
+      console.error('Failed to delete reminder:', err);
+    }
+  };
+
+  const fetchSnippets = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/inbox/snippets/list', {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSnippetsList(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load snippets:', err);
+    }
+  };
+
+  const handleCreateSnippet = async () => {
+    if (!newSnippetTitle.trim() || !newSnippetBody.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/inbox/snippets', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          title: newSnippetTitle.trim(),
+          body: newSnippetBody.trim(),
+          shortcut: newSnippetShortcut.trim(),
+        }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setSnippetsList((prev) => [created, ...prev]);
+        setNewSnippetTitle('');
+        setNewSnippetBody('');
+        setNewSnippetShortcut('');
+        setShowCreateSnippet(false);
+      }
+    } catch (err) {
+      console.error('Failed to create snippet:', err);
+    }
+  };
+
+  const handleDeleteSnippet = async (id) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/inbox/snippets/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        setSnippetsList((prev) => prev.filter((s) => s.id !== id));
+      }
+    } catch (err) {
+      console.error('Failed to delete snippet:', err);
+    }
+  };
+
+  const handleInsertSnippet = (snippet) => {
+    setReplyText((prev) => (prev ? `${prev}\n${snippet.body}` : snippet.body));
+    setSnippetsOpen(false);
+  };
+
+  const fetchTags = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/inbox/tags/list', {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTagsList(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load tags:', err);
+    }
+  };
+
+  const handleToggleTag = async (tagName) => {
+    if (!selectedThread) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/tags`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ tag_name: tagName }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedThread((prev) => ({ ...prev, tags: data.tags }));
+        setThreads((prev) =>
+          prev.map((t) => (t.id === selectedThread.id ? { ...t, tags: data.tags } : t))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to toggle tag:', err);
+    }
+  };
+
+  const handleCreateTag = async () => {
+    if (!newTagName.trim()) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/inbox/tags', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          name: newTagName.trim(),
+          color: newTagColor,
+        }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setTagsList((prev) => [...prev, created]);
+        setNewTagName('');
+        setShowCreateTag(false);
+      }
+    } catch (err) {
+      console.error('Failed to create tag:', err);
+    }
+  };
+
 
   useEffect(() => {
     fetchThreads();
@@ -94,6 +357,7 @@ export default function OutreachInbox() {
   const handleSelectThread = async (thread) => {
     setSelectedThread(thread);
     setAiSuggestions([]);
+    fetchReminders(thread.id);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/inbox/${thread.id}`, {
@@ -457,27 +721,107 @@ export default function OutreachInbox() {
                       <ExternalLink className="h-3 w-3" />
                     </a>
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
-                    {selectedThread.lead_headline || selectedThread.lead_title || 'LinkedIn Prospect'}
-                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <p className="text-[11px] text-gray-400">
+                      {selectedThread.lead_headline || selectedThread.lead_title || 'LinkedIn Prospect'}
+                    </p>
+                    {/* Active Lead Tags */}
+                    {(selectedThread.tags || []).map((tName) => {
+                      const tagDef = tagsList.find((t) => t.name === tName);
+                      return (
+                        <span
+                          key={tName}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold border shadow-2xs"
+                          style={{
+                            backgroundColor: `${tagDef?.color || '#6366f1'}15`,
+                            borderColor: `${tagDef?.color || '#6366f1'}40`,
+                            color: tagDef?.color || '#6366f1',
+                          }}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tagDef?.color || '#6366f1' }} />
+                          {tName}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
-              {/* Status / Intent Selector */}
+              {/* Action Tools & Status matching Prosp (prosp_inbox_reminders.jpg) */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-400 font-medium">Status:</span>
+                {/* Reminders Button [S] */}
+                <button
+                  type="button"
+                  onClick={() => setRemindersOpen(!remindersOpen)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-2xs ${
+                    selectedThread.remind_at
+                      ? 'bg-amber-50 text-amber-700 border-amber-300'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-200'
+                  }`}
+                  title="Schedule Follow-up Reminder (Press S)"
+                >
+                  <Clock className={`w-3.5 h-3.5 ${selectedThread.remind_at ? 'text-amber-600' : 'text-gray-400'}`} />
+                  <span>Reminders</span>
+                  <kbd className="text-[9px] px-1 bg-gray-100 rounded text-gray-500 font-mono">S</kbd>
+                </button>
+
+                {/* Snippets Button [C] */}
+                <button
+                  type="button"
+                  onClick={() => setSnippetsOpen(!snippetsOpen)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-xs font-semibold transition-all shadow-2xs"
+                  title="Saved Reply Snippets (Press C)"
+                >
+                  <Bookmark className="w-3.5 h-3.5 text-gray-400" />
+                  <span>Snippets</span>
+                  <kbd className="text-[9px] px-1 bg-gray-100 rounded text-gray-500 font-mono">C</kbd>
+                </button>
+
+                {/* Tags Button [T] */}
+                <button
+                  type="button"
+                  onClick={() => setTagsOpen(!tagsOpen)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-xs font-semibold transition-all shadow-2xs"
+                  title="Assign Tags (Press T)"
+                >
+                  <Tag className="w-3.5 h-3.5 text-gray-400" />
+                  <span>Tags</span>
+                  <kbd className="text-[9px] px-1 bg-gray-100 rounded text-gray-500 font-mono">T</kbd>
+                </button>
+
+                {/* Status / Intent Selector */}
                 <select
                   value={selectedThread.intent_tag || ''}
                   onChange={(e) => handleUpdateIntent(e.target.value)}
                   className="text-xs border border-gray-200 rounded-xl px-3 py-1.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white shadow-2xs font-semibold"
                 >
-                  <option value="">No tag</option>
+                  <option value="">No status tag</option>
                   <option value="interested">Interested</option>
                   <option value="objection">Question / Objection</option>
                   <option value="not_interested">Not Interested</option>
                 </select>
               </div>
             </div>
+
+            {/* Reminder Alert Banner */}
+            {selectedThread.remind_at && (
+              <div className="px-6 py-2 bg-amber-50/80 border-b border-amber-200/60 flex items-center justify-between text-xs text-amber-900 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>
+                    Reminder: <strong>{new Date(selectedThread.remind_at).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</strong>
+                    {selectedThread.reminder_note && ` — "${selectedThread.reminder_note}"`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteReminder(remindersList[0]?.id || 'active')}
+                  className="text-amber-700 hover:text-amber-900 text-[11px] font-semibold underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             {/* Messages Scroll Area */}
             <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-gray-50/40">
@@ -550,6 +894,14 @@ export default function OutreachInbox() {
                   <Sparkles className={`w-3 h-3 ${loadingAi ? 'animate-spin' : ''}`} />
                   AI suggestions
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSnippetsOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] font-semibold transition-colors shrink-0 shadow-2xs"
+                >
+                  <Bookmark className="w-3 h-3 text-gray-500" />
+                  Snippets (C)
+                </button>
                 {aiSuggestions.map((sug, i) => (
                   <button
                     key={i}
@@ -602,6 +954,394 @@ export default function OutreachInbox() {
           </div>
         )}
       </div>
+
+      {/* ── REMINDERS MODAL (prosp_inbox_reminders.jpg) ──────────────────── */}
+      {remindersOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+        >
+          <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl border border-gray-100 p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Schedule Follow-up</h3>
+                  <p className="text-[11px] text-gray-400">Set a reminder for {selectedThread?.lead_name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRemindersOpen(false)}
+                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Quick Timing Pills */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                Quick Options
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSetReminder(1)}
+                  className="py-2 px-2.5 rounded-xl border border-gray-200 hover:border-amber-500 hover:bg-amber-50/20 text-xs font-semibold text-gray-700 text-center transition-all shadow-2xs"
+                >
+                  Tomorrow
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetReminder(3)}
+                  className="py-2 px-2.5 rounded-xl border border-gray-200 hover:border-amber-500 hover:bg-amber-50/20 text-xs font-semibold text-gray-700 text-center transition-all shadow-2xs"
+                >
+                  In 3 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetReminder(7)}
+                  className="py-2 px-2.5 rounded-xl border border-gray-200 hover:border-amber-500 hover:bg-amber-50/20 text-xs font-semibold text-gray-700 text-center transition-all shadow-2xs"
+                >
+                  In 1 Week
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Datetime & Note */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
+                  Or Pick Custom Date & Time
+                </label>
+                <input
+                  type="datetime-local"
+                  value={reminderDate}
+                  onChange={(e) => setReminderDate(e.target.value)}
+                  className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 text-gray-700 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
+                  Reminder Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={reminderNote}
+                  onChange={(e) => setReminderNote(e.target.value)}
+                  placeholder="e.g. Send enterprise pricing sheet"
+                  className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 text-gray-700 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Existing Reminders */}
+            {remindersList.length > 0 && (
+              <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                  Active Reminders
+                </span>
+                {remindersList.map((rem) => (
+                  <div
+                    key={rem.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-amber-50/50 border border-amber-200/50 text-xs"
+                  >
+                    <div>
+                      <p className="font-semibold text-amber-900">{rem.note || 'Follow up'}</p>
+                      <span className="text-[10px] text-amber-700 font-mono">
+                        {new Date(rem.remind_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteReminder(rem.id)}
+                      className="p-1 text-amber-600 hover:text-amber-800"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRemindersOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-800 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetReminder()}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
+              >
+                Set Reminder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SNIPPETS DRAWER (prosp_inbox_snippets.jpg) ────────────────────── */}
+      {snippetsOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-0 right-0 bottom-0 w-[420px] max-w-[95vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-left"
+        >
+          <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-indigo-50 text-[#5145cd]">
+                <Bookmark className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm">Saved Reply Snippets</h3>
+                <p className="text-[11px] text-gray-400">Insert high-converting responses with 1-click</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSnippetsOpen(false)}
+              className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Search & Actions */}
+          <div className="p-4 border-b border-gray-100 space-y-3 shrink-0 bg-gray-50/50">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                value={snippetSearch}
+                onChange={(e) => setSnippetSearch(e.target.value)}
+                placeholder="Search snippets (e.g. cal, pricing)..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-gray-200 focus:border-[#5145cd] focus:ring-1 focus:ring-[#5145cd] bg-white"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                {snippetsList.length} Snippets
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCreateSnippet(!showCreateSnippet)}
+                className="text-xs font-semibold text-[#5145cd] hover:underline"
+              >
+                {showCreateSnippet ? '– Cancel' : '+ New Saved Reply'}
+              </button>
+            </div>
+
+            {showCreateSnippet && (
+              <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-2.5 shadow-2xs">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-700 block mb-0.5">Snippet Title</label>
+                  <input
+                    type="text"
+                    value={newSnippetTitle}
+                    onChange={(e) => setNewSnippetTitle(e.target.value)}
+                    placeholder="e.g. Calendly Link"
+                    className="w-full text-xs rounded-lg border border-gray-200 px-2.5 py-1 focus:border-[#5145cd]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-700 block mb-0.5">Quick Shortcut (Optional)</label>
+                  <input
+                    type="text"
+                    value={newSnippetShortcut}
+                    onChange={(e) => setNewSnippetShortcut(e.target.value)}
+                    placeholder="e.g. cal"
+                    className="w-full text-xs rounded-lg border border-gray-200 px-2.5 py-1 focus:border-[#5145cd]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-700 block mb-0.5">Message Body</label>
+                  <textarea
+                    rows={3}
+                    value={newSnippetBody}
+                    onChange={(e) => setNewSnippetBody(e.target.value)}
+                    placeholder="Write the response template..."
+                    className="w-full text-xs rounded-lg border border-gray-200 p-2 focus:border-[#5145cd] resize-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateSnippet}
+                  disabled={!newSnippetTitle.trim() || !newSnippetBody.trim()}
+                  className="w-full py-1.5 bg-[#5145cd] hover:bg-[#4338ca] text-white font-bold text-xs rounded-lg shadow-2xs disabled:opacity-50"
+                >
+                  Save Snippet
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Snippets List */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+            {snippetsList
+              .filter(
+                (s) =>
+                  !snippetSearch ||
+                  s.title.toLowerCase().includes(snippetSearch.toLowerCase()) ||
+                  s.body.toLowerCase().includes(snippetSearch.toLowerCase()) ||
+                  (s.shortcut && s.shortcut.toLowerCase().includes(snippetSearch.toLowerCase()))
+              )
+              .map((snip) => (
+                <div
+                  key={snip.id}
+                  className="p-3.5 rounded-xl border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/20 bg-white transition-all space-y-2 text-left"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-gray-900">{snip.title}</span>
+                      {snip.shortcut && (
+                        <span className="text-[10px] font-mono bg-gray-100 text-gray-600 px-1.5 py-0.2 rounded">
+                          /{snip.shortcut}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSnippet(snip.id)}
+                      className="p-1 text-gray-300 hover:text-rose-600 rounded transition-colors"
+                      title="Delete snippet"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-gray-600 line-clamp-2 leading-relaxed bg-gray-50/70 p-2 rounded-lg font-sans">
+                    {snip.body}
+                  </p>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleInsertSnippet(snip)}
+                      className="inline-flex items-center gap-1 px-3 py-1 bg-[#5145cd] hover:bg-[#4338ca] text-white font-bold text-xs rounded-lg shadow-2xs transition-colors"
+                    >
+                      Insert into Reply
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAGS POPOVER (prosp_inbox_tags.jpg) ──────────────────────────── */}
+      {tagsOpen && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+        >
+          <div className="relative w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-gray-100 p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Thread Tags</h3>
+                  <p className="text-[11px] text-gray-400">Classify lead stage & interest</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTagsOpen(false)}
+                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Tag Items */}
+            <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+              {tagsList.map((tag) => {
+                const isChecked = (selectedThread?.tags || []).includes(tag.name);
+                return (
+                  <label
+                    key={tag.id || tag.name}
+                    className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200 transition-all"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-3 h-3 rounded-full shrink-0 shadow-2xs" style={{ backgroundColor: tag.color }} />
+                      <span className="text-xs font-semibold text-gray-800">{tag.name}</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleTag(tag.name)}
+                      className="rounded border-gray-300 text-[#5145cd] focus:ring-[#5145cd]"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Create Tag Toggle */}
+            <div className="pt-2 border-t border-gray-100">
+              {showCreateTag ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={newTagColor}
+                      onChange={(e) => setNewTagColor(e.target.value)}
+                      className="w-7 h-7 rounded border-0 cursor-pointer p-0 shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={newTagName}
+                      onChange={(e) => setNewTagName(e.target.value)}
+                      placeholder="Tag label..."
+                      className="flex-1 text-xs rounded-lg border border-gray-200 px-2.5 py-1 focus:border-[#5145cd]"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateTag(false)}
+                      className="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateTag}
+                      disabled={!newTagName.trim()}
+                      className="px-3 py-1 bg-[#5145cd] text-white text-xs font-bold rounded-lg shadow-2xs disabled:opacity-50"
+                    >
+                      Save Tag
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCreateTag(true)}
+                  className="text-xs font-semibold text-[#5145cd] hover:underline flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Create New Tag
+                </button>
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setTagsOpen(false)}
+                className="px-5 py-2 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
