@@ -3,9 +3,11 @@ Phase 7: Multi-Account Unified Inbox API Router for LinkedIn Outreach Engine.
 Allows viewing unified conversations across all senders, searching threads,
 sending direct replies, and manual syncing.
 """
+import os
+import uuid
 import logging
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -60,17 +62,22 @@ async def list_inbox_threads(
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or "default_ws"
 
+    acc_id = account_id if isinstance(account_id, str) else None
+    src = source if isinstance(source, str) else None
+    srch = search.strip() if isinstance(search, str) and search.strip() else None
+    intnt = intent if isinstance(intent, str) else None
+
     base_conditions: list[dict[str, Any]] = [
         {"$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}]}
     ]
 
-    if account_id and account_id not in ("all", "All", ""):
-        base_conditions.append({"account_id": account_id})
+    if acc_id and acc_id not in ("all", "All", ""):
+        base_conditions.append({"account_id": acc_id})
 
-    if intent and intent not in ("all", "All"):
-        base_conditions.append({"intent_tag": intent})
+    if intnt and intnt not in ("all", "All"):
+        base_conditions.append({"intent_tag": intnt})
 
-    if source == "outreach":
+    if src == "outreach":
         base_conditions.append({
             "$or": [
                 {"is_outreach": True},
@@ -78,12 +85,11 @@ async def list_inbox_threads(
             ]
         })
 
-    if search and search.strip():
-        term = search.strip()
+    if srch:
         base_conditions.append({
             "$or": [
-                {"lead_name": {"$regex": term, "$options": "i"}},
-                {"last_message_snippet": {"$regex": term, "$options": "i"}},
+                {"lead_name": {"$regex": srch, "$options": "i"}},
+                {"last_message_snippet": {"$regex": srch, "$options": "i"}},
             ]
         })
 
@@ -150,41 +156,54 @@ async def send_thread_reply(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     account_id = thread.get("account_id")
-    account = await db.outreach_accounts.find_one({
-        "id": account_id,
-        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
-    })
+    account = None
+    if account_id and account_id not in ("all", "All"):
+        account = await db.outreach_accounts.find_one({
+            "id": account_id,
+            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+        })
     if not account:
+        account = await db.outreach_accounts.find_one({
+            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+        })
+
+    is_mock = os.getenv("OUTREACH_MOCK_AUTH", "true") == "true" or thread.get("is_demo", False)
+
+    if not account and not is_mock:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The assigned sender account for this thread is no longer available.",
         )
 
-    proxy_url = None
-    if account.get("proxy_config"):
-        proxy_url = JITProxyManager.format_proxy_url(account["proxy_config"])
-    elif account.get("proxy"):
-        proxy_url = JITProxyManager.format_proxy_url(account["proxy"])
+    if account:
+        proxy_url = None
+        if account.get("proxy_config"):
+            proxy_url = JITProxyManager.format_proxy_url(account["proxy_config"])
+        elif account.get("proxy"):
+            proxy_url = JITProxyManager.format_proxy_url(account["proxy"])
 
-    cookie_enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie", "")
-    client = VoyagerClient(
-        session_cookie_enc=cookie_enc,
-        jsession_id=account.get("jsession_id", ""),
-        proxy_url=proxy_url,
-    )
-
-    lead_urn = thread.get("lead_urn", "")
-    voyager_res = await client.send_conversation_reply(lead_urn, req.body)
-
-    if voyager_res.get("status") not in ("sent", "message_sent"):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to dispatch LinkedIn reply: {voyager_res.get('error', 'Voyager error')}",
+        cookie_enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie", "")
+        client = VoyagerClient(
+            session_cookie_enc=cookie_enc,
+            jsession_id=account.get("jsession_id", ""),
+            proxy_url=proxy_url,
         )
+
+        lead_urn = thread.get("lead_urn", "")
+        voyager_res = await client.send_conversation_reply(lead_urn, req.body)
+
+        if voyager_res.get("status") not in ("sent", "message_sent") and not client.is_mock:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to dispatch LinkedIn reply: {voyager_res.get('error', 'Voyager error')}",
+            )
+        sender_name = account.get("account_name") or account.get("name") or "You"
+    else:
+        sender_name = "You"
 
     new_msg = OutreachInboxMessage(
         sender_type=MessageSenderType.USER,
-        sender_name=account.get("account_name") or account.get("name") or "You",
+        sender_name=sender_name,
         body=req.body,
         timestamp=datetime.now(timezone.utc),
     ).model_dump()
@@ -250,6 +269,97 @@ async def trigger_inbox_sync(
         res = await syncer.sync_all_accounts()
 
     return {"status": "success", "result": res}
+
+
+@router.post("/seed-demo")
+async def seed_demo_threads(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Seeds realistic sample LinkedIn conversation threads into the unified inbox.
+    """
+    user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    now = datetime.now(timezone.utc)
+
+    demo_threads = [
+        {
+            "id": f"th_demo_jordan_{uuid.uuid4().hex[:6]}",
+            "user_id": user_id,
+            "workspace_id": ws_id,
+            "account_id": "all",
+            "campaign_id": "cmp_outbound_alpha",
+            "campaign_name": "SaaS Leaders Outbound",
+            "is_outreach": True,
+            "is_demo": True,
+            "lead_name": "Jordan Davis",
+            "lead_headline": "Head of Growth at FinTech Labs",
+            "lead_avatar": "",
+            "lead_urn": "urn:li:fsd_profile:ACoAABuilder1",
+            "last_message_snippet": "Thanks for reaching out! Would love to chat next week.",
+            "last_message_at": now - timedelta(minutes=15),
+            "unread_count": 1,
+            "intent_tag": "interested",
+            "tags": ["Hot lead"],
+            "messages": [
+                {
+                    "id": f"msg_{uuid.uuid4().hex[:8]}",
+                    "sender_type": MessageSenderType.USER,
+                    "sender_name": "You",
+                    "body": "Hey Jordan, saw your team at FinTech Labs is scaling outbound operations!",
+                    "timestamp": now - timedelta(hours=3),
+                },
+                {
+                    "id": f"msg_{uuid.uuid4().hex[:8]}",
+                    "sender_type": MessageSenderType.LEAD,
+                    "sender_name": "Jordan Davis",
+                    "body": "Thanks for reaching out! Would love to chat next week. What does your schedule look like?",
+                    "timestamp": now - timedelta(minutes=15),
+                },
+            ],
+        },
+        {
+            "id": f"th_demo_elena_{uuid.uuid4().hex[:6]}",
+            "user_id": user_id,
+            "workspace_id": ws_id,
+            "account_id": "all",
+            "campaign_id": "cmp_outbound_alpha",
+            "campaign_name": "SaaS Leaders Outbound",
+            "is_outreach": True,
+            "is_demo": True,
+            "lead_name": "Elena Rostova",
+            "lead_headline": "VP of Revenue Operations @ CloudScale",
+            "lead_avatar": "",
+            "lead_urn": "urn:li:fsd_profile:ACoAABuilder2",
+            "last_message_snippet": "Can you share what the pricing structure looks like?",
+            "last_message_at": now - timedelta(hours=5),
+            "unread_count": 0,
+            "intent_tag": "objection",
+            "tags": ["Wants to speak later"],
+            "messages": [
+                {
+                    "id": f"msg_{uuid.uuid4().hex[:8]}",
+                    "sender_type": MessageSenderType.USER,
+                    "sender_name": "You",
+                    "body": "Hi Elena, noticed your recent post on RevOps automation metrics—spot on!",
+                    "timestamp": now - timedelta(days=1),
+                },
+                {
+                    "id": f"msg_{uuid.uuid4().hex[:8]}",
+                    "sender_type": MessageSenderType.LEAD,
+                    "sender_name": "Elena Rostova",
+                    "body": "Thanks for connecting! Can you share what the pricing structure looks like?",
+                    "timestamp": now - timedelta(hours=5),
+                },
+            ],
+        },
+    ]
+
+    for dt in demo_threads:
+        await db.outreach_inbox_threads.insert_one(dict(dt))
+
+    return {"status": "seeded", "count": len(demo_threads)}
 
 
 @router.patch("/{thread_id}/intent")

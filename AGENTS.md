@@ -9,11 +9,10 @@ Focus: URL Deep-Linking & History Sync, Relational Cascades, Live SSE Stream, Co
 ## Last Session Completed
 Date: 2026-09-23
 Completed:
-- URL Deep-Linking & Browser History: Wired native `window.location.search`, `pushState`, and `popstate` Back/Forward navigation across `OutreachApp.js` and `OutreachCampaigns.js`.
-- Relational Cascade Integrity: Shipped atomic cascade hooks in `campaigns.py` (cancels tasks, unenrolls leads, archives sequence) and `accounts.py` (unbinds disconnected sender accounts from campaign pools, cancels assigned tasks) with full reversible restore.
-- Real-Time Activity SSE Stream: Shipped `/api/v1/outreach/analytics/live-feed` SSE endpoint and live activity pulse listener in `OutreachHome.js` ($0.00 infra cost).
-- Converging Branches in DAG Engine: Verified multi-branch convergence into shared steps with Kahn's algorithm and `execution_order` tracking in `dag_compiler.py`.
-- 69/69 outreach tests pass, frontend CI clean (`CI=true npm run build`, 807.89 kB gzip main bundle).
+- Unified Inbox Parity & Unravler Branding: Replaced all leftover Prosp references in `DashboardLayout.js` navigation badge and `prompts.py` with Unravler.
+- Inbox Functionality Overhaul: Added toast alerts across all actions (replies, reminders, snippets, tags, intent), top-bar live sync button, automatic first-thread selection, Escape key modal dismiss, safe avatar initial fallback, and demo conversation seeding endpoint (`POST /seed-demo`).
+- Account Resolution & Sync Resilience: Fixed `sync_all_accounts` query to check both `workspace_id` and `user_id`; made `send_thread_reply` account fallback resilient for demo/mock testing.
+- 71/71 outreach tests pass, frontend CI clean (`CI=true npm run build`, 807.88 kB gzip main bundle).
 
 ## Active Work
 Currently implementing: None

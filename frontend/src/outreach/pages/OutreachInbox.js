@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import {
   Search,
   ChevronDown,
@@ -98,12 +99,32 @@ export default function OutreachInbox() {
         if (selectedThread) {
           const updated = data.find((t) => t.id === selectedThread.id);
           if (updated) setSelectedThread(updated);
+        } else if (data && data.length > 0) {
+          setSelectedThread(data[0]);
+          fetchReminders(data[0].id);
         }
       }
     } catch (err) {
       console.error('Failed to load threads:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSeedDemo = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/inbox/seed-demo', {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        toast.success('Sample conversations loaded');
+        await fetchThreads();
+      }
+    } catch (err) {
+      console.error('Failed to seed sample conversations:', err);
+      toast.error('Failed to load sample conversations');
     }
   };
 
@@ -114,7 +135,7 @@ export default function OutreachInbox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Hotkey listener for [S] Reminders, [C] Snippets, [T] Tags
+  // Hotkey listener for [S] Reminders, [C] Snippets, [T] Tags, [Escape] Close
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
@@ -127,6 +148,10 @@ export default function OutreachInbox() {
       } else if (e.key === 't' || e.key === 'T') {
         e.preventDefault();
         setTagsOpen((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setRemindersOpen(false);
+        setSnippetsOpen(false);
+        setTagsOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -193,9 +218,13 @@ export default function OutreachInbox() {
         setReminderNote('');
         setReminderDate('');
         setRemindersOpen(false);
+        toast.success('Follow-up reminder scheduled');
+      } else {
+        toast.error('Failed to schedule reminder');
       }
     } catch (err) {
       console.error('Failed to set reminder:', err);
+      toast.error('Failed to schedule reminder');
     }
   };
 
@@ -209,9 +238,13 @@ export default function OutreachInbox() {
       if (res.ok) {
         setRemindersList((prev) => prev.filter((r) => r.id !== remId));
         setSelectedThread((prev) => ({ ...prev, remind_at: null, reminder_note: null }));
+        toast.success('Reminder dismissed');
+      } else {
+        toast.error('Failed to dismiss reminder');
       }
     } catch (err) {
       console.error('Failed to delete reminder:', err);
+      toast.error('Failed to dismiss reminder');
     }
   };
 
@@ -253,9 +286,13 @@ export default function OutreachInbox() {
         setNewSnippetBody('');
         setNewSnippetShortcut('');
         setShowCreateSnippet(false);
+        toast.success('Saved reply snippet created');
+      } else {
+        toast.error('Failed to create snippet');
       }
     } catch (err) {
       console.error('Failed to create snippet:', err);
+      toast.error('Failed to create snippet');
     }
   };
 
@@ -268,9 +305,13 @@ export default function OutreachInbox() {
       });
       if (res.ok) {
         setSnippetsList((prev) => prev.filter((s) => s.id !== id));
+        toast.success('Snippet removed');
+      } else {
+        toast.error('Failed to delete snippet');
       }
     } catch (err) {
       console.error('Failed to delete snippet:', err);
+      toast.error('Failed to delete snippet');
     }
   };
 
@@ -312,9 +353,13 @@ export default function OutreachInbox() {
         setThreads((prev) =>
           prev.map((t) => (t.id === selectedThread.id ? { ...t, tags: data.tags } : t))
         );
+        toast.success('Tags updated');
+      } else {
+        toast.error('Failed to update tag');
       }
     } catch (err) {
       console.error('Failed to toggle tag:', err);
+      toast.error('Failed to update tag');
     }
   };
 
@@ -338,9 +383,13 @@ export default function OutreachInbox() {
         setTagsList((prev) => [...prev, created]);
         setNewTagName('');
         setShowCreateTag(false);
+        toast.success('Tag created');
+      } else {
+        toast.error('Failed to create tag');
       }
     } catch (err) {
       console.error('Failed to create tag:', err);
+      toast.error('Failed to create tag');
     }
   };
 
@@ -398,9 +447,14 @@ export default function OutreachInbox() {
         }));
         setReplyText('');
         fetchThreads();
+        toast.success('Reply dispatched');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.detail || 'Failed to dispatch reply');
       }
     } catch (err) {
       console.error('Reply failed:', err);
+      toast.error('Failed to dispatch reply');
     } finally {
       setIsSending(false);
     }
@@ -418,9 +472,12 @@ export default function OutreachInbox() {
       if (res.ok) {
         const data = await res.json();
         setAiSuggestions(data.suggestions || []);
+      } else {
+        toast.error('Failed to load AI suggestions');
       }
     } catch (err) {
       console.error('AI reply generation failed:', err);
+      toast.error('Failed to load AI suggestions');
     } finally {
       setLoadingAi(false);
     }
@@ -434,13 +491,19 @@ export default function OutreachInbox() {
         selectedAccountId !== 'all'
           ? `/api/v1/outreach/inbox/sync?account_id=${selectedAccountId}`
           : '/api/v1/outreach/inbox/sync';
-      await fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
+      if (res.ok) {
+        toast.success('Inbox synchronized');
+      } else {
+        toast.error('Sync failed');
+      }
       await fetchThreads();
     } catch (err) {
       console.error('Sync error:', err);
+      toast.error('Sync error occurred');
     } finally {
       setIsSyncing(false);
     }
@@ -461,9 +524,13 @@ export default function OutreachInbox() {
       if (res.ok) {
         setSelectedThread((prev) => ({ ...prev, intent_tag: newIntent }));
         fetchThreads();
+        toast.success('Lead status updated');
+      } else {
+        toast.error('Failed to update status');
       }
     } catch (err) {
       console.error('Intent update failed:', err);
+      toast.error('Failed to update status');
     }
   };
 
@@ -476,7 +543,18 @@ export default function OutreachInbox() {
         {/* Header with Title & Filter Switcher */}
         <div className="p-4 border-b border-gray-100 bg-white space-y-3">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Inbox</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Inbox</h1>
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                title="Sync conversations with LinkedIn"
+                className="p-1.5 text-gray-400 hover:text-[#5145cd] hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-[#5145cd]' : ''}`} />
+              </button>
+            </div>
             {/* Pill Switcher: [ Unravler | All ] matching media_1790103710555.png */}
             <div className="inline-flex items-center bg-[#f4f4f5] p-1 rounded-xl gap-0.5 text-xs font-semibold text-gray-500">
               <button
@@ -618,18 +696,28 @@ export default function OutreachInbox() {
               <RefreshCw className="h-5 w-5 animate-spin" />
             </div>
           ) : threads.length === 0 ? (
-            <div className="my-auto py-24 text-center px-4">
+            <div className="my-auto py-24 text-center px-4 space-y-3">
               <p className="text-xs text-gray-400 font-normal">No conversations yet.</p>
-              {accounts.length > 0 && (
+              <div className="flex flex-col items-center gap-2 pt-1">
                 <button
-                  onClick={handleSync}
-                  disabled={isSyncing}
-                  className="mt-2.5 inline-flex items-center gap-1.5 text-xs text-[#5145cd] font-semibold hover:underline"
+                  type="button"
+                  onClick={handleSeedDemo}
+                  className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#5145cd] font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer"
                 >
-                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                  Check for new messages
+                  Load Sample Conversations
                 </button>
-              )}
+                {accounts.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSync}
+                    disabled={isSyncing}
+                    className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 font-medium hover:underline cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                    Check for new messages
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             threads.map((t) => {
@@ -651,10 +739,12 @@ export default function OutreachInbox() {
                       {t.lead_name}
                     </span>
                     <span className="text-[10px] text-gray-400 shrink-0 font-mono">
-                      {new Date(t.last_message_at).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                      })}
+                      {t.last_message_at
+                        ? new Date(t.last_message_at).toLocaleDateString([], {
+                            month: 'short',
+                            day: 'numeric',
+                          })
+                        : ''}
                     </span>
                   </div>
 
@@ -702,7 +792,7 @@ export default function OutreachInbox() {
             <div className="h-16 px-6 border-b border-gray-200 flex items-center justify-between bg-white shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-indigo-50 text-[#5145cd] flex items-center justify-center font-bold text-sm">
-                  {selectedThread.lead_name.charAt(0).toUpperCase()}
+                  {(selectedThread.lead_name || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">

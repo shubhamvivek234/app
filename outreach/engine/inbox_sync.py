@@ -202,7 +202,13 @@ class InboxSynchronizer:
         Synchronizes all connected active accounts in the workspace.
         """
         accounts = await _fetch_cursor_docs(
-            self.db.outreach_accounts.find({"workspace_id": self.workspace_id}),
+            self.db.outreach_accounts.find({
+                "$or": [
+                    {"workspace_id": self.workspace_id},
+                    {"user_id": self.user_id},
+                    {"workspace_id": self.user_id},
+                ]
+            }),
             length=100,
         )
 

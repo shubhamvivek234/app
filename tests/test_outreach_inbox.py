@@ -18,6 +18,9 @@ from outreach.api.inbox import (
     generate_ai_reply_options,
     update_thread_intent,
     UpdateIntentRequest,
+    seed_demo_threads,
+    send_thread_reply,
+    ReplyRequest,
 )
 
 
@@ -229,3 +232,50 @@ async def test_update_thread_intent():
     )
     assert res["status"] == "updated"
     assert res["intent_tag"] == "interested"
+
+
+@pytest.mark.asyncio
+async def test_seed_demo_threads():
+    """Verify seed_demo_threads populates demo conversations into unified inbox."""
+    db = MockDB()
+    user = {"user_id": "usr_seed_1", "default_workspace_id": "ws_seed"}
+
+    res = await seed_demo_threads(current_user=user, db=db)
+    assert res["status"] == "seeded"
+    assert res["count"] == 2
+
+    # Verify threads can be fetched
+    threads = await list_inbox_threads(current_user=user, db=db)
+    assert len(threads) == 2
+    lead_names = [t["lead_name"] for t in threads]
+    assert "Jordan Davis" in lead_names
+    assert "Elena Rostova" in lead_names
+
+
+@pytest.mark.asyncio
+async def test_send_thread_reply_in_demo_mode():
+    """Verify send_thread_reply dispatches and records reply in thread messages."""
+    db = MockDB()
+    user = {"user_id": "usr_reply_1", "default_workspace_id": "ws_reply"}
+
+    await db.outreach_inbox_threads.insert_one({
+        "id": "th_reply_demo",
+        "user_id": "usr_reply_1",
+        "workspace_id": "ws_reply",
+        "is_demo": True,
+        "lead_name": "Jordan Davis",
+        "messages": [
+            {"sender_type": "lead", "body": "Hey there!"},
+        ],
+    })
+
+    req = ReplyRequest(body="Hey Jordan! Thanks for following up.")
+    res = await send_thread_reply(
+        thread_id="th_reply_demo",
+        req=req,
+        current_user=user,
+        db=db,
+    )
+    assert res["status"] == "sent"
+    assert res["message"]["body"] == "Hey Jordan! Thanks for following up."
+    assert res["message"]["sender_name"] == "You"
