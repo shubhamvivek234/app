@@ -58,8 +58,11 @@ async def list_voices(
     Returns list of configured AI voices for the workspace, matching Part 3, Image 2.
     """
     user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or user_id
     voices = await _fetch_cursor_docs(
-        db.outreach_voices.find({"workspace_id": user_id}),
+        db.outreach_voices.find({
+            "$or": [{"workspace_id": user_id}, {"workspace_id": ws_id}, {"user_id": user_id}],
+        }),
         length=MAX_VOICE_PROFILES,
     )
 
@@ -88,10 +91,13 @@ async def clone_voice(
     and registers it in the outreach database.
     """
     user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or user_id
 
     # Check quota
     existing = await _fetch_cursor_docs(
-        db.outreach_voices.find({"workspace_id": user_id}),
+        db.outreach_voices.find({
+            "$or": [{"workspace_id": user_id}, {"workspace_id": ws_id}, {"user_id": user_id}],
+        }),
         length=MAX_VOICE_PROFILES + 1,
     )
     if len(existing) >= MAX_VOICE_PROFILES:
@@ -111,14 +117,15 @@ async def clone_voice(
     try:
         elevenlabs_voice_id = await cloner.create_voice_clone(
             audio_bytes=audio_bytes,
-            voice_name=f"{name} ({user_id[:6]})",
+            voice_name=name.strip(),
             filename=file.filename or "sample.wav",
         )
     except VoiceCloningError as err:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(err))
 
     voice_record = OutreachVoice(
-        workspace_id=user_id,
+        workspace_id=ws_id,
+        user_id=user_id,
         name=name.strip(),
         elevenlabs_voice_id=elevenlabs_voice_id,
         sample_audio_url="",
@@ -141,9 +148,13 @@ async def preview_voice_note(
     Synthesizes a sample voice note with dynamic lead tokens and returns base64 audio.
     """
     user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
 
     # Verify voice belongs to workspace or is mock
-    voice = await db.outreach_voices.find_one({"id": req.voice_id, "workspace_id": user_id})
+    voice = await db.outreach_voices.find_one({
+        "id": req.voice_id,
+        "$or": [{"workspace_id": user_id}, {"workspace_id": ws_id}, {"user_id": user_id}],
+    })
     if not voice and not req.voice_id.startswith("voice_mock_"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -183,8 +194,9 @@ async def assign_voice(
     Assigns this voice profile to one or more LinkedIn sender accounts.
     """
     user_id = current_user.get("user_id")
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
     res = await db.outreach_voices.update_one(
-        {"id": voice_id, "workspace_id": user_id},
+        {"id": voice_id, "$or": [{"workspace_id": user_id}, {"workspace_id": ws_id}, {"user_id": user_id}]},
         {"$set": {"assigned_account_ids": req.account_ids}},
     )
     if res.matched_count == 0:
@@ -203,12 +215,17 @@ async def delete_voice(
     Deletes a voice profile from the database and ElevenLabs.
     """
     user_id = current_user.get("user_id")
-    voice = await db.outreach_voices.find_one({"id": voice_id, "workspace_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    voice = await db.outreach_voices.find_one({
+        "id": voice_id,
+        "$or": [{"workspace_id": user_id}, {"workspace_id": ws_id}, {"user_id": user_id}],
+    })
     if not voice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice profile not found")
 
     cloner = VoiceCloner()
     await cloner.delete_voice_clone(voice.get("elevenlabs_voice_id", voice_id))
-    await db.outreach_voices.delete_one({"id": voice_id, "workspace_id": user_id})
+    await db.outreach_voices.delete_one({"id": voice_id})
 
     return {"status": "deleted", "voice_id": voice_id}
+

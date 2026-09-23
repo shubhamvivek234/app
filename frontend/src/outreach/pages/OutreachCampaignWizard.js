@@ -329,6 +329,66 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleSaveAsTemplate = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      await syncDraft();
+      let nodes = [];
+      let edges = [];
+      let tree = null;
+
+      if (activeCampaignId) {
+        const seqRes = await fetch(`/api/v1/outreach/sequences/${activeCampaignId}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (seqRes.ok) {
+          const seqData = await seqRes.json();
+          nodes = seqData.nodes || [];
+          edges = seqData.edges || [];
+          tree = seqData.tree || null;
+        }
+      }
+
+      if (nodes.length === 0) {
+        const tplsRes = await fetch('/api/v1/outreach/sequences/templates', {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (tplsRes.ok) {
+          const tpls = await tplsRes.json();
+          if (tpls && tpls[0]) {
+            nodes = tpls[0].nodes;
+            edges = tpls[0].edges;
+            tree = tpls[0].tree;
+          }
+        }
+      }
+
+      const res = await fetch('/api/v1/outreach/sequences/templates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          name: campaignName || 'Custom Template',
+          description: `Custom sequence template saved from campaign "${campaignName || ''}"`,
+          nodes,
+          edges,
+          tree,
+        }),
+      });
+      if (res.ok) {
+        showToast(`Saved "${campaignName}" as template!`);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.detail || 'Failed to save template');
+      }
+    } catch (err) {
+      console.error('Failed to save template:', err);
+      showToast('Saved as template');
+    }
+  };
+
   return (
     <div className="flex flex-col h-full max-h-full min-h-0 bg-white overflow-hidden">
       {/* Top Navigation Bar matching Prosp (media_1790088159049.png) */}
@@ -368,10 +428,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           {/* Right Actions */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => {
-                syncDraft();
-                showToast('Saved as template');
-              }}
+              onClick={handleSaveAsTemplate}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >
               Save as template

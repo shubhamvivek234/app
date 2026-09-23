@@ -136,19 +136,28 @@ async def list_leads(
     Returns filterable, paginated leads for the active workspace.
     """
     workspace_id = current_user.get("default_workspace_id") or "default_ws"
-    query: dict[str, Any] = {"workspace_id": workspace_id}
+    user_id = current_user.get("user_id")
+
+    clauses: list[dict[str, Any]] = [
+        {"$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}]}
+    ]
 
     if campaign_id:
-        query["campaign_id"] = campaign_id
+        clauses.append({"campaign_id": campaign_id})
     if execution_state:
-        query["execution_state"] = execution_state
+        clauses.append({"execution_state": execution_state})
     if search:
-        query["$or"] = [
-            {"first_name": {"$regex": search, "$options": "i"}},
-            {"last_name": {"$regex": search, "$options": "i"}},
-            {"company_name": {"$regex": search, "$options": "i"}},
-            {"job_title": {"$regex": search, "$options": "i"}},
-        ]
+        clauses.append({
+            "$or": [
+                {"first_name": {"$regex": search, "$options": "i"}},
+                {"last_name": {"$regex": search, "$options": "i"}},
+                {"company_name": {"$regex": search, "$options": "i"}},
+                {"job_title": {"$regex": search, "$options": "i"}},
+            ]
+        })
+
+    query: dict[str, Any] = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+
 
     total = await db.outreach_leads.count_documents(query)
     cursor = db.outreach_leads.find(query).skip(skip).limit(limit).sort("created_at", -1)

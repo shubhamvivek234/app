@@ -25,6 +25,8 @@ export default function OutreachCampaigns({ onOpenWizard }) {
   const [activeCampaignId, setActiveCampaignId] = useState(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [templatesList, setTemplatesList] = useState([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [undoAlert, setUndoAlert] = useState(null); // { id, name }
   const [menuOpenId, setMenuOpenId] = useState(null);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -47,10 +49,95 @@ export default function OutreachCampaigns({ onOpenWizard }) {
     }
   };
 
+  const fetchTemplates = async () => {
+    setLoadingTemplates(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/sequences/templates', {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTemplatesList(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch templates:', err);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
   useEffect(() => {
     fetchCampaigns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (isTemplatesOpen) {
+      fetchTemplates();
+    }
+  }, [isTemplatesOpen]);
+
+  const handleDeleteTemplate = async (templateId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/sequences/templates/${templateId}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        setTemplatesList((prev) => prev.filter((t) => t.id !== templateId));
+      }
+    } catch (err) {
+      console.error('Failed to delete template:', err);
+    }
+  };
+
+  const handleUseTemplate = async (tpl) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          name: tpl.name || 'Connect and follow up',
+          draft_step: 2,
+          draft_progress: 60,
+          next_step_label: 'Next: Launch',
+        }),
+      });
+      if (res.ok) {
+        const draft = await res.json();
+        if (tpl.nodes && tpl.edges) {
+          await fetch('/api/v1/outreach/sequences', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: token ? `Bearer ${token}` : '',
+            },
+            body: JSON.stringify({
+              campaign_id: draft.id,
+              nodes: tpl.nodes,
+              edges: tpl.edges,
+              tree: tpl.tree || null,
+            }),
+          });
+        }
+        setIsTemplatesOpen(false);
+        if (onOpenWizard) {
+          onOpenWizard(draft.id, 2);
+        } else {
+          setActiveCampaignId(draft.id);
+          setIsWizardOpen(true);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to use template:', err);
+    }
+  };
 
   // Auto-drafting when user clicks "New campaign"
   const handleCreateNewCampaign = async (nameOverride) => {
@@ -160,9 +247,11 @@ export default function OutreachCampaigns({ onOpenWizard }) {
 
   // Templates View matching media_1790104784825.png
   if (isTemplatesOpen) {
-    const templates = [
-      { id: 'connect_followup', name: 'Connect and follow up', uses: '—', acceptance: '—', reply: '—' },
-      { id: 'profile_warmup', name: 'Profile warm-up', uses: '—', acceptance: '—', reply: '—' },
+    const displayTemplates = templatesList.length > 0 ? templatesList : [
+      { id: 'tpl_connect_and_follow_up', name: 'Connect and follow up', uses: '—', acceptance: '—', reply: '—' },
+      { id: 'tpl_profile_warmup', name: 'Profile warm-up', uses: '—', acceptance: '—', reply: '—' },
+      { id: 'tpl_voice_note_outreach', name: 'Voice note outreach', uses: '—', acceptance: '—', reply: '—' },
+      { id: 'tpl_inmail_engage', name: 'Multi-touch InMail & engage', uses: '—', acceptance: '—', reply: '—' },
     ];
 
     return (
@@ -173,11 +262,16 @@ export default function OutreachCampaigns({ onOpenWizard }) {
         >
           ← Campaigns
         </button>
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Templates</h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Prebuilt sequences and your saved templates. Save any campaign as a template to reuse it.
-          </p>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Templates</h1>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Prebuilt sequences and your saved templates. Save any campaign as a template to reuse it.
+            </p>
+          </div>
+          {loadingTemplates && (
+            <span className="text-xs text-gray-400 animate-pulse">Loading templates...</span>
+          )}
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
@@ -192,22 +286,42 @@ export default function OutreachCampaigns({ onOpenWizard }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {templates.map((tpl) => (
+              {displayTemplates.map((tpl) => (
                 <tr key={tpl.id} className="hover:bg-gray-50/60 transition-colors">
-                  <td className="py-4 px-5 font-bold text-gray-900">{tpl.name}</td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.uses}</td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.acceptance}</td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.reply}</td>
+                  <td className="py-4 px-5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-gray-900">{tpl.name}</span>
+                      {tpl.is_custom && (
+                        <span className="px-2 py-0.5 text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200 rounded-md">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+                    {tpl.description && (
+                      <p className="text-[11px] text-gray-400 mt-0.5 truncate max-w-md">{tpl.description}</p>
+                    )}
+                  </td>
+                  <td className="py-4 px-5 text-gray-400">{tpl.uses || '—'}</td>
+                  <td className="py-4 px-5 text-gray-400">{tpl.acceptance || '—'}</td>
+                  <td className="py-4 px-5 text-gray-400">{tpl.reply || '—'}</td>
                   <td className="py-4 px-5 text-right">
-                    <button
-                      onClick={async () => {
-                        setIsTemplatesOpen(false);
-                        await handleCreateNewCampaign(tpl.name);
-                      }}
-                      className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors"
-                    >
-                      Use
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      {tpl.is_custom && (
+                        <button
+                          onClick={() => handleDeleteTemplate(tpl.id)}
+                          className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Delete custom template"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleUseTemplate(tpl)}
+                        className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors"
+                      >
+                        Use
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

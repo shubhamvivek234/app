@@ -163,9 +163,12 @@ async def send_thread_reply(
     proxy_url = None
     if account.get("proxy_config"):
         proxy_url = JITProxyManager.format_proxy_url(account["proxy_config"])
+    elif account.get("proxy"):
+        proxy_url = JITProxyManager.format_proxy_url(account["proxy"])
 
+    cookie_enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie", "")
     client = VoyagerClient(
-        session_cookie_enc=account.get("encrypted_session_cookie", ""),
+        session_cookie_enc=cookie_enc,
         jsession_id=account.get("jsession_id", ""),
         proxy_url=proxy_url,
     )
@@ -238,7 +241,8 @@ async def trigger_inbox_sync(
     Triggers an immediate background sync with Voyager for all accounts or a selected account.
     """
     user_id = current_user.get("user_id")
-    syncer = InboxSynchronizer(db=db, workspace_id=user_id)
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    syncer = InboxSynchronizer(db=db, workspace_id=ws_id, user_id=user_id)
 
     if account_id and account_id not in ("all", "All"):
         res = await syncer.sync_account_inbox(account_id)
@@ -256,18 +260,29 @@ async def update_thread_intent(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Updates the intent classification tag for a lead conversation.
+    Updates the intent classification tag for a lead conversation and reconciles campaign metrics.
     """
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or "default_ws"
-    res = await db.outreach_inbox_threads.update_one(
-        {
-            "id": thread_id,
-            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
-        },
-        {"$set": {"intent_tag": req.intent_tag}},
-    )
-    if res.matched_count == 0:
+    thread = await db.outreach_inbox_threads.find_one({
+        "id": thread_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
+    if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
+    old_intent = thread.get("intent_tag")
+    await db.outreach_inbox_threads.update_one(
+        {"id": thread_id},
+        {"$set": {"intent_tag": req.intent_tag}},
+    )
+
+    # If marked as interested, increment campaign interested count
+    if req.intent_tag == "interested" and old_intent != "interested" and thread.get("campaign_id"):
+        await db.outreach_campaigns.update_one(
+            {"id": thread["campaign_id"]},
+            {"$inc": {"interested_count": 1}},
+        )
+
     return {"status": "updated", "thread_id": thread_id, "intent_tag": req.intent_tag}
+

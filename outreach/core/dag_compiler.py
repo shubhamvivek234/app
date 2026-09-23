@@ -126,65 +126,316 @@ class DAGCompiler:
     @staticmethod
     def get_prebuilt_templates() -> list[dict[str, Any]]:
         """
-        Returns high-converting pre-built sequence templates matching Part 2, Image 2.
+        Returns high-converting pre-built sequence templates matching media_1790104784825.png,
+        media_1790104824235.png, and media_1790104866987.png.
         """
         return [
             {
                 "id": "tpl_connect_and_follow_up",
                 "name": "Connect and follow up",
-                "description": "Standard high-conversion outreach: Profile visit, clean connection invite, and follow-up message upon acceptance.",
+                "description": "Standard high-conversion outreach: Clean connection invite with no note, and follow-up message 1 day after acceptance.",
+                "uses": "—",
+                "acceptance": "—",
+                "reply": "—",
                 "nodes": [
                     {
-                        "id": "node_visit",
-                        "type": SequenceNodeType.VISIT_PROFILE,
-                        "title": "Visit profile",
+                        "id": "step_connect_root",
+                        "type": SequenceNodeType.CONNECTION_REQUEST,
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
                         "delay_hours": 0,
+                        "config": {"note": ""},
                         "position": {"x": 250, "y": 50},
                     },
                     {
-                        "id": "node_connect",
-                        "type": SequenceNodeType.CONNECTION_REQUEST,
-                        "title": "Connection request",
-                        "delay_hours": 0,
-                        "config": {"note": ""},  # No note by default (higher acceptance)
-                        "position": {"x": 250, "y": 180},
-                    },
-                    {
-                        "id": "node_msg",
+                        "id": "step_msg_followup",
                         "type": SequenceNodeType.SEND_MESSAGE,
                         "title": "Send message",
+                        "subtitle": "Hi {{first_name}}, thanks for...",
                         "delay_hours": 24,
-                        "config": {"body": "Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}."},
-                        "position": {"x": 400, "y": 320},
+                        "config": {
+                            "body": "Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.",
+                        },
+                        "position": {"x": 400, "y": 200},
                     },
                 ],
                 "edges": [
-                    {"id": "e1", "source": "node_visit", "target": "node_connect"},
-                    {"id": "e2", "source": "node_connect", "target": "node_msg", "label": "accepted"},
+                    {"id": "e_conn_to_msg", "source": "step_connect_root", "target": "step_msg_followup", "label": "accepted"},
+                ],
+                "tree": [
+                    {
+                        "id": "step_connect_root",
+                        "type": "connection_request",
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
+                        "delay_days": 0,
+                        "config": {"note": ""},
+                        "branches": {
+                            "left": {
+                                "condition": "not accepted yet",
+                                "type": "danger",
+                                "steps": [],
+                                "endsHere": True,
+                            },
+                            "right": {
+                                "condition": "accepted",
+                                "type": "success",
+                                "steps": [
+                                    {
+                                        "id": "step_msg_followup",
+                                        "type": "send_message",
+                                        "title": "Send message",
+                                        "subtitle": "Hi {{first_name}}, thanks for...",
+                                        "delay_days": 1,
+                                        "config": {
+                                            "body": "Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.",
+                                        },
+                                        "branches": {
+                                            "left": {"condition": "no reply", "type": "danger", "steps": [], "endsHere": True},
+                                            "right": {"condition": "replied", "type": "success", "steps": [], "endsHere": True},
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    }
                 ],
             },
             {
                 "id": "tpl_profile_warmup",
                 "name": "Profile warm-up",
-                "description": "Lightweight profile engagement sequence: visit profile and like latest post before initiating outreach.",
+                "description": "Lightweight profile engagement sequence: visit lead's profile to trigger notifications before reaching out.",
+                "uses": "—",
+                "acceptance": "—",
+                "reply": "—",
                 "nodes": [
                     {
-                        "id": "node_visit_warm",
+                        "id": "step_visit_root",
                         "type": SequenceNodeType.VISIT_PROFILE,
                         "title": "Visit profile",
+                        "subtitle": "Visit lead's profile",
                         "delay_hours": 0,
+                        "config": {},
+                        "position": {"x": 250, "y": 50},
+                    },
+                ],
+                "edges": [],
+                "tree": [
+                    {
+                        "id": "step_visit_root",
+                        "type": "visit_profile",
+                        "title": "Visit profile",
+                        "subtitle": "Visit lead's profile",
+                        "delay_days": 0,
+                        "config": {},
+                        "steps": [],
+                        "endsHere": True,
+                    }
+                ],
+            },
+            {
+                "id": "tpl_voice_note_outreach",
+                "name": "Voice note outreach",
+                "description": "High-reply multi-touch strategy: Profile visit, clean invite, and hyper-personalized AI voice note upon acceptance.",
+                "uses": "—",
+                "acceptance": "—",
+                "reply": "—",
+                "nodes": [
+                    {
+                        "id": "step_vn_visit",
+                        "type": SequenceNodeType.VISIT_PROFILE,
+                        "title": "Visit profile",
+                        "subtitle": "Visit lead's profile",
+                        "delay_hours": 0,
+                        "config": {},
                         "position": {"x": 250, "y": 50},
                     },
                     {
-                        "id": "node_like",
-                        "type": SequenceNodeType.LIKE_LAST_POST,
-                        "title": "Like last post",
-                        "delay_hours": 4,
+                        "id": "step_vn_connect",
+                        "type": SequenceNodeType.CONNECTION_REQUEST,
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
+                        "delay_hours": 0,
+                        "config": {"note": ""},
                         "position": {"x": 250, "y": 180},
+                    },
+                    {
+                        "id": "step_vn_voice",
+                        "type": SequenceNodeType.VOICE_NOTE,
+                        "title": "Voice note",
+                        "subtitle": "Personalized AI cloned voice bubble",
+                        "delay_hours": 24,
+                        "config": {
+                            "script": "Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note to introduce myself!",
+                            "fallback": "Hi {{first_name}}, wanted to reach out and say hello! Excited to connect.",
+                        },
+                        "position": {"x": 400, "y": 320},
+                    },
+                    {
+                        "id": "step_vn_msg",
+                        "type": SequenceNodeType.SEND_MESSAGE,
+                        "title": "Send message",
+                        "subtitle": "Following up on voice note",
+                        "delay_hours": 48,
+                        "config": {
+                            "body": "Hey {{first_name}}, following up on my quick voice note—would love to hear your thoughts when you have a moment!",
+                        },
+                        "position": {"x": 300, "y": 460},
                     },
                 ],
                 "edges": [
-                    {"id": "e_warm1", "source": "node_visit_warm", "target": "node_like"},
+                    {"id": "e_vn_1", "source": "step_vn_visit", "target": "step_vn_connect"},
+                    {"id": "e_vn_2", "source": "step_vn_connect", "target": "step_vn_voice", "label": "accepted"},
+                    {"id": "e_vn_3", "source": "step_vn_voice", "target": "step_vn_msg", "label": "no reply"},
+                ],
+                "tree": [
+                    {
+                        "id": "step_vn_visit",
+                        "type": "visit_profile",
+                        "title": "Visit profile",
+                        "subtitle": "Visit lead's profile",
+                        "delay_days": 0,
+                        "config": {},
+                    },
+                    {
+                        "id": "step_vn_connect",
+                        "type": "connection_request",
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
+                        "delay_days": 0,
+                        "config": {"note": ""},
+                        "branches": {
+                            "left": {
+                                "condition": "not accepted yet",
+                                "type": "danger",
+                                "steps": [],
+                                "endsHere": True,
+                            },
+                            "right": {
+                                "condition": "accepted",
+                                "type": "success",
+                                "steps": [
+                                    {
+                                        "id": "step_vn_voice",
+                                        "type": "voice_note",
+                                        "title": "Voice note",
+                                        "subtitle": "Personalized AI cloned voice bubble",
+                                        "delay_days": 1,
+                                        "config": {
+                                            "script": "Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note to introduce myself!",
+                                            "fallback": "Hi {{first_name}}, wanted to reach out and say hello! Excited to connect.",
+                                        },
+                                        "branches": {
+                                            "left": {
+                                                "condition": "no reply",
+                                                "type": "danger",
+                                                "steps": [
+                                                    {
+                                                        "id": "step_vn_msg",
+                                                        "type": "send_message",
+                                                        "title": "Send message",
+                                                        "subtitle": "Following up on voice note",
+                                                        "delay_days": 2,
+                                                        "config": {
+                                                            "body": "Hey {{first_name}}, following up on my quick voice note—would love to hear your thoughts when you have a moment!",
+                                                        },
+                                                        "branches": {
+                                                            "left": {"condition": "no reply", "type": "danger", "steps": [], "endsHere": True},
+                                                            "right": {"condition": "replied", "type": "success", "steps": [], "endsHere": True},
+                                                        },
+                                                    }
+                                                ],
+                                            },
+                                            "right": {
+                                                "condition": "replied",
+                                                "type": "success",
+                                                "steps": [],
+                                                "endsHere": True,
+                                            },
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "id": "tpl_multitouch_inmail",
+                "name": "Multi-touch InMail & engage",
+                "description": "Engage via follow and post like before dispatching targeted InMail directly to decision makers.",
+                "uses": "—",
+                "acceptance": "—",
+                "reply": "—",
+                "nodes": [
+                    {
+                        "id": "step_inmail_follow",
+                        "type": SequenceNodeType.FOLLOW,
+                        "title": "Follow",
+                        "subtitle": "Follow lead's profile",
+                        "delay_hours": 0,
+                        "config": {},
+                        "position": {"x": 250, "y": 50},
+                    },
+                    {
+                        "id": "step_inmail_like",
+                        "type": SequenceNodeType.LIKE_LAST_POST,
+                        "title": "Like last post",
+                        "subtitle": "Like most recent activity",
+                        "delay_hours": 24,
+                        "config": {},
+                        "position": {"x": 250, "y": 180},
+                    },
+                    {
+                        "id": "step_inmail_send",
+                        "type": SequenceNodeType.INMAIL,
+                        "title": "InMail",
+                        "subtitle": "Send message to 2nd/3rd degree lead",
+                        "delay_hours": 24,
+                        "config": {
+                            "subject": "Quick question regarding {{company_name}}",
+                            "message": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
+                        },
+                        "position": {"x": 250, "y": 320},
+                    },
+                ],
+                "edges": [
+                    {"id": "e_inmail_1", "source": "step_inmail_follow", "target": "step_inmail_like"},
+                    {"id": "e_inmail_2", "source": "step_inmail_like", "target": "step_inmail_send"},
+                ],
+                "tree": [
+                    {
+                        "id": "step_inmail_follow",
+                        "type": "follow",
+                        "title": "Follow",
+                        "subtitle": "Follow lead's profile",
+                        "delay_days": 0,
+                        "config": {},
+                    },
+                    {
+                        "id": "step_inmail_like",
+                        "type": "like_last_post",
+                        "title": "Like last post",
+                        "subtitle": "Like most recent activity",
+                        "delay_days": 1,
+                        "config": {},
+                    },
+                    {
+                        "id": "step_inmail_send",
+                        "type": "inmail",
+                        "title": "InMail",
+                        "subtitle": "Send message to 2nd/3rd degree lead",
+                        "delay_days": 1,
+                        "config": {
+                            "subject": "Quick question regarding {{company_name}}",
+                            "message": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
+                        },
+                        "branches": {
+                            "left": {"condition": "no reply", "type": "danger", "steps": [], "endsHere": True},
+                            "right": {"condition": "replied", "type": "success", "steps": [], "endsHere": True},
+                        },
+                    },
                 ],
             },
         ]
+

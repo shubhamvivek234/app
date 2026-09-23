@@ -89,9 +89,13 @@ async def list_outreach_accounts(
 ):
     """Lists all connected LinkedIn sender accounts for the active user."""
     user_id = current_user.get("user_id")
-    cursor = db.outreach_accounts.find({"user_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    cursor = db.outreach_accounts.find({
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     accounts = await cursor.to_list(length=100)
     return [_sanitize_account(a) for a in accounts]
+
 
 
 @router.post("/connect-cookie")
@@ -308,7 +312,11 @@ async def update_account_limits(
 ):
     """Updates daily safety caps for a specific connected account."""
     user_id = current_user.get("user_id")
-    account = await db.outreach_accounts.find_one({"id": account_id, "user_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    account = await db.outreach_accounts.find_one({
+        "id": account_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
@@ -337,7 +345,11 @@ async def disconnect_account(
     Disconnects the LinkedIn account and immediately tears down the dedicated proxy.
     """
     user_id = current_user.get("user_id")
-    account = await db.outreach_accounts.find_one({"id": account_id, "user_id": user_id})
+    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    account = await db.outreach_accounts.find_one({
+        "id": account_id,
+        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+    })
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 

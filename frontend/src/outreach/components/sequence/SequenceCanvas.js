@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Eye, UserPlus, MessageSquare, Mic, Mail, UserCheck, ThumbsUp, MessageCircle,
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
@@ -69,18 +69,69 @@ const VARIABLE_PILLS = [
   '{{location_raw}}',
 ];
 
-// Initial sequence exactly matching media_1790088446398.png
-const INITIAL_TREE = [
+// Helper to flatten a hierarchical tree into execution DAG nodes and edges
+export function flattenTreeToDAG(tree) {
+  const nodes = [];
+  const edges = [];
+  let yOffset = 50;
+
+  function traverse(steps, parentId = null, branchLabel = null) {
+    let prevId = parentId;
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const nodeId = step.id || `node_${Math.random().toString(36).slice(2, 9)}`;
+      const delayHours =
+        step.delay_days !== undefined
+          ? step.delay_days * 24
+          : step.delay_hours !== undefined
+          ? step.delay_hours
+          : 0;
+
+      nodes.push({
+        id: nodeId,
+        type: step.type,
+        title: step.title || '',
+        subtitle: step.subtitle || '',
+        delay_hours: Math.round(delayHours),
+        config: step.config || {},
+        position: { x: 250, y: yOffset },
+      });
+      yOffset += 130;
+
+      if (prevId) {
+        const edgeLabel = i === 0 && branchLabel ? branchLabel : undefined;
+        edges.push({
+          id: `edge_${prevId}_to_${nodeId}`,
+          source: prevId,
+          target: nodeId,
+          ...(edgeLabel ? { label: edgeLabel } : {}),
+        });
+      }
+      prevId = nodeId;
+
+      if (step.branches) {
+        if (step.branches.left?.steps?.length > 0) {
+          traverse(step.branches.left.steps, nodeId, step.branches.left.condition || 'not accepted yet');
+        }
+        if (step.branches.right?.steps?.length > 0) {
+          traverse(step.branches.right.steps, nodeId, step.branches.right.condition || 'accepted');
+        }
+      }
+
+      if (step.steps?.length > 0) {
+        traverse(step.steps, nodeId, null);
+      }
+    }
+  }
+
+  traverse(tree);
+  return { nodes, edges };
+}
+
+// Default sequence matching Template 1 "Connect and follow up" (media_1790104824235.png)
+export const DEFAULT_TREE = [
   {
-    id: 'step_visit',
-    type: 'visit_profile',
-    title: 'Visit profile',
-    subtitle: "Visit lead's profile",
-    delay_days: 0,
-    config: {},
-  },
-  {
-    id: 'step_connect',
+    id: 'step_connect_root',
     type: 'connection_request',
     title: 'Connection request',
     subtitle: 'Send a connection request',
@@ -91,129 +142,24 @@ const INITIAL_TREE = [
         condition: 'not accepted yet',
         type: 'danger',
         steps: [],
+        endsHere: true,
       },
       right: {
         condition: 'accepted',
         type: 'success',
         steps: [
           {
-            id: 'step_voice',
-            type: 'voice_note',
-            title: 'Voice note',
-            subtitle: 'Action required',
-            delay_days: 0,
-            config: { script: '', fallback: '' },
-            isActionRequired: true,
+            id: 'step_msg_followup',
+            type: 'send_message',
+            title: 'Send message',
+            subtitle: 'Hi {{first_name}}, thanks for ...',
+            delay_days: 1,
+            config: {
+              body: 'Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.',
+            },
             branches: {
-              left: {
-                condition: 'no reply',
-                type: 'danger',
-                steps: [],
-                endsHere: true,
-              },
-              right: {
-                condition: 'replied',
-                type: 'success',
-                steps: [
-                  {
-                    id: 'step_inmail',
-                    type: 'inmail',
-                    title: 'InMail',
-                    subtitle: 'Action required',
-                    delay_days: 0,
-                    config: { subject: '', message: '', fallback: '' },
-                    isActionRequired: true,
-                    branches: {
-                      left: {
-                        condition: 'no reply',
-                        type: 'danger',
-                        steps: [],
-                      },
-                      right: {
-                        condition: 'replied',
-                        type: 'success',
-                        steps: [
-                          {
-                            id: 'step_follow',
-                            type: 'follow',
-                            title: 'Follow',
-                            subtitle: "Follow lead's profile",
-                            delay_days: 0,
-                            config: {},
-                          },
-                          {
-                            id: 'step_if_conn_1',
-                            type: 'if_connected',
-                            title: 'If connected',
-                            subtitle: 'Check if lead accepted',
-                            delay_days: 0,
-                            config: {},
-                            branches: {
-                              left: {
-                                condition: 'not connected',
-                                type: 'danger',
-                                steps: [],
-                              },
-                              right: {
-                                condition: 'connected',
-                                type: 'success',
-                                steps: [
-                                  {
-                                    id: 'step_if_conn_2',
-                                    type: 'if_connected',
-                                    title: 'If connected',
-                                    subtitle: 'Check if lead accepted',
-                                    delay_days: 0,
-                                    config: {},
-                                    branches: {
-                                      left: {
-                                        condition: 'not connected',
-                                        type: 'danger',
-                                        steps: [
-                                          {
-                                            id: 'step_endorse_1',
-                                            type: 'endorse_skills',
-                                            title: 'Endorse skills',
-                                            subtitle: 'Endorse their top skills',
-                                            delay_days: 4,
-                                            config: {},
-                                          },
-                                          {
-                                            id: 'step_endorse_2',
-                                            type: 'endorse_skills',
-                                            title: 'Endorse skills',
-                                            subtitle: 'Endorse their top skills',
-                                            delay_days: 0,
-                                            config: {},
-                                          },
-                                          {
-                                            id: 'step_reply_comment',
-                                            type: 'reply_to_comment',
-                                            title: 'Reply to comment',
-                                            subtitle: 'Action required',
-                                            delay_days: 0,
-                                            config: {},
-                                            isActionRequired: true,
-                                          },
-                                        ],
-                                      },
-                                      right: {
-                                        condition: 'connected',
-                                        type: 'success',
-                                        steps: [],
-                                      },
-                                    },
-                                  },
-                                ],
-                              },
-                            },
-                          },
-                        ],
-                      },
-                    },
-                  },
-                ],
-              },
+              left: { condition: 'no reply', type: 'danger', steps: [], endsHere: true },
+              right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
             },
           },
         ],
@@ -223,13 +169,70 @@ const INITIAL_TREE = [
 ];
 
 export default function SequenceCanvas({ campaignId, onSave }) {
-  const [tree, setTree] = useState(INITIAL_TREE);
-  const [selectedStepId, setSelectedStepId] = useState('step_reply_comment');
+  const [tree, setTree] = useState(DEFAULT_TREE);
+  const [selectedStepId, setSelectedStepId] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteTarget, setPaletteTarget] = useState(null); // { type: 'linear' | 'branch', stepId, branchKey, index }
   const [zoomLevel, setZoomLevel] = useState(100);
   const [showTip, setShowTip] = useState(true);
-  const [toastMessage, setToastMessage] = useState('Reply to comment added.');
+  const [toastMessage, setToastMessage] = useState(null);
+  const hasLoaded = useRef(false);
+
+  // Load existing sequence if campaignId is provided
+  useEffect(() => {
+    if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
+      hasLoaded.current = true;
+      return;
+    }
+    const loadSequence = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/v1/outreach/sequences/${campaignId}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.tree && Array.isArray(data.tree) && data.tree.length > 0) {
+            setTree(data.tree);
+            setSelectedStepId(null);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load sequence:', err);
+      } finally {
+        hasLoaded.current = true;
+      }
+    };
+    loadSequence();
+  }, [campaignId]);
+
+  // Auto-save sequence debounced when tree changes
+  useEffect(() => {
+    if (!hasLoaded.current || !campaignId || campaignId === 'new' || campaignId === 'new_campaign') return;
+    const timer = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const { nodes, edges } = flattenTreeToDAG(tree);
+        await fetch('/api/v1/outreach/sequences', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            campaign_id: campaignId,
+            nodes,
+            edges,
+            tree,
+          }),
+        });
+        if (onSave) onSave({ nodes, edges, tree });
+      } catch (err) {
+        console.error('Failed to auto-save sequence:', err);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [tree, campaignId, onSave]);
 
   // Inline header delay editor state (matches media_1790088397090.png)
   const [editingDelayId, setEditingDelayId] = useState(null);
@@ -544,7 +547,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             <>
               <div className="flex items-center gap-1.5 font-medium">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>{step.delay_days === 0 ? 'No delay' : `Wait ${step.delay_days} days, then`}</span>
+                <span>{step.delay_days === 0 ? 'No delay' : step.delay_days === 1 ? 'Wait 1 day, then' : `Wait ${step.delay_days} days, then`}</span>
               </div>
               <button
                 type="button"
@@ -802,126 +805,162 @@ export default function SequenceCanvas({ campaignId, onSave }) {
         setSelectedStepId(null);
       }}
     >
-      {/* Background Dot Grid */}
-      <div
-        className="absolute inset-0 opacity-45 pointer-events-none"
-        style={{
-          backgroundImage: 'radial-gradient(#94a3b8 1.4px, transparent 1.4px)',
-          backgroundSize: '24px 24px',
-        }}
-      />
-
-      {/* Top Floating Tip Banner matching media_1790088201124.png */}
-      {showTip && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-3 rounded-2xl bg-indigo-50/90 border border-indigo-100 px-4 py-2.5 text-xs text-indigo-950 shadow-xs backdrop-blur-sm animate-fade-in">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
-              <Sparkles className="w-3.5 h-3.5" />
-            </div>
-            <div>
-              <span className="font-bold text-indigo-900 mr-1">Tip:</span>
-              <span className="text-indigo-800">
-                Your first invite has no note. That is good—invites with notes are often accepted less.
-              </span>
-            </div>
-          </div>
-          <button onClick={() => setShowTip(false)} className="text-indigo-400 hover:text-indigo-700 p-1">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Action Toast Banner matching media_1790088446398.png */}
-      {toastMessage && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs font-semibold text-emerald-800 shadow-xs animate-fade-in">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>{toastMessage}</span>
-          </div>
-          <button onClick={() => setToastMessage(null)} className="text-emerald-500 hover:text-emerald-800">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Zoom Controls (Top Left) */}
-      <div className="absolute top-5 left-6 z-20 flex items-center gap-1 rounded-xl bg-white border border-gray-200 p-1 shadow-xs text-gray-600">
-        <button
-          onClick={() => setZoomLevel((z) => Math.max(z - 10, 60))}
-          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-          title="Zoom out"
-        >
-          <ZoomOut className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => setZoomLevel((z) => Math.min(z + 10, 140))}
-          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-          title="Zoom in"
-        >
-          <ZoomIn className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => setZoomLevel(100)}
-          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-          title="Reset zoom"
-        >
-          <Maximize2 className="h-3.5 w-3.5" />
-        </button>
-        <span className="px-2 text-xs font-semibold text-gray-700">{zoomLevel}%</span>
-      </div>
-
-      {/* Main Flowchart Tree Canvas Area (Scrollable independently from drawers) */}
-      <div className="flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10">
+      {/* Left Canvas Column */}
+      <div className="relative flex-1 h-full min-h-0 overflow-hidden flex flex-col">
+        {/* Background Dot Grid */}
         <div
-          className="flex flex-col items-center transition-transform duration-150 origin-top"
-          style={{ transform: `scale(${zoomLevel / 100})` }}
-        >
-          {/* SEQUENCE START Pill (media_1790088201124.png) */}
-          <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold tracking-wider text-slate-500 shadow-2xs mb-0">
-            <Navigation className="w-3.5 h-3.5 text-slate-400 rotate-45" />
-            <span>SEQUENCE START</span>
-          </div>
+          className="absolute inset-0 opacity-45 pointer-events-none"
+          style={{
+            backgroundImage: 'radial-gradient(#94a3b8 1.4px, transparent 1.4px)',
+            backgroundSize: '24px 24px',
+          }}
+        />
 
-          {/* Root vertical trunk lines and recursive nodes */}
-          {tree.map((rootStep, index) => (
-            <div key={rootStep.id} className="flex flex-col items-center w-full">
-              {renderVerticalConnector({
-                type: 'linear',
-                stepId: index > 0 ? tree[index - 1].id : 'start',
-              })}
-              {renderCard(rootStep)}
-              {rootStep.branches && renderBranches(rootStep)}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* RIGHT DRAWER: Step Configuration Inspector matching media_1790088114763.png */}
-      {selectedStep && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute top-0 right-0 bottom-0 w-96 max-w-[90vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-30 flex flex-col overflow-hidden animate-slide-left"
-        >
-          {/* Drawer Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+        {/* Top Floating Tip Banner matching media_1790088201124.png / media_1790104824235.png */}
+        {showTip && tree[0]?.type === 'connection_request' && !tree[0]?.config?.note && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-3 rounded-2xl bg-indigo-50/90 border border-indigo-100 px-4 py-2.5 text-xs text-indigo-950 shadow-xs backdrop-blur-sm animate-fade-in">
             <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
-                {React.createElement(getNodeVisuals(selectedStep.type).icon, { className: 'w-5 h-5' })}
+              <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5" />
               </div>
               <div>
-                <h3 className="font-bold text-gray-900 text-sm">{selectedStep.title}</h3>
-                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
-                  LinkedIn Outreach
+                <span className="font-bold text-indigo-900 mr-1">Tip:</span>
+                <span className="text-indigo-800">
+                  Your first invite has no note. That is good—invites with notes are often accepted less.
                 </span>
               </div>
             </div>
-            <button
-              onClick={() => setSelectedStepId(null)}
-              className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <X className="w-4 h-4" />
+            <button onClick={() => setShowTip(false)} className="text-indigo-400 hover:text-indigo-700 p-1">
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
+        )}
+
+        {/* Action Toast Banner matching media_1790088446398.png */}
+        {toastMessage && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs font-semibold text-emerald-800 shadow-xs animate-fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>{toastMessage}</span>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-emerald-500 hover:text-emerald-800">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Zoom Controls (Top Left) */}
+        <div className="absolute top-5 left-6 z-20 flex items-center gap-1 rounded-xl bg-white border border-gray-200 p-1 shadow-xs text-gray-600">
+          <button
+            onClick={() => setZoomLevel((z) => Math.max(z - 10, 60))}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Zoom out"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setZoomLevel((z) => Math.min(z + 10, 140))}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Zoom in"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setZoomLevel(100)}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Reset zoom"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+          <span className="px-2 text-xs font-semibold text-gray-700">{zoomLevel}%</span>
+        </div>
+
+        {/* Main Flowchart Tree Canvas Area (Scrollable independently from drawers) */}
+        <div className="flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10">
+          <div
+            className="flex flex-col items-center transition-transform duration-150 origin-top"
+            style={{ transform: `scale(${zoomLevel / 100})` }}
+          >
+            {/* SEQUENCE START Pill (media_1790088201124.png) */}
+            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold tracking-wider text-slate-500 shadow-2xs mb-0">
+              <Navigation className="w-3.5 h-3.5 text-slate-400 rotate-45" />
+              <span>SEQUENCE START</span>
+            </div>
+
+            {/* Root vertical trunk lines and recursive nodes */}
+            {tree.map((rootStep, index) => (
+              <div key={rootStep.id} className="flex flex-col items-center w-full">
+                {renderVerticalConnector({
+                  type: 'linear',
+                  stepId: index > 0 ? tree[index - 1].id : 'start',
+                })}
+                {renderCard(rootStep)}
+                {rootStep.branches && renderBranches(rootStep)}
+                {!rootStep.branches && rootStep.endsHere && (
+                  <div className="flex flex-col items-center mt-1">
+                    <div className="w-[2px] h-3 bg-slate-300" />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPaletteTarget({ type: 'linear', stepId: rootStep.id });
+                        setPaletteOpen(true);
+                      }}
+                      className="w-5 h-5 rounded-full border border-slate-300 bg-white text-slate-400 hover:text-indigo-600 hover:border-indigo-500 hover:scale-110 transition flex items-center justify-center shadow-2xs z-10"
+                    >
+                      <Plus className="w-3 h-3 stroke-[2.5]" />
+                    </button>
+                    <div className="w-[2px] h-3 bg-slate-300" />
+                    <div className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-100 border border-slate-200 text-slate-600 mt-1">
+                      <span>✓</span>
+                      <span>ENDS HERE</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPaletteTarget({ type: 'linear', stepId: rootStep.id });
+                        setPaletteOpen(true);
+                      }}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 mt-2.5"
+                    >
+                      + Add a step
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT FIXED PANEL: Fixed width sidebar matching media_1790104824235.png & media_1790104866987.png */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-96 max-w-[90vw] shrink-0 h-full max-h-full bg-white border-l border-gray-200 shadow-2xs z-20 flex flex-col overflow-hidden"
+      >
+        {selectedStep ? (
+          <>
+            {/* Drawer Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                  {React.createElement(getNodeVisuals(selectedStep.type).icon, { className: 'w-5 h-5' })}
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">{selectedStep.title}</h3>
+                  <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
+                    LinkedIn Outreach
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedStepId(null)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
           {/* Drawer Content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5 text-left">
@@ -1246,7 +1285,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           </div>
 
           {/* Drawer Footer Actions */}
-          <div className="p-4 border-t border-gray-100 bg-gray-50/40 flex items-center justify-between">
+          <div className="p-4 border-t border-gray-100 bg-gray-50/40 flex items-center justify-between shrink-0">
             <button
               onClick={() => handleDeleteStep(selectedStep.id)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
@@ -1261,8 +1300,20 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               Done
             </button>
           </div>
+        </>
+      ) : (
+        /* Empty State matching media_1790104824235.png & media_1790104866987.png */
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none">
+          <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-400 mb-4 shadow-2xs">
+            <Edit3 className="w-6 h-6 stroke-[1.5]" />
+          </div>
+          <h3 className="text-base font-bold text-gray-900 mb-1.5">Select a step to edit it</h3>
+          <p className="text-xs text-gray-500 leading-relaxed max-w-[240px]">
+            Click any card to change its message, timing, or how it branches.
+          </p>
         </div>
       )}
+    </div>
 
       {/* STEP PALETTE DRAWER (When clicking any + in the tree) */}
       {paletteOpen && (

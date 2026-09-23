@@ -7,6 +7,7 @@ import os
 import logging
 import httpx
 from datetime import datetime, timezone
+from typing import Any
 from outreach.models import ProxyConfig, ProxyStatus
 from utils.encryption import encrypt, decrypt
 
@@ -131,12 +132,23 @@ class JITProxyManager:
             return False
 
     @staticmethod
-    def format_proxy_url(proxy: ProxyConfig) -> str:
+    def format_proxy_url(proxy: ProxyConfig | dict[str, Any]) -> str:
         """Constructs an authenticated HTTP proxy URL for Playwright, httpx, or curl."""
+        if isinstance(proxy, dict):
+            host = proxy.get("host", "")
+            port = proxy.get("port", "")
+            username = proxy.get("username", "")
+            password_enc = proxy.get("password_enc", "")
+        else:
+            host = getattr(proxy, "host", "")
+            port = getattr(proxy, "port", "")
+            username = getattr(proxy, "username", "")
+            password_enc = getattr(proxy, "password_enc", "")
+
         try:
-            password = decrypt(proxy.password_enc)
+            password = decrypt(password_enc) if password_enc else ""
         except Exception:
             password = ""
-        if proxy.username and password:
-            return f"http://{proxy.username}:{password}@{proxy.host}:{proxy.port}"
-        return f"http://{proxy.host}:{proxy.port}"
+        if username and password:
+            return f"http://{username}:{password}@{host}:{port}"
+        return f"http://{host}:{port}"

@@ -36,23 +36,29 @@ class InboxSynchronizer:
     Coordinates multi-account synchronization into a single unified conversation stream.
     """
 
-    def __init__(self, db: AsyncIOMotorDatabase, workspace_id: str):
+    def __init__(self, db: AsyncIOMotorDatabase, workspace_id: str, user_id: str | None = None):
         self.db = db
         self.workspace_id = workspace_id
+        self.user_id = user_id or workspace_id
 
     async def sync_account_inbox(self, account_id: str) -> dict[str, Any]:
         """
         Fetches and synchronizes inbox threads for a specific LinkedIn sender account.
         """
-        account = await self.db.outreach_accounts.find_one({"id": account_id, "workspace_id": self.workspace_id})
+        account = await self.db.outreach_accounts.find_one({
+            "id": account_id,
+            "$or": [{"workspace_id": self.workspace_id}, {"user_id": self.user_id}],
+        })
         if not account:
             return {"status": "error", "error": f"Account {account_id} not found"}
 
         proxy_url = None
         if account.get("proxy_config"):
             proxy_url = JITProxyManager.format_proxy_url(account["proxy_config"])
+        elif account.get("proxy"):
+            proxy_url = JITProxyManager.format_proxy_url(account["proxy"])
 
-        cookie_enc = account.get("encrypted_session_cookie", "")
+        cookie_enc = account.get("encrypted_session_cookie") or account.get("session_cookie_enc", "")
         jsession_id = account.get("jsession_id", "")
         client = VoyagerClient(session_cookie_enc=cookie_enc, jsession_id=jsession_id, proxy_url=proxy_url)
 
@@ -63,7 +69,11 @@ class InboxSynchronizer:
         for conv in conversations:
             lead_urn = conv.get("lead_urn", "")
             lead_name = conv.get("lead_name", "LinkedIn Member")
-            last_snippet = conv.get("last_message_snippet", "")
+            raw_msgs = conv.get("messages", [])
+            last_snippet = conv.get("last_message_snippet") or ""
+            if not last_snippet and raw_msgs:
+                last_snippet = raw_msgs[-1].get("body") or raw_msgs[-1].get("text", "")
+
             last_time = conv.get("last_message_at") or datetime.now(timezone.utc)
             if isinstance(last_time, str):
                 try:
@@ -72,7 +82,6 @@ class InboxSynchronizer:
                     last_time = datetime.now(timezone.utc)
 
             # Build messages list
-            raw_msgs = conv.get("messages", [])
             parsed_msgs = []
             has_lead_reply = False
             for m in raw_msgs:
@@ -83,7 +92,7 @@ class InboxSynchronizer:
                     OutreachInboxMessage(
                         sender_type=s_type,
                         sender_name=m.get("sender_name", lead_name if s_type == MessageSenderType.LEAD else "You"),
-                        body=m.get("body", ""),
+                        body=m.get("body") or m.get("text", ""),
                         timestamp=m.get("timestamp") or datetime.now(timezone.utc),
                     ).model_dump()
                 )
@@ -105,9 +114,28 @@ class InboxSynchronizer:
                 elif any(w in lower_body for w in ["no thanks", "not interested", "unsubscribe", "remove"]):
                     intent_tag = "not_interested"
 
+            # Look up if this lead belongs to an existing campaign lead
+            matched_lead = await self.db.outreach_leads.find_one({
+                "$or": [
+                    {"workspace_id": self.workspace_id},
+                    {"user_id": self.user_id},
+                ],
+                "$or": [
+                    {"linkedin_url": {"$regex": lead_name.replace(" ", ".*"), "$options": "i"}},
+                    {"first_name": lead_name.split()[0] if lead_name else ""},
+                ],
+            })
+            campaign_id = matched_lead.get("campaign_id") if isinstance(matched_lead, dict) else None
+            if not isinstance(campaign_id, str):
+                campaign_id = None
+            is_outreach = True if campaign_id or intent_tag or has_lead_reply else conv.get("is_outreach", False)
+
             thread_doc = {
                 "workspace_id": self.workspace_id,
+                "user_id": self.user_id,
                 "account_id": account_id,
+                "campaign_id": campaign_id,
+                "is_outreach": is_outreach,
                 "lead_name": lead_name,
                 "lead_headline": conv.get("lead_headline", ""),
                 "lead_avatar": conv.get("lead_avatar", ""),
@@ -130,14 +158,15 @@ class InboxSynchronizer:
 
             synced_count += 1
 
-            # If lead replied, flag lead in CRM and stop outbound sequence
+            # If lead replied, flag lead in CRM, update campaign reply counter, and stop sequence
             if has_lead_reply:
                 lead_update = await self.db.outreach_leads.update_many(
                     {
                         "workspace_id": self.workspace_id,
                         "$or": [
                             {"profile_url": {"$regex": lead_name.replace(" ", ".*"), "$options": "i"}},
-                            {"first_name": lead_name.split()[0]},
+                            {"linkedin_url": {"$regex": lead_name.replace(" ", ".*"), "$options": "i"}},
+                            {"first_name": lead_name.split()[0] if lead_name else ""},
                         ],
                         "has_replied": False,
                     },
@@ -149,8 +178,18 @@ class InboxSynchronizer:
                         }
                     },
                 )
-                if lead_update.modified_count > 0:
+                if hasattr(lead_update, "modified_count") and lead_update.modified_count > 0:
                     new_replies_detected += lead_update.modified_count
+
+                # Increment campaign reply KPIs if lead has campaign_id
+                if campaign_id:
+                    inc_dict = {"replies_count": 1}
+                    if intent_tag == "interested":
+                        inc_dict["interested_count"] = 1
+                    await self.db.outreach_campaigns.update_one(
+                        {"id": campaign_id},
+                        {"$inc": inc_dict},
+                    )
 
         return {
             "account_id": account_id,

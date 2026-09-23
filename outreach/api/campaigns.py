@@ -11,9 +11,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from api.deps import get_current_user
 from db.mongo import get_db
+from outreach.core.dag_compiler import DAGCompiler
 from outreach.models import (
     CampaignStatus,
     DailyLimits,
+    LeadExecutionState,
     OutreachCampaign,
     WorkingSchedule,
 )
@@ -60,6 +62,15 @@ class UpdateCampaignRequest(BaseModel):
     draft_step: int | None = None
     draft_progress: int | None = None
     next_step_label: str | None = None
+
+
+class LaunchCampaignRequest(BaseModel):
+    name: str | None = None
+    sender_account_ids: list[str] | None = None
+    schedule: Any | None = None
+    timezone: str | None = None
+    daily_limits: Any | None = None
+    status: str | None = None
 
 
 @router.get("")
@@ -297,6 +308,7 @@ async def restore_campaign(
 @router.post("/{campaign_id}/launch")
 async def launch_campaign(
     campaign_id: str,
+    req: LaunchCampaignRequest | None = None,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -308,6 +320,22 @@ async def launch_campaign(
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
+    # Apply any runtime parameters passed during launch
+    updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    if req:
+        if req.name:
+            updates["name"] = req.name
+            campaign["name"] = req.name
+        if req.sender_account_ids:
+            updates["sender_account_ids"] = req.sender_account_ids
+            campaign["sender_account_ids"] = req.sender_account_ids
+        if req.schedule:
+            updates["schedule"] = req.schedule.model_dump() if hasattr(req.schedule, "model_dump") else req.schedule
+            campaign["schedule"] = updates["schedule"]
+        if req.daily_limits:
+            updates["limits"] = req.daily_limits.model_dump() if hasattr(req.daily_limits, "model_dump") else req.daily_limits
+            campaign["limits"] = updates["limits"]
+
     senders = campaign.get("sender_account_ids", [])
     if not senders:
         raise HTTPException(
@@ -315,7 +343,37 @@ async def launch_campaign(
             detail="Cannot launch campaign without at least one assigned LinkedIn sender account.",
         )
 
-    # 1. Distribute unassigned leads across sender pool (Round-Robin Pooling)
+    # 1. Ensure Sequence DAG is compiled for this campaign
+    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id})
+    root_node_id = None
+    if seq and isinstance(seq, dict) and seq.get("compiled_dag"):
+        root_nodes = seq["compiled_dag"].get("root_node_ids", [])
+        if root_nodes:
+            root_node_id = root_nodes[0]
+    else:
+        # Auto-compile default sequence template if not explicitly saved yet
+        templates = DAGCompiler.get_prebuilt_templates()
+        if templates:
+            default_tpl = templates[0]
+            try:
+                compiled = DAGCompiler.validate_and_compile(default_tpl["nodes"], default_tpl["edges"])
+                await db.outreach_sequences.update_one(
+                    {"campaign_id": campaign_id},
+                    {"$set": {
+                        "campaign_id": campaign_id,
+                        "nodes": default_tpl["nodes"],
+                        "edges": default_tpl["edges"],
+                        "compiled_dag": compiled,
+                        "updated_at": datetime.now(timezone.utc),
+                    }},
+                    upsert=True,
+                )
+                if compiled.get("root_node_ids"):
+                    root_node_id = compiled["root_node_ids"][0]
+            except Exception as exc:
+                logger.warning("Could not auto-compile default sequence on launch: %s", exc)
+
+    # 2. Distribute unassigned leads across sender pool (Round-Robin Pooling) & initialize state
     unassigned_leads = await _fetch_cursor_docs(
         db.outreach_leads.find({"campaign_id": campaign_id, "assigned_account_id": None}),
         length=10000,
@@ -323,15 +381,22 @@ async def launch_campaign(
 
     for i, lead in enumerate(unassigned_leads):
         assigned_sender = senders[i % len(senders)]
+        lead_updates = {
+            "assigned_account_id": assigned_sender,
+            "execution_state": LeadExecutionState.QUEUED,
+        }
+        if root_node_id and not lead.get("current_node_id"):
+            lead_updates["current_node_id"] = root_node_id
         await db.outreach_leads.update_one(
             {"id": lead["id"]},
-            {"$set": {"assigned_account_id": assigned_sender}}
+            {"$set": lead_updates}
         )
 
-    # 2. Mark Campaign as ACTIVE
+    # 3. Mark Campaign as ACTIVE
+    updates["status"] = CampaignStatus.ACTIVE
     await db.outreach_campaigns.update_one(
         {"id": campaign_id},
-        {"$set": {"status": CampaignStatus.ACTIVE, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": updates}
     )
 
     logger.info("Campaign %s launched with %s senders and %s leads pooled.", campaign_id, len(senders), len(unassigned_leads))
