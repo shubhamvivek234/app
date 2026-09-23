@@ -404,6 +404,7 @@ export default function OutreachCampaigns({
   selectedCampaignId: propSelectedCampaignId,
   onSelectCampaign: propOnSelectCampaign,
   refreshKey,
+  lastSavedDraft,
 }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -428,16 +429,36 @@ export default function OutreachCampaigns({
   const [newCampaignModalOpen, setNewCampaignModalOpen] = useState(false);
   const [scratchCampaignName, setScratchCampaignName] = useState('');
 
+  // Optimistically reflect newly saved campaign from wizard with 0ms latency
+  useEffect(() => {
+    if (lastSavedDraft && lastSavedDraft.id) {
+      setCampaigns((prev) => {
+        const without = prev.filter((c) => c.id !== lastSavedDraft.id);
+        return [lastSavedDraft, ...without];
+      });
+    }
+  }, [lastSavedDraft]);
+
   const fetchCampaigns = async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setCampaigns(data || []);
+        const incoming = Array.isArray(data) ? data : [];
+        setCampaigns((prev) => {
+          if (lastSavedDraft && lastSavedDraft.id) {
+            const found = incoming.find((c) => c.id === lastSavedDraft.id);
+            if (!found) {
+              return [lastSavedDraft, ...incoming];
+            }
+          }
+          return incoming;
+        });
       }
     } catch (err) {
       console.error('Failed to fetch campaigns:', err);
@@ -451,6 +472,7 @@ export default function OutreachCampaigns({
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/sequences/templates', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -516,6 +538,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -533,6 +556,7 @@ export default function OutreachCampaigns({
         if (fullTpl.nodes && fullTpl.edges) {
           await fetch('/api/v1/outreach/sequences', {
             method: 'POST',
+            credentials: 'include',
             headers: {
               'Content-Type': 'application/json',
               Authorization: token ? `Bearer ${token}` : '',
@@ -580,6 +604,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -595,7 +620,7 @@ export default function OutreachCampaigns({
         const draft = await res.json();
         toast.success(`Campaign created: “${safeName}”`);
         if (onOpenWizard) {
-          onOpenWizard(draft.id, 2, safeName);
+          onOpenWizard(draft.id, 2, draft.name || safeName);
         } else {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
@@ -733,9 +758,9 @@ export default function OutreachCampaigns({
           setSelectedCampaignId(null);
           fetchCampaigns();
         }}
-        onEdit={(id, step) => {
+        onEdit={(id, step, name) => {
           if (onOpenWizard) {
-            onOpenWizard(id, step || 2);
+            onOpenWizard(id, step || 2, name || '');
           } else {
             setActiveCampaignId(id);
             setIsWizardOpen(true);
@@ -922,7 +947,7 @@ export default function OutreachCampaigns({
           <button
             onClick={() => {
               if (onOpenWizard) {
-                onOpenWizard(draftCampaign.id, draftCampaign.draft_step || 2);
+                onOpenWizard(draftCampaign.id, draftCampaign.draft_step || 2, draftCampaign.name);
               } else {
                 setActiveCampaignId(draftCampaign.id);
                 setIsWizardOpen(true);
@@ -1038,7 +1063,18 @@ export default function OutreachCampaigns({
                 {filteredCampaigns.map((camp) => (
                   <tr
                     key={camp.id}
-                    onClick={() => setSelectedCampaignId(camp.id)}
+                    onClick={() => {
+                      if (camp.status === 'draft') {
+                        if (onOpenWizard) {
+                          onOpenWizard(camp.id, camp.draft_step || 2, camp.name);
+                        } else {
+                          setActiveCampaignId(camp.id);
+                          setIsWizardOpen(true);
+                        }
+                      } else {
+                        setSelectedCampaignId(camp.id);
+                      }
+                    }}
                     className="hover:bg-gray-50/60 transition-colors cursor-pointer group"
                   >
                     {/* Status Pill */}

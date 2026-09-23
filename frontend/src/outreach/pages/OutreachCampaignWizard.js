@@ -165,6 +165,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/leads?campaign_id=${targetCid}&limit=20`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -225,6 +226,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -255,6 +257,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       if (campaignId && campaignId !== 'new' && campaignId !== 'new_campaign') {
         try {
           const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
+            credentials: 'include',
             headers: { Authorization: token ? `Bearer ${token}` : '' },
           });
           if (res.ok) {
@@ -279,6 +282,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           const defaultInitialName = (campaignName || initialName || '').trim() || 'Connect and follow up';
           const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
             method: 'POST',
+            credentials: 'include',
             headers: {
               'Content-Type': 'application/json',
               Authorization: token ? `Bearer ${token}` : '',
@@ -335,6 +339,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       };
       await fetch(`/api/v1/outreach/campaigns/${targetId}/launch`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -366,6 +371,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       try {
         const token = localStorage.getItem('token');
         const res = await fetch('/api/v1/outreach/accounts', {
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (res.ok) {
@@ -393,6 +399,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
       if (activeCampaignId) {
         const seqRes = await fetch(`/api/v1/outreach/sequences/${activeCampaignId}`, {
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (seqRes.ok) {
@@ -405,6 +412,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
       if (nodes.length === 0) {
         const tplsRes = await fetch('/api/v1/outreach/sequences/templates', {
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (tplsRes.ok) {
@@ -419,6 +427,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
       const res = await fetch('/api/v1/outreach/sequences/templates', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -498,8 +507,16 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             <button
               onClick={async () => {
                 const saved = await syncDraft(campaignName);
+                const finalSaved = saved || {
+                  id: activeCampaignId || campaignId,
+                  name: campaignName,
+                  status: 'draft',
+                  draft_progress: currentStep === 1 ? 20 : currentStep === 2 ? 60 : 80,
+                  draft_step: currentStep,
+                  updated_at: new Date().toISOString(),
+                };
                 toast.success('Campaign saved to drafts');
-                if (onBack) onBack(saved ? saved.id : activeCampaignId);
+                if (onBack) onBack(finalSaved);
               }}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >

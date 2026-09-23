@@ -353,6 +353,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       try {
         const token = localStorage.getItem('token');
         const res = await fetch(`/api/v1/outreach/sequences/${campaignId}`, {
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (res.ok) {
@@ -380,6 +381,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
         const { nodes, edges } = flattenTreeToDAG(tree);
         await fetch('/api/v1/outreach/sequences', {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Authorization: token ? `Bearer ${token}` : '',
@@ -746,7 +748,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           setSelectedStepId(step.id);
           setContextMenuStepId(null);
         }}
-        className={`card-interactive relative w-[340px] rounded-2xl bg-white border transition-all cursor-pointer select-none text-left ${
+        className={`card-interactive relative w-[340px] shrink-0 rounded-2xl bg-white border transition-all cursor-pointer select-none text-left ${
           isSelected
             ? 'border-indigo-600 ring-4 ring-indigo-500/20 shadow-md'
             : step.isActionRequired
@@ -880,10 +882,10 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   // Recursive Branch / Subtree Renderer
   const renderBranchSubtree = (branchSteps, parentStepId, branchKey, endsHere) => {
     return (
-      <div className="flex flex-col items-center w-full">
+      <div className="flex flex-col items-center w-full min-w-max">
         {branchSteps && branchSteps.length > 0 ? (
           branchSteps.map((step, idx) => (
-            <div key={step.id} className="flex flex-col items-center w-full">
+            <div key={step.id} className="flex flex-col items-center w-full min-w-max">
               {renderVerticalConnector({
                 type: 'branch',
                 parentStepId,
@@ -987,27 +989,25 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     const { left, right } = node.branches;
 
     return (
-      <div className="flex flex-col items-center w-full">
-        {/* Orthogonal SVG Connector */}
-        <div className="w-full flex justify-center">
-          <svg className="w-[680px] h-[36px] overflow-visible" viewBox="0 0 680 36" fill="none">
-            {/* Center trunk dropping from parent */}
-            <line x1="340" y1="0" x2="340" y2="18" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
-            {/* Horizontal splitter busbar */}
-            <line x1="170" y1="18" x2="510" y2="18" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
-            {/* Left drop line into left condition pill */}
-            <line x1="170" y1="18" x2="170" y2="36" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
-            {/* Right drop line into right condition pill */}
-            <line x1="510" y1="18" x2="510" y2="36" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        </div>
+      <div className="flex flex-col items-center w-full min-w-max">
+        {/* Center vertical trunk line dropping from parent card */}
+        <div className="w-[2px] h-5 bg-slate-300 shrink-0" />
 
-        {/* Two Branch Columns */}
-        <div className="flex items-start justify-center gap-16 w-full">
-          {/* Left Branch */}
-          <div className="w-[340px] flex flex-col items-center">
+        {/* 2-Column Responsive Grid for Branches */}
+        <div className="grid grid-cols-2 w-full min-w-max items-start">
+          {/* Left Branch Column */}
+          <div className="flex flex-col items-center min-w-[360px] w-full px-4">
+            {/* Orthogonal Branch Header Connector */}
+            <div className="w-full h-5 relative shrink-0">
+              {/* Horizontal line from center (50%) to right seam (100%) */}
+              <div className="absolute top-0 right-0 left-1/2 h-[2px] bg-slate-300" />
+              {/* Vertical line from top-0 down to pill at center (50%) */}
+              <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[2px] bg-slate-300" />
+            </div>
+
+            {/* Left Condition Pill */}
             <div
-              className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold tracking-tight shadow-2xs ${
+              className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold tracking-tight shadow-2xs shrink-0 ${
                 left.type === 'danger'
                   ? 'bg-rose-50 border border-rose-200 text-rose-600'
                   : 'bg-emerald-50 border border-emerald-200 text-emerald-700'
@@ -1016,13 +1016,24 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <span>{left.type === 'danger' ? '✕' : '✓'}</span>
               <span>{left.condition}</span>
             </div>
+
+            {/* Left Branch Subtree */}
             {renderBranchSubtree(left.steps, node.id, 'left', left.endsHere)}
           </div>
 
-          {/* Right Branch */}
-          <div className="w-[340px] flex flex-col items-center">
+          {/* Right Branch Column */}
+          <div className="flex flex-col items-center min-w-[360px] w-full px-4">
+            {/* Orthogonal Branch Header Connector */}
+            <div className="w-full h-5 relative shrink-0">
+              {/* Horizontal line from left seam (0%) to center (50%) */}
+              <div className="absolute top-0 left-0 right-1/2 h-[2px] bg-slate-300" />
+              {/* Vertical line from top-0 down to pill at center (50%) */}
+              <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[2px] bg-slate-300" />
+            </div>
+
+            {/* Right Condition Pill */}
             <div
-              className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold tracking-tight shadow-2xs ${
+              className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold tracking-tight shadow-2xs shrink-0 ${
                 right.type === 'danger'
                   ? 'bg-rose-50 border border-rose-200 text-rose-600'
                   : 'bg-emerald-50 border border-emerald-200 text-emerald-700'
@@ -1031,6 +1042,8 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <span>{right.type === 'danger' ? '✕' : '✓'}</span>
               <span>{right.condition}</span>
             </div>
+
+            {/* Right Branch Subtree */}
             {renderBranchSubtree(right.steps, node.id, 'right', right.endsHere)}
           </div>
         </div>
@@ -1156,7 +1169,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           }`}
         >
           <div
-            className="flex flex-col items-center transition-transform origin-top will-change-transform min-w-[760px]"
+            className="flex flex-col items-center transition-transform origin-top will-change-transform min-w-[760px] w-max"
             style={{
               transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel / 100})`,
               transitionDuration: isPanning ? '0ms' : '150ms',
@@ -1170,7 +1183,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
             {/* Root vertical trunk lines and recursive nodes */}
             {tree.map((rootStep, index) => (
-              <div key={rootStep.id} className="flex flex-col items-center w-full">
+              <div key={rootStep.id} className="flex flex-col items-center w-full min-w-max">
                 {renderVerticalConnector({
                   type: 'linear',
                   stepId: index > 0 ? tree[index - 1].id : 'start',

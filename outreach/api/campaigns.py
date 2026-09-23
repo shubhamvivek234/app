@@ -82,7 +82,7 @@ async def list_campaigns(
     """
     Returns list of campaigns with outbound KPI metrics matching Part 1, Image 2.
     """
-    user_id = current_user.get("user_id")
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
     campaigns = await _fetch_cursor_docs(
         db.outreach_campaigns.find({
             "user_id": user_id,
@@ -108,13 +108,19 @@ async def auto_draft_campaign(
     """
     Auto-persists a campaign draft immediately so work is never lost if user closes browser.
     """
-    user_id = current_user.get("user_id")
-    workspace_id = current_user.get("default_workspace_id") or "default_ws"
+    user_id = current_user.get("user_id") or str(current_user.get("id") or current_user.get("_id", ""))
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or "default_ws"
 
     if req.campaign_id:
         existing = await db.outreach_campaigns.find_one({"id": req.campaign_id, "user_id": user_id})
+        if not existing:
+            existing = await db.outreach_campaigns.find_one({"id": req.campaign_id})
         if existing:
-            updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+            updates: dict[str, Any] = {
+                "updated_at": datetime.now(timezone.utc),
+                "user_id": user_id or existing.get("user_id"),
+                "workspace_id": workspace_id or existing.get("workspace_id"),
+            }
             if req.name:
                 updates["name"] = req.name
             if req.draft_step is not None:
@@ -132,8 +138,9 @@ async def auto_draft_campaign(
 
             await db.outreach_campaigns.update_one({"id": req.campaign_id}, {"$set": updates})
             doc = await db.outreach_campaigns.find_one({"id": req.campaign_id})
-            doc.pop("_id", None)
-            return doc
+            if doc:
+                doc.pop("_id", None)
+                return doc
 
     # Assign sequential default name if not provided
     count = await db.outreach_campaigns.count_documents({"user_id": user_id})

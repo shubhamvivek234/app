@@ -9,9 +9,9 @@ Focus: URL Deep-Linking & History Sync, Relational Cascades, Live SSE Stream, Co
 ## Last Session Completed
 Date: 2026-09-24
 Completed:
-- Campaign Save & Close Visibility & Name Persistence: Fixed auto-draft name overwrites with `hasUserEditedName` ref and onBlur sync; updated `syncDraft()` to ensure creation on save; sorted `list_campaigns` by `updated_at` desc so newly saved drafts appear at top; updated `handleCloseWizard` in `OutreachApp` to navigate directly to campaigns tab and trigger fresh list re-fetch via `refreshKey`.
-- Sequence Canvas Fluid Panning & Leftward Navigation: Added native drag-to-pan, two-finger trackpad panning, and wheel zoom to `SequenceCanvas`; added directional Move Left, Move Right, and Recenter controls to the toolbar to easily pan and inspect branch steps expanding to the left.
-- 73/73 outreach tests pass, frontend CI clean (`CI=true npm run build`, 807.88 kB gzip main bundle).
+- Campaign Save Visibility & Name Persistence: Fixed cross-origin session credentials on all outreach API requests (`credentials: 'include'`); added optimistic draft state synchronization between `OutreachCampaignWizard`, `OutreachApp`, and `OutreachCampaigns` for 0ms latency display; preserved custom names in drafts table and resume links; added fallback lookups in `auto_draft_campaign`.
+- Sequence Canvas Orthogonal Grid Connectors: Replaced static 680px SVG and fixed 340px width constraints with responsive 2-column grid (`grid grid-cols-2 min-w-max`) and exact 50% orthogonal branch connectors; fixed misalignment where child branch cards were centered and detached from condition drop lines.
+- 73/73 outreach tests pass, frontend CI clean (`CI=true npm run build`, 807.87 kB gzip main bundle).
 
 ## Active Work
 Currently implementing: None

@@ -43,6 +43,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
   const [wizardCampaignName, setWizardCampaignName] = useState('');
   const [selectedCampaignId, setSelectedCampaignId] = useState(initial.detailId);
   const [campaignsRefreshKey, setCampaignsRefreshKey] = useState(0);
+  const [lastSavedDraft, setLastSavedDraft] = useState(null);
 
   // Sync state changes to browser URL via pushState
   const syncUrl = useCallback((tab, isWizard, campId, step, detailId, replace = false) => {
@@ -111,7 +112,10 @@ export default function OutreachApp({ initialTab = 'home' }) {
     syncUrl('campaigns', true, validId, validStep, null);
   };
 
-  const handleCloseWizard = () => {
+  const handleCloseWizard = (savedDraft) => {
+    if (savedDraft && typeof savedDraft === 'object' && savedDraft.id) {
+      setLastSavedDraft(savedDraft);
+    }
     setIsWizardOpen(false);
     setActiveTab('campaigns');
     setSelectedCampaignId(null);
@@ -160,6 +164,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
             <OutreachCampaigns
               key={`camp_list_${campaignsRefreshKey}`}
               refreshKey={campaignsRefreshKey}
+              lastSavedDraft={lastSavedDraft}
               selectedCampaignId={selectedCampaignId}
               onSelectCampaign={handleSelectCampaign}
               onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 2, name || '')}

@@ -37,6 +37,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -57,6 +58,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
       const query = new URLSearchParams({ campaign_id: campaignId });
       if (searchQuery) query.set('search', searchQuery);
       const res = await fetch(`/api/v1/outreach/leads?${query.toString()}`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -75,6 +77,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/sequences/${campaignId}`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -96,6 +99,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
       if (campaign.status === 'active') {
         const res = await fetch(`/api/v1/outreach/campaigns/${campaign.id}/pause`, {
           method: 'POST',
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (res.ok) {
@@ -108,6 +112,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
         // Paused or Draft -> Launch/Resume
         const res = await fetch(`/api/v1/outreach/campaigns/${campaign.id}/launch`, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Authorization: token ? `Bearer ${token}` : '',
@@ -238,7 +243,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </button>
           )}
           <button
-            onClick={() => onEdit && onEdit(campaign.id)}
+            onClick={() => onEdit && onEdit(campaign.id, campaign.draft_step || 2, campaign.name)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors"
           >
             <Pencil className="h-3.5 w-3.5 text-indigo-600" />
