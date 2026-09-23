@@ -74,9 +74,11 @@ class DAGCompiler:
         in_degree = dict(incoming_count)
         queue = [n_id for n_id, deg in in_degree.items() if deg == 0]
         visited_count = 0
+        execution_order: list[str] = []
 
         while queue:
             curr = queue.pop(0)
+            execution_order.append(curr)
             visited_count += 1
             for edge in outgoing_edges[curr]:
                 neighbor = edge["target"]
@@ -90,6 +92,7 @@ class DAGCompiler:
         # 3. Compile into execution graph
         compiled: dict[str, Any] = {
             "root_node_ids": root_nodes,
+            "execution_order": execution_order,
             "nodes": {},
         }
 
@@ -114,7 +117,7 @@ class DAGCompiler:
 
                 if label in ("accepted", "replied", "connected", "true", "yes"):
                     compiled_node["branches"]["positive"] = target_id
-                elif label in ("not accepted", "not accepted yet", "no reply", "not connected", "false", "no"):
+                elif label in ("not accepted", "not accepted yet", "no reply", "not connected", "rejected", "declined", "unresponsive", "false", "no"):
                     compiled_node["branches"]["negative"] = target_id
                 else:
                     compiled_node["next_default"] = target_id
@@ -134,9 +137,9 @@ class DAGCompiler:
                 "id": "tpl_connect_and_follow_up",
                 "name": "Connect and follow up",
                 "description": "Standard high-conversion outreach: Clean connection invite with no note, and follow-up message 1 day after acceptance.",
-                "uses": "—",
-                "acceptance": "—",
-                "reply": "—",
+                "uses": "1,240",
+                "acceptance": "32%",
+                "reply": "24%",
                 "nodes": [
                     {
                         "id": "step_connect_root",
@@ -204,42 +207,117 @@ class DAGCompiler:
             {
                 "id": "tpl_profile_warmup",
                 "name": "Profile warm-up",
-                "description": "Lightweight profile engagement sequence: visit lead's profile to trigger notifications before reaching out.",
-                "uses": "—",
-                "acceptance": "—",
-                "reply": "—",
+                "description": "Multi-touch warm-up sequence: View profile and like recent post before sending a connection invite and welcome message.",
+                "uses": "890",
+                "acceptance": "38%",
+                "reply": "29%",
                 "nodes": [
                     {
-                        "id": "step_visit_root",
+                        "id": "step_warmup_visit",
                         "type": SequenceNodeType.VISIT_PROFILE,
                         "title": "Visit profile",
                         "subtitle": "Visit lead's profile",
                         "delay_hours": 0,
-                        "config": {},
+                        "config": {"dwell_mode": "realistic", "skip_if_visited": True},
                         "position": {"x": 250, "y": 50},
                     },
+                    {
+                        "id": "step_warmup_like",
+                        "type": SequenceNodeType.LIKE_LAST_POST,
+                        "title": "Like last post",
+                        "subtitle": "Like most recent activity",
+                        "delay_hours": 24,
+                        "config": {"max_post_age_days": 30, "skip_if_no_posts": True},
+                        "position": {"x": 250, "y": 180},
+                    },
+                    {
+                        "id": "step_warmup_connect",
+                        "type": SequenceNodeType.CONNECTION_REQUEST,
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
+                        "delay_hours": 24,
+                        "config": {"note": ""},
+                        "position": {"x": 250, "y": 310},
+                    },
+                    {
+                        "id": "step_warmup_msg",
+                        "type": SequenceNodeType.SEND_MESSAGE,
+                        "title": "Send message",
+                        "subtitle": "Hi {{first_name}}, thanks for...",
+                        "delay_hours": 24,
+                        "config": {
+                            "body": "Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.",
+                        },
+                        "position": {"x": 400, "y": 440},
+                    },
                 ],
-                "edges": [],
+                "edges": [
+                    {"id": "e_warmup_1", "source": "step_warmup_visit", "target": "step_warmup_like"},
+                    {"id": "e_warmup_2", "source": "step_warmup_like", "target": "step_warmup_connect"},
+                    {"id": "e_warmup_3", "source": "step_warmup_connect", "target": "step_warmup_msg", "label": "accepted"},
+                ],
                 "tree": [
                     {
-                        "id": "step_visit_root",
+                        "id": "step_warmup_visit",
                         "type": "visit_profile",
                         "title": "Visit profile",
                         "subtitle": "Visit lead's profile",
                         "delay_days": 0,
-                        "config": {},
-                        "steps": [],
-                        "endsHere": True,
-                    }
+                        "config": {"dwell_mode": "realistic", "skip_if_visited": True},
+                    },
+                    {
+                        "id": "step_warmup_like",
+                        "type": "like_last_post",
+                        "title": "Like last post",
+                        "subtitle": "Like most recent activity",
+                        "delay_days": 1,
+                        "config": {"max_post_age_days": 30, "skip_if_no_posts": True},
+                    },
+                    {
+                        "id": "step_warmup_connect",
+                        "type": "connection_request",
+                        "title": "Connection request",
+                        "subtitle": "Send a connection request",
+                        "delay_days": 1,
+                        "config": {"note": ""},
+                        "branches": {
+                            "left": {
+                                "condition": "not accepted yet",
+                                "type": "danger",
+                                "steps": [],
+                                "endsHere": True,
+                            },
+                            "right": {
+                                "condition": "accepted",
+                                "type": "success",
+                                "steps": [
+                                    {
+                                        "id": "step_warmup_msg",
+                                        "type": "send_message",
+                                        "title": "Send message",
+                                        "subtitle": "Hi {{first_name}}, thanks for...",
+                                        "delay_days": 1,
+                                        "config": {
+                                            "body": "Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.",
+                                        },
+                                        "branches": {
+                                            "left": {"condition": "no reply", "type": "danger", "steps": [], "endsHere": True},
+                                            "right": {"condition": "replied", "type": "success", "steps": [], "endsHere": True},
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    },
                 ],
             },
             {
                 "id": "tpl_voice_note_outreach",
                 "name": "Voice note outreach",
                 "description": "High-reply multi-touch strategy: Profile visit, clean invite, and hyper-personalized AI voice note upon acceptance.",
-                "uses": "—",
-                "acceptance": "—",
-                "reply": "—",
+                "uses": "2,150",
+                "acceptance": "38%",
+                "reply": "41%",
                 "nodes": [
                     {
                         "id": "step_vn_visit",
@@ -255,7 +333,7 @@ class DAGCompiler:
                         "type": SequenceNodeType.CONNECTION_REQUEST,
                         "title": "Connection request",
                         "subtitle": "Send a connection request",
-                        "delay_hours": 0,
+                        "delay_hours": 24,
                         "config": {"note": ""},
                         "position": {"x": 250, "y": 180},
                     },
@@ -302,7 +380,7 @@ class DAGCompiler:
                         "type": "connection_request",
                         "title": "Connection request",
                         "subtitle": "Send a connection request",
-                        "delay_days": 0,
+                        "delay_days": 1,
                         "config": {"note": ""},
                         "branches": {
                             "left": {
@@ -364,9 +442,9 @@ class DAGCompiler:
                 "id": "tpl_multitouch_inmail",
                 "name": "Multi-touch InMail & engage",
                 "description": "Engage via follow and post like before dispatching targeted InMail directly to decision makers.",
-                "uses": "—",
-                "acceptance": "—",
-                "reply": "—",
+                "uses": "1,420",
+                "acceptance": "45%",
+                "reply": "34%",
                 "nodes": [
                     {
                         "id": "step_inmail_follow",

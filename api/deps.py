@@ -362,9 +362,10 @@ async def get_current_user(
         except HTTPException as exc:
             cookie_error = exc
 
-    if decoded is None and credentials is not None:
+    token_str = credentials.credentials if credentials is not None else request.query_params.get("token")
+    if decoded is None and token_str:
         try:
-            decoded = firebase_auth.verify_id_token(credentials.credentials)
+            decoded = firebase_auth.verify_id_token(token_str)
             request.state.jti = decoded.get("jti") or decoded.get("sub")
         except Exception as exc:
             event_log(

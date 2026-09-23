@@ -281,16 +281,47 @@ async def delete_campaign(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Soft-deletes a campaign allowing reversible undo."""
+    """Soft-deletes a campaign allowing reversible undo with relational cascade cleanup."""
     user_id = current_user.get("user_id")
     campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "user_id": user_id})
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
+    now = datetime.now(timezone.utc)
+    # 1. Soft-delete campaign
     await db.outreach_campaigns.update_one(
         {"id": campaign_id},
-        {"$set": {"is_deleted": True, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"is_deleted": True, "updated_at": now}}
     )
+
+    # 2. Cascade cancel all pending/queued/scheduled tasks to prevent unwanted execution
+    await db.outreach_tasks.update_many(
+        {"campaign_id": campaign_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
+        {"$set": {
+            "status": "cancelled",
+            "cancelled_due_to_campaign_delete": True,
+            "updated_at": now,
+        }}
+    )
+
+    # 3. Soft-unassign leads enrolled in this campaign
+    await db.outreach_leads.update_many(
+        {"campaign_id": campaign_id, "$or": [{"user_id": user_id}, {"workspace_id": user_id}]},
+        {"$set": {
+            "pipeline_stage": "unassigned",
+            "campaign_id": None,
+            "previous_campaign_id": campaign_id,
+            "updated_at": now,
+        }}
+    )
+
+    # 4. Soft-delete associated sequence if any
+    if campaign.get("sequence_id"):
+        await db.outreach_sequences.update_one(
+            {"id": campaign["sequence_id"]},
+            {"$set": {"is_deleted": True, "updated_at": now}}
+        )
+
     return {"status": "deleted", "id": campaign_id, "name": campaign["name"]}
 
 
@@ -300,16 +331,44 @@ async def restore_campaign(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Restores a soft-deleted campaign (Undo action)."""
+    """Restores a soft-deleted campaign and cascades reversal to tasks, leads, and sequences."""
     user_id = current_user.get("user_id")
     campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "user_id": user_id})
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
+    now = datetime.now(timezone.utc)
+    # 1. Restore campaign
     await db.outreach_campaigns.update_one(
         {"id": campaign_id},
-        {"$set": {"is_deleted": False, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"is_deleted": False, "updated_at": now}}
     )
+
+    # 2. Restore cancelled tasks that were halted by the deletion
+    await db.outreach_tasks.update_many(
+        {"campaign_id": campaign_id, "cancelled_due_to_campaign_delete": True},
+        {
+            "$set": {"status": "queued", "updated_at": now},
+            "$unset": {"cancelled_due_to_campaign_delete": ""}
+        }
+    )
+
+    # 3. Re-enroll unassigned leads back into the campaign
+    await db.outreach_leads.update_many(
+        {"previous_campaign_id": campaign_id, "$or": [{"user_id": user_id}, {"workspace_id": user_id}], "campaign_id": None},
+        {
+            "$set": {"campaign_id": campaign_id, "pipeline_stage": "enrolled", "updated_at": now},
+            "$unset": {"previous_campaign_id": ""}
+        }
+    )
+
+    # 4. Restore sequence
+    if campaign.get("sequence_id"):
+        await db.outreach_sequences.update_one(
+            {"id": campaign["sequence_id"]},
+            {"$set": {"is_deleted": False, "updated_at": now}}
+        )
+
     return {"status": "restored", "id": campaign_id, "name": campaign["name"]}
 
 

@@ -48,7 +48,7 @@ from outreach.api.prompts import (
     delete_prompt,
     preview_evaluated_message,
 )
-from outreach.api.analytics import get_outreach_analytics
+from outreach.api.analytics import get_outreach_analytics, live_activity_feed
 
 
 class MockCursor:
@@ -390,3 +390,13 @@ async def test_outreach_analytics():
     assert len(res["daily_chart"]) == 14
     assert res["daily_chart"][0]["sent"] >= 0
     assert res["daily_chart"][0]["accepted"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_outreach_analytics_live_feed():
+    db = MockDatabase()
+    res = await live_activity_feed(current_user=USER, db=db)
+    assert res.media_type == "text/event-stream"
+    assert res.headers["Cache-Control"] == "no-cache"
+    assert res.headers["Connection"] == "keep-alive"
+

@@ -158,3 +158,5 @@ async def test_update_limits_and_disconnect_account():
     del_res = await disconnect_account("acc_target_1", current_user=user, db=mock_db)
     assert del_res["status"] == "success"
     mock_db.outreach_accounts.delete_one.assert_awaited_once_with({"id": "acc_target_1"})
+    mock_db.outreach_campaigns.update_many.assert_awaited_once()
+    mock_db.outreach_tasks.update_many.assert_awaited_once()

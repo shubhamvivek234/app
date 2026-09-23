@@ -358,7 +358,24 @@ async def disconnect_account(
         proxy_manager = JITProxyManager()
         await proxy_manager.release_proxy(account["proxy"]["proxy_id"])
 
+    now = datetime.now(timezone.utc)
+    # Relational Cascade: Unbind account from campaign sender pools
+    await db.outreach_campaigns.update_many(
+        {"sender_account_ids": account_id},
+        {"$pull": {"sender_account_ids": account_id}, "$set": {"updated_at": now}}
+    )
+
+    # Relational Cascade: Cancel queued/pending tasks scheduled on this account
+    await db.outreach_tasks.update_many(
+        {"account_id": account_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
+        {"$set": {
+            "status": "cancelled",
+            "cancellation_reason": f"Sender account {account_id} was disconnected",
+            "updated_at": now,
+        }}
+    )
+
     # Delete account from MongoDB
     await db.outreach_accounts.delete_one({"id": account_id})
-    logger.info("Account %s disconnected and proxy released for user %s", account_id, user_id)
-    return {"status": "success", "message": "Account disconnected and proxy deallocated."}
+    logger.info("Account %s disconnected, unlinked from campaigns, and proxy released for user %s", account_id, user_id)
+    return {"status": "success", "message": "Account disconnected, campaigns updated, and proxy deallocated."}

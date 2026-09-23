@@ -3,10 +3,13 @@ Phase 3 & Prosp AI Parity: Outreach Campaign & Account Analytics API.
 Powers KPI summary metric cards and daily Sent vs Accepted bar chart.
 Matches Prosp campaign analytics (prosp_campaign_analytics.jpg).
 """
+import json
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from api.deps import get_current_user
@@ -155,3 +158,72 @@ async def get_outreach_analytics(
         "timeframe": timeframe,
         "campaign_id": campaign_id or "all",
     }
+
+
+@router.get("/live-feed")
+async def live_activity_feed(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Real-time Server-Sent Events (SSE) stream for live outreach touchpoints and activity.
+    Broadcasts completed tasks, invitations, replies, and heartbeats at $0 infra cost.
+    """
+    user_id = current_user.get("user_id")
+    workspace_id = current_user.get("default_workspace_id") or "default_ws"
+
+    async def event_generator():
+        # Initial greeting event
+        init_payload = {
+            "type": "connected",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "online",
+        }
+        yield f"event: connected\ndata: {json.dumps(init_payload)}\n\n"
+
+        last_check = datetime.now(timezone.utc) - timedelta(minutes=10)
+        try:
+            while True:
+                now = datetime.now(timezone.utc)
+                # Check for tasks completed since last check
+                recent_tasks = await db.outreach_tasks.find({
+                    "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
+                    "status": "completed",
+                    "updated_at": {"$gte": last_check},
+                }).sort("updated_at", -1).to_list(length=10)
+
+                for t in recent_tasks:
+                    payload = {
+                        "id": t.get("id"),
+                        "task_type": t.get("task_type"),
+                        "campaign_id": t.get("campaign_id"),
+                        "lead_id": t.get("lead_id"),
+                        "account_id": t.get("account_id"),
+                        "timestamp": (
+                            t["updated_at"].isoformat()
+                            if isinstance(t.get("updated_at"), datetime)
+                            else str(t.get("updated_at", now.isoformat()))
+                        ),
+                    }
+                    yield f"event: task_completed\ndata: {json.dumps(payload)}\n\n"
+
+                last_check = now
+                heartbeat = {
+                    "type": "heartbeat",
+                    "timestamp": now.isoformat(),
+                }
+                yield f"event: heartbeat\ndata: {json.dumps(heartbeat)}\n\n"
+                await asyncio.sleep(15)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+

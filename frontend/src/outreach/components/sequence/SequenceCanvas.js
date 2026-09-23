@@ -982,7 +982,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <span>{right.type === 'danger' ? '✕' : '✓'}</span>
               <span>{right.condition}</span>
             </div>
-            {renderBranchSubtree(right.steps, node.id, 'right', false)}
+            {renderBranchSubtree(right.steps, node.id, 'right', right.endsHere)}
           </div>
         </div>
       </div>
@@ -1118,6 +1118,28 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     >
                       + Add a step
                     </button>
+                  </div>
+                )}
+                {!rootStep.branches && !rootStep.endsHere && index === tree.length - 1 && (
+                  <div className="flex flex-col items-center mt-1">
+                    <div className="w-[2px] h-4 bg-slate-300" />
+                    <div className="flex items-center gap-1.5">
+                      <div className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 shadow-2xs">
+                        End
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPaletteTarget({ type: 'linear', stepId: rootStep.id });
+                          setPaletteOpen(true);
+                        }}
+                        className="w-7 h-7 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-xs transition-colors"
+                        title="Add a step"
+                      >
+                        <Plus className="w-4 h-4 stroke-[2.5]" />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1414,6 +1436,299 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                   />
                 </div>
                 {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* VISIT PROFILE CONFIGURATION */}
+            {selectedStep.type === 'visit_profile' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
+                  <strong>Profile Visit:</strong> Simulates a natural visit to the prospect's profile, triggering a notification in their LinkedIn feed and warming them up.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Dwell Time & Browsing Depth
+                  </label>
+                  <select
+                    value={selectedStep.config?.dwell_mode || 'realistic'}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, dwell_mode: e.target.value },
+                        })
+                      )
+                    }
+                    className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  >
+                    <option value="realistic">Realistic (20–40s scroll + scan, recommended)</option>
+                    <option value="quick">Quick glance (10–15s view)</option>
+                    <option value="deep">Deep engagement (45–60s full profile & skills scan)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/60">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-900">Skip if already visited</p>
+                    <p className="text-[11px] text-gray-500">Don't re-visit if viewed within the past 30 days</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={selectedStep.config?.skip_if_visited ?? true}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, skip_if_visited: e.target.checked },
+                        })
+                      )
+                    }
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                  />
+                </div>
+
+                {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* LIKE LAST POST CONFIGURATION */}
+            {selectedStep.type === 'like_last_post' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-sky-50/70 border border-sky-100 rounded-xl text-xs text-sky-900 leading-relaxed">
+                  <strong>Post Like:</strong> Likes the lead's most recent post or share on LinkedIn. This puts your profile directly into their activity notifications and dramatically boosts invite acceptance.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Maximum Post Age
+                  </label>
+                  <select
+                    value={selectedStep.config?.max_post_age_days || 30}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, max_post_age_days: Number(e.target.value) },
+                        })
+                      )
+                    }
+                    className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  >
+                    <option value={7}>Within last 7 days</option>
+                    <option value={14}>Within last 14 days</option>
+                    <option value={30}>Within last 30 days (recommended)</option>
+                    <option value={90}>Within last 90 days</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/60">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-900">Skip if no posts found</p>
+                    <p className="text-[11px] text-gray-500">Advance without failing if lead hasn't posted</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={selectedStep.config?.skip_if_no_posts ?? true}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, skip_if_no_posts: e.target.checked },
+                        })
+                      )
+                    }
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                  />
+                </div>
+
+                {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* COMMENT LAST POST CONFIGURATION */}
+            {selectedStep.type === 'comment_last_post' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-purple-50/70 border border-purple-100 rounded-xl text-xs text-purple-900 leading-relaxed">
+                  <strong>Post Comment:</strong> Leaves an insightful comment on the lead's latest post.
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-gray-900">Comment Mode</label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, mode: 'ai' },
+                            })
+                          )
+                        }
+                        className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors ${
+                          (selectedStep.config?.mode || 'ai') === 'ai'
+                            ? 'bg-purple-600 text-white shadow-2xs'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        AI Generated
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, mode: 'custom' },
+                            })
+                          )
+                        }
+                        className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors ${
+                          selectedStep.config?.mode === 'custom'
+                            ? 'bg-purple-600 text-white shadow-2xs'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        Custom Template
+                      </button>
+                    </div>
+                  </div>
+
+                  {renderEditorToolbar()}
+
+                  {(selectedStep.config?.mode || 'ai') === 'ai' ? (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                        AI Prompt Instructions for Comment
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={selectedStep.config?.ai_prompt || ''}
+                        onChange={(e) =>
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, ai_prompt: e.target.value },
+                              subtitle: e.target.value.trim().length > 0 ? 'AI comment ready' : 'Action required',
+                            })
+                          )
+                        }
+                        placeholder="Write a warm, 1-2 sentence thoughtful observation about their post topic. Never sell or pitch."
+                        className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                        Comment Template
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={selectedStep.config?.comment_template || ''}
+                        onChange={(e) =>
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, comment_template: e.target.value },
+                              subtitle: e.target.value.trim().length > 0 ? 'Comment template set' : 'Action required',
+                            })
+                          )
+                        }
+                        placeholder="Great point {{first_name}}! Completely agree with your perspective here."
+                        className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* FOLLOW PROFILE CONFIGURATION */}
+            {selectedStep.type === 'follow' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
+                  <strong>Follow Profile:</strong> Follows the prospect on LinkedIn so you see their content updates and appear in their followers list.
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/60">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-900">Skip if already following</p>
+                    <p className="text-[11px] text-gray-500">Avoid duplicate follow actions if already followed</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={selectedStep.config?.skip_if_following ?? true}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, skip_if_following: e.target.checked },
+                        })
+                      )
+                    }
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                  />
+                </div>
+
+                {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* ENDORSE SKILLS CONFIGURATION */}
+            {selectedStep.type === 'endorse_skills' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
+                  <strong>Endorse Skills:</strong> Endorses top skills on the prospect's profile to generate a high-trust notification.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Skills to Endorse
+                  </label>
+                  <select
+                    value={selectedStep.config?.endorse_count || 3}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, endorse_count: Number(e.target.value) },
+                        })
+                      )
+                    }
+                    className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  >
+                    <option value={1}>Top 1 skill</option>
+                    <option value={3}>Top 3 skills (recommended)</option>
+                    <option value={5}>Top 5 skills</option>
+                  </select>
+                </div>
+
+                {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* CONDITIONS CONFIGURATION */}
+            {CONDITION_DEFINITIONS.some((c) => c.type === selectedStep.type) && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-amber-50/70 border border-amber-200/70 rounded-xl text-xs text-amber-900 leading-relaxed">
+                  <strong>{selectedStep.title} Check:</strong> Sequences split dynamically based on lead response. Green branch runs if the condition is met, red branch runs if not.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Timeout / Waiting Duration
+                  </label>
+                  <select
+                    value={selectedStep.config?.timeout_days || 3}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, timeout_days: Number(e.target.value) },
+                        })
+                      )
+                    }
+                    className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                  >
+                    <option value={1}>Wait 1 day before evaluating</option>
+                    <option value={3}>Wait 3 days before evaluating (recommended)</option>
+                    <option value={5}>Wait 5 days before evaluating</option>
+                    <option value={7}>Wait 7 days before evaluating</option>
+                  </select>
+                </div>
               </div>
             )}
           </div>

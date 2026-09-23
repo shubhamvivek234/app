@@ -12,6 +12,7 @@ import {
   Pause,
   Trash2,
   ExternalLink,
+  ArrowRight,
 } from 'lucide-react';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
@@ -91,32 +92,107 @@ export const PREBUILT_TEMPLATES = [
   {
     id: 'tpl_profile_warmup',
     name: 'Profile warm-up',
-    description: "Lightweight profile engagement sequence: visit lead's profile to trigger notifications before reaching out.",
+    description: 'Multi-touch warm-up sequence: View profile and like recent post before sending a connection invite and welcome message.',
     uses: '890',
-    acceptance: '28%',
-    reply: '18%',
+    acceptance: '38%',
+    reply: '29%',
     nodes: [
       {
-        id: 'step_visit_root',
+        id: 'step_warmup_visit',
         type: 'visit_profile',
         title: 'Visit profile',
         subtitle: "Visit lead's profile",
         delay_hours: 0,
-        config: {},
+        config: { dwell_mode: 'realistic', skip_if_visited: true },
         position: { x: 250, y: 50 },
       },
+      {
+        id: 'step_warmup_like',
+        type: 'like_last_post',
+        title: 'Like last post',
+        subtitle: 'Like most recent activity',
+        delay_hours: 24,
+        config: { max_post_age_days: 30, skip_if_no_posts: true },
+        position: { x: 250, y: 180 },
+      },
+      {
+        id: 'step_warmup_connect',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_hours: 24,
+        config: { note: '' },
+        position: { x: 250, y: 310 },
+      },
+      {
+        id: 'step_warmup_msg',
+        type: 'send_message',
+        title: 'Send message',
+        subtitle: 'Hi {{first_name}}, thanks for...',
+        delay_hours: 24,
+        config: {
+          body: 'Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.',
+        },
+        position: { x: 400, y: 440 },
+      },
     ],
-    edges: [],
+    edges: [
+      { id: 'e_warmup_1', source: 'step_warmup_visit', target: 'step_warmup_like' },
+      { id: 'e_warmup_2', source: 'step_warmup_like', target: 'step_warmup_connect' },
+      { id: 'e_warmup_3', source: 'step_warmup_connect', target: 'step_warmup_msg', label: 'accepted' },
+    ],
     tree: [
       {
-        id: 'step_visit_root',
+        id: 'step_warmup_visit',
         type: 'visit_profile',
         title: 'Visit profile',
         subtitle: "Visit lead's profile",
         delay_days: 0,
-        config: {},
-        steps: [],
-        endsHere: true,
+        config: { dwell_mode: 'realistic', skip_if_visited: true },
+      },
+      {
+        id: 'step_warmup_like',
+        type: 'like_last_post',
+        title: 'Like last post',
+        subtitle: 'Like most recent activity',
+        delay_days: 1,
+        config: { max_post_age_days: 30, skip_if_no_posts: true },
+      },
+      {
+        id: 'step_warmup_connect',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_days: 1,
+        config: { note: '' },
+        branches: {
+          left: {
+            condition: 'not accepted yet',
+            type: 'danger',
+            steps: [],
+            endsHere: true,
+          },
+          right: {
+            condition: 'accepted',
+            type: 'success',
+            steps: [
+              {
+                id: 'step_warmup_msg',
+                type: 'send_message',
+                title: 'Send message',
+                subtitle: 'Hi {{first_name}}, thanks for...',
+                delay_days: 1,
+                config: {
+                  body: 'Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.',
+                },
+                branches: {
+                  left: { condition: 'no reply', type: 'danger', steps: [], endsHere: true },
+                  right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
+                },
+              },
+            ],
+          },
+        },
       },
     ],
   },
@@ -142,7 +218,7 @@ export const PREBUILT_TEMPLATES = [
         type: 'connection_request',
         title: 'Connection request',
         subtitle: 'Send a connection request',
-        delay_hours: 0,
+        delay_hours: 24,
         config: { note: '' },
         position: { x: 250, y: 180 },
       },
@@ -189,7 +265,7 @@ export const PREBUILT_TEMPLATES = [
         type: 'connection_request',
         title: 'Connection request',
         subtitle: 'Send a connection request',
-        delay_days: 0,
+        delay_days: 1,
         config: { note: '' },
         branches: {
           left: {
@@ -243,7 +319,7 @@ export const PREBUILT_TEMPLATES = [
     ],
   },
   {
-    id: 'tpl_inmail_engage',
+    id: 'tpl_multitouch_inmail',
     name: 'Multi-touch InMail & engage',
     description: 'Engage via follow and post like before dispatching targeted InMail directly to decision makers.',
     uses: '1,420',
@@ -321,19 +397,33 @@ export const PREBUILT_TEMPLATES = [
   },
 ];
 
-export default function OutreachCampaigns({ onOpenWizard }) {
+export default function OutreachCampaigns({
+  onOpenWizard,
+  selectedCampaignId: propSelectedCampaignId,
+  onSelectCampaign: propOnSelectCampaign,
+}) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [activeCampaignId, setActiveCampaignId] = useState(null);
-  const [selectedCampaignId, setSelectedCampaignId] = useState(null);
+  const [internalSelectedId, setInternalSelectedId] = useState(null);
+  const selectedCampaignId = propSelectedCampaignId !== undefined ? propSelectedCampaignId : internalSelectedId;
+  const setSelectedCampaignId = (id) => {
+    if (propOnSelectCampaign) {
+      propOnSelectCampaign(id);
+    } else {
+      setInternalSelectedId(id);
+    }
+  };
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [templatesList, setTemplatesList] = useState([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [undoAlert, setUndoAlert] = useState(null); // { id, name }
   const [menuOpenId, setMenuOpenId] = useState(null);
+  const [newCampaignModalOpen, setNewCampaignModalOpen] = useState(false);
+  const [scratchCampaignName, setScratchCampaignName] = useState('');
 
   const fetchCampaigns = async () => {
     setLoading(true);
@@ -403,8 +493,10 @@ export default function OutreachCampaigns({ onOpenWizard }) {
     // 1. Immediately close templates view so user transitions to campaign builder
     setIsTemplatesOpen(false);
 
-    // 2. Resolve complete template definition (nodes, edges, tree)
-    const fullTpl = PREBUILT_TEMPLATES.find((p) => p.id === tpl.id || p.name === tpl.name) || tpl;
+    const fullTpl =
+      PREBUILT_TEMPLATES.find(
+        (p) => p.id === tpl.id || (tpl.id === 'tpl_inmail_engage' && p.id === 'tpl_multitouch_inmail') || p.name === tpl.name
+      ) || tpl;
 
     // 3. Cache template tree locally so SequenceCanvas renders the pre-made campaign immediately
     if (fullTpl.tree) {
@@ -699,7 +791,10 @@ export default function OutreachCampaigns({ onOpenWizard }) {
             Browse winning templates
           </button>
           <button
-            onClick={() => handleCreateNewCampaign()}
+            onClick={() => {
+              setScratchCampaignName(`Campaign #${campaigns.length + 1}`);
+              setNewCampaignModalOpen(true);
+            }}
             className="inline-flex items-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -817,7 +912,10 @@ export default function OutreachCampaigns({ onOpenWizard }) {
           <div className="p-16 text-center text-gray-500">
             <p className="text-xs font-medium text-gray-500">No campaigns found in this view.</p>
             <button
-              onClick={() => handleCreateNewCampaign()}
+              onClick={() => {
+                setScratchCampaignName(`Campaign #${campaigns.length + 1}`);
+                setNewCampaignModalOpen(true);
+              }}
               className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
             >
               + Create your first outreach campaign
@@ -953,7 +1051,143 @@ export default function OutreachCampaigns({ onOpenWizard }) {
         )}
       </div>
 
+      {/* Start a new campaign Modal matching Prosp /campaigns/new */}
+      {newCampaignModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-gray-100 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-extrabold text-gray-900 tracking-tight">
+                  Start a new campaign
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  Build the outreach first. You add leads in the next step.
+                </p>
+              </div>
+              <button
+                onClick={() => setNewCampaignModalOpen(false)}
+                className="p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                title="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
+            {/* 2-Card Grid matching Prosp /campaigns/new */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+              {/* Card 1: Build it your way */}
+              <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 hover:border-indigo-300 hover:shadow-md transition-all group">
+                {/* Visual Art Box */}
+                <div className="relative h-32 rounded-xl border border-indigo-100 bg-gradient-to-br from-[#EEF0FF] to-[#E3E7FF] p-3 flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-[10px]">
+                      in
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-white/80 text-[10px] font-semibold text-indigo-700 shadow-2xs">
+                      Scratch
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="h-2 w-28 bg-white/70 rounded-full" />
+                    <div className="h-2 w-16 bg-white/50 rounded-full" />
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div className="mt-4 flex-1 flex flex-col justify-between space-y-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900">
+                      Build it your way
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                      Create a draft and add leads from an existing lead list. Set the campaign name and supported lead filters.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <input
+                      type="text"
+                      value={scratchCampaignName}
+                      onChange={(e) => setScratchCampaignName(e.target.value)}
+                      placeholder="e.g. Q4 Growth Leaders"
+                      className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      onClick={() => {
+                        const name = scratchCampaignName.trim() || `Campaign #${campaigns.length + 1}`;
+                        setNewCampaignModalOpen(false);
+                        handleCreateNewCampaign(name);
+                      }}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors"
+                    >
+                      Build from scratch
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Use a proven template [Recommended] */}
+              <div className="flex flex-col rounded-2xl border-2 border-indigo-200/90 bg-indigo-50/10 p-4 hover:border-indigo-400 hover:shadow-md transition-all group relative">
+                {/* Recommended Badge */}
+                <div className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full bg-[#5145cd] text-white text-[10px] font-bold shadow-xs">
+                  Recommended
+                </div>
+
+                {/* Visual Art Box */}
+                <div className="relative h-32 rounded-xl border border-rose-100 bg-gradient-to-br from-[#FDECEC] to-[#FBE3E8] p-3 flex flex-col justify-between overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-500 text-white font-bold text-[10px]">
+                      %
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="px-2 py-0.5 rounded-md bg-white/90 text-[10px] font-bold text-indigo-700 shadow-2xs">
+                        32% Acc
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-white/90 text-[10px] font-bold text-emerald-700 shadow-2xs">
+                        24% Rep
+                      </span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="h-2 w-32 bg-white/70 rounded-full" />
+                    <div className="h-2 w-20 bg-white/50 rounded-full" />
+                  </div>
+                </div>
+
+                {/* Content */}
+                <div className="mt-4 flex-1 flex flex-col justify-between space-y-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-gray-900">
+                      Use a proven template
+                    </h3>
+                    <p className="text-xs text-indigo-600 font-semibold mt-0.5">
+                      Most teams start here.
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                      Browse and review available prebuilt sequences with proven conversion data and instant setup.
+                    </p>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => {
+                        setNewCampaignModalOpen(false);
+                        setIsTemplatesOpen(true);
+                      }}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white hover:bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-700 shadow-2xs transition-colors"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                      Browse templates
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -80,6 +80,36 @@ class MockCollection:
                 return True
         return False
 
+    async def update_many(self, query, update):
+        count = 0
+        for item in self.items:
+            match = True
+            for k, v in (query or {}).items():
+                if k == "$or":
+                    or_matched = False
+                    for subq in v:
+                        if all(item.get(sk) == sv for sk, sv in subq.items()):
+                            or_matched = True
+                            break
+                    if not or_matched:
+                        match = False
+                        break
+                elif isinstance(v, dict):
+                    if "$in" in v and item.get(k) not in v["$in"]:
+                        match = False
+                        break
+                elif item.get(k) != v:
+                    match = False
+                    break
+            if match:
+                if "$set" in update:
+                    item.update(update["$set"])
+                if "$unset" in update:
+                    for un_k in update["$unset"]:
+                        item.pop(un_k, None)
+                count += 1
+        return count
+
 
 class MockDB:
     def __init__(self):
@@ -87,6 +117,7 @@ class MockDB:
         self.outreach_leads = MockCollection()
         self.outreach_accounts = MockCollection()
         self.outreach_sequences = MockCollection()
+        self.outreach_tasks = MockCollection()
 
 
 @pytest.mark.asyncio
@@ -190,17 +221,41 @@ async def test_soft_delete_and_restore_campaign():
     }
     await db.outreach_campaigns.insert_one(camp_doc)
 
+    task_doc = {
+        "id": "task_1",
+        "campaign_id": "camp_del_1",
+        "status": "queued",
+    }
+    await db.outreach_tasks.insert_one(task_doc)
+
+    lead_doc = {
+        "id": "lead_1",
+        "campaign_id": "camp_del_1",
+        "user_id": "usr_test_3",
+        "pipeline_stage": "enrolled",
+    }
+    await db.outreach_leads.insert_one(lead_doc)
+
     # Check initially listed
     initial_list = await list_campaigns(current_user=user, db=db)
     assert len(initial_list) == 1
 
-    # Soft delete
+    # Soft delete (triggers cascade cancellation of tasks and unenrolls leads)
     del_res = await delete_campaign(campaign_id="camp_del_1", current_user=user, db=db)
     assert del_res["status"] == "deleted"
 
     # Listed should be empty now
     after_del_list = await list_campaigns(current_user=user, db=db)
     assert len(after_del_list) == 0
+
+    # Task should be cancelled
+    t = await db.outreach_tasks.find_one({"id": "task_1"})
+    assert t["status"] == "cancelled"
+
+    # Lead should be unassigned
+    ld = await db.outreach_leads.find_one({"id": "lead_1"})
+    assert ld["pipeline_stage"] == "unassigned"
+    assert ld["campaign_id"] is None
 
     # Restore (Undo)
     restore_res = await restore_campaign(campaign_id="camp_del_1", current_user=user, db=db)
@@ -210,3 +265,12 @@ async def test_soft_delete_and_restore_campaign():
     restored_list = await list_campaigns(current_user=user, db=db)
     assert len(restored_list) == 1
     assert restored_list[0]["name"] == "Profile warm-up"
+
+    # Task should be restored to queued
+    t_restored = await db.outreach_tasks.find_one({"id": "task_1"})
+    assert t_restored["status"] == "queued"
+
+    # Lead should be re-enrolled
+    ld_restored = await db.outreach_leads.find_one({"id": "lead_1"})
+    assert ld_restored["pipeline_stage"] == "enrolled"
+    assert ld_restored["campaign_id"] == "camp_del_1"
