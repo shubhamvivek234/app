@@ -2,19 +2,17 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v8.7 Prosp AI Full Parity Engine & E2E Cold Outreach Shipped
+Stage: v8.8 Outreach Fixes & Real Analytics Shipped
 Branch: main
-Focus: 7-Source Lead Ingestion, Lead Finder Explorer, Post Engager Scraper, AI Prompt Library, Unified Inbox Tools, CRM Kanban, Analytics Dashboard
+Focus: Real Analytics Metrics, Campaign Creation Reliability, Prebuilt Template Builder Loading, Removed Booking Session
 
 ## Last Session Completed
 Date: 2026-09-23
 Completed:
-- Forensic Prosp AI Parity (`EU4zSGaPmW0`):
-  - 7-Source lead ingestion modal (`source_082s.jpg`) with interactive Lead Finder explorer (10+ multi-criteria filters & live preview table) and Post Engagers scraper (`time_090s.jpg`).
-  - AI Prompt Library drawer (`seq_240s.jpg`) pre-seeded with 5 proven outbound prompt architectures, dynamic variable block insertion, and live prospect preview modal.
-  - Unified Inbox pro tools (`prosp_inbox_reminders.jpg`, `prosp_inbox_snippets.jpg`, `prosp_inbox_tags.jpg`): Reminders (`⏱ [S]`) with snooze/complete, Snippets drawer (`📋 [C]`) with search & inject, and colored Tags (`🏷 [T]`) with thread filtering.
-  - Contacts CRM View Switcher (`prosp_crm_kanban.jpg`): Table (`=`) vs Vertical Stack Kanban (`00`), 5 pipeline columns (`Unassigned`, `In Campaign`, `Contacted`, `Replied`, `Call booked`), drag-and-drop & 1-click stage advancement via `PATCH /leads/{id}/stage`.
-  - Campaign & Account Analytics (`prosp_campaign_analytics.jpg`): Dedicated view with 4 KPI summary cards (`Linkedin Requests`, `Messages`, `Engagement`, `Email Delivered`), conversion funnel, and dual-tone daily Sent vs Accepted timeline bar chart.
+- Fixed Analytics Fake Data: Removed all artificial positive minimums (`max(..., 28)`, `308`, etc.) from backend (`outreach/api/analytics.py`) and frontend fallback. Analytics now reflect true database counts and zero states, showing an informative banner when no accounts are connected.
+- Fixed New Campaign Action: `handleCreateNewCampaign` in `OutreachCampaigns.js` no longer fails silently on network errors, and keys the wizard instance in `OutreachApp.js` (`key={`${wizardCampaignId}_${wizardStep}`}`) for clean remounts.
+- Removed Book the Call Section: Eliminated the Jack expert session promotional banner and Calendly booking modal entirely.
+- Winning Template Campaign Builder Loading: Embedded full prebuilt template sequence DAGs (`PREBUILT_TEMPLATES`) in `OutreachCampaigns.js`. Clicking "Use" caches the tree, drafts the campaign, and opens `SequenceCanvas` with the pre-made campaign visible immediately.
 - 67/67 outreach tests pass, frontend CI clean (`CI=true npm run build`, 807.89 kB gzip main bundle).
 
 ## Active Work

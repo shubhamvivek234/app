@@ -18,8 +18,10 @@ export default function OutreachApp({ initialTab = 'home' }) {
   const [wizardStep, setWizardStep] = useState(2);
 
   const handleOpenWizard = (campaignId = 'new', step = 2) => {
-    setWizardCampaignId(campaignId);
-    setWizardStep(step);
+    const validId = typeof campaignId === 'string' && campaignId ? campaignId : 'new';
+    const validStep = typeof step === 'number' ? step : 2;
+    setWizardCampaignId(validId);
+    setWizardStep(validStep);
     setIsWizardOpen(true);
   };
 
@@ -40,6 +42,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
     >
       {isWizardOpen ? (
         <OutreachCampaignWizard
+          key={`${wizardCampaignId}_${wizardStep}`}
           campaignId={wizardCampaignId}
           initialStep={wizardStep}
           onBack={handleCloseWizard}

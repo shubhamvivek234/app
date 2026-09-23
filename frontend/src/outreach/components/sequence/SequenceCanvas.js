@@ -278,8 +278,25 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     }
   };
 
-  // Load existing sequence if campaignId is provided
+  // Load existing sequence or pre-made template tree
   useEffect(() => {
+    // Check if there is a pending pre-made template tree waiting to be applied
+    const pendingTplStr = localStorage.getItem('pending_template_tree');
+    if (pendingTplStr) {
+      try {
+        const parsed = JSON.parse(pendingTplStr);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTree(parsed);
+          setSelectedStepId(null);
+          localStorage.removeItem('pending_template_tree');
+          hasLoaded.current = true;
+          return;
+        }
+      } catch (_) {
+        localStorage.removeItem('pending_template_tree');
+      }
+    }
+
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
       hasLoaded.current = true;
       return;

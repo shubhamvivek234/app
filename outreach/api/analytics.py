@@ -53,22 +53,42 @@ async def get_outreach_analytics(
         queue_clauses.append({"campaign_id": campaign_id})
     queue_query = {"$and": queue_clauses} if len(queue_clauses) > 1 else queue_clauses[0]
 
+    # Check for connected accounts safely
+    acc_count = 0
+    if hasattr(db, "outreach_accounts"):
+        acc_count = await db.outreach_accounts.count_documents({
+            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": workspace_id}],
+            "status": {"$ne": "disconnected"},
+        })
+    social_acc_count = 0
+    if hasattr(db, "social_accounts"):
+        social_acc_count = await db.social_accounts.count_documents({
+            "user_id": user_id,
+            "platform": {"$in": ["linkedin", "linkedin_page"]},
+            "is_active": True,
+        })
+    has_connected_account = (acc_count + social_acc_count) > 0
+
     total_tasks = await db.outreach_tasks.count_documents(queue_query)
     completed_tasks = await db.outreach_tasks.count_documents({**queue_query, "status": "completed"})
 
-    # Requests metrics
-    requests_sent = max(contacted_leads, 28)
-    requests_accepted = max(int(requests_sent * 0.46), 12)
+    # Requests metrics (real values, zero if no activity)
+    task_reqs = await db.outreach_tasks.count_documents({**queue_query, "task_type": "connection_request", "status": "completed"})
+    requests_sent = task_reqs if task_reqs > 0 else contacted_leads
+
+    lead_accepted = await db.outreach_leads.count_documents({**lead_query, "is_connected": True})
+    requests_accepted = lead_accepted if lead_accepted > 0 else (replied_leads if contacted_leads > 0 else 0)
     acceptance_rate = round((requests_accepted / requests_sent) * 100, 1) if requests_sent > 0 else 0.0
 
     # Messages metrics
-    messages_sent = max(int(requests_accepted * 1.8), 22)
-    messages_replied = max(replied_leads, 7)
+    task_msgs = await db.outreach_tasks.count_documents({**queue_query, "task_type": "send_message", "status": "completed"})
+    messages_sent = task_msgs if task_msgs > 0 else (requests_accepted if requests_accepted > 0 else 0)
+    messages_replied = replied_leads
     reply_rate = round((messages_replied / messages_sent) * 100, 1) if messages_sent > 0 else 0.0
 
     # Engagement metrics (pre-warming visits, likes, comments)
-    profile_visits = max(int(requests_sent * 1.5), 42)
-    post_engagements = max(int(requests_sent * 0.8), 24)
+    profile_visits = await db.outreach_tasks.count_documents({**queue_query, "task_type": "visit_profile", "status": "completed"})
+    post_engagements = await db.outreach_tasks.count_documents({**queue_query, "task_type": {"$in": ["like_last_post", "comment_last_post"]}, "status": "completed"})
     total_engagement = profile_visits + post_engagements
 
     # Days breakdown
@@ -76,15 +96,23 @@ async def get_outreach_analytics(
     now = datetime.now(timezone.utc)
     daily_chart = []
 
-    # Proportional mock/aggregated timeline
+    # Daily distribution (only populate if actual activity exists)
+    has_activity = (requests_sent > 0 or messages_sent > 0 or total_engagement > 0)
     for d in range(num_days - 1, -1, -1):
         day_date = now - timedelta(days=d)
         label = day_date.strftime("%d %b")
-        # Generate representative bell-curve activity
-        day_idx = num_days - d
-        sent = max(1, int((day_idx % 5 + 2) * (1.2 if day_idx > 3 else 0.7)))
-        accepted = max(0, int(sent * 0.42))
-        replied = max(0, int(accepted * 0.55))
+        sent = 0
+        accepted = 0
+        replied = 0
+
+        if has_activity:
+            # Query actual tasks for that day
+            day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            date_filter = {"updated_at": {"$gte": day_start, "$lte": day_end}}
+            sent = await db.outreach_tasks.count_documents({**queue_query, **date_filter, "status": "completed"})
+            accepted = await db.outreach_leads.count_documents({**lead_query, "is_connected": True, "created_at": {"$gte": day_start, "$lte": day_end}})
+            replied = await db.outreach_leads.count_documents({**lead_query, "pipeline_stage": {"$in": ["replied", "call_booked"]}, "created_at": {"$gte": day_start, "$lte": day_end}})
 
         daily_chart.append({
             "date": label,
@@ -95,6 +123,7 @@ async def get_outreach_analytics(
         })
 
     return {
+        "has_connected_account": has_connected_account,
         "kpis": {
             "requests": {
                 "sent": requests_sent,
@@ -113,7 +142,7 @@ async def get_outreach_analytics(
             },
             "email": {
                 "delivered": 0,
-                "deliverability_rate": 99.4,
+                "deliverability_rate": 0.0,
             },
             "pipeline": {
                 "total_leads": total_leads,

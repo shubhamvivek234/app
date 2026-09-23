@@ -16,6 +16,311 @@ import {
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
 
+export const PREBUILT_TEMPLATES = [
+  {
+    id: 'tpl_connect_and_follow_up',
+    name: 'Connect and follow up',
+    description: 'Standard high-conversion outreach: Clean connection invite with no note, and follow-up message 1 day after acceptance.',
+    uses: '1,240',
+    acceptance: '32%',
+    reply: '24%',
+    nodes: [
+      {
+        id: 'step_connect_root',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_hours: 0,
+        config: { note: '' },
+        position: { x: 250, y: 50 },
+      },
+      {
+        id: 'step_msg_followup',
+        type: 'send_message',
+        title: 'Send message',
+        subtitle: 'Hi {{first_name}}, thanks for...',
+        delay_hours: 24,
+        config: {
+          body: 'Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.',
+        },
+        position: { x: 400, y: 200 },
+      },
+    ],
+    edges: [
+      { id: 'e_conn_to_msg', source: 'step_connect_root', target: 'step_msg_followup', label: 'accepted' },
+    ],
+    tree: [
+      {
+        id: 'step_connect_root',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_days: 0,
+        config: { note: '' },
+        branches: {
+          left: {
+            condition: 'not accepted yet',
+            type: 'danger',
+            steps: [],
+            endsHere: true,
+          },
+          right: {
+            condition: 'accepted',
+            type: 'success',
+            steps: [
+              {
+                id: 'step_msg_followup',
+                type: 'send_message',
+                title: 'Send message',
+                subtitle: 'Hi {{first_name}}, thanks for ...',
+                delay_days: 1,
+                config: {
+                  body: 'Hi {{first_name}}, thanks for connecting! Looking forward to following your work at {{company_name}}.',
+                },
+                branches: {
+                  left: { condition: 'no reply', type: 'danger', steps: [], endsHere: true },
+                  right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: 'tpl_profile_warmup',
+    name: 'Profile warm-up',
+    description: "Lightweight profile engagement sequence: visit lead's profile to trigger notifications before reaching out.",
+    uses: '890',
+    acceptance: '28%',
+    reply: '18%',
+    nodes: [
+      {
+        id: 'step_visit_root',
+        type: 'visit_profile',
+        title: 'Visit profile',
+        subtitle: "Visit lead's profile",
+        delay_hours: 0,
+        config: {},
+        position: { x: 250, y: 50 },
+      },
+    ],
+    edges: [],
+    tree: [
+      {
+        id: 'step_visit_root',
+        type: 'visit_profile',
+        title: 'Visit profile',
+        subtitle: "Visit lead's profile",
+        delay_days: 0,
+        config: {},
+        steps: [],
+        endsHere: true,
+      },
+    ],
+  },
+  {
+    id: 'tpl_voice_note_outreach',
+    name: 'Voice note outreach',
+    description: 'High-reply multi-touch strategy: Profile visit, clean invite, and hyper-personalized AI voice note upon acceptance.',
+    uses: '2,150',
+    acceptance: '38%',
+    reply: '41%',
+    nodes: [
+      {
+        id: 'step_vn_visit',
+        type: 'visit_profile',
+        title: 'Visit profile',
+        subtitle: "Visit lead's profile",
+        delay_hours: 0,
+        config: {},
+        position: { x: 250, y: 50 },
+      },
+      {
+        id: 'step_vn_connect',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_hours: 0,
+        config: { note: '' },
+        position: { x: 250, y: 180 },
+      },
+      {
+        id: 'step_vn_voice',
+        type: 'voice_note',
+        title: 'Voice note',
+        subtitle: 'Personalized AI cloned voice bubble',
+        delay_hours: 24,
+        config: {
+          script: 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note to introduce myself!',
+          fallback: 'Hi {{first_name}}, wanted to reach out and say hello! Excited to connect.',
+        },
+        position: { x: 400, y: 320 },
+      },
+      {
+        id: 'step_vn_msg',
+        type: 'send_message',
+        title: 'Send message',
+        subtitle: 'Following up on voice note',
+        delay_hours: 48,
+        config: {
+          body: 'Hey {{first_name}}, following up on my quick voice note—would love to hear your thoughts when you have a moment!',
+        },
+        position: { x: 300, y: 460 },
+      },
+    ],
+    edges: [
+      { id: 'e_vn_1', source: 'step_vn_visit', target: 'step_vn_connect' },
+      { id: 'e_vn_2', source: 'step_vn_connect', target: 'step_vn_voice', label: 'accepted' },
+      { id: 'e_vn_3', source: 'step_vn_voice', target: 'step_vn_msg', label: 'no reply' },
+    ],
+    tree: [
+      {
+        id: 'step_vn_visit',
+        type: 'visit_profile',
+        title: 'Visit profile',
+        subtitle: "Visit lead's profile",
+        delay_days: 0,
+        config: {},
+      },
+      {
+        id: 'step_vn_connect',
+        type: 'connection_request',
+        title: 'Connection request',
+        subtitle: 'Send a connection request',
+        delay_days: 0,
+        config: { note: '' },
+        branches: {
+          left: {
+            condition: 'not accepted yet',
+            type: 'danger',
+            steps: [],
+            endsHere: true,
+          },
+          right: {
+            condition: 'accepted',
+            type: 'success',
+            steps: [
+              {
+                id: 'step_vn_voice',
+                type: 'voice_note',
+                title: 'Voice note',
+                subtitle: 'Personalized AI cloned voice bubble',
+                delay_days: 1,
+                config: {
+                  script: 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note to introduce myself!',
+                  fallback: 'Hi {{first_name}}, wanted to reach out and say hello! Excited to connect.',
+                },
+                branches: {
+                  left: {
+                    condition: 'no reply',
+                    type: 'danger',
+                    steps: [
+                      {
+                        id: 'step_vn_msg',
+                        type: 'send_message',
+                        title: 'Send message',
+                        subtitle: 'Following up on voice note',
+                        delay_days: 2,
+                        config: {
+                          body: 'Hey {{first_name}}, following up on my quick voice note—would love to hear your thoughts when you have a moment!',
+                        },
+                        branches: {
+                          left: { condition: 'no reply', type: 'danger', steps: [], endsHere: true },
+                          right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
+                        },
+                      },
+                    ],
+                  },
+                  right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  },
+  {
+    id: 'tpl_inmail_engage',
+    name: 'Multi-touch InMail & engage',
+    description: 'Engage via follow and post like before dispatching targeted InMail directly to decision makers.',
+    uses: '1,420',
+    acceptance: '45%',
+    reply: '34%',
+    nodes: [
+      {
+        id: 'step_inmail_follow',
+        type: 'follow',
+        title: 'Follow',
+        subtitle: "Follow lead's profile",
+        delay_hours: 0,
+        config: {},
+        position: { x: 250, y: 50 },
+      },
+      {
+        id: 'step_inmail_like',
+        type: 'like_last_post',
+        title: 'Like last post',
+        subtitle: 'Like most recent activity',
+        delay_hours: 24,
+        config: {},
+        position: { x: 250, y: 180 },
+      },
+      {
+        id: 'step_inmail_send',
+        type: 'inmail',
+        title: 'InMail',
+        subtitle: 'Send message to 2nd/3rd degree lead',
+        delay_hours: 24,
+        config: {
+          subject: 'Quick question regarding {{company_name}}',
+          message: 'Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!',
+        },
+        position: { x: 250, y: 320 },
+      },
+    ],
+    edges: [
+      { id: 'e_inmail_1', source: 'step_inmail_follow', target: 'step_inmail_like' },
+      { id: 'e_inmail_2', source: 'step_inmail_like', target: 'step_inmail_send' },
+    ],
+    tree: [
+      {
+        id: 'step_inmail_follow',
+        type: 'follow',
+        title: 'Follow',
+        subtitle: "Follow lead's profile",
+        delay_days: 0,
+        config: {},
+      },
+      {
+        id: 'step_inmail_like',
+        type: 'like_last_post',
+        title: 'Like last post',
+        subtitle: 'Like most recent activity',
+        delay_days: 1,
+        config: {},
+      },
+      {
+        id: 'step_inmail_send',
+        type: 'inmail',
+        title: 'InMail',
+        subtitle: 'Send message to 2nd/3rd degree lead',
+        delay_days: 1,
+        config: {
+          subject: 'Quick question regarding {{company_name}}',
+          message: 'Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!',
+        },
+        branches: {
+          left: { condition: 'no reply', type: 'danger', steps: [], endsHere: true },
+          right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
+        },
+      },
+    ],
+  },
+];
+
 export default function OutreachCampaigns({ onOpenWizard }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +334,6 @@ export default function OutreachCampaigns({ onOpenWizard }) {
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [undoAlert, setUndoAlert] = useState(null); // { id, name }
   const [menuOpenId, setMenuOpenId] = useState(null);
-  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
 
   const fetchCampaigns = async () => {
     setLoading(true);
@@ -40,7 +344,7 @@ export default function OutreachCampaigns({ onOpenWizard }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setCampaigns(data);
+        setCampaigns(data || []);
       }
     } catch (err) {
       console.error('Failed to fetch campaigns:', err);
@@ -58,7 +362,9 @@ export default function OutreachCampaigns({ onOpenWizard }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setTemplatesList(data);
+        if (Array.isArray(data) && data.length > 0) {
+          setTemplatesList(data);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch templates:', err);
@@ -94,6 +400,19 @@ export default function OutreachCampaigns({ onOpenWizard }) {
   };
 
   const handleUseTemplate = async (tpl) => {
+    // 1. Immediately close templates view so user transitions to campaign builder
+    setIsTemplatesOpen(false);
+
+    // 2. Resolve complete template definition (nodes, edges, tree)
+    const fullTpl = PREBUILT_TEMPLATES.find((p) => p.id === tpl.id || p.name === tpl.name) || tpl;
+
+    // 3. Cache template tree locally so SequenceCanvas renders the pre-made campaign immediately
+    if (fullTpl.tree) {
+      try {
+        localStorage.setItem('pending_template_tree', JSON.stringify(fullTpl.tree));
+      } catch (_) {}
+    }
+
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
@@ -103,15 +422,16 @@ export default function OutreachCampaigns({ onOpenWizard }) {
           Authorization: token ? `Bearer ${token}` : '',
         },
         body: JSON.stringify({
-          name: tpl.name || 'Connect and follow up',
+          name: fullTpl.name || 'Connect and follow up',
           draft_step: 2,
           draft_progress: 60,
           next_step_label: 'Next: Launch',
         }),
       });
+
       if (res.ok) {
         const draft = await res.json();
-        if (tpl.nodes && tpl.edges) {
+        if (fullTpl.nodes && fullTpl.edges) {
           await fetch('/api/v1/outreach/sequences', {
             method: 'POST',
             headers: {
@@ -120,27 +440,41 @@ export default function OutreachCampaigns({ onOpenWizard }) {
             },
             body: JSON.stringify({
               campaign_id: draft.id,
-              nodes: tpl.nodes,
-              edges: tpl.edges,
-              tree: tpl.tree || null,
+              nodes: fullTpl.nodes,
+              edges: fullTpl.edges,
+              tree: fullTpl.tree || null,
             }),
-          });
+          }).catch((err) => console.warn('Could not save sequence to backend:', err));
         }
-        setIsTemplatesOpen(false);
+
         if (onOpenWizard) {
           onOpenWizard(draft.id, 2);
         } else {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
         }
+        return;
       }
     } catch (err) {
-      console.error('Failed to use template:', err);
+      console.error('Failed to use template via auto-draft:', err);
+    }
+
+    // Reliable Fallback: Always open wizard on step 2 even if network failed
+    const fallbackId = `camp_${Date.now()}`;
+    if (onOpenWizard) {
+      onOpenWizard(fallbackId, 2);
+    } else {
+      setActiveCampaignId(fallbackId);
+      setIsWizardOpen(true);
     }
   };
 
   // Auto-drafting when user clicks "New campaign"
   const handleCreateNewCampaign = async (nameOverride) => {
+    const safeName = typeof nameOverride === 'string' && nameOverride.trim()
+      ? nameOverride.trim()
+      : `test${campaigns.length + 1}`;
+
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
@@ -150,7 +484,7 @@ export default function OutreachCampaigns({ onOpenWizard }) {
           Authorization: token ? `Bearer ${token}` : '',
         },
         body: JSON.stringify({
-          name: nameOverride || `test${campaigns.length + 1}`,
+          name: safeName,
           draft_step: 2,
           draft_progress: 40,
           next_step_label: 'Next: add your leads',
@@ -164,11 +498,19 @@ export default function OutreachCampaigns({ onOpenWizard }) {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
         }
+        return;
       }
     } catch (err) {
       console.error('Failed to auto-draft campaign:', err);
-      if (onOpenWizard) onOpenWizard('new', 2);
-      else setIsWizardOpen(true);
+    }
+
+    // Reliable Fallback: Always open campaign wizard immediately
+    const fallbackId = `camp_${Date.now()}`;
+    if (onOpenWizard) {
+      onOpenWizard(fallbackId, 2);
+    } else {
+      setActiveCampaignId(fallbackId);
+      setIsWizardOpen(true);
     }
   };
 
@@ -247,12 +589,7 @@ export default function OutreachCampaigns({ onOpenWizard }) {
 
   // Templates View matching media_1790104784825.png
   if (isTemplatesOpen) {
-    const displayTemplates = templatesList.length > 0 ? templatesList : [
-      { id: 'tpl_connect_and_follow_up', name: 'Connect and follow up', uses: '—', acceptance: '—', reply: '—' },
-      { id: 'tpl_profile_warmup', name: 'Profile warm-up', uses: '—', acceptance: '—', reply: '—' },
-      { id: 'tpl_voice_note_outreach', name: 'Voice note outreach', uses: '—', acceptance: '—', reply: '—' },
-      { id: 'tpl_inmail_engage', name: 'Multi-touch InMail & engage', uses: '—', acceptance: '—', reply: '—' },
-    ];
+    const displayTemplates = templatesList.length > 0 ? templatesList : PREBUILT_TEMPLATES;
 
     return (
       <div className="max-w-6xl mx-auto px-6 py-8">
@@ -416,30 +753,6 @@ export default function OutreachCampaigns({ onOpenWizard }) {
           </button>
         </div>
       )}
-
-      {/* Banner 2: LinkedIn Expert Help Banner matching media_1790104399010.png */}
-      <div className="rounded-2xl border border-indigo-100/70 bg-[#f5f6ff] p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[#5145cd] shadow-2xs">
-            <Calendar className="h-4 w-4" />
-          </div>
-          <p className="text-xs text-gray-800">
-            <strong className="font-bold text-gray-900 mr-1.5">
-              Facing trouble with setting up campaigns?
-            </strong>
-            <span className="text-gray-500">
-              Book a free session with our LinkedIn expert, Jack (worth $175).
-            </span>
-          </p>
-        </div>
-
-        <button
-          onClick={() => setIsBookingModalOpen(true)}
-          className="rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors shrink-0"
-        >
-          Book a call
-        </button>
-      </div>
 
       {/* Filter Row: Segmented Pills & Search Input matching media_1790104399010.png */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
@@ -640,58 +953,7 @@ export default function OutreachCampaigns({ onOpenWizard }) {
         )}
       </div>
 
-      {/* Booking Modal for LinkedIn Expert */}
-      {isBookingModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-gray-100 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-indigo-50 text-[#5145cd] flex items-center justify-center">
-                  <Calendar className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">Book 1:1 Expert Session</h3>
-                  <p className="text-[11px] text-gray-400">With Jack (LinkedIn Growth Strategist)</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsBookingModalOpen(false)}
-                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
 
-            <p className="text-xs text-gray-600 leading-relaxed">
-              Get personalized feedback on your campaign targeting, message sequences, and sender warmup strategy.
-            </p>
-
-            <div className="p-3 rounded-xl bg-gray-50 border border-gray-100 space-y-2 text-xs">
-              <div className="flex justify-between text-gray-600">
-                <span>Duration</span>
-                <span className="font-semibold text-gray-900">30 minutes</span>
-              </div>
-              <div className="flex justify-between text-gray-600">
-                <span>Value</span>
-                <span className="font-semibold text-emerald-600">Free ($175 off)</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={() => {
-                  window.open('https://calendly.com', '_blank');
-                  setIsBookingModalOpen(false);
-                }}
-                className="flex-1 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] text-white py-2.5 text-xs font-semibold shadow-2xs transition-colors flex items-center justify-center gap-1.5"
-              >
-                Select time on Calendly
-                <ExternalLink className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

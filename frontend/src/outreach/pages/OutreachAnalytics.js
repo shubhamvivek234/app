@@ -68,13 +68,15 @@ export default function OutreachAnalytics() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe, campaignId]);
 
-  const kpis = analytics?.kpis || {
-    requests: { sent: 308, accepted: 92, acceptance_rate: 29.9 },
-    messages: { sent: 111, replied: 24, reply_rate: 21.6 },
-    engagement: { total_actions: 433, profile_visits: 280, post_engagements: 153 },
-    email: { delivered: 0, deliverability_rate: 99.4 },
-    pipeline: { total_leads: 150, in_campaign: 84, replied: 18, call_booked: 6 },
+  const emptyKpis = {
+    requests: { sent: 0, accepted: 0, acceptance_rate: 0 },
+    messages: { sent: 0, replied: 0, reply_rate: 0 },
+    engagement: { total_actions: 0, profile_visits: 0, post_engagements: 0 },
+    email: { delivered: 0, deliverability_rate: 0 },
+    pipeline: { total_leads: 0, in_campaign: 0, replied: 0, call_booked: 0 },
   };
+
+  const kpis = analytics?.kpis || emptyKpis;
 
   const dailyChart = analytics?.daily_chart || [];
   const maxBarValue = Math.max(
@@ -87,6 +89,23 @@ export default function OutreachAnalytics() {
 
   return (
     <div className="h-full max-h-full min-h-0 bg-[#fafafa] overflow-y-auto px-8 py-7 font-sans">
+      {/* Notice Banner if No Account or No Activity */}
+      {analytics && !analytics.has_connected_account && (
+        <div className="mb-6 rounded-2xl border border-amber-200/80 bg-amber-50/70 p-4 text-xs text-amber-900 flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-100 font-bold text-amber-700">
+              !
+            </span>
+            <div>
+              <p className="font-bold">No LinkedIn account connected</p>
+              <p className="text-amber-700 text-[11px] mt-0.5">
+                Connect a sender account in Settings to start launching campaigns and collecting live outreach analytics.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Header matching prosp_campaign_analytics.jpg */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-7">
         <div>

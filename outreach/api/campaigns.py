@@ -18,6 +18,7 @@ from outreach.models import (
     LeadExecutionState,
     OutreachCampaign,
     WorkingSchedule,
+    generate_uuid,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,8 @@ class AutoDraftRequest(BaseModel):
     draft_progress: int | None = 20
     next_step_label: str | None = "Next: add your leads"
     sender_account_ids: list[str] | None = None
-    schedule: WorkingSchedule | None = None
-    limits: DailyLimits | None = None
+    schedule: dict[str, Any] | None = None
+    limits: dict[str, Any] | None = None
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -125,9 +126,9 @@ async def auto_draft_campaign(
             if req.sender_account_ids is not None:
                 updates["sender_account_ids"] = req.sender_account_ids
             if req.schedule is not None:
-                updates["schedule"] = req.schedule.model_dump()
+                updates["schedule"] = req.schedule if isinstance(req.schedule, dict) else req.schedule.model_dump()
             if req.limits is not None:
-                updates["limits"] = req.limits.model_dump()
+                updates["limits"] = req.limits if isinstance(req.limits, dict) else req.limits.model_dump()
 
             await db.outreach_campaigns.update_one({"id": req.campaign_id}, {"$set": updates})
             doc = await db.outreach_campaigns.find_one({"id": req.campaign_id})
@@ -138,18 +139,25 @@ async def auto_draft_campaign(
     count = await db.outreach_campaigns.count_documents({"user_id": user_id})
     default_name = req.name or f"test{count + 1}"
 
-    campaign_doc = OutreachCampaign(
-        workspace_id=workspace_id,
-        user_id=user_id,
-        name=default_name,
-        status=CampaignStatus.DRAFT,
-        sender_account_ids=req.sender_account_ids or [],
-        schedule=req.schedule or WorkingSchedule(),
-        limits=req.limits or DailyLimits(),
-        draft_step=req.draft_step or 1,
-        draft_progress=req.draft_progress or 20,
-        next_step_label=req.next_step_label or "Next: add your leads",
-    ).model_dump()
+    schedule_data = req.schedule if isinstance(req.schedule, dict) else (req.schedule.model_dump() if req.schedule else WorkingSchedule().model_dump())
+    limits_data = req.limits if isinstance(req.limits, dict) else (req.limits.model_dump() if req.limits else DailyLimits().model_dump())
+
+    campaign_doc = {
+        "id": generate_uuid(),
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "name": default_name,
+        "status": CampaignStatus.DRAFT.value,
+        "sender_account_ids": req.sender_account_ids or [],
+        "schedule": schedule_data,
+        "limits": limits_data,
+        "draft_step": req.draft_step or 1,
+        "draft_progress": req.draft_progress or 20,
+        "next_step_label": req.next_step_label or "Next: add your leads",
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
 
     await db.outreach_campaigns.insert_one(campaign_doc)
     campaign_doc.pop("_id", None)
