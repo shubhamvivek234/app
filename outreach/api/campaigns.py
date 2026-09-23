@@ -87,7 +87,7 @@ async def list_campaigns(
         db.outreach_campaigns.find({
             "user_id": user_id,
             "is_deleted": {"$ne": True},
-        }).sort("created_at", -1),
+        }).sort([("updated_at", -1), ("created_at", -1)]),
         length=100,
     )
     for c in campaigns:

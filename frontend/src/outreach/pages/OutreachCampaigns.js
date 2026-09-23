@@ -403,6 +403,7 @@ export default function OutreachCampaigns({
   onOpenWizard,
   selectedCampaignId: propSelectedCampaignId,
   onSelectCampaign: propOnSelectCampaign,
+  refreshKey,
 }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -468,7 +469,7 @@ export default function OutreachCampaigns({
   useEffect(() => {
     fetchCampaigns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (isTemplatesOpen) {
@@ -547,7 +548,7 @@ export default function OutreachCampaigns({
 
         toast.success(`Template loaded: “${fullTpl.name}”`);
         if (onOpenWizard) {
-          onOpenWizard(draft.id, 2);
+          onOpenWizard(draft.id, 2, fullTpl.name);
         } else {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
@@ -562,7 +563,7 @@ export default function OutreachCampaigns({
     const fallbackId = `camp_${Date.now()}`;
     toast.success(`Template loaded: “${fullTpl.name}”`);
     if (onOpenWizard) {
-      onOpenWizard(fallbackId, 2);
+      onOpenWizard(fallbackId, 2, fullTpl.name);
     } else {
       setActiveCampaignId(fallbackId);
       setIsWizardOpen(true);
@@ -594,7 +595,7 @@ export default function OutreachCampaigns({
         const draft = await res.json();
         toast.success(`Campaign created: “${safeName}”`);
         if (onOpenWizard) {
-          onOpenWizard(draft.id, 2);
+          onOpenWizard(draft.id, 2, safeName);
         } else {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
@@ -609,7 +610,7 @@ export default function OutreachCampaigns({
     const fallbackId = `camp_${Date.now()}`;
     toast.success(`Campaign started: “${safeName}”`);
     if (onOpenWizard) {
-      onOpenWizard(fallbackId, 2);
+      onOpenWizard(fallbackId, 2, safeName);
     } else {
       setActiveCampaignId(fallbackId);
       setIsWizardOpen(true);
@@ -849,13 +850,14 @@ export default function OutreachCampaigns({
   const draftCampaign = campaigns.find((c) => c.status === 'draft');
 
   const filteredCampaigns = campaigns.filter((c) => {
-    if (statusFilter === 'sending') return c.status === 'active';
-    if (statusFilter === 'paused') return c.status === 'paused';
-    if (statusFilter === 'draft') return c.status === 'draft';
-    if (searchQuery) {
-      return (c.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-    }
-    return true;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'sending' && c.status === 'active') ||
+      (statusFilter === 'paused' && c.status === 'paused') ||
+      (statusFilter === 'draft' && c.status === 'draft');
+    const matchesSearch =
+      !searchQuery || (c.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesStatus && matchesSearch;
   });
 
   return (

@@ -48,12 +48,13 @@ const TIMEZONE_OPTIONS = [
   { value: 'Australia/Sydney', label: 'Australian Eastern Time (AET)', detail: 'UTC+10:00 · 4:57 am' },
 ];
 
-export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 2, onBack, onComplete }) {
+export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 2, initialName = '', onBack, onComplete }) {
   const [activeCampaignId, setActiveCampaignId] = useState(
     campaignId && campaignId !== 'new' && campaignId !== 'new_campaign' ? campaignId : null
   );
   const [currentStep, setCurrentStep] = useState(initialStep || 2);
-  const [campaignName, setCampaignName] = useState('Connect and follow up');
+  const [campaignName, setCampaignName] = useState(initialName || '');
+  const hasUserEditedName = React.useRef(Boolean(initialName));
   const [senders, setSenders] = useState([]);
   const [selectedSenders, setSelectedSenders] = useState([]);
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
@@ -192,7 +193,8 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   };
 
   const syncDraft = async (overrideName, overrideStep) => {
-    if (!activeCampaignId) return;
+    const rawName = overrideName !== undefined ? overrideName : campaignName;
+    const targetName = (rawName || '').trim() || 'Connect and follow up';
     try {
       const token = localStorage.getItem('token');
       const step = overrideStep !== undefined ? overrideStep : currentStep;
@@ -204,29 +206,46 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           ? 'Next: configure sequence'
           : 'Next: review and launch';
 
-      await fetch('/api/v1/outreach/campaigns/auto-draft', {
+      const payload = {
+        name: targetName,
+        draft_step: step,
+        draft_progress: progress,
+        next_step_label: nextLabel,
+        sender_account_ids: selectedSenders,
+        schedule: {
+          timezone,
+          days: schedule,
+        },
+        limits,
+      };
+
+      if (activeCampaignId && activeCampaignId !== 'new' && activeCampaignId !== 'new_campaign') {
+        payload.campaign_id = activeCampaignId;
+      }
+
+      const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({
-          campaign_id: activeCampaignId,
-          name: overrideName || campaignName,
-          draft_step: step,
-          draft_progress: progress,
-          next_step_label: nextLabel,
-          sender_account_ids: selectedSenders,
-          schedule: {
-            timezone,
-            days: schedule,
-          },
-          limits,
-        }),
+        body: JSON.stringify(payload),
       });
+
+      if (res.ok) {
+        const doc = await res.json();
+        if (doc && doc.id) {
+          setActiveCampaignId(doc.id);
+          if (!hasUserEditedName.current && doc.name) {
+            setCampaignName(doc.name);
+          }
+          return doc;
+        }
+      }
     } catch (err) {
       console.error('Draft auto-save failed:', err);
     }
+    return null;
   };
 
   // Initial load / create draft
@@ -241,7 +260,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           if (res.ok) {
             const data = await res.json();
             setActiveCampaignId(data.id);
-            if (data.name) setCampaignName(data.name);
+            if (data.name && !hasUserEditedName.current) {
+              setCampaignName(data.name);
+            }
             if (data.schedule?.days) setSchedule(data.schedule.days);
             if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
             if (data.limits) setLimits(data.limits);
@@ -253,8 +274,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           console.error('Failed to load campaign:', err);
         }
       } else {
-        // Auto-create draft immediately in MongoDB
+        // Auto-create draft immediately in MongoDB if none provided
         try {
+          const defaultInitialName = (campaignName || initialName || '').trim() || 'Connect and follow up';
           const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
             method: 'POST',
             headers: {
@@ -262,7 +284,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
               Authorization: token ? `Bearer ${token}` : '',
             },
             body: JSON.stringify({
-              name: campaignName || 'Connect and follow up',
+              name: defaultInitialName,
               draft_step: initialStep || 2,
               draft_progress: initialStep === 1 ? 20 : initialStep === 2 ? 60 : 80,
               next_step_label:
@@ -278,7 +300,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           if (res.ok) {
             const doc = await res.json();
             setActiveCampaignId(doc.id);
-            if (doc.name) setCampaignName(doc.name);
+            if (doc.name && !hasUserEditedName.current) {
+              setCampaignName(doc.name);
+            }
           }
         } catch (err) {
           console.error('Auto-draft creation failed:', err);
@@ -428,7 +452,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           {/* Left: Back button + Campaign Name */}
           <div className="flex items-center gap-4">
             <button
-              onClick={onBack}
+              onClick={async () => {
+                await syncDraft(campaignName);
+                if (onBack) onBack();
+              }}
               title="Back to campaigns"
               className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors shadow-2xs"
             >
@@ -441,7 +468,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
               <input
                 type="text"
                 value={campaignName}
-                onChange={(e) => setCampaignName(e.target.value)}
+                onChange={(e) => {
+                  hasUserEditedName.current = true;
+                  setCampaignName(e.target.value);
+                }}
+                onBlur={() => syncDraft(campaignName)}
+                placeholder="Name your campaign"
                 className="font-bold text-gray-900 text-base focus:outline-none focus:border-b-2 focus:border-indigo-600 pb-0.5 bg-transparent"
               />
             </div>
@@ -465,8 +497,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             </button>
             <button
               onClick={async () => {
-                await syncDraft();
-                if (onBack) onBack();
+                const saved = await syncDraft(campaignName);
+                toast.success('Campaign saved to drafts');
+                if (onBack) onBack(saved ? saved.id : activeCampaignId);
               }}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >

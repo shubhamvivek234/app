@@ -40,7 +40,9 @@ export default function OutreachApp({ initialTab = 'home' }) {
   const [isWizardOpen, setIsWizardOpen] = useState(initial.isWizard);
   const [wizardCampaignId, setWizardCampaignId] = useState(initial.campaignId);
   const [wizardStep, setWizardStep] = useState(initial.step);
+  const [wizardCampaignName, setWizardCampaignName] = useState('');
   const [selectedCampaignId, setSelectedCampaignId] = useState(initial.detailId);
+  const [campaignsRefreshKey, setCampaignsRefreshKey] = useState(0);
 
   // Sync state changes to browser URL via pushState
   const syncUrl = useCallback((tab, isWizard, campId, step, detailId, replace = false) => {
@@ -99,18 +101,22 @@ export default function OutreachApp({ initialTab = 'home' }) {
     syncUrl(tab, false, 'new', 2, null);
   };
 
-  const handleOpenWizard = (campaignId = 'new', step = 2) => {
+  const handleOpenWizard = (campaignId = 'new', step = 2, name = '') => {
     const validId = typeof campaignId === 'string' && campaignId ? campaignId : 'new';
     const validStep = typeof step === 'number' ? step : 2;
     setWizardCampaignId(validId);
     setWizardStep(validStep);
+    setWizardCampaignName(name || '');
     setIsWizardOpen(true);
     syncUrl('campaigns', true, validId, validStep, null);
   };
 
   const handleCloseWizard = () => {
     setIsWizardOpen(false);
-    syncUrl('campaigns', false, 'new', 2, selectedCampaignId);
+    setActiveTab('campaigns');
+    setSelectedCampaignId(null);
+    setCampaignsRefreshKey(Date.now());
+    syncUrl('campaigns', false, 'new', 2, null);
   };
 
   const handleSelectCampaign = (campId) => {
@@ -131,11 +137,14 @@ export default function OutreachApp({ initialTab = 'home' }) {
           key={`${wizardCampaignId}_${wizardStep}`}
           campaignId={wizardCampaignId}
           initialStep={wizardStep}
+          initialName={wizardCampaignName}
           onBack={handleCloseWizard}
           onClose={handleCloseWizard}
           onComplete={() => {
             setIsWizardOpen(false);
             setActiveTab('campaigns');
+            setSelectedCampaignId(null);
+            setCampaignsRefreshKey(Date.now());
             syncUrl('campaigns', false, 'new', 2, null);
           }}
         />
@@ -144,14 +153,16 @@ export default function OutreachApp({ initialTab = 'home' }) {
           {activeTab === 'home' && (
             <OutreachHome
               onNavigate={handleNavigate}
-              onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
+              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 2, name || '')}
             />
           )}
           {activeTab === 'campaigns' && (
             <OutreachCampaigns
+              key={`camp_list_${campaignsRefreshKey}`}
+              refreshKey={campaignsRefreshKey}
               selectedCampaignId={selectedCampaignId}
               onSelectCampaign={handleSelectCampaign}
-              onOpenWizard={(id, step) => handleOpenWizard(id || 'new', step || 2)}
+              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 2, name || '')}
             />
           )}
           {activeTab === 'analytics' && <OutreachAnalytics />}

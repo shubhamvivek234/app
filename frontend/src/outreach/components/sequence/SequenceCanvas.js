@@ -3,7 +3,8 @@ import {
   Eye, UserPlus, MessageSquare, Mic, Mail, UserCheck, ThumbsUp, MessageCircle,
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
   CheckCircle2, Sparkles, ChevronRight, Edit3, Trash2, MoreVertical, Navigation,
-  Link2, Check, Search, ExternalLink, Play, Copy, RefreshCw, ChevronDown
+  Link2, Check, Search, ExternalLink, Play, Copy, RefreshCw, ChevronDown,
+  ArrowLeft, ArrowRight, Crosshair
 } from 'lucide-react';
 
 const ACTION_DEFINITIONS = [
@@ -174,6 +175,53 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteTarget, setPaletteTarget] = useState(null); // { type: 'linear' | 'branch', stepId, branchKey, index }
   const [zoomLevel, setZoomLevel] = useState(100);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  const handleCanvasMouseDown = (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, input, textarea, select, a, [role="button"], .card-interactive')) {
+      return;
+    }
+    setIsPanning(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: panOffset.x,
+      panY: panOffset.y,
+    };
+  };
+
+  const handleCanvasMouseMove = (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    setPanOffset({
+      x: dragStartRef.current.panX + dx,
+      y: dragStartRef.current.panY + dy,
+    });
+  };
+
+  const handleCanvasMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false);
+    }
+  };
+
+  const handleCanvasWheel = (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const zoomDelta = e.deltaY < 0 ? 5 : -5;
+      setZoomLevel((z) => Math.max(50, Math.min(150, z + zoomDelta)));
+      return;
+    }
+    setPanOffset((prev) => ({
+      x: prev.x - e.deltaX,
+      y: prev.y - e.deltaY,
+    }));
+  };
+
   const [showTip, setShowTip] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const hasLoaded = useRef(false);
@@ -692,12 +740,13 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     return (
       <div
         key={step.id}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           setSelectedStepId(step.id);
           setContextMenuStepId(null);
         }}
-        className={`relative w-[340px] rounded-2xl bg-white border transition-all cursor-pointer select-none text-left ${
+        className={`card-interactive relative w-[340px] rounded-2xl bg-white border transition-all cursor-pointer select-none text-left ${
           isSelected
             ? 'border-indigo-600 ring-4 ring-indigo-500/20 shadow-md'
             : step.isActionRequired
@@ -1041,37 +1090,77 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           </div>
         )}
 
-        {/* Zoom Controls (Top Left) */}
+        {/* Zoom & Canvas Panning Controls (Top Left) */}
         <div className="absolute top-5 left-6 z-20 flex items-center gap-1 rounded-xl bg-white border border-gray-200 p-1 shadow-xs text-gray-600">
           <button
-            onClick={() => setZoomLevel((z) => Math.max(z - 10, 60))}
+            onClick={() => setPanOffset((p) => ({ ...p, x: p.x + 180 }))}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
+            title="Move canvas left (reveals leftward steps)"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span className="text-[10px] font-semibold text-gray-500 hidden md:inline">Left</span>
+          </button>
+          <button
+            onClick={() => setPanOffset((p) => ({ ...p, x: p.x - 180 }))}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
+            title="Move canvas right"
+          >
+            <span className="text-[10px] font-semibold text-gray-500 hidden md:inline">Right</span>
+            <ArrowRight className="h-4 w-4" />
+          </button>
+
+          <div className="w-px h-4 bg-gray-200 mx-0.5" />
+
+          <button
+            onClick={() => {
+              setPanOffset({ x: 0, y: 0 });
+              setZoomLevel(100);
+            }}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
+            title="Recenter sequence & reset zoom"
+          >
+            <Crosshair className="h-3.5 w-3.5" />
+            <span className="text-[10px] font-semibold text-gray-500 hidden sm:inline">Center</span>
+          </button>
+
+          <div className="w-px h-4 bg-gray-200 mx-0.5" />
+
+          <button
+            onClick={() => setZoomLevel((z) => Math.max(z - 10, 50))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             title="Zoom out"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
           <button
-            onClick={() => setZoomLevel((z) => Math.min(z + 10, 140))}
+            onClick={() => setZoomLevel((z) => Math.min(z + 10, 150))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             title="Zoom in"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
-          <button
-            onClick={() => setZoomLevel(100)}
-            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Reset zoom"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
-          <span className="px-2 text-xs font-semibold text-gray-700">{zoomLevel}%</span>
+          <span className="px-2 text-xs font-semibold text-gray-700 min-w-[38px] text-center">
+            {zoomLevel}%
+          </span>
         </div>
 
-        {/* Main Flowchart Tree Canvas Area (Scrollable independently from drawers) */}
-        <div className="flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10">
+        {/* Main Flowchart Tree Canvas Area (Pannable & Scrollable) */}
+        <div
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseUp}
+          onWheel={handleCanvasWheel}
+          className={`flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10 relative select-none ${
+            isPanning ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+        >
           <div
-            className="flex flex-col items-center transition-transform duration-150 origin-top"
-            style={{ transform: `scale(${zoomLevel / 100})` }}
+            className="flex flex-col items-center transition-transform origin-top will-change-transform min-w-[760px]"
+            style={{
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel / 100})`,
+              transitionDuration: isPanning ? '0ms' : '150ms',
+            }}
           >
             {/* SEQUENCE START Pill (media_1790088201124.png) */}
             <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold tracking-wider text-slate-500 shadow-2xs mb-0">
