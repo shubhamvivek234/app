@@ -40,7 +40,7 @@ export default function OutreachInbox() {
   const [loadingAi, setLoadingAi] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState(null);
 
-  // Prosp AI Parity: Reminders, Snippets & Tags State
+  // Unravler AI Parity: Reminders, Snippets & Tags State
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [remindersList, setRemindersList] = useState([]);
   const [reminderNote, setReminderNote] = useState('');
@@ -477,7 +477,7 @@ export default function OutreachInbox() {
         <div className="p-4 border-b border-gray-100 bg-white space-y-3">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Inbox</h1>
-            {/* Pill Switcher: [ Prosp | All ] matching media_1790103710555.png */}
+            {/* Pill Switcher: [ Unravler | All ] matching media_1790103710555.png */}
             <div className="inline-flex items-center bg-[#f4f4f5] p-1 rounded-xl gap-0.5 text-xs font-semibold text-gray-500">
               <button
                 type="button"
@@ -488,7 +488,7 @@ export default function OutreachInbox() {
                     : 'text-gray-500 hover:text-gray-900'
                 }`}
               >
-                Prosp
+                Unravler
               </button>
               <button
                 type="button"
@@ -747,7 +747,7 @@ export default function OutreachInbox() {
                 </div>
               </div>
 
-              {/* Action Tools & Status matching Prosp (prosp_inbox_reminders.jpg) */}
+              {/* Action Tools & Status matching Unravler (unravler_inbox_reminders.jpg) */}
               <div className="flex items-center gap-2">
                 {/* Reminders Button [S] */}
                 <button
@@ -955,7 +955,7 @@ export default function OutreachInbox() {
         )}
       </div>
 
-      {/* ── REMINDERS MODAL (prosp_inbox_reminders.jpg) ──────────────────── */}
+      {/* ── REMINDERS MODAL (unravler_inbox_reminders.jpg) ──────────────────── */}
       {remindersOpen && (
         <div
           onClick={(e) => e.stopPropagation()}
@@ -1087,7 +1087,7 @@ export default function OutreachInbox() {
         </div>
       )}
 
-      {/* ── SNIPPETS DRAWER (prosp_inbox_snippets.jpg) ────────────────────── */}
+      {/* ── SNIPPETS DRAWER (unravler_inbox_snippets.jpg) ────────────────────── */}
       {snippetsOpen && (
         <div
           onClick={(e) => e.stopPropagation()}
@@ -1233,7 +1233,7 @@ export default function OutreachInbox() {
         </div>
       )}
 
-      {/* ── TAGS POPOVER (prosp_inbox_tags.jpg) ──────────────────────────── */}
+      {/* ── TAGS POPOVER (unravler_inbox_tags.jpg) ──────────────────────────── */}
       {tagsOpen && (
         <div
           onClick={(e) => e.stopPropagation()}

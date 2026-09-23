@@ -178,7 +178,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   const [toastMessage, setToastMessage] = useState(null);
   const hasLoaded = useRef(false);
 
-  // Prosp AI Parity: AI Prompt Library & Preview State
+  // Unravler AI Parity: AI Prompt Library & Preview State
   const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
   const [promptsList, setPromptsList] = useState([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
@@ -682,7 +682,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   );
 
 
-  // Render a Single Step Card matching Prosp (media_1790088397090.png)
+  // Render a Single Step Card matching Unravler (media_1790088397090.png)
   const renderCard = (step) => {
     const isSelected = selectedStepId === step.id;
     const { icon: StepIcon, color: iconStyle } = getNodeVisuals(step.type);
@@ -1413,7 +1413,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             {selectedStep.type === 'connection_request' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl text-xs text-amber-800 leading-relaxed">
-                  <strong>Prosp Tip:</strong> Connection invites without notes often get 15-20% higher acceptance rates.
+                  <strong>Unravler Tip:</strong> Connection invites without notes often get 15-20% higher acceptance rates.
                 </div>
                 <div>
                   {renderEditorToolbar()}
@@ -1962,7 +1962,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                     </p>
 
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-[10px] text-gray-400">By {prompt.author_name || 'Prosp'}</span>
+                      <span className="text-[10px] text-gray-400">By {prompt.author_name || 'Unravler'}</span>
                       <button
                         type="button"
                         onClick={() => insertPromptToken(prompt.name)}

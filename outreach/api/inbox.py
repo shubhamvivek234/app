@@ -48,14 +48,14 @@ class AIReplyResponse(BaseModel):
 @router.get("")
 async def list_inbox_threads(
     account_id: str | None = Query(None, description="Filter by sender account id or null for All"),
-    source: str | None = Query(None, description="Filter by source: 'outreach' (Prosp) or 'all'"),
+    source: str | None = Query(None, description="Filter by source: 'outreach' (Unravler) or 'all'"),
     search: str | None = Query(None, description="Search prospect name or message snippet"),
     intent: str | None = Query(None, description="Filter by intent tag"),
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Returns list of inbox threads matching media_1790103710555.png with Prosp/All source filtering.
+    Returns list of inbox threads matching media_1790103710555.png with Unravler/All source filtering.
     """
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or "default_ws"
