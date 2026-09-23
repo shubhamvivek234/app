@@ -16,6 +16,7 @@ from outreach.api.campaigns import (
     delete_campaign,
     restore_campaign,
     list_campaigns,
+    duplicate_campaign,
 )
 
 
@@ -274,3 +275,69 @@ async def test_soft_delete_and_restore_campaign():
     ld_restored = await db.outreach_leads.find_one({"id": "lead_1"})
     assert ld_restored["pipeline_stage"] == "enrolled"
     assert ld_restored["campaign_id"] == "camp_del_1"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_campaign():
+    user = {"user_id": "usr_dup_test", "default_workspace_id": "ws_1"}
+    original_campaign = {
+        "id": "camp_source_1",
+        "user_id": "usr_dup_test",
+        "workspace_id": "ws_1",
+        "name": "Q4 Enterprise Founders",
+        "status": "active",
+        "sender_account_ids": ["acc_1", "acc_2"],
+        "schedule": {"timezone": "America/New_York", "days": []},
+        "limits": {"connection_invites": 25, "messages": 30},
+        "leads_count": 50,
+        "leads_contacted": 30,
+        "acceptances_count": 15,
+        "replies_count": 8,
+        "interested_count": 3,
+        "is_deleted": False,
+    }
+    original_sequence = {
+        "campaign_id": "camp_source_1",
+        "nodes": [{"id": "n1", "type": "connection_request"}],
+        "edges": [],
+        "tree": [{"id": "n1"}],
+        "compiled_dag": {"root_node_ids": ["n1"]},
+    }
+    db = MockDB()
+    db.outreach_campaigns = MockCollection([original_campaign])
+    db.outreach_sequences = MockCollection([original_sequence])
+
+    duplicated = await duplicate_campaign(campaign_id="camp_source_1", current_user=user, db=db)
+
+    assert duplicated["id"] != "camp_source_1"
+    assert duplicated["name"] == "Q4 Enterprise Founders (Copy)"
+    assert duplicated["status"] == "draft"
+    assert duplicated["sender_account_ids"] == ["acc_1", "acc_2"]
+    assert duplicated["limits"]["connection_invites"] == 25
+    assert duplicated["leads_count"] == 0
+    assert duplicated["leads_contacted"] == 0
+    assert duplicated["acceptances_count"] == 0
+
+    # Ensure sequence was also duplicated
+    cloned_seq = await db.outreach_sequences.find_one({"campaign_id": duplicated["id"]})
+    assert cloned_seq is not None
+    assert len(cloned_seq["nodes"]) == 1
+    assert cloned_seq["nodes"][0]["type"] == "connection_request"
+
+
+@pytest.mark.asyncio
+async def test_auto_draft_preserves_custom_id():
+    user = {"user_id": "usr_draft_test", "default_workspace_id": "ws_1"}
+    db = MockDB()
+    custom_id = "camp_custom_fallback_123"
+
+    req = AutoDraftRequest(
+        campaign_id=custom_id,
+        name="Fallback Draft",
+        draft_step=1,
+    )
+    res = await auto_draft_campaign(req=req, current_user=user, db=db)
+    assert res["id"] == custom_id
+    assert res["name"] == "Fallback Draft"
+
+

@@ -143,7 +143,7 @@ async def auto_draft_campaign(
     limits_data = req.limits if isinstance(req.limits, dict) else (req.limits.model_dump() if req.limits else DailyLimits().model_dump())
 
     campaign_doc = {
-        "id": generate_uuid(),
+        "id": req.campaign_id or generate_uuid(),
         "workspace_id": workspace_id,
         "user_id": user_id,
         "name": default_name,
@@ -370,6 +370,67 @@ async def restore_campaign(
         )
 
     return {"status": "restored", "id": campaign_id, "name": campaign["name"]}
+
+
+@router.post("/{campaign_id}/duplicate")
+async def duplicate_campaign(
+    campaign_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Duplicates an existing campaign, including its settings, schedule, daily limits, 
+    sender assignments, and sequence DAG, resetting status to draft and metrics to 0.
+    """
+    user_id = current_user.get("user_id")
+    campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "user_id": user_id})
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    new_id = generate_uuid()
+    now = datetime.now(timezone.utc)
+    original_name = campaign.get("name", "Campaign")
+    copy_name = f"{original_name} (Copy)"
+
+    new_campaign_doc = {
+        "id": new_id,
+        "workspace_id": campaign.get("workspace_id", "default_ws"),
+        "user_id": user_id,
+        "name": copy_name,
+        "status": CampaignStatus.DRAFT.value,
+        "sender_account_ids": list(campaign.get("sender_account_ids", [])),
+        "schedule": dict(campaign.get("schedule", {})),
+        "limits": dict(campaign.get("limits", {})),
+        "draft_step": 2,
+        "draft_progress": 60,
+        "next_step_label": "Next: add your leads",
+        "leads_count": 0,
+        "leads_contacted": 0,
+        "acceptances_count": 0,
+        "replies_count": 0,
+        "interested_count": 0,
+        "is_deleted": False,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # If original campaign has an associated sequence, clone it for the new campaign
+    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id})
+    if seq:
+        new_seq_doc = {
+            "campaign_id": new_id,
+            "nodes": seq.get("nodes", []),
+            "edges": seq.get("edges", []),
+            "tree": seq.get("tree"),
+            "compiled_dag": seq.get("compiled_dag"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.outreach_sequences.insert_one(new_seq_doc)
+
+    await db.outreach_campaigns.insert_one(new_campaign_doc)
+    new_campaign_doc.pop("_id", None)
+    return new_campaign_doc
 
 
 @router.post("/{campaign_id}/launch")

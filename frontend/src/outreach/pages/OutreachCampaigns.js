@@ -13,7 +13,9 @@ import {
   Trash2,
   ExternalLink,
   ArrowRight,
+  Copy,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
 
@@ -483,9 +485,13 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         setTemplatesList((prev) => prev.filter((t) => t.id !== templateId));
+        toast.success('Template deleted');
+      } else {
+        toast.error('Failed to delete template');
       }
     } catch (err) {
       console.error('Failed to delete template:', err);
+      toast.error('Error deleting template');
     }
   };
 
@@ -539,6 +545,7 @@ export default function OutreachCampaigns({
           }).catch((err) => console.warn('Could not save sequence to backend:', err));
         }
 
+        toast.success(`Template loaded: “${fullTpl.name}”`);
         if (onOpenWizard) {
           onOpenWizard(draft.id, 2);
         } else {
@@ -553,6 +560,7 @@ export default function OutreachCampaigns({
 
     // Reliable Fallback: Always open wizard on step 2 even if network failed
     const fallbackId = `camp_${Date.now()}`;
+    toast.success(`Template loaded: “${fullTpl.name}”`);
     if (onOpenWizard) {
       onOpenWizard(fallbackId, 2);
     } else {
@@ -584,6 +592,7 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         const draft = await res.json();
+        toast.success(`Campaign created: “${safeName}”`);
         if (onOpenWizard) {
           onOpenWizard(draft.id, 2);
         } else {
@@ -598,11 +607,78 @@ export default function OutreachCampaigns({
 
     // Reliable Fallback: Always open campaign wizard immediately
     const fallbackId = `camp_${Date.now()}`;
+    toast.success(`Campaign started: “${safeName}”`);
     if (onOpenWizard) {
       onOpenWizard(fallbackId, 2);
     } else {
       setActiveCampaignId(fallbackId);
       setIsWizardOpen(true);
+    }
+  };
+
+  const handlePauseCampaign = async (campaignId, campaignName) => {
+    setMenuOpenId(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/pause`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        toast.success(`Paused “${campaignName}”`);
+        fetchCampaigns();
+      } else {
+        toast.error('Failed to pause campaign');
+      }
+    } catch (err) {
+      console.error('Failed to pause campaign:', err);
+      toast.error('Error pausing campaign');
+    }
+  };
+
+  const handleResumeCampaign = async (campaignId, campaignName) => {
+    setMenuOpenId(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/launch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ status: 'active' }),
+      });
+      if (res.ok) {
+        toast.success(`Resumed “${campaignName}”`);
+        fetchCampaigns();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.detail || 'Failed to resume campaign');
+      }
+    } catch (err) {
+      console.error('Failed to resume campaign:', err);
+      toast.error('Error resuming campaign');
+    }
+  };
+
+  const handleDuplicateCampaign = async (campaignId) => {
+    setMenuOpenId(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/duplicate`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const cloned = await res.json();
+        toast.success(`Duplicated as “${cloned.name}”`);
+        fetchCampaigns();
+      } else {
+        toast.error('Failed to duplicate campaign');
+      }
+    } catch (err) {
+      console.error('Failed to duplicate campaign:', err);
+      toast.error('Error duplicating campaign');
     }
   };
 
@@ -616,10 +692,14 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         setUndoAlert({ id: campaignId, name: campaignName });
+        toast.success(`Deleted “${campaignName}”`);
         fetchCampaigns();
+      } else {
+        toast.error('Failed to delete campaign');
       }
     } catch (err) {
       console.error('Failed to delete campaign:', err);
+      toast.error('Error deleting campaign');
     }
   };
 
@@ -632,10 +712,14 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         setUndoAlert(null);
+        toast.success('Campaign restored');
         fetchCampaigns();
+      } else {
+        toast.error('Failed to restore campaign');
       }
     } catch (err) {
       console.error('Failed to restore campaign:', err);
+      toast.error('Error restoring campaign');
     }
   };
 
@@ -852,17 +936,29 @@ export default function OutreachCampaigns({
       {/* Filter Row: Segmented Pills & Search Input matching media_1790104399010.png */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
         <div className="inline-flex items-center bg-gray-100/80 p-1 rounded-xl gap-1">
-          {['all', 'sending', 'paused', 'draft'].map((tab) => (
+          {[
+            { id: 'all', label: 'All', count: campaigns.length },
+            { id: 'sending', label: 'Sending', count: campaigns.filter((c) => c.status === 'active').length },
+            { id: 'paused', label: 'Paused', count: campaigns.filter((c) => c.status === 'paused').length },
+            { id: 'draft', label: 'Draft', count: campaigns.filter((c) => c.status === 'draft').length },
+          ].map((tab) => (
             <button
-              key={tab}
-              onClick={() => setStatusFilter(tab)}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-all ${
-                statusFilter === tab
+              key={tab.id}
+              onClick={() => setStatusFilter(tab.id)}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all inline-flex items-center gap-1.5 ${
+                statusFilter === tab.id
                   ? 'bg-white text-gray-900 shadow-2xs'
                   : 'text-gray-500 hover:text-gray-800'
               }`}
             >
-              {tab}
+              <span>{tab.label}</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  statusFilter === tab.id ? 'bg-gray-100 text-gray-700' : 'text-gray-400'
+                }`}
+              >
+                {tab.count}
+              </span>
             </button>
           ))}
         </div>
@@ -1014,14 +1110,52 @@ export default function OutreachCampaigns({
                       </button>
 
                       {menuOpenId === camp.id && (
-                        <div className="absolute right-5 mt-1 w-40 rounded-xl border border-gray-100 bg-white p-1 shadow-lg z-30 text-xs">
+                        <div className="absolute right-5 mt-1 w-44 rounded-xl border border-gray-100 bg-white p-1 shadow-lg z-30 text-xs">
+                          {camp.status === 'active' && (
+                            <button
+                              onClick={() => handlePauseCampaign(camp.id, camp.name)}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-amber-700 hover:bg-amber-50 font-medium flex items-center gap-2"
+                            >
+                              <Pause className="h-3.5 w-3.5 text-amber-600" />
+                              Pause campaign
+                            </button>
+                          )}
+                          {camp.status === 'paused' && (
+                            <button
+                              onClick={() => handleResumeCampaign(camp.id, camp.name)}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 font-medium flex items-center gap-2"
+                            >
+                              <Play className="h-3.5 w-3.5 text-emerald-600" />
+                              Resume campaign
+                            </button>
+                          )}
+                          {camp.status === 'draft' && (
+                            <button
+                              onClick={() => {
+                                setMenuOpenId(null);
+                                if (onOpenWizard) onOpenWizard(camp.id, camp.draft_step || 2);
+                              }}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-indigo-700 hover:bg-indigo-50 font-medium flex items-center gap-2"
+                            >
+                              <Play className="h-3.5 w-3.5 text-indigo-600" />
+                              Resume draft
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDuplicateCampaign(camp.id)}
+                            className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-gray-500" />
+                            Duplicate
+                          </button>
                           <button
                             onClick={() => {
                               setMenuOpenId(null);
                               setSelectedCampaignId(camp.id);
                             }}
-                            className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                            className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
                           >
+                            <ExternalLink className="h-3.5 w-3.5 text-gray-500" />
                             View details
                           </button>
                           <button
@@ -1029,15 +1163,17 @@ export default function OutreachCampaigns({
                               setMenuOpenId(null);
                               if (onOpenWizard) onOpenWizard(camp.id, 2);
                             }}
-                            className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+                            className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
                           >
+                            <Pencil className="h-3.5 w-3.5 text-gray-500" />
                             Edit sequence
                           </button>
+                          <div className="h-px bg-gray-100 my-1" />
                           <button
                             onClick={() => handleSoftDelete(camp.id, camp.name)}
-                            className="w-full text-left px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-medium flex items-center gap-1.5"
+                            className="w-full text-left px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-medium flex items-center gap-2"
                           >
-                            <Trash2 className="h-3 w-3" />
+                            <Trash2 className="h-3.5 w-3.5" />
                             Delete
                           </button>
                         </div>
@@ -1051,7 +1187,7 @@ export default function OutreachCampaigns({
         )}
       </div>
 
-      {/* Start a new campaign Modal matching Prosp /campaigns/new */}
+      {/* Start a new campaign Modal */}
       {newCampaignModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-gray-100 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-150">
@@ -1074,7 +1210,7 @@ export default function OutreachCampaigns({
               </button>
             </div>
 
-            {/* 2-Card Grid matching Prosp /campaigns/new */}
+            {/* 2-Card Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
               {/* Card 1: Build it your way */}
               <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 hover:border-indigo-300 hover:shadow-md transition-all group">

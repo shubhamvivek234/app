@@ -17,6 +17,7 @@ import {
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import SequenceCanvas from '../components/sequence/SequenceCanvas';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
@@ -60,7 +61,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [isLaunching, setIsLaunching] = useState(false);
-  const [toastMessage, setToastMessage] = useState(null);
+  const [leadsCount, setLeadsCount] = useState(0);
+  const [enrolledLeads, setEnrolledLeads] = useState([]);
+  const [loadingLeads, setLoadingLeads] = useState(false);
 
   const [schedule, setSchedule] = useState([
     { day: 'Sunday', key: 'S', enabled: false, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
@@ -151,8 +154,28 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   };
 
   const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    toast.success(msg);
+  };
+
+  const fetchEnrolledLeads = async (cid) => {
+    const targetCid = cid || activeCampaignId || campaignId;
+    if (!targetCid || targetCid === 'new' || targetCid === 'new_campaign') return;
+    setLoadingLeads(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/leads?campaign_id=${targetCid}&limit=20`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEnrolledLeads(data.leads || []);
+        setLeadsCount(data.total || data.leads?.length || 0);
+      }
+    } catch (err) {
+      console.error('Failed to fetch enrolled leads:', err);
+    } finally {
+      setLoadingLeads(false);
+    }
   };
 
   const copyToAllWeekdays = (sourceIdx) => {
@@ -265,6 +288,13 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     initCampaign();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, initialStep]);
+
+  useEffect(() => {
+    if (activeCampaignId) {
+      fetchEnrolledLeads(activeCampaignId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCampaignId]);
 
   const handleLaunch = async () => {
     setIsLaunching(true);
@@ -391,7 +421,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
   return (
     <div className="flex flex-col h-full max-h-full min-h-0 bg-white overflow-hidden">
-      {/* Top Navigation Bar matching Prosp (media_1790088159049.png) */}
+      {/* Top Navigation Bar */}
       <div className="border-b border-gray-200/80 bg-white z-20 shrink-0">
         {/* Row 1: Workspace info & Main title actions */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
@@ -488,7 +518,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             >
               1
             </span>
-            Leads
+            <span>Leads</span>
+            {leadsCount > 0 && (
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-1.5 py-0.5 rounded-full">
+                {leadsCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -529,17 +564,101 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       <div className="flex-1 min-h-0 h-full overflow-hidden relative flex flex-col">
         {/* Step 1: Leads Setup */}
         {currentStep === 1 && (
-          <div className="max-w-4xl mx-auto px-6 py-12 text-center">
-            <h2 className="text-2xl font-bold text-gray-900">Add your leads</h2>
-            <p className="text-sm text-gray-500 mt-1 max-w-md mx-auto">
-              Paste a LinkedIn search URL or upload a CSV spreadsheet. We will handle deduplication automatically.
-            </p>
-            <button
-              onClick={() => setLeadsModalOpen(true)}
-              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-              + Import leads list
-            </button>
+          <div className="flex-1 min-h-0 overflow-y-auto bg-[#f8f9fa] py-8 px-6">
+            <div className="max-w-4xl mx-auto space-y-6">
+              {leadsCount === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center shadow-xs">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 mb-4">
+                    <Users className="h-7 w-7" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Add your leads</h2>
+                  <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto leading-relaxed">
+                    Paste a LinkedIn search URL or upload a CSV spreadsheet. We will handle deduplication automatically.
+                  </p>
+                  <button
+                    onClick={() => setLeadsModalOpen(true)}
+                    className="mt-6 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 shadow-sm transition-all"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Import leads list
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+                        <CheckCircle2 className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-gray-900">
+                          {leadsCount} lead{leadsCount !== 1 ? 's' : ''} enrolled
+                        </h2>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Prospects loaded into this campaign and queued for outbound steps.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setLeadsModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add more leads
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await syncDraft();
+                          setCurrentStep(2);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
+                      >
+                        Proceed to Sequence →
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Leads Preview Table */}
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs">
+                    <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+                      <span className="text-xs font-bold text-gray-800">Recent Prospects Preview</span>
+                      <span className="text-[11px] text-gray-400">
+                        Showing up to {enrolledLeads.length} leads
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="border-b border-gray-100 bg-gray-50/50 text-gray-400 uppercase font-semibold text-[10px] tracking-wider">
+                          <tr>
+                            <th className="py-2.5 px-5">NAME</th>
+                            <th className="py-2.5 px-5">JOB TITLE</th>
+                            <th className="py-2.5 px-5">COMPANY</th>
+                            <th className="py-2.5 px-5">STATE</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {enrolledLeads.slice(0, 10).map((lead) => (
+                            <tr key={lead.id} className="hover:bg-gray-50/50">
+                              <td className="py-3 px-5 font-semibold text-gray-900">
+                                {lead.first_name} {lead.last_name || ''}
+                              </td>
+                              <td className="py-3 px-5 text-gray-600">{lead.job_title || '—'}</td>
+                              <td className="py-3 px-5 text-gray-600">{lead.company_name || '—'}</td>
+                              <td className="py-3 px-5">
+                                <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  {lead.execution_state || 'queued'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -979,15 +1098,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         isOpen={leadsModalOpen}
         onClose={() => setLeadsModalOpen(false)}
         campaignId={activeCampaignId || campaignId}
+        onLeadsImported={() => {
+          fetchEnrolledLeads(activeCampaignId || campaignId);
+          toast.success('Leads enrolled into campaign!');
+        }}
       />
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white text-xs font-semibold px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 animate-bounce-subtle">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
     </div>
   );
 }
