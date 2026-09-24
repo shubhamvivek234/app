@@ -60,6 +60,70 @@ class VoyagerClient:
             logger.error("Voyager check_connection_status error: %s", exc)
             return False
 
+    async def fetch_profile_info(self, vanity_name: str) -> dict[str, Any]:
+        """
+        Fetches real profile data (name, headline, avatar, URN) from LinkedIn Voyager.
+        Used during contact enrichment to replace fake data derived from vanity slugs.
+        """
+        import re
+
+        if self.is_mock:
+            # Generate realistic stub from vanity name
+            cleaned = re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title()
+            return {
+                "full_name": cleaned or "LinkedIn Member",
+                "headline": f"Professional at LinkedIn",
+                "avatar_url": "",
+                "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+            }
+
+        url = f"{VOYAGER_BASE_URL}/identity/profiles/{vanity_name}/profileView"
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
+                resp = await client.get(url, headers=self._get_headers())
+                if resp.status_code != 200:
+                    return {
+                        "full_name": re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title() or "LinkedIn Member",
+                        "headline": "",
+                        "avatar_url": "",
+                        "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+                        "status_code": resp.status_code,
+                    }
+
+                data = resp.json()
+                profile = data.get("profile", data)
+                first_name = profile.get("firstName", "")
+                last_name = profile.get("lastName", "")
+                full_name = f"{first_name} {last_name}".strip() or vanity_name.replace("-", " ").title()
+
+                # Extract avatar URL from display image
+                avatar_url = ""
+                img_artifacts = profile.get("displayImageReference", {}).get("vectorImage", {}).get("artifacts", [])
+                if img_artifacts:
+                    # Pick the 200x200 or last available size
+                    best = img_artifacts[-1]
+                    root = profile.get("displayImageReference", {}).get("vectorImage", {}).get("rootUrl", "")
+                    avatar_url = f"{root}{best.get('fileIdentifyingUrlPathSegment', '')}"
+
+                # Extract profile URN
+                entity_urn = profile.get("entityUrn", "")
+                profile_urn = entity_urn if entity_urn else f"urn:li:fsd_profile:{vanity_name}"
+
+                return {
+                    "full_name": full_name,
+                    "headline": profile.get("headline", ""),
+                    "avatar_url": avatar_url,
+                    "profile_urn": profile_urn,
+                }
+        except Exception as exc:
+            logger.error("Voyager fetch_profile_info error for %s: %s", vanity_name, exc)
+            return {
+                "full_name": re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title() or "LinkedIn Member",
+                "headline": "",
+                "avatar_url": "",
+                "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+            }
+
     async def visit_profile(self, profile_url: str) -> dict[str, Any]:
         """
         Triggers a genuine profile view on LinkedIn so the prospect sees 'Viewed your profile'.

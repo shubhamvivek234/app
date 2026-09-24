@@ -230,6 +230,15 @@ async def add_contacts_to_list(
             logger.warning("Error parsing CSV text for contacts: %s", exc)
 
     added_count = 0
+
+    # Try to resolve sender account for enrichment (optional — enrich if account available)
+    try:
+        account = await _resolve_sender_account(workspace_id, db)
+        voyager = _build_voyager(account)
+    except HTTPException:
+        voyager = None
+        logger.info("No active account for contact enrichment — using fallback data from vanity names")
+
     for raw_url in extracted_urls:
         if not raw_url.strip():
             continue
@@ -239,14 +248,25 @@ async def add_contacts_to_list(
         # Deduplicate within list
         existing = await db.outreach_engage_contacts.find_one({"list_id": list_id, "profile_url": cleaned_url})
         if not existing:
+            # Real enrichment via Voyager (or fallback)
+            if voyager:
+                try:
+                    profile_info = await voyager.fetch_profile_info(vanity)
+                except Exception as exc:
+                    logger.warning("Enrichment failed for %s: %s", vanity, exc)
+                    profile_info = None
+            else:
+                profile_info = None
+
             contact = EngageContact(
                 list_id=list_id,
                 workspace_id=workspace_id,
                 profile_url=cleaned_url,
                 vanity_name=vanity,
-                full_name=_extract_name_from_vanity(vanity),
-                headline=f"Leader at {vanity.replace('-', ' ').title()}",
-                profile_urn=f"urn:li:fsd_profile:{vanity}",
+                full_name=profile_info.get("full_name") if profile_info else _extract_name_from_vanity(vanity),
+                headline=profile_info.get("headline", "") if profile_info else "",
+                avatar_url=profile_info.get("avatar_url", "") if profile_info else "",
+                profile_urn=profile_info.get("profile_urn") if profile_info else f"urn:li:fsd_profile:{vanity}",
             ).model_dump()
             await db.outreach_engage_contacts.insert_one(contact)
             added_count += 1
@@ -281,12 +301,20 @@ async def fetch_latest_posts_for_list(
     account = await _resolve_sender_account(workspace_id, db)
     voyager = _build_voyager(account)
 
+    import asyncio
+
     new_posts_count = 0
     now = datetime.now(timezone.utc)
 
-    for c in contacts:
+    async def _fetch_contact_posts(c: dict) -> int:
+        """Fetch recent posts for a single contact and insert new ones."""
+        count = 0
         profile_urn = c.get("profile_urn") or f"urn:li:fsd_profile:{c.get('vanity_name', 'user')}"
-        updates = await voyager.fetch_profile_recent_updates(profile_urn, count=3)
+        try:
+            updates = await voyager.fetch_profile_recent_updates(profile_urn, count=3)
+        except Exception as e:
+            logger.warning("Failed to fetch posts for %s: %s", c.get("vanity_name"), e)
+            return 0
 
         for u in updates:
             post_urn = u.get("post_urn")
@@ -314,12 +342,26 @@ async def fetch_latest_posts_for_list(
                     status="pending",
                 ).model_dump()
                 await db.outreach_engage_posts.insert_one(post_doc)
-                new_posts_count += 1
+                count += 1
 
         await db.outreach_engage_contacts.update_one(
             {"id": c["id"]},
             {"$set": {"last_fetched_at": now}}
         )
+        return count
+
+    # Fetch in batches of 3 to stay under LinkedIn rate limits
+    BATCH_SIZE = 3
+    for i in range(0, len(contacts), BATCH_SIZE):
+        batch = contacts[i:i + BATCH_SIZE]
+        results = await asyncio.gather(*[_fetch_contact_posts(c) for c in batch], return_exceptions=True)
+        for r in results:
+            if isinstance(r, int):
+                new_posts_count += r
+
+        # Human jitter between batches (skip for mock/last batch)
+        if i + BATCH_SIZE < len(contacts) and not voyager.is_mock:
+            await asyncio.sleep(OutboundRateLimiter.calculate_human_jitter(2.0))
 
     # Refresh list counters
     pending_count = await db.outreach_engage_posts.count_documents({"list_id": list_id, "status": "pending"})

@@ -52,6 +52,11 @@ export default function OutreachEngage() {
   const [commentDrafts, setCommentDrafts] = useState({});
   // Track per-post like loading state: { [postId]: true }
   const [likingPosts, setLikingPosts] = useState({});
+  // Bulk selection for batch actions
+  const [selectedPosts, setSelectedPosts] = useState(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  // Pagination
+  const [totalPosts, setTotalPosts] = useState(0);
 
   const fetchLists = useCallback(async () => {
     setLoadingLists(true);
@@ -72,17 +77,24 @@ export default function OutreachEngage() {
     }
   }, []);
 
-  const fetchPosts = useCallback(async (listId, filter = 'pending') => {
-    setLoadingPosts(true);
+  const fetchPosts = useCallback(async (listId, filter = 'pending', append = false, skipOffset = 0) => {
+    if (!append) setLoadingPosts(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/engage/lists/${listId}/posts?status_filter=${filter}`, {
+      const PAGE_SIZE = 20;
+      const res = await fetch(`/api/v1/outreach/engage/lists/${listId}/posts?status_filter=${filter}&skip=${skipOffset}&limit=${PAGE_SIZE}`, {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setPosts(data.posts || []);
+        const newPosts = data.posts || [];
+        if (append) {
+          setPosts((prev) => [...prev, ...newPosts]);
+        } else {
+          setPosts(newPosts);
+        }
+        setTotalPosts(data.total || 0);
       }
     } catch (_) {
       toast.error('Failed to load prospect posts');
@@ -250,6 +262,7 @@ export default function OutreachEngage() {
   };
 
   const handleDiscardPost = async (postId) => {
+    if (!window.confirm('Dismiss this post from your feed? You can find it later under the "discarded" filter.')) return;
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/discard`, {
@@ -364,6 +377,84 @@ export default function OutreachEngage() {
     }));
     setAiModalPost(null);
     toast.success('Inserted AI comment into composer!');
+  };
+
+  // ── Bulk Actions ──────────────────────────────────────────────────────
+  const togglePostSelection = (postId) => {
+    setSelectedPosts((prev) => {
+      const next = new Set(prev);
+      if (next.has(postId)) next.delete(postId);
+      else next.add(postId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedPosts.size === posts.length) {
+      setSelectedPosts(new Set());
+    } else {
+      setSelectedPosts(new Set(posts.map((p) => p.id)));
+    }
+  };
+
+  const handleBulkLike = async () => {
+    if (selectedPosts.size === 0) return;
+    setBulkLoading(true);
+    const token = localStorage.getItem('token');
+    let successCount = 0;
+    let rateLimited = false;
+    for (const postId of selectedPosts) {
+      try {
+        const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/like`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+          body: JSON.stringify({}),
+        });
+        if (res.ok) {
+          successCount++;
+          setPosts((prev) =>
+            prev.map((p) => (p.id === postId ? { ...p, status: 'liked', reactions_count: p.reactions_count + 1 } : p))
+          );
+        } else if (res.status === 429) {
+          rateLimited = true;
+          break;
+        }
+      } catch (_) {}
+      // Small delay between batch actions
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    setSelectedPosts(new Set());
+    setBulkLoading(false);
+    if (rateLimited) {
+      toast.error(`Liked ${successCount} posts before hitting daily limit.`);
+    } else {
+      toast.success(`Liked ${successCount} post${successCount !== 1 ? 's' : ''} on LinkedIn!`);
+    }
+  };
+
+  const handleBulkDiscard = async () => {
+    if (selectedPosts.size === 0) return;
+    if (!window.confirm(`Dismiss ${selectedPosts.size} selected post${selectedPosts.size !== 1 ? 's' : ''}?`)) return;
+    setBulkLoading(true);
+    const token = localStorage.getItem('token');
+    let successCount = 0;
+    for (const postId of selectedPosts) {
+      try {
+        const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/discard`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (res.ok) {
+          successCount++;
+          setPosts((prev) => prev.filter((p) => p.id !== postId));
+        }
+      } catch (_) {}
+    }
+    setSelectedPosts(new Set());
+    setBulkLoading(false);
+    toast.success(`Dismissed ${successCount} post${successCount !== 1 ? 's' : ''}`);
   };
 
   return (
@@ -551,13 +642,34 @@ export default function OutreachEngage() {
           {/* Posts Feed Tab */}
           {activeTab === 'posts' && (
             <div className="space-y-4">
+              {/* Engagement Analytics Bar */}
+              {activeList && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Total Posts', value: activeList.pending_posts_count || 0, icon: <FileText className="w-3.5 h-3.5" />, color: 'text-gray-600 bg-gray-50' },
+                    { label: 'Liked', value: posts.filter((p) => p.status === 'liked').length + (statusFilter !== 'all' && statusFilter !== 'liked' ? '…' : ''), icon: <ThumbsUp className="w-3.5 h-3.5" />, color: 'text-blue-600 bg-blue-50' },
+                    { label: 'Commented', value: posts.filter((p) => p.status === 'commented').length + (statusFilter !== 'all' && statusFilter !== 'commented' ? '…' : ''), icon: <MessageCircle className="w-3.5 h-3.5" />, color: 'text-emerald-600 bg-emerald-50' },
+                    { label: 'Contacts', value: activeList.contacts_count || 0, icon: <Users className="w-3.5 h-3.5" />, color: 'text-purple-600 bg-purple-50' },
+                  ].map((stat) => (
+                    <div key={stat.label} className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+                      <div className={`w-7 h-7 rounded-lg ${stat.color} flex items-center justify-center`}>
+                        {stat.icon}
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-400 font-medium">{stat.label}</div>
+                        <div className="text-sm font-bold text-gray-900">{stat.value}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Filter controls */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   {['pending', 'liked', 'commented', 'discarded', 'all'].map((st) => (
                     <button
                       key={st}
-                      onClick={() => setStatusFilter(st)}
+                      onClick={() => { setStatusFilter(st); setSelectedPosts(new Set()); }}
                       className={`text-xs px-3 py-1 rounded-lg font-medium capitalize transition-colors ${
                         statusFilter === st
                           ? 'bg-gray-900 text-white'
@@ -572,6 +684,40 @@ export default function OutreachEngage() {
                   {posts.length} {statusFilter} post{posts.length !== 1 ? 's' : ''}
                 </span>
               </div>
+
+              {/* Bulk Action Bar */}
+              {posts.length > 0 && statusFilter === 'pending' && (
+                <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={selectedPosts.size === posts.length && posts.length > 0}
+                      onChange={toggleSelectAll}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    {selectedPosts.size > 0 ? `${selectedPosts.size} selected` : 'Select all'}
+                  </label>
+                  {selectedPosts.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleBulkLike}
+                        disabled={bulkLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-200 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                      >
+                        {bulkLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ThumbsUp className="w-3 h-3" />}
+                        Like All
+                      </button>
+                      <button
+                        onClick={handleBulkDiscard}
+                        disabled={bulkLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-semibold border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
+                      >
+                        <X className="w-3 h-3" /> Dismiss All
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 2-Column Responsive Feed */}
               {loadingPosts ? (
@@ -607,6 +753,14 @@ export default function OutreachEngage() {
                         {/* Author Header */}
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 min-w-0">
+                            {statusFilter === 'pending' && (
+                              <input
+                                type="checkbox"
+                                checked={selectedPosts.has(post.id)}
+                                onChange={() => togglePostSelection(post.id)}
+                                className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0 mt-0.5"
+                              />
+                            )}
                             <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center shrink-0 text-sm">
                               {post.author_avatar ? (
                                 <img
@@ -652,6 +806,27 @@ export default function OutreachEngage() {
                           {post.content_text}
                         </div>
 
+                        {/* Post Media */}
+                        {post.media_urls && post.media_urls.length > 0 && (
+                          <div className={`rounded-xl overflow-hidden ${post.media_urls.length > 1 ? 'grid grid-cols-2 gap-1' : ''}`}>
+                            {post.media_urls.slice(0, 2).map((url, idx) => (
+                              <div key={idx} className="relative bg-gray-100">
+                                <img
+                                  src={url}
+                                  alt={`Post media ${idx + 1}`}
+                                  className="w-full h-32 object-cover"
+                                  loading="lazy"
+                                  onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                                {idx === 1 && post.media_urls.length > 2 && (
+                                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-sm font-bold">
+                                    +{post.media_urls.length - 2}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {/* Social Metric Bar */}
                         <div className="flex items-center justify-between text-[11px] text-gray-500 pt-2 border-t border-gray-100">
                           <span className="flex items-center gap-1">
@@ -752,6 +927,18 @@ export default function OutreachEngage() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Load More */}
+              {!loadingPosts && posts.length > 0 && posts.length < totalPosts && (
+                <div className="flex justify-center pt-2">
+                  <button
+                    onClick={() => fetchPosts(activeList.id, statusFilter, true, posts.length)}
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-white border border-gray-200 text-gray-600 text-xs font-semibold hover:bg-gray-50 transition-colors shadow-xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Load More ({totalPosts - posts.length} remaining)
+                  </button>
                 </div>
               )}
             </div>
