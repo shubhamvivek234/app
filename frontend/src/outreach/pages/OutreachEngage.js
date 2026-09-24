@@ -50,12 +50,15 @@ export default function OutreachEngage() {
 
   // In-line comment draft state per post: { [postId]: { text: string, autoLike: boolean, posting: boolean } }
   const [commentDrafts, setCommentDrafts] = useState({});
+  // Track per-post like loading state: { [postId]: true }
+  const [likingPosts, setLikingPosts] = useState({});
 
   const fetchLists = useCallback(async () => {
     setLoadingLists(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/engage/lists', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -74,6 +77,7 @@ export default function OutreachEngage() {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/lists/${listId}/posts?status_filter=${filter}`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -105,6 +109,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/engage/lists', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -134,6 +139,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/lists/${listId}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -153,6 +159,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/fetch`, {
         method: 'POST',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -174,6 +181,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/contacts`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -193,6 +201,7 @@ export default function OutreachEngage() {
         fetchLists();
         // Refresh active list details
         const listRes = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}`, {
+          credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (listRes.ok) setActiveList(await listRes.json());
@@ -203,10 +212,13 @@ export default function OutreachEngage() {
   };
 
   const handleLikePost = async (postId) => {
+    if (likingPosts[postId]) return; // Prevent double-click
+    setLikingPosts((prev) => ({ ...prev, [postId]: true }));
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/like`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -218,9 +230,22 @@ export default function OutreachEngage() {
         setPosts((prev) =>
           prev.map((p) => (p.id === postId ? { ...p, status: 'liked', reactions_count: p.reactions_count + 1 } : p))
         );
+      } else if (res.status === 429) {
+        toast.error('Daily like limit reached. Try again tomorrow.');
+      } else if (res.status === 400) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No active LinkedIn account connected.');
+      } else if (res.status === 503) {
+        toast.error('LinkedIn restriction detected — account paused for safety.');
       }
     } catch (_) {
       toast.error('Failed to like post');
+    } finally {
+      setLikingPosts((prev) => {
+        const updated = { ...prev };
+        delete updated[postId];
+        return updated;
+      });
     }
   };
 
@@ -229,6 +254,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/discard`, {
         method: 'POST',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -256,6 +282,7 @@ export default function OutreachEngage() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/comment`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -266,13 +293,21 @@ export default function OutreachEngage() {
         }),
       });
       if (res.ok) {
-        toast.success('Comment posted to LinkedIn (auto-liked)!');
+        const data = await res.json().catch(() => ({}));
+        toast.success(data.auto_liked ? 'Comment posted & post liked on LinkedIn!' : 'Comment posted to LinkedIn!');
         setPosts((prev) => prev.filter((p) => p.id !== postId));
         setCommentDrafts((prev) => {
           const updated = { ...prev };
           delete updated[postId];
           return updated;
         });
+      } else if (res.status === 429) {
+        toast.error('Daily comment limit reached. Try again tomorrow.');
+      } else if (res.status === 400) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'No active LinkedIn account connected.');
+      } else if (res.status === 503) {
+        toast.error('LinkedIn restriction detected — account paused for safety.');
       }
     } catch (_) {
       toast.error('Failed to post comment');
@@ -287,12 +322,15 @@ export default function OutreachEngage() {
   const handleGenerateAIComments = async (post) => {
     setAiModalPost(post);
     setAiComments([]);
+    setAiPrompt('');
+    setAiTone('insightful');
     setAiLoading(true);
 
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/engage/ai-comment', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -516,7 +554,7 @@ export default function OutreachEngage() {
               {/* Filter controls */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {['pending', 'commented', 'all'].map((st) => (
+                  {['pending', 'liked', 'commented', 'discarded', 'all'].map((st) => (
                     <button
                       key={st}
                       onClick={() => setStatusFilter(st)}
@@ -526,7 +564,7 @@ export default function OutreachEngage() {
                           : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
                     >
-                      {st === 'pending' ? 'Pending Posts' : st}
+                      {st === 'pending' ? 'Pending' : st}
                     </button>
                   ))}
                 </div>
@@ -626,9 +664,19 @@ export default function OutreachEngage() {
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => handleLikePost(post.id)}
-                            className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-neutral-50 transition-colors"
+                            disabled={likingPosts[post.id] || post.status === 'liked'}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              post.status === 'liked'
+                                ? 'border-blue-200 bg-blue-50 text-blue-600'
+                                : 'border-gray-200 text-gray-700 hover:bg-neutral-50'
+                            }`}
                           >
-                            <ThumbsUp className="w-3.5 h-3.5 text-blue-600" /> Like Post
+                            {likingPosts[post.id] ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                            ) : (
+                              <ThumbsUp className="w-3.5 h-3.5 text-blue-600" />
+                            )}
+                            {post.status === 'liked' ? 'Liked ✓' : 'Like Post'}
                           </button>
                           <button
                             onClick={() => handleDiscardPost(post.id)}

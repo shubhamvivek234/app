@@ -359,13 +359,20 @@ class VoyagerClient:
         """
         Human-mimicking action: auto-likes post before posting comment with a realistic jitter.
         """
+        import asyncio
+        import random
+
         like_res = await self.like_update(update_urn)
-        # Small delay between like and comment in real calls
+        # Realistic human delay between like and comment to avoid bot fingerprinting
+        jitter = max(2.5, min(8.0, random.gauss(4.0, 1.5)))
+        if not self.is_mock:
+            await asyncio.sleep(jitter)
         comment_res = await self.comment_on_update(update_urn, comment_text)
         return {
             "status": "success",
             "like": like_res,
             "comment": comment_res,
+            "jitter_seconds": round(jitter, 1),
         }
 
 

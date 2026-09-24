@@ -19,6 +19,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from api.deps import get_current_user
 from db.mongo import get_db
 from outreach.core.lead_importer import normalize_linkedin_url
+from outreach.core.rate_limiter import OutboundRateLimiter
+from outreach.core.safety_shield import SafetyShield
 from outreach.engine.voyager_client import VoyagerClient
 from outreach.models import EngageContact, EngageList, EngagePost
 from utils.free_llm_router import free_llm
@@ -73,6 +75,52 @@ def _extract_name_from_vanity(vanity: str) -> str:
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
+
+async def _resolve_sender_account(
+    workspace_id: str,
+    db: AsyncIOMotorDatabase,
+    sender_account_id: str | None = None,
+) -> dict:
+    """
+    Resolves the sender account for engage actions.
+    Raises 400 if no active account exists (no silent mock fallback).
+    """
+    if sender_account_id:
+        account = await db.outreach_accounts.find_one(
+            {"id": sender_account_id, "workspace_id": workspace_id, "status": "active"}
+        )
+        if not account:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected sender account is not active or doesn't exist. Connect a LinkedIn account first.",
+            )
+    else:
+        account = await db.outreach_accounts.find_one(
+            {"workspace_id": workspace_id, "status": "active"}
+        )
+        if not account:
+            raise HTTPException(
+                status_code=400,
+                detail="No active LinkedIn account connected. Connect an account in Settings before engaging.",
+            )
+    return account
+
+
+def _build_voyager(account: dict) -> VoyagerClient:
+    """Build VoyagerClient from a resolved account document."""
+    from outreach.core.crypto import decrypt_secret
+
+    proxy_cfg = account.get("proxy") or {}
+    proxy_url = None
+    if proxy_cfg.get("host"):
+        proxy_pass = decrypt_secret(proxy_cfg.get("password_enc", ""))
+        proxy_url = f"http://{proxy_cfg.get('username', '')}:{proxy_pass}@{proxy_cfg['host']}:{proxy_cfg.get('port', 8080)}"
+
+    return VoyagerClient(
+        session_cookie_enc=account.get("session_cookie_enc", ""),
+        jsession_id=account.get("jsession_id", "ajax:123"),
+        proxy_url=proxy_url,
+    )
 
 @router.post("/lists", status_code=status.HTTP_201_CREATED)
 async def create_engage_list(
@@ -229,12 +277,9 @@ async def fetch_latest_posts_for_list(
     if not contacts:
         return {"status": "empty", "message": "No contacts in list. Add contacts first.", "posts_fetched": 0}
 
-    # Use first available sender account or fallback to mock
-    account = await db.outreach_accounts.find_one({"workspace_id": workspace_id, "status": "active"})
-    cookie_enc = account.get("session_cookie_enc", "mock_cookie") if account else "mock_cookie"
-    jsession = account.get("jsession_id", "ajax:123") if account else "ajax:123"
-
-    voyager = VoyagerClient(session_cookie_enc=cookie_enc, jsession_id=jsession)
+    # Use validated sender account (no silent mock fallback)
+    account = await _resolve_sender_account(workspace_id, db)
+    voyager = _build_voyager(account)
 
     new_posts_count = 0
     now = datetime.now(timezone.utc)
@@ -318,18 +363,38 @@ async def like_engage_post(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """1-Click Like a post via Voyager."""
+    """1-Click Like a post via Voyager with rate limiting and safety checks."""
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    account = await db.outreach_accounts.find_one({"workspace_id": workspace_id, "status": "active"})
-    cookie_enc = account.get("session_cookie_enc", "mock_cookie") if account else "mock_cookie"
-    jsession = account.get("jsession_id", "ajax:123") if account else "ajax:123"
+    # B2: Validated account resolution (no silent mock fallback)
+    account = await _resolve_sender_account(workspace_id, db, req.sender_account_id)
 
-    voyager = VoyagerClient(session_cookie_enc=cookie_enc, jsession_id=jsession)
+    # B4: Rate limiter check — enforce daily like limits
+    allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "post_likes", db)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Daily like limit reached for this LinkedIn account. Try again tomorrow or adjust limits in Settings.",
+        )
+
+    voyager = _build_voyager(account)
     res = await voyager.like_update(post["post_urn"])
+
+    # B5: Safety Shield — check for restriction signals
+    if res.get("status") == "failed":
+        status_code = res.get("status_code", 0)
+        response_text = res.get("text", "")
+        if SafetyShield.should_trip_circuit_breaker(status_code, response_text):
+            await SafetyShield.trip_circuit_breaker(
+                account["id"], f"Engage like triggered: HTTP {status_code}", db, workspace_id
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="LinkedIn security restriction detected. Account paused for safety. Check Settings.",
+            )
 
     await db.outreach_engage_posts.update_one(
         {"id": post_id},
@@ -346,7 +411,7 @@ async def comment_engage_post(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Post an in-line comment to LinkedIn with optional auto-like."""
+    """Post an in-line comment to LinkedIn with optional auto-like, rate limiting, and safety checks."""
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
@@ -355,17 +420,48 @@ async def comment_engage_post(
     if not req.comment_text.strip():
         raise HTTPException(status_code=400, detail="Comment text cannot be empty")
 
-    account = await db.outreach_accounts.find_one({"workspace_id": workspace_id, "status": "active"})
-    cookie_enc = account.get("session_cookie_enc", "mock_cookie") if account else "mock_cookie"
-    jsession = account.get("jsession_id", "ajax:123") if account else "ajax:123"
+    # B2: Validated account resolution
+    account = await _resolve_sender_account(workspace_id, db, req.sender_account_id)
 
-    voyager = VoyagerClient(session_cookie_enc=cookie_enc, jsession_id=jsession)
+    # B4: Rate limiter check — enforce daily comment limits
+    allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "comments", db)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Daily comment limit reached for this LinkedIn account. Try again tomorrow or adjust limits in Settings.",
+        )
+
+    # If auto-like is enabled, also check like limit
+    if req.auto_like:
+        # Re-fetch account to get updated counters after comment increment
+        account = await db.outreach_accounts.find_one({"id": account["id"]})
+        like_allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "post_likes", db)
+        if not like_allowed:
+            logger.info("Auto-like skipped for post %s — daily like limit reached", post_id)
+            # Still allow comment, just skip the auto-like
+            req = CommentPostRequest(comment_text=req.comment_text, auto_like=False)
+
+    voyager = _build_voyager(account)
 
     now = datetime.now(timezone.utc)
     if req.auto_like:
         res = await voyager.auto_like_and_comment(post["post_urn"], req.comment_text.strip())
     else:
         res = await voyager.comment_on_update(post["post_urn"], req.comment_text.strip())
+
+    # B5: Safety Shield — check for restriction signals
+    comment_res = res.get("comment", res) if req.auto_like else res
+    if comment_res.get("status") == "failed":
+        status_code = comment_res.get("status_code", 0)
+        response_text = comment_res.get("text", "")
+        if SafetyShield.should_trip_circuit_breaker(status_code, response_text):
+            await SafetyShield.trip_circuit_breaker(
+                account["id"], f"Engage comment triggered: HTTP {status_code}", db, workspace_id
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="LinkedIn security restriction detected. Account paused for safety. Check Settings.",
+            )
 
     await db.outreach_engage_posts.update_one(
         {"id": post_id},
@@ -387,6 +483,7 @@ async def comment_engage_post(
         "status": "commented",
         "post_id": post_id,
         "comment": req.comment_text.strip(),
+        "auto_liked": req.auto_like,
         "timestamp": now.isoformat(),
         "details": res,
     }

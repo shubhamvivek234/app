@@ -193,6 +193,17 @@ async def test_create_and_list_engage_lists(db, mock_user):
 
 @pytest.mark.asyncio
 async def test_add_contacts_and_fetch_posts(db, mock_user):
+    # 0. Seed an active sender account (required after B2 fix: no silent mock fallback)
+    await db.outreach_accounts.insert_one({
+        "id": "acc_test_engage",
+        "workspace_id": "ws_test123",
+        "status": "active",
+        "session_cookie_enc": "mock_cookie",
+        "jsession_id": "ajax:123",
+        "counters": {},
+        "limits": {"post_likes": 50, "comments": 50},
+    })
+
     # 1. Create list
     req = CreateEngageListRequest(name="SaaS Founders", emoji="🚀")
     lst = await create_engage_list(req, current_user=mock_user, db=db)
