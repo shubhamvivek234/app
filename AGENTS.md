@@ -19,11 +19,12 @@ Completed:
 - Added sender picker, true list stats, contact deletion/history, CSV report, writing styles in AI comments, post-age warnings, keyboard shortcuts, and media URL extraction/cards. Bulk likes now have human spacing.
 - Linked Engage lists to draft campaigns; campaign launch checks every lead has confirmed engagement and delays first action 24/48h. No unreviewed scheduled auto-comments (I14); the unsupported 12%→50% conversion claim was removed.
 - Local verification: 10 Engage tests passed, Python compile clean, frontend CI build succeeded with third-party source-map warnings. Broader campaign detail/short-link tests have pre-existing fixture/DNS failures. Live UI check blocked by locked Mac.
-- Current changes are uncommitted and not deployed. Preserve unrelated dirty worktree files and earlier campaign edits.
+- Release commit `d8ad55d` was pushed to `origin/main` on 2026-09-25. Frontend should auto-deploy via Vercel. Backend EC2 deploy is blocked on this Mac by missing SSH identity (`Permission denied (publickey)`).
 
 ## Active Work
 Currently implementing: None
 Next:
+- Load/provide the EC2 deploy SSH key, then run backend deploy from `/opt/socialentagler`.
 - Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
 - Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).
 - Content Writing Styles UI (`OutreachStyles.js`).
