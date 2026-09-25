@@ -4,23 +4,27 @@
 ## Current Phase
 Stage: v9.1 Prosp AI Architectural Advantages & Live Streaming Shipped
 Branch: main
-Focus: Engage Section Hardening, Outreach Quality & Safety
+Focus: Engage & Grow verification, outreach safety, and campaign warm-up
 
 ## Last Session Completed
-Date: 2026-09-24
+Date: 2026-09-25
 Completed:
-- Engage Section Deep Audit: 16 bugs (5 critical, 7 medium, 4 low), 20 improvements identified.
-- **Critical Bugs Fixed (B1-B5)**: credentials:'include' on all 11 fetch calls; account validation (no silent mock fallback) via `_resolve_sender_account`; 2.5-8s Gaussian jitter between like→comment; `OutboundRateLimiter` wired into like/comment endpoints (429 on limit); `SafetyShield` circuit breaker auto-pauses accounts on 401/403/429.
-- **Medium Bugs Fixed (B6/B9/B10-B12/B14-B16)**: Parallel fetch with `asyncio.gather` batches of 3; paginated posts feed (20/page + Load More); liked/discarded filter pills; like button loading spinner; toast respects auto-like; discard confirmation dialog; post media image rendering.
-- **Improvements Shipped (I1/I3/I5)**: Bulk actions (select-all + batch like/discard); real contact enrichment via `VoyagerClient.fetch_profile_info`; engagement analytics summary bar (total/liked/commented/contacts).
-- 73/73 outreach tests pass, frontend CI clean.
-- Two commits: `61c9195` (critical bugs), `58674e8` (medium bugs + improvements).
-- Deployed to EC2 + Vercel.
+- LinkedIn Cold Outreach Campaign audit: create/edit/template, leads, sequence, schedule, limits, launch/pause/resume, duplicate/delete/restore, and analytics.
+- Fixed phantom campaign/template success, sequence save/lifecycle issues, workspace ownership checks, stale campaign metrics, invalid schedule/cap handling, and failed actions being counted as success.
+- Added a scheduled campaign runner with due-step claiming, explicit wait/branch handling, verified LinkedIn profile URNs, and fail-safe mock defaults.
+- Removed fabricated prospect enrollment; disabled disconnected lead sources and unsupported sequence actions/limits. Prompt tokens now preview as placeholders and cannot be launched as literal copy.
+- Improved CSV URL normalization, template variables, timezone/schedule display, and sender/launch validation.
+- Earlier Engage fixes B1-B6/B9-B10/B12-B16 and I1/I3/I5 were committed (`61c9195`, `58674e8`) and deployed, but B7/B8/B11 remained incomplete in practice.
+- This session fixed B7 (verified-only enrichment; legacy guessed identities hidden/reverified), B8 (Celery fetch with 3 concurrent requests, status/polling), and B11 (client lock + atomic backend claim). Like/comment now queue on the outreach worker; failed Voyager calls no longer count as successful engagement.
+- Added sender picker, true list stats, contact deletion/history, CSV report, writing styles in AI comments, post-age warnings, keyboard shortcuts, and media URL extraction/cards. Bulk likes now have human spacing.
+- Linked Engage lists to draft campaigns; campaign launch checks every lead has confirmed engagement and delays first action 24/48h. No unreviewed scheduled auto-comments (I14); the unsupported 12%→50% conversion claim was removed.
+- Local verification: 10 Engage tests passed, Python compile clean, frontend CI build succeeded with third-party source-map warnings. Broader campaign detail/short-link tests have pre-existing fixture/DNS failures. Live UI check blocked by locked Mac.
+- Current changes are uncommitted and not deployed. Preserve unrelated dirty worktree files and earlier campaign edits.
 
 ## Active Work
 Currently implementing: None
 Next:
-- Remaining improvements I2/I4/I6-I20 from engage audit.
+- Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
 - Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).
 - Content Writing Styles UI (`OutreachStyles.js`).
 - Auto-Plug scheduled first comments in post composer.

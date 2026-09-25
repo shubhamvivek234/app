@@ -3,7 +3,9 @@ Unit tests for the LinkedIn Pre-Outreach Engage & Grow Studio,
 Writing Styles Mimicry, and Swipe Files Repurposer.
 """
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 from outreach.api.engage import (
     CreateEngageListRequest,
     AddContactsRequest,
@@ -18,10 +20,13 @@ from outreach.api.engage import (
     fetch_latest_posts_for_list,
     get_engage_posts_feed,
     like_engage_post,
+    queue_like_engage_post,
     comment_engage_post,
     discard_engage_post,
     generate_ai_comments,
 )
+from outreach.models import EngagePost
+from outreach.engine.voyager_client import VoyagerClient
 from outreach.api.styles import (
     CreateWritingStyleRequest,
     create_writing_style,
@@ -215,30 +220,129 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
         profile_urls=["https://www.linkedin.com/in/reedhastings/"],
         csv_text=csv_sample,
     )
-    add_res = await add_contacts_to_list(list_id, contact_req, current_user=mock_user, db=db)
+    with patch("celery_workers.celery_app.celery_app.send_task") as send_task:
+        add_res = await add_contacts_to_list(list_id, contact_req, current_user=mock_user, db=db)
+        send_task.assert_called_once()
     assert add_res["status"] == "success"
     assert add_res["added_count"] == 3
 
-    # 3. Fetch latest posts via Voyager
-    fetch_res = await fetch_latest_posts_for_list(list_id, current_user=mock_user, db=db)
-    assert fetch_res["status"] == "success"
-    assert fetch_res["posts_fetched"] >= 2
+    # 3. Fetch queues background work; the API no longer scrapes on the request path.
+    with patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
+         patch.object(db.outreach_engage_lists, "update_one", new_callable=AsyncMock) as update_one:
+        update_one.return_value = SimpleNamespace(modified_count=1)
+        fetch_res = await fetch_latest_posts_for_list(list_id, current_user=mock_user, db=db)
+        assert fetch_res["status"] == "queued"
+        send_task.assert_called_once()
+
+    contact = db.outreach_engage_contacts.items[0]
+    await db.outreach_engage_posts.insert_one(EngagePost(
+        list_id=list_id, contact_id=contact["id"], workspace_id="ws_test123",
+        author_name="Verified Prospect", author_urn="urn:li:fsd_profile:123",
+        post_urn="urn:li:activity:123", content_text="A recent post",
+    ).model_dump())
 
     # 4. Read posts feed
     feed = await get_engage_posts_feed(list_id, status_filter="pending", current_user=mock_user, db=db)
-    assert len(feed["posts"]) >= 2
+    assert len(feed["posts"]) == 1
     first_post = feed["posts"][0]
     assert first_post["status"] == "pending"
 
     # 5. 1-Click Like
-    like_res = await like_engage_post(first_post["id"], LikePostRequest(), current_user=mock_user, db=db)
+    with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
+         patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit:
+        update_one.return_value = SimpleNamespace(modified_count=1)
+        limit.return_value = True
+        like_res = await like_engage_post(first_post["id"], LikePostRequest(), current_user=mock_user, db=db)
     assert like_res["status"] == "liked"
+    db.outreach_engage_posts.items[0]["status"] = "liked"
 
     # 6. In-line Comment with auto-like
     comment_req = CommentPostRequest(comment_text="Incredible point on follow-up speed. Totally agreed!", auto_like=True)
-    com_res = await comment_engage_post(first_post["id"], comment_req, current_user=mock_user, db=db)
+    with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
+         patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit:
+        update_one.return_value = SimpleNamespace(modified_count=1)
+        limit.return_value = True
+        com_res = await comment_engage_post(first_post["id"], comment_req, current_user=mock_user, db=db)
     assert com_res["status"] == "commented"
+    assert com_res["auto_liked"] is False
     assert com_res["comment"] == "Incredible point on follow-up speed. Totally agreed!"
+
+
+@pytest.mark.asyncio
+async def test_mock_enrichment_never_claims_a_guessed_identity():
+    profile = await VoyagerClient("mock_cookie").fetch_profile_info("jane-smith-123")
+    assert profile["verified"] is False
+    assert profile["profile_urn"] == ""
+    assert profile["full_name"] == "LinkedIn Member"
+
+
+def test_voyager_extracts_image_and_article_media():
+    update = {"content": {"media": [
+        {"vectorImage": {"rootUrl": "https://media.licdn.com/", "artifacts": [
+            {"fileIdentifyingUrlPathSegment": "image.jpg"}]}},
+        {"article": {"navigationUrl": "https://www.linkedin.com/pulse/example"}},
+    ]}}
+    assert VoyagerClient._update_media_urls(update) == [
+        "https://media.licdn.com/image.jpg", "https://www.linkedin.com/pulse/example",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_like_is_rejected_before_voyager(db, mock_user):
+    await db.outreach_engage_posts.insert_one(EngagePost(
+        list_id="list_1", contact_id="contact_1", workspace_id="ws_test123",
+        author_name="Prospect", post_urn="urn:li:activity:123", status="liked",
+    ).model_dump())
+    post_id = db.outreach_engage_posts.items[0]["id"]
+    with patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
+        with pytest.raises(HTTPException) as exc:
+            await like_engage_post(post_id, LikePostRequest(), current_user=mock_user, db=db)
+        assert exc.value.status_code == 409
+        voyager_like.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_like_is_not_recorded_as_success(db, mock_user):
+    await db.outreach_accounts.insert_one({
+        "id": "acc_1", "workspace_id": "ws_test123", "status": "active",
+        "session_cookie_enc": "mock_cookie", "jsession_id": "ajax:123",
+    })
+    await db.outreach_engage_posts.insert_one(EngagePost(
+        list_id="list_1", contact_id="contact_1", workspace_id="ws_test123",
+        author_name="Prospect", post_urn="urn:li:activity:123",
+    ).model_dump())
+    post_id = db.outreach_engage_posts.items[0]["id"]
+    with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
+         patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit, \
+         patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
+        update_one.return_value = SimpleNamespace(modified_count=1)
+        limit.return_value = True
+        voyager_like.return_value = {"status": "failed", "status_code": 500}
+        with pytest.raises(HTTPException) as exc:
+            await like_engage_post(post_id, LikePostRequest(), current_user=mock_user, db=db)
+        assert exc.value.status_code == 502
+    assert db.outreach_engage_posts.items[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_like_endpoint_only_queues_worker_action(db, mock_user):
+    await db.outreach_accounts.insert_one({
+        "id": "acc_1", "workspace_id": "ws_test123", "status": "active",
+    })
+    await db.outreach_engage_posts.insert_one(EngagePost(
+        list_id="list_1", contact_id="contact_1", workspace_id="ws_test123",
+        author_name="Prospect", post_urn="urn:li:activity:123",
+    ).model_dump())
+    post_id = db.outreach_engage_posts.items[0]["id"]
+    with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
+         patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
+         patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
+        update_one.return_value = SimpleNamespace(modified_count=1)
+        result = await queue_like_engage_post(post_id, LikePostRequest(sender_account_id="acc_1"),
+                                              current_user=mock_user, db=db)
+        assert result["status"] == "queued"
+        send_task.assert_called_once()
+        voyager_like.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -248,7 +352,9 @@ async def test_ai_comment_generator(db, mock_user):
         author_headline="VP of Sales",
         tone="insightful",
     )
-    res = await generate_ai_comments(req, current_user=mock_user, db=db)
+    with patch("outreach.api.engage.free_llm.generate_text", new_callable=AsyncMock) as generate:
+        generate.return_value = ('["A useful comment about speed.", "A second relevant angle.", "A thoughtful question for the author?"]', None, None)
+        res = await generate_ai_comments(req, current_user=mock_user, db=db)
     assert res["tone"] == "insightful"
     assert len(res["comments"]) == 3
     for c in res["comments"]:

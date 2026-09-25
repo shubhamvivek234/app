@@ -16,16 +16,37 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
     last_name = lead.get("last_name") or ""
     company = lead.get("company_name") or "your company"
     title = lead.get("job_title") or ""
+    custom_variables = lead.get("custom_variables") or {}
+    built_in_variables = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": " ".join(part for part in (first_name, last_name) if part).strip(),
+        "headline": lead.get("headline") or (f"{title} at {company}" if title else company),
+        "company_name": company,
+        "job_title": title,
+        "industry": lead.get("industry") or custom_variables.get("industry") or "",
+        "location_raw": lead.get("location_raw") or lead.get("location") or "",
+    }
 
-    text = template_str.replace("{{first_name}}", first_name)
-    text = text.replace("{{last_name}}", last_name)
-    text = text.replace("{{company_name}}", company)
-    text = text.replace("{{job_title}}", title)
+    text = template_str
+    for key, value in built_in_variables.items():
+        text = text.replace(f"{{{{{key}}}}}", str(value))
 
-    for k, v in lead.get("custom_variables", {}).items():
+    for k, v in custom_variables.items():
         text = text.replace(f"{{{{{k}}}}}", str(v))
 
     return text
+
+
+def contains_ai_prompt_token(value: Any) -> bool:
+    """Detect prompt-library tokens that the live sequence runner cannot generate."""
+    if isinstance(value, str):
+        return "✨ [" in value
+    if isinstance(value, dict):
+        return any(contains_ai_prompt_token(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(contains_ai_prompt_token(item) for item in value)
+    return False
 
 
 class DAGCompiler:
@@ -41,6 +62,17 @@ class DAGCompiler:
         """
         if not nodes:
             raise DAGValidationError("Sequence must contain at least one step.")
+
+        if any(not isinstance(node, dict) or not node.get("id") or not node.get("type") for node in nodes):
+            raise DAGValidationError("Every sequence step must have an ID and a type.")
+
+        for node in nodes:
+            try:
+                SequenceNodeType(node["type"])
+                if int(node.get("delay_hours", 0)) < 0:
+                    raise ValueError("negative delay")
+            except (ValueError, TypeError):
+                raise DAGValidationError(f"Invalid step type or delay for node: {node.get('id')}")
 
         node_map = {n["id"]: n for n in nodes}
         if len(node_map) != len(nodes):
@@ -67,8 +99,7 @@ class DAGCompiler:
         if not root_nodes:
             raise DAGValidationError("Cycle detected: No root start node found in sequence.")
         if len(root_nodes) > 1:
-            # Multiple starting roots — verify they don't cause disconnected disjoint branches
-            pass
+            raise DAGValidationError("Sequence contains disconnected steps. Connect every step to the start flow.")
 
         # 2. Cycle Detection using Kahn's Algorithm (Topological Sort)
         in_degree = dict(incoming_count)
@@ -111,15 +142,25 @@ class DAGCompiler:
             }
 
             # Map branching vs sequential flow
+            branch_targets: set[str] = set()
             for edge in edges_from:
                 label = (edge.get("label") or "").strip().lower()
                 target_id = edge["target"]
 
                 if label in ("accepted", "replied", "connected", "true", "yes"):
+                    if "positive" in branch_targets:
+                        raise DAGValidationError(f"Step {n_id} has more than one positive branch.")
+                    branch_targets.add("positive")
                     compiled_node["branches"]["positive"] = target_id
                 elif label in ("not accepted", "not accepted yet", "no reply", "not connected", "rejected", "declined", "unresponsive", "false", "no"):
+                    if "negative" in branch_targets:
+                        raise DAGValidationError(f"Step {n_id} has more than one negative branch.")
+                    branch_targets.add("negative")
                     compiled_node["branches"]["negative"] = target_id
                 else:
+                    if "default" in branch_targets:
+                        raise DAGValidationError(f"Step {n_id} has more than one default next step.")
+                    branch_targets.add("default")
                     compiled_node["next_default"] = target_id
 
             compiled["nodes"][n_id] = compiled_node
@@ -516,4 +557,3 @@ class DAGCompiler:
                 ],
             },
         ]
-

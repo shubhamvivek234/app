@@ -6,6 +6,7 @@ messaging polling, post liking) without headless browser overhead.
 import os
 import logging
 from typing import Any
+from urllib.parse import urlparse
 import httpx
 from datetime import datetime, timezone, timedelta
 from outreach.core.crypto import decrypt_secret
@@ -13,6 +14,12 @@ from outreach.core.crypto import decrypt_secret
 logger = logging.getLogger(__name__)
 
 VOYAGER_BASE_URL = "https://www.linkedin.com/voyager/api"
+
+
+class VoyagerRestrictionError(RuntimeError):
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"LinkedIn returned HTTP {status_code} while fetching profile posts")
 
 
 class VoyagerClient:
@@ -27,7 +34,7 @@ class VoyagerClient:
         self.proxy_url = proxy_url
         self.is_mock = (
             self.session_cookie.startswith("mock_")
-            or os.getenv("OUTREACH_MOCK_AUTH", "true") == "true"
+            or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() == "true"
         )
 
     def _get_headers(self) -> dict[str, str]:
@@ -39,6 +46,54 @@ class VoyagerClient:
             "Accept": "application/vnd.linkedin.normalized+json+2.1",
         }
 
+    @staticmethod
+    def _update_media_urls(update: dict[str, Any]) -> list[str]:
+        """Extract linked images/documents/articles from supported Voyager media shapes."""
+        found: list[str] = []
+
+        def add(value: Any) -> None:
+            if isinstance(value, str) and value.startswith("https://") and value not in found:
+                found.append(value)
+
+        def walk(value: Any, depth: int = 0) -> None:
+            if depth > 5 or len(found) >= 8:
+                return
+            if isinstance(value, list):
+                for item in value:
+                    walk(item, depth + 1)
+            elif isinstance(value, dict):
+                root = value.get("rootUrl")
+                for artifact in value.get("artifacts") or []:
+                    if isinstance(artifact, dict) and isinstance(root, str):
+                        add(root + str(artifact.get("fileIdentifyingUrlPathSegment", "")))
+                for key in ("url", "navigationUrl", "originalUrl"):
+                    add(value.get(key))
+                for key in ("media", "content", "images", "image", "attachments", "article", "document", "vectorImage"):
+                    if key in value:
+                        walk(value[key], depth + 1)
+
+        for key in ("media", "content", "attachments", "article", "document"):
+            if key in update:
+                walk(update[key])
+        return found[:8]
+
+    async def _resolve_profile_urn(self, profile_identifier: str) -> str | None:
+        """Resolve a profile URL to a verified LinkedIn member URN."""
+        if profile_identifier.startswith("urn:"):
+            return profile_identifier
+        parsed = urlparse(profile_identifier)
+        hostname = (parsed.hostname or "").lower()
+        if hostname in {"linkedin.com", "www.linkedin.com"} and "/in/" in parsed.path:
+            vanity_name = parsed.path.rstrip("/").split("/")[-1]
+        else:
+            vanity_name = profile_identifier.strip().strip("/")
+        if not vanity_name or "/" in vanity_name:
+            return None
+        profile = await self.fetch_profile_info(vanity_name)
+        if not profile.get("verified"):
+            return None
+        return profile.get("profile_urn")
+
     async def check_connection_status(self, profile_urn: str) -> bool:
         """
         Checks if the target profile has accepted our connection request.
@@ -48,13 +103,31 @@ class VoyagerClient:
             logger.info("VoyagerClient [MOCK]: check_connection_status for %s", profile_urn)
             return True
 
-        url = f"{VOYAGER_BASE_URL}/relationships/connections?count=1"
+        target_vanity = urlparse(profile_urn).path.rstrip("/").split("/")[-1] if "/in/" in profile_urn else ""
+        target_urn = await self._resolve_profile_urn(profile_urn)
+        if not target_urn:
+            return False
+
+        url = f"{VOYAGER_BASE_URL}/relationships/connections?count=1000"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
                 resp = await client.get(url, headers=self._get_headers())
                 if resp.status_code == 200:
-                    # In real response, parse connections list
-                    return True
+                    data = resp.json()
+                    elements = data.get("elements", []) if isinstance(data, dict) else []
+                    identifiers = {value for value in (target_urn, profile_urn, target_vanity) if value}
+                    for element in elements:
+                        if not isinstance(element, dict):
+                            continue
+                        candidate_values = {
+                            element.get("entityUrn"),
+                            element.get("profileUrn"),
+                            element.get("memberUrn"),
+                            element.get("publicIdentifier"),
+                            (element.get("miniProfile") or {}).get("entityUrn") if isinstance(element.get("miniProfile"), dict) else None,
+                        }
+                        if identifiers.intersection(value for value in candidate_values if isinstance(value, str)):
+                            return True
                 return False
         except Exception as exc:
             logger.error("Voyager check_connection_status error: %s", exc)
@@ -65,16 +138,14 @@ class VoyagerClient:
         Fetches real profile data (name, headline, avatar, URN) from LinkedIn Voyager.
         Used during contact enrichment to replace fake data derived from vanity slugs.
         """
-        import re
-
         if self.is_mock:
-            # Generate realistic stub from vanity name
-            cleaned = re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title()
             return {
-                "full_name": cleaned or "LinkedIn Member",
-                "headline": f"Professional at LinkedIn",
+                "full_name": "LinkedIn Member",
+                "headline": "",
                 "avatar_url": "",
-                "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+                "profile_urn": "",
+                "verified": False,
+                "mock": True,
             }
 
         url = f"{VOYAGER_BASE_URL}/identity/profiles/{vanity_name}/profileView"
@@ -83,45 +154,60 @@ class VoyagerClient:
                 resp = await client.get(url, headers=self._get_headers())
                 if resp.status_code != 200:
                     return {
-                        "full_name": re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title() or "LinkedIn Member",
+                        "full_name": "",
                         "headline": "",
                         "avatar_url": "",
-                        "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+                        "profile_urn": "",
                         "status_code": resp.status_code,
+                        "verified": False,
                     }
 
                 data = resp.json()
-                profile = data.get("profile", data)
+                if not isinstance(data, dict):
+                    return {"full_name": "", "headline": "", "avatar_url": "", "profile_urn": "", "verified": False}
+                candidates = [data.get("profile"), data.get("data"), data]
+                candidates.extend(data.get("included", []) if isinstance(data.get("included"), list) else [])
+                profile = next((item for item in candidates if isinstance(item, dict)
+                                and (item.get("firstName") or item.get("lastName"))), {})
                 first_name = profile.get("firstName", "")
                 last_name = profile.get("lastName", "")
-                full_name = f"{first_name} {last_name}".strip() or vanity_name.replace("-", " ").title()
+                full_name = f"{first_name} {last_name}".strip()
 
                 # Extract avatar URL from display image
                 avatar_url = ""
-                img_artifacts = profile.get("displayImageReference", {}).get("vectorImage", {}).get("artifacts", [])
+                display = profile.get("displayImageReference") or {}
+                vector = (display.get("vectorImage") or {}) if isinstance(display, dict) else {}
+                img_artifacts = vector.get("artifacts", [])
                 if img_artifacts:
                     # Pick the 200x200 or last available size
                     best = img_artifacts[-1]
-                    root = profile.get("displayImageReference", {}).get("vectorImage", {}).get("rootUrl", "")
+                    root = vector.get("rootUrl", "")
                     avatar_url = f"{root}{best.get('fileIdentifyingUrlPathSegment', '')}"
 
                 # Extract profile URN
                 entity_urn = profile.get("entityUrn", "")
-                profile_urn = entity_urn if entity_urn else f"urn:li:fsd_profile:{vanity_name}"
+                profile_urn = entity_urn or ""
+                current_position = profile.get("currentPosition") or {}
+                if not isinstance(current_position, dict):
+                    current_position = {}
 
                 return {
                     "full_name": full_name,
                     "headline": profile.get("headline", ""),
                     "avatar_url": avatar_url,
                     "profile_urn": profile_urn,
+                    "company": current_position.get("companyName", "") or profile.get("companyName", ""),
+                    "job_title": current_position.get("title", "") or profile.get("occupation", ""),
+                    "verified": bool(entity_urn and full_name),
                 }
         except Exception as exc:
             logger.error("Voyager fetch_profile_info error for %s: %s", vanity_name, exc)
             return {
-                "full_name": re.sub(r"-\d+$", "", vanity_name).replace("-", " ").title() or "LinkedIn Member",
+                "full_name": "",
                 "headline": "",
                 "avatar_url": "",
-                "profile_urn": f"urn:li:fsd_profile:{vanity_name}",
+                "profile_urn": "",
+                "verified": False,
             }
 
     async def visit_profile(self, profile_url: str) -> dict[str, Any]:
@@ -137,7 +223,9 @@ class VoyagerClient:
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
                 resp = await client.post(url, headers=self._get_headers(), json={"profileUrl": profile_url})
-                return {"status": "viewed", "http_status": resp.status_code}
+                if resp.status_code in (200, 201, 202, 204):
+                    return {"status": "viewed", "http_status": resp.status_code}
+                return {"status": "failed", "http_status": resp.status_code, "text": resp.text[:200]}
         except Exception as exc:
             logger.error("Voyager visit_profile error: %s", exc)
             return {"status": "failed", "error": str(exc)}
@@ -150,9 +238,13 @@ class VoyagerClient:
             logger.info("VoyagerClient [MOCK]: Dispatched connection invite to %s with note=%s", profile_urn, custom_note[:30])
             return {"status": "invite_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
         url = f"{VOYAGER_BASE_URL}/growth/normInvitations"
         payload = {
-            "invitee": {"inviteeUnion": {"memberProfileUrn": profile_urn}},
+            "invitee": {"inviteeUnion": {"memberProfileUrn": resolved_urn}},
             "customMessage": custom_note if custom_note else None,
         }
         try:
@@ -173,9 +265,13 @@ class VoyagerClient:
             logger.info("VoyagerClient [MOCK]: Dispatched DM to %s: %s", recipient_urn, message_body[:40])
             return {"status": "message_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+        resolved_urn = await self._resolve_profile_urn(recipient_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
         url = f"{VOYAGER_BASE_URL}/messaging/conversations"
         payload = {
-            "recipients": [recipient_urn],
+            "recipients": [resolved_urn],
             "message": {"body": message_body},
         }
         try:
@@ -188,7 +284,7 @@ class VoyagerClient:
             logger.error("Voyager send_direct_message error: %s", exc)
             return {"status": "error", "error": str(exc)}
 
-    async def like_last_post(self, profile_urn: str) -> dict[str, Any]:
+    async def like_last_post(self, profile_urn: str, max_age_days: int = 30) -> dict[str, Any]:
         """
         Likes the prospect's most recent post or article.
         """
@@ -196,7 +292,31 @@ class VoyagerClient:
             logger.info("VoyagerClient [MOCK]: Liked last post for %s", profile_urn)
             return {"status": "liked", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-        return {"status": "liked"}
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+        profile_urn = resolved_urn
+        updates = await self.fetch_profile_recent_updates(profile_urn, count=20)
+        if not updates:
+            return {"status": "failed", "error": "No recent post found for this profile"}
+        max_age = max(1, int(max_age_days))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age)
+        for update in updates:
+            published_at = update.get("published_at")
+            if isinstance(published_at, (int, float)):
+                published_at = datetime.fromtimestamp(published_at / (1000 if published_at > 10**12 else 1), tz=timezone.utc)
+            elif isinstance(published_at, str):
+                try:
+                    published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    published_at = None
+            if published_at is None or published_at < cutoff:
+                continue
+            if update.get("post_urn"):
+                return await self.like_update(update["post_urn"])
+        return {"status": "failed", "error": f"No post found within the last {max_age} days"}
 
     async def send_voice_note(self, recipient_urn: str, audio_bytes: bytes, transcript: str = "") -> dict[str, Any]:
         """
@@ -211,11 +331,15 @@ class VoyagerClient:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
+        resolved_urn = await self._resolve_profile_urn(recipient_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
         url = f"{VOYAGER_BASE_URL}/messaging/conversations"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25.0) as client:
                 files = {"file": ("voicenote.wav", audio_bytes, "audio/wav")}
-                data = {"recipientUrn": recipient_urn, "messageType": "VOICE_NOTE"}
+                data = {"recipientUrn": resolved_urn, "messageType": "VOICE_NOTE"}
                 resp = await client.post(url, headers=self._get_headers(), data=data, files=files)
                 if resp.status_code in (200, 201):
                     return {"status": "voice_note_sent"}
@@ -354,17 +478,21 @@ class VoyagerClient:
                         results.append({
                             "post_urn": update_urn,
                             "post_url": f"https://www.linkedin.com/feed/update/{update_urn}/" if update_urn else "",
-                            "published_at": "Recent",
+                            "published_at": el.get("createdAt") or el.get("lastModifiedAt"),
                             "content_text": commentary,
                             "reactions_count": total_reactions,
                             "comments_count": total_comments,
-                            "media_urls": [],
+                            "media_urls": self._update_media_urls(el),
                         })
                     return results
-                return []
+                if resp.status_code in (401, 403, 429):
+                    raise VoyagerRestrictionError(resp.status_code)
+                raise RuntimeError(f"LinkedIn post fetch failed with HTTP {resp.status_code}")
+        except VoyagerRestrictionError:
+            raise
         except Exception as exc:
             logger.error("Voyager fetch_profile_recent_updates error: %s", exc)
-            return []
+            raise
 
     async def like_update(self, update_urn: str, reaction_type: str = "LIKE") -> dict[str, Any]:
         """
@@ -424,19 +552,19 @@ class VoyagerClient:
         Human-mimicking action: auto-likes post before posting comment with a realistic jitter.
         """
         import asyncio
-        import random
+        from outreach.core.rate_limiter import OutboundRateLimiter
 
         like_res = await self.like_update(update_urn)
+        if like_res.get("status") != "liked":
+            return {"status": "failed", "like": like_res, "comment": None, "jitter_seconds": 0}
         # Realistic human delay between like and comment to avoid bot fingerprinting
-        jitter = max(2.5, min(8.0, random.gauss(4.0, 1.5)))
+        jitter = OutboundRateLimiter.calculate_human_jitter(3.0)
         if not self.is_mock:
             await asyncio.sleep(jitter)
         comment_res = await self.comment_on_update(update_urn, comment_text)
         return {
-            "status": "success",
+            "status": "success" if comment_res.get("status") == "commented" else "failed",
             "like": like_res,
             "comment": comment_res,
             "jitter_seconds": round(jitter, 1),
         }
-
-

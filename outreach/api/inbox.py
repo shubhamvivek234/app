@@ -167,7 +167,7 @@ async def send_thread_reply(
             "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
         })
 
-    is_mock = os.getenv("OUTREACH_MOCK_AUTH", "true") == "true" or thread.get("is_demo", False)
+    is_mock = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in ("true", "1") or thread.get("is_demo", False)
 
     if not account and not is_mock:
         raise HTTPException(
@@ -730,5 +730,4 @@ async def toggle_thread_tag(
     )
 
     return {"status": "updated", "thread_id": thread_id, "tags": new_tags}
-
 

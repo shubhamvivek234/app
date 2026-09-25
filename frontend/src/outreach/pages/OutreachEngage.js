@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 import {
   Sparkles,
@@ -18,8 +18,33 @@ import {
   MessageCircle,
   FileText,
   Upload,
+  Download,
+  Clock3,
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+const authHeaders = (json = false) => ({
+  ...(json ? { 'Content-Type': 'application/json' } : {}),
+  Authorization: localStorage.getItem('token') ? `Bearer ${localStorage.getItem('token')}` : '',
+});
+
+const readError = async (res, fallback) => {
+  const body = await res.json().catch(() => ({}));
+  return body.detail || body.error || fallback;
+};
+
+const postAge = (value) => {
+  if (!value) return { label: 'Date unavailable', old: false };
+  const raw = Number(value);
+  const date = Number.isFinite(raw) && raw > 0
+    ? new Date(raw > 1e12 ? raw : raw * 1000)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return { label: String(value), old: false };
+  const days = Math.max(0, (Date.now() - date.getTime()) / 86400000);
+  const label = days < 1 / 24 ? 'Just now' : days < 1 ? `${Math.floor(days * 24)}h ago`
+    : days < 2 ? 'Yesterday' : `${Math.floor(days)} days ago`;
+  return { label, old: days > 7 };
+};
 
 export default function OutreachEngage() {
   const [lists, setLists] = useState([]);
@@ -57,6 +82,20 @@ export default function OutreachEngage() {
   const [bulkLoading, setBulkLoading] = useState(false);
   // Pagination
   const [totalPosts, setTotalPosts] = useState(0);
+  const [stats, setStats] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [styles, setStyles] = useState([]);
+  const [selectedStyleId, setSelectedStyleId] = useState('');
+  const [campaigns, setCampaigns] = useState([]);
+  const [historyContact, setHistoryContact] = useState(null);
+  const [historyPosts, setHistoryPosts] = useState([]);
+  const [activePostIndex, setActivePostIndex] = useState(0);
+  const likingLock = useRef(new Set());
+  const shortcutActions = useRef({});
+  const activeListId = activeList?.id;
+  const fetchStatus = activeList?.fetch_status;
+  const enrichmentStatus = activeList?.enrichment_status;
 
   const fetchLists = useCallback(async () => {
     setLoadingLists(true);
@@ -69,7 +108,7 @@ export default function OutreachEngage() {
       if (res.ok) {
         const data = await res.json();
         setLists(data || []);
-      }
+      } else toast.error(await readError(res, 'Failed to load engagement lists'));
     } catch (_) {
       toast.error('Failed to load engagement lists');
     } finally {
@@ -95,7 +134,7 @@ export default function OutreachEngage() {
           setPosts(newPosts);
         }
         setTotalPosts(data.total || 0);
-      }
+      } else toast.error(await readError(res, 'Failed to load prospect posts'));
     } catch (_) {
       toast.error('Failed to load prospect posts');
     } finally {
@@ -103,15 +142,110 @@ export default function OutreachEngage() {
     }
   }, []);
 
+  const fetchStats = useCallback(async (listId) => {
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${listId}/stats`, {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (res.ok) setStats(await res.json());
+    } catch (_) { /* Feed remains usable without summary stats. */ }
+  }, []);
+
+  const fetchListDetail = useCallback(async (listId) => {
+    const res = await fetch(`/api/v1/outreach/engage/lists/${listId}`, {
+      credentials: 'include', headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error(await readError(res, 'Could not load list details'));
+    const data = await res.json();
+    setActiveList((previous) => previous?.id === listId ? data : previous);
+    return data;
+  }, []);
+
+  const waitForPostAction = async (postId, expectedStatus) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/action`, {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not check LinkedIn action status'));
+      const data = await res.json();
+      if (data.action_error) throw new Error(data.action_error);
+      if (data.status === expectedStatus) return data;
+      if (!data.action_queued_at && !data.action_claimed_at) {
+        throw new Error('LinkedIn did not confirm this action. Please refresh the feed.');
+      }
+    }
+    throw new Error('Action is still processing. Refresh the feed to check its final status.');
+  };
+
+  const openList = async (list) => {
+    setActiveList(list);
+    setActiveTab('posts');
+    setSelectedPosts(new Set());
+    setStats(null);
+    try { await fetchListDetail(list.id); }
+    catch (error) { toast.error(error.message); }
+  };
+
   useEffect(() => {
     fetchLists();
   }, [fetchLists]);
 
   useEffect(() => {
-    if (activeList) {
-      fetchPosts(activeList.id, statusFilter);
+    const loadOptions = async () => {
+      try {
+        const [accountRes, styleRes, campaignRes] = await Promise.all([
+          fetch('/api/v1/outreach/engage/accounts', { credentials: 'include', headers: authHeaders() }),
+          fetch('/api/v1/outreach/styles', { credentials: 'include', headers: authHeaders() }),
+          fetch('/api/v1/outreach/campaigns', { credentials: 'include', headers: authHeaders() }),
+        ]);
+        if (accountRes.ok) {
+          const data = await accountRes.json();
+          setAccounts(data);
+          setSelectedAccountId((current) => data.some((account) => account.id === current) ? current : data[0]?.id || '');
+        }
+        if (styleRes.ok) {
+          const data = await styleRes.json();
+          setStyles(data);
+          setSelectedStyleId(data.find((style) => style.is_default)?.id || '');
+        }
+        if (campaignRes.ok) setCampaigns(await campaignRes.json());
+      } catch (_) { /* Account and style actions surface their own errors. */ }
+    };
+    loadOptions();
+  }, []);
+
+  useEffect(() => {
+    if (activeListId) {
+      fetchPosts(activeListId, statusFilter);
+      fetchStats(activeListId);
     }
-  }, [activeList, statusFilter, fetchPosts]);
+  }, [activeListId, statusFilter, fetchPosts, fetchStats]);
+
+  useEffect(() => {
+    if (!activeListId || !['queued', 'running'].includes(fetchStatus) &&
+      !['queued', 'running'].includes(enrichmentStatus)) return undefined;
+    const listId = activeListId;
+    const timer = window.setInterval(async () => {
+      try {
+        const updated = await fetchListDetail(listId);
+        if (['queued', 'running'].includes(fetchStatus) && ['complete', 'failed'].includes(updated.fetch_status)) {
+          fetchPosts(listId, statusFilter);
+          fetchStats(listId);
+          fetchLists();
+          if (updated.fetch_status === 'failed') toast.error(updated.fetch_error || 'Post fetch failed');
+          else if (updated.fetch_failed_contacts_last_run || updated.fetch_unverified_contacts_last_run) {
+            toast.warning(`Fetched ${updated.posts_fetched_last_run || 0} new posts; ${
+              (updated.fetch_failed_contacts_last_run || 0) + (updated.fetch_unverified_contacts_last_run || 0)
+            } contacts need attention.`);
+          } else toast.success(`Fetched ${updated.posts_fetched_last_run || 0} new posts`);
+        }
+        if (['queued', 'running'].includes(enrichmentStatus) &&
+          updated.enrichment_status === 'complete') fetchStats(listId);
+      } catch (_) { /* Retry on next poll. */ }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [activeListId, fetchStatus, enrichmentStatus, fetchListDetail, fetchLists, fetchPosts, fetchStats, statusFilter]);
 
   const handleCreateList = async (e) => {
 
@@ -139,7 +273,7 @@ export default function OutreachEngage() {
         setNewListName('');
         setNewListDesc('');
         fetchLists();
-      }
+      } else toast.error(await readError(res, 'Failed to create engagement list'));
     } catch (_) {
       toast.error('Failed to create engagement list');
     }
@@ -158,7 +292,7 @@ export default function OutreachEngage() {
         toast.success('List deleted');
         if (activeList?.id === listId) setActiveList(null);
         fetchLists();
-      }
+      } else toast.error(await readError(res, 'Failed to delete list'));
     } catch (_) {
       toast.error('Failed to delete list');
     }
@@ -166,19 +300,22 @@ export default function OutreachEngage() {
 
   const handleFetchLatestPosts = async () => {
     if (!activeList) return;
+    if (!selectedAccountId) { toast.error('Connect a LinkedIn sender before fetching posts'); return; }
     setLoadingPosts(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/fetch`, {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/fetch?sender_account_id=${encodeURIComponent(selectedAccountId)}`, {
         method: 'POST',
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Fetched ${data.posts_fetched} recent posts from contacts!`);
-        fetchPosts(activeList.id, statusFilter);
-        fetchLists();
+        if (data.status === 'empty') toast.info(data.message);
+        else toast.info(data.status === 'already_running' ? 'Post fetch is already running' : 'Post fetch queued. Results will appear shortly.');
+        await fetchListDetail(activeList.id);
+      } else {
+        toast.error(await readError(res, 'Could not queue post fetch'));
       }
     } catch (_) {
       toast.error('Error fetching prospect posts');
@@ -201,22 +338,24 @@ export default function OutreachEngage() {
         body: JSON.stringify({
           profile_urls: contactUrlsList,
           csv_text: csvText || null,
+          sender_account_id: selectedAccountId,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         toast.success(`Added ${data.added_count} contacts!`);
+        if (data.invalid_count) toast.warning(`${data.invalid_count} invalid LinkedIn profile URLs were skipped.`);
+        if (data.enrichment_status === 'waiting_for_sender') toast.info('Connect a LinkedIn sender to verify these profiles.');
         setShowAddContactsModal(false);
         setContactUrlsList([]);
         setCsvText('');
         setContactUrlInput('');
         fetchLists();
         // Refresh active list details
-        const listRes = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}`, {
-          credentials: 'include',
-          headers: { Authorization: token ? `Bearer ${token}` : '' },
-        });
-        if (listRes.ok) setActiveList(await listRes.json());
+        await fetchListDetail(activeList.id);
+        fetchStats(activeList.id);
+      } else {
+        toast.error(await readError(res, 'Could not add contacts'));
       }
     } catch (_) {
       toast.error('Failed to add contacts');
@@ -224,7 +363,9 @@ export default function OutreachEngage() {
   };
 
   const handleLikePost = async (postId) => {
-    if (likingPosts[postId]) return; // Prevent double-click
+    if (!selectedAccountId) { toast.error('Select a LinkedIn sender first'); return; }
+    if (likingLock.current.has(postId)) return;
+    likingLock.current.add(postId);
     setLikingPosts((prev) => ({ ...prev, [postId]: true }));
     try {
       const token = localStorage.getItem('token');
@@ -235,13 +376,19 @@ export default function OutreachEngage() {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ sender_account_id: selectedAccountId || null }),
       });
       if (res.ok) {
+        await waitForPostAction(postId, 'liked');
         toast.success('Liked post on LinkedIn!');
         setPosts((prev) =>
-          prev.map((p) => (p.id === postId ? { ...p, status: 'liked', reactions_count: p.reactions_count + 1 } : p))
+          statusFilter === 'pending' ? prev.filter((p) => p.id !== postId)
+            : prev.map((p) => (p.id === postId ? { ...p, status: 'liked', action_queued_at: null, reactions_count: p.reactions_count + 1 } : p))
         );
+        if (statusFilter === 'pending') setTotalPosts((total) => Math.max(0, total - 1));
+        setSelectedPosts((current) => new Set([...current].filter((id) => id !== postId)));
+        fetchStats(activeList.id);
+        fetchLists();
       } else if (res.status === 429) {
         toast.error('Daily like limit reached. Try again tomorrow.');
       } else if (res.status === 400) {
@@ -249,10 +396,14 @@ export default function OutreachEngage() {
         toast.error(err.detail || 'No active LinkedIn account connected.');
       } else if (res.status === 503) {
         toast.error('LinkedIn restriction detected — account paused for safety.');
+      } else {
+        toast.error(await readError(res, 'LinkedIn did not confirm the like'));
       }
-    } catch (_) {
-      toast.error('Failed to like post');
+    } catch (error) {
+      toast.error(error.message || 'Failed to like post');
+      if (activeList) fetchPosts(activeList.id, statusFilter);
     } finally {
+      likingLock.current.delete(postId);
       setLikingPosts((prev) => {
         const updated = { ...prev };
         delete updated[postId];
@@ -272,7 +423,14 @@ export default function OutreachEngage() {
       });
       if (res.ok) {
         toast.success('Dismissed post from feed');
-        setPosts((prev) => prev.filter((p) => p.id !== postId));
+        setPosts((prev) => statusFilter === 'all'
+          ? prev.map((p) => p.id === postId ? { ...p, status: 'discarded' } : p)
+          : prev.filter((p) => p.id !== postId));
+        if (statusFilter !== 'all') setTotalPosts((total) => Math.max(0, total - 1));
+        fetchStats(activeList.id);
+        fetchLists();
+      } else {
+        toast.error(await readError(res, 'Failed to discard post'));
       }
     } catch (_) {
       toast.error('Failed to discard post');
@@ -280,6 +438,7 @@ export default function OutreachEngage() {
   };
 
   const handleSendComment = async (postId) => {
+    if (!selectedAccountId) { toast.error('Select a LinkedIn sender first'); return; }
     const draft = commentDrafts[postId];
     if (!draft || !draft.text?.trim()) {
       toast.error('Please write a comment first');
@@ -303,17 +462,25 @@ export default function OutreachEngage() {
         body: JSON.stringify({
           comment_text: draft.text.trim(),
           auto_like: draft.autoLike ?? true,
+          sender_account_id: selectedAccountId || null,
         }),
       });
       if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.success(data.auto_liked ? 'Comment posted & post liked on LinkedIn!' : 'Comment posted to LinkedIn!');
-        setPosts((prev) => prev.filter((p) => p.id !== postId));
+        const priorPost = posts.find((post) => post.id === postId);
+        const data = await waitForPostAction(postId, 'commented');
+        toast.success(draft.autoLike && priorPost?.status === 'pending' && data.liked_at
+          ? 'Comment posted & post liked on LinkedIn!' : 'Comment posted to LinkedIn!');
+        setPosts((prev) => statusFilter === 'all'
+          ? prev.map((p) => p.id === postId ? { ...p, status: 'commented', action_queued_at: null, user_comment: draft.text.trim() } : p)
+          : prev.filter((p) => p.id !== postId));
+        if (statusFilter !== 'all') setTotalPosts((total) => Math.max(0, total - 1));
         setCommentDrafts((prev) => {
           const updated = { ...prev };
           delete updated[postId];
           return updated;
         });
+        fetchStats(activeList.id);
+        fetchLists();
       } else if (res.status === 429) {
         toast.error('Daily comment limit reached. Try again tomorrow.');
       } else if (res.status === 400) {
@@ -321,9 +488,12 @@ export default function OutreachEngage() {
         toast.error(err.detail || 'No active LinkedIn account connected.');
       } else if (res.status === 503) {
         toast.error('LinkedIn restriction detected — account paused for safety.');
+      } else {
+        toast.error(await readError(res, 'LinkedIn did not confirm the comment'));
       }
-    } catch (_) {
-      toast.error('Failed to post comment');
+    } catch (error) {
+      toast.error(error.message || 'Failed to post comment');
+      if (activeList) fetchPosts(activeList.id, statusFilter);
     } finally {
       setCommentDrafts((prev) => ({
         ...prev,
@@ -332,11 +502,9 @@ export default function OutreachEngage() {
     }
   };
 
-  const handleGenerateAIComments = async (post) => {
+  const handleGenerateAIComments = async (post, tone = aiTone, prompt = aiPrompt) => {
     setAiModalPost(post);
     setAiComments([]);
-    setAiPrompt('');
-    setAiTone('insightful');
     setAiLoading(true);
 
     try {
@@ -351,19 +519,26 @@ export default function OutreachEngage() {
         body: JSON.stringify({
           post_text: post.content_text,
           author_headline: post.author_headline,
-          tone: aiTone,
-          custom_prompt: aiPrompt,
+          tone,
+          custom_prompt: prompt,
+          writing_style_id: selectedStyleId || null,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setAiComments(data.comments || []);
-      }
+      } else toast.error(await readError(res, 'AI comment generation failed'));
     } catch (_) {
       toast.error('AI comment generation failed');
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const openAiModal = (post) => {
+    setAiPrompt('');
+    setAiTone('insightful');
+    handleGenerateAIComments(post, 'insightful', '');
   };
 
   const selectAiComment = (commentText) => {
@@ -390,43 +565,58 @@ export default function OutreachEngage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedPosts.size === posts.length) {
+    const selectable = posts.filter((post) => post.status === 'pending' && !post.action_queued_at);
+    if (selectedPosts.size === selectable.length) {
       setSelectedPosts(new Set());
     } else {
-      setSelectedPosts(new Set(posts.map((p) => p.id)));
+      setSelectedPosts(new Set(selectable.map((p) => p.id)));
     }
   };
 
   const handleBulkLike = async () => {
     if (selectedPosts.size === 0) return;
+    if (!selectedAccountId) { toast.error('Select a LinkedIn sender first'); return; }
     setBulkLoading(true);
     const token = localStorage.getItem('token');
     let successCount = 0;
     let rateLimited = false;
-    for (const postId of selectedPosts) {
+    let stoppedForSafety = false;
+    const ids = [...selectedPosts];
+    for (const [index, postId] of ids.entries()) {
       try {
         const res = await fetch(`/api/v1/outreach/engage/posts/${postId}/like`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ sender_account_id: selectedAccountId }),
         });
         if (res.ok) {
+          await waitForPostAction(postId, 'liked');
           successCount++;
-          setPosts((prev) =>
-            prev.map((p) => (p.id === postId ? { ...p, status: 'liked', reactions_count: p.reactions_count + 1 } : p))
-          );
+          setPosts((prev) => prev.filter((p) => p.id !== postId));
+          setTotalPosts((total) => Math.max(0, total - 1));
         } else if (res.status === 429) {
           rateLimited = true;
           break;
+        } else if (res.status === 503 || res.status === 400) {
+          stoppedForSafety = true;
+          break;
         }
-      } catch (_) {}
-      // Small delay between batch actions
-      await new Promise((r) => setTimeout(r, 800));
+      } catch (error) {
+        toast.error(error.message || 'A bulk like failed');
+        stoppedForSafety = true;
+        break;
+      }
+      // Space live actions so a bulk click does not create an instant burst.
+      if (index < ids.length - 1) await new Promise((r) => setTimeout(r, 2500 + Math.random() * 5500));
     }
     setSelectedPosts(new Set());
     setBulkLoading(false);
-    if (rateLimited) {
+    fetchStats(activeList.id);
+    fetchLists();
+    if (stoppedForSafety) {
+      toast.error(`Stopped after ${successCount} likes because the sender is unavailable or restricted.`);
+    } else if (rateLimited) {
       toast.error(`Liked ${successCount} posts before hitting daily limit.`);
     } else {
       toast.success(`Liked ${successCount} post${successCount !== 1 ? 's' : ''} on LinkedIn!`);
@@ -449,13 +639,87 @@ export default function OutreachEngage() {
         if (res.ok) {
           successCount++;
           setPosts((prev) => prev.filter((p) => p.id !== postId));
+          setTotalPosts((total) => Math.max(0, total - 1));
         }
       } catch (_) {}
     }
     setSelectedPosts(new Set());
     setBulkLoading(false);
+    fetchStats(activeList.id);
+    fetchLists();
     toast.success(`Dismissed ${successCount} post${successCount !== 1 ? 's' : ''}`);
   };
+
+  const handleDeleteContact = async (contact) => {
+    if (!window.confirm(`Remove ${contact.full_name || contact.profile_url} and their cached posts from this list?`)) return;
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/contacts/${contact.id}`, {
+      method: 'DELETE', credentials: 'include', headers: authHeaders(),
+    }).catch(() => null);
+    if (!res?.ok) { toast.error(res ? await readError(res, 'Could not remove contact') : 'Network error removing contact'); return; }
+    await fetchListDetail(activeList.id);
+    fetchStats(activeList.id);
+    fetchPosts(activeList.id, statusFilter);
+    fetchLists();
+    toast.success('Contact removed');
+  };
+
+  const openContactHistory = async (contact) => {
+    setHistoryContact(contact);
+    setHistoryPosts([]);
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/contacts/${contact.id}/history`, {
+      credentials: 'include', headers: authHeaders(),
+    }).catch(() => null);
+    if (res?.ok) setHistoryPosts((await res.json()).events || []);
+    else toast.error('Could not load contact history');
+  };
+
+  const handleExport = async () => {
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/export.csv`, {
+      credentials: 'include', headers: authHeaders(),
+    }).catch(() => null);
+    if (!res?.ok) { toast.error('Could not export engagement report'); return; }
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `engage-${activeList.name.replace(/[^a-z0-9-]/gi, '-').toLowerCase()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const saveListSettings = async (campaignId, hours = activeList.warmup_hours || 24) => {
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/settings`, {
+      method: 'PATCH', credentials: 'include', headers: authHeaders(true),
+      body: JSON.stringify({ campaign_id: campaignId || null, warmup_hours: Number(hours) }),
+    }).catch(() => null);
+    if (!res?.ok) { toast.error(res ? await readError(res, 'Could not save warm-up settings') : 'Network error saving settings'); return; }
+    await fetchListDetail(activeList.id);
+    toast.success(campaignId ? 'Campaign warm-up linked' : 'Campaign unlinked');
+  };
+
+  shortcutActions.current = { like: handleLikePost, discard: handleDiscardPost };
+
+  useEffect(() => {
+    if (!activeList || activeTab !== 'posts' || aiModalPost || showAddContactsModal || showCreateModal) return undefined;
+    const onKeyDown = (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey ||
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const next = Math.max(0, Math.min(posts.length - 1, activePostIndex + (event.key === 'ArrowDown' ? 1 : -1)));
+        setActivePostIndex(next);
+        document.querySelectorAll('[data-engage-post]')[next]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+      const post = posts[activePostIndex];
+      if (!post) return;
+      if (event.key.toLowerCase() === 'l' && post.status === 'pending') shortcutActions.current.like(post.id);
+      if (event.key.toLowerCase() === 'd' && post.status === 'pending') shortcutActions.current.discard(post.id);
+      if (event.key.toLowerCase() === 'c') document.querySelectorAll('[data-engage-post]')[activePostIndex]?.querySelector('textarea')?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeList, activeTab, aiModalPost, showAddContactsModal, showCreateModal, posts, activePostIndex, selectedAccountId]);
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-neutral-50/50 p-6 md:p-8">
@@ -472,11 +736,11 @@ export default function OutreachEngage() {
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-bold text-gray-900">Pre-Outreach Social Warm-up</h3>
                   <span className="text-[10px] bg-indigo-600 text-white font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                    High Conversion
+                    Pre-Outreach
                   </span>
                 </div>
                 <p className="text-xs text-gray-600 mt-0.5">
-                  Liking and leaving an insightful comment on prospects' posts 24h prior boosts cold connection acceptances from 12% to over 50%.
+                  Build context before outreach with genuine, relevant engagement. Review every comment before posting.
                 </p>
               </div>
             </div>
@@ -527,7 +791,7 @@ export default function OutreachEngage() {
               {lists.map((l) => (
                 <div
                   key={l.id}
-                  onClick={() => setActiveList(l)}
+                  onClick={() => openList(l)}
                   className="bg-white rounded-2xl border border-gray-200/90 hover:border-indigo-400 hover:shadow-md transition-all p-5 cursor-pointer group flex flex-col justify-between"
                 >
                   <div className="space-y-3">
@@ -630,13 +894,48 @@ export default function OutreachEngage() {
 
               <button
                 onClick={handleFetchLatestPosts}
-                disabled={loadingPosts}
+                disabled={loadingPosts || ['queued', 'running'].includes(activeList.fetch_status) || !selectedAccountId}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors shadow-xs disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loadingPosts ? 'animate-spin' : ''}`} />
-                Fetch Latest Posts
+                {['queued', 'running'].includes(activeList.fetch_status) ? 'Fetching Posts…' : 'Fetch Latest Posts'}
               </button>
             </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl p-3 flex flex-wrap items-center gap-3 text-xs">
+            <label className="font-semibold text-gray-600" htmlFor="engage-sender">LinkedIn sender</label>
+            <select id="engage-sender" value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-gray-800 min-w-[170px]">
+              {accounts.length === 0 && <option value="">No active account</option>}
+              {accounts.map((account) => <option key={account.id} value={account.id}>{account.account_name || account.vanity_name || account.id}</option>)}
+            </select>
+            <label className="font-semibold text-gray-600" htmlFor="engage-campaign">Warm up campaign</label>
+            <select id="engage-campaign" value={activeList.campaign_id || ''}
+              onChange={(event) => saveListSettings(event.target.value)}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-gray-800 min-w-[170px]">
+              <option value="">None</option>
+              {campaigns.filter((campaign) => campaign.status === 'draft' || campaign.id === activeList.campaign_id)
+                .map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+            </select>
+            {activeList.campaign_id && (
+              <label className="flex items-center gap-1 text-gray-600">
+                Delay first action
+                <select value={activeList.warmup_hours || 24}
+                  onChange={(event) => saveListSettings(activeList.campaign_id, event.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1.5">
+                  <option value={24}>24 hours</option><option value={48}>48 hours</option>
+                </select>
+              </label>
+            )}
+            <button onClick={handleExport} className="ml-auto inline-flex items-center gap-1 text-indigo-600 font-semibold hover:text-indigo-800">
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            {activeList.fetch_status === 'failed' && <span className="w-full text-red-600">{activeList.fetch_error || 'Post fetch failed'}</span>}
+            {activeList.campaign_id && <span className="w-full text-gray-500">Launching the linked campaign requires confirmed engagement for every lead within the past seven days; its first outreach action waits for the selected warm-up period.</span>}
+            {['queued', 'running'].includes(activeList.enrichment_status) && <span className="w-full text-gray-500">Verifying added LinkedIn profiles…</span>}
+            {activeList.enrichment_status === 'failed' && <span className="w-full text-red-600">Profile verification failed. Check the sender connection, then retry Fetch Latest Posts.</span>}
+            {activeList.enrichment_status === 'waiting_for_sender' && <span className="w-full text-gray-500">Profiles are saved but unverified. Connect a sender, then fetch posts to verify them.</span>}
           </div>
 
           {/* Posts Feed Tab */}
@@ -644,12 +943,13 @@ export default function OutreachEngage() {
             <div className="space-y-4">
               {/* Engagement Analytics Bar */}
               {activeList && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   {[
-                    { label: 'Total Posts', value: activeList.pending_posts_count || 0, icon: <FileText className="w-3.5 h-3.5" />, color: 'text-gray-600 bg-gray-50' },
-                    { label: 'Liked', value: posts.filter((p) => p.status === 'liked').length + (statusFilter !== 'all' && statusFilter !== 'liked' ? '…' : ''), icon: <ThumbsUp className="w-3.5 h-3.5" />, color: 'text-blue-600 bg-blue-50' },
-                    { label: 'Commented', value: posts.filter((p) => p.status === 'commented').length + (statusFilter !== 'all' && statusFilter !== 'commented' ? '…' : ''), icon: <MessageCircle className="w-3.5 h-3.5" />, color: 'text-emerald-600 bg-emerald-50' },
-                    { label: 'Contacts', value: activeList.contacts_count || 0, icon: <Users className="w-3.5 h-3.5" />, color: 'text-purple-600 bg-purple-50' },
+                    { label: 'Total Posts', value: stats?.total ?? '—', icon: <FileText className="w-3.5 h-3.5" />, color: 'text-gray-600 bg-gray-50' },
+                    { label: 'Liked', value: stats?.liked ?? '—', icon: <ThumbsUp className="w-3.5 h-3.5" />, color: 'text-blue-600 bg-blue-50' },
+                    { label: 'Commented', value: stats?.commented ?? '—', icon: <MessageCircle className="w-3.5 h-3.5" />, color: 'text-emerald-600 bg-emerald-50' },
+                    { label: 'Discarded', value: stats?.discarded ?? '—', icon: <X className="w-3.5 h-3.5" />, color: 'text-amber-600 bg-amber-50' },
+                    { label: 'Contacts', value: stats?.contacts ?? '—', icon: <Users className="w-3.5 h-3.5" />, color: 'text-purple-600 bg-purple-50' },
                   ].map((stat) => (
                     <div key={stat.label} className="bg-white border border-gray-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
                       <div className={`w-7 h-7 rounded-lg ${stat.color} flex items-center justify-center`}>
@@ -681,7 +981,7 @@ export default function OutreachEngage() {
                   ))}
                 </div>
                 <span className="text-xs text-gray-400">
-                  {posts.length} {statusFilter} post{posts.length !== 1 ? 's' : ''}
+                  {totalPosts} {statusFilter} post{totalPosts !== 1 ? 's' : ''} · Shortcuts: ↑/↓ navigate, L like, D dismiss, C comment
                 </span>
               </div>
 
@@ -691,7 +991,7 @@ export default function OutreachEngage() {
                   <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600">
                     <input
                       type="checkbox"
-                      checked={selectedPosts.size === posts.length && posts.length > 0}
+                      checked={selectedPosts.size === posts.filter((post) => post.status === 'pending' && !post.action_queued_at).length && selectedPosts.size > 0}
                       onChange={toggleSelectAll}
                       className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                     />
@@ -745,10 +1045,13 @@ export default function OutreachEngage() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
                   {posts.map((post) => {
                     const draft = commentDrafts[post.id] || { text: '', autoLike: true };
+                    const age = postAge(post.published_at);
                     return (
                       <div
                         key={post.id}
-                        className="bg-white rounded-2xl border border-gray-200 shadow-xs hover:shadow-md transition-shadow p-5 flex flex-col justify-between space-y-4"
+                        data-engage-post={post.id}
+                        onClick={() => setActivePostIndex(posts.findIndex((item) => item.id === post.id))}
+                        className={`bg-white rounded-2xl border shadow-xs hover:shadow-md transition-shadow p-5 flex flex-col justify-between space-y-4 ${posts[activePostIndex]?.id === post.id ? 'border-indigo-300' : 'border-gray-200'}`}
                       >
                         {/* Author Header */}
                         <div className="flex items-start justify-between gap-3">
@@ -757,6 +1060,7 @@ export default function OutreachEngage() {
                               <input
                                 type="checkbox"
                                 checked={selectedPosts.has(post.id)}
+                                disabled={Boolean(post.action_queued_at)}
                                 onChange={() => togglePostSelection(post.id)}
                                 className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0 mt-0.5"
                               />
@@ -769,20 +1073,21 @@ export default function OutreachEngage() {
                                   className="w-full h-full rounded-full object-cover"
                                 />
                               ) : (
-                                post.author_name.charAt(0)
+                                (post.author_name || 'LinkedIn Member').charAt(0)
                               )}
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <h4 className="text-xs font-bold text-gray-900 truncate">
-                                  {post.author_name}
+                                  {post.author_name || 'LinkedIn Member'}
                                 </h4>
                                 <span className="w-4 h-4 bg-[#0A66C2] text-white rounded text-[9px] font-bold flex items-center justify-center shrink-0">
                                   in
                                 </span>
                               </div>
                               <p className="text-[11px] text-gray-500 truncate">{post.author_headline}</p>
-                              <span className="text-[10px] text-gray-400">Published {post.published_at}</span>
+                              <span className="text-[10px] text-gray-400">Published {age.label}</span>
+                              {age.old && <span className="block text-[10px] text-amber-700"><Clock3 className="w-3 h-3 inline" /> Older than 7 days — consider whether commenting is timely</span>}
                             </div>
                           </div>
 
@@ -811,13 +1116,14 @@ export default function OutreachEngage() {
                           <div className={`rounded-xl overflow-hidden ${post.media_urls.length > 1 ? 'grid grid-cols-2 gap-1' : ''}`}>
                             {post.media_urls.slice(0, 2).map((url, idx) => (
                               <div key={idx} className="relative bg-gray-100">
-                                <img
-                                  src={url}
-                                  alt={`Post media ${idx + 1}`}
-                                  className="w-full h-32 object-cover"
-                                  loading="lazy"
-                                  onError={(e) => { e.target.style.display = 'none'; }}
-                                />
+                                {/\.(pdf|docx?|pptx?)(\?|$)/i.test(url) || /\/article\/|\/document\//i.test(url) ? (
+                                  <a href={url} target="_blank" rel="noreferrer" className="h-32 flex flex-col items-center justify-center gap-2 text-indigo-600 bg-indigo-50 text-xs font-semibold">
+                                    <FileText className="w-6 h-6" /> Open article or document
+                                  </a>
+                                ) : (
+                                  <img src={url} alt={`Post media ${idx + 1}`} className="w-full h-32 object-cover" loading="lazy"
+                                    onError={(e) => { e.target.style.display = 'none'; }} />
+                                )}
                                 {idx === 1 && post.media_urls.length > 2 && (
                                   <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-sm font-bold">
                                     +{post.media_urls.length - 2}
@@ -839,7 +1145,7 @@ export default function OutreachEngage() {
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => handleLikePost(post.id)}
-                            disabled={likingPosts[post.id] || post.status === 'liked'}
+                            disabled={likingPosts[post.id] || Boolean(post.action_queued_at) || post.status !== 'pending' || !selectedAccountId}
                             className={`flex items-center justify-center gap-1.5 py-1.5 rounded-xl border text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                               post.status === 'liked'
                                 ? 'border-blue-200 bg-blue-50 text-blue-600'
@@ -851,11 +1157,12 @@ export default function OutreachEngage() {
                             ) : (
                               <ThumbsUp className="w-3.5 h-3.5 text-blue-600" />
                             )}
-                            {post.status === 'liked' ? 'Liked ✓' : 'Like Post'}
+                            {post.status === 'liked' ? 'Liked ✓' : post.action_queued_at ? 'Queued…' : 'Like Post'}
                           </button>
                           <button
                             onClick={() => handleDiscardPost(post.id)}
-                            className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors"
+                            disabled={post.status !== 'pending' || Boolean(post.action_queued_at)}
+                            className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50"
                           >
                             <X className="w-3.5 h-3.5" /> Discard
                           </button>
@@ -874,6 +1181,7 @@ export default function OutreachEngage() {
                           <div className="relative">
                             <textarea
                               rows={3}
+                              disabled={!['pending', 'liked'].includes(post.status)}
                               placeholder="Write a thoughtful comment to warm up this prospect…"
                               value={draft.text}
                               onChange={(e) =>
@@ -886,7 +1194,8 @@ export default function OutreachEngage() {
                             />
                             {/* AI Comment Trigger Button */}
                             <button
-                              onClick={() => handleGenerateAIComments(post)}
+                              onClick={() => openAiModal(post)}
+                              disabled={!['pending', 'liked'].includes(post.status)}
                               className="absolute bottom-3 right-3 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-semibold transition-colors shadow-xs"
                               title="Generate AI comments"
                             >
@@ -912,7 +1221,7 @@ export default function OutreachEngage() {
 
                             <button
                               onClick={() => handleSendComment(post.id)}
-                              disabled={draft.posting || !draft.text?.trim()}
+                              disabled={draft.posting || Boolean(post.action_queued_at) || !draft.text?.trim() || !selectedAccountId || !['pending', 'liked'].includes(post.status)}
                               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm transition-all disabled:opacity-50 active:scale-95"
                             >
                               {draft.posting ? (
@@ -971,21 +1280,23 @@ export default function OutreachEngage() {
                     <div key={c.id} className="p-4 flex items-center justify-between hover:bg-neutral-50/50 transition-colors">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs">
-                          {c.full_name?.charAt(0) || 'L'}
+                          {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full rounded-full object-cover" /> : c.full_name?.charAt(0) || 'L'}
                         </div>
                         <div>
-                          <h4 className="text-xs font-bold text-gray-900">{c.full_name}</h4>
-                          <p className="text-[11px] text-gray-500">{c.headline}</p>
+                          <h4 className="text-xs font-bold text-gray-900">{c.full_name || 'Unverified LinkedIn profile'}</h4>
+                          <p className="text-[11px] text-gray-500">{c.headline || (c.enrichment_status === 'pending' ? 'Verification pending' : c.profile_url)}</p>
                         </div>
                       </div>
-                      <a
-                        href={c.profile_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                      >
-                        Profile <ExternalLink className="w-3 h-3" />
-                      </a>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => openContactHistory(c)} className="text-xs text-indigo-600 font-semibold hover:text-indigo-800">History</button>
+                        <a href={c.profile_url} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                          Profile <ExternalLink className="w-3 h-3" />
+                        </a>
+                        <button onClick={() => handleDeleteContact(c)} title="Remove contact" className="text-gray-400 hover:text-red-600">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1207,6 +1518,14 @@ export default function OutreachEngage() {
 
             {/* Custom instruction */}
             <div>
+              <label className="text-xs font-semibold text-gray-700">Writing Style</label>
+              <select value={selectedStyleId} onChange={(event) => setSelectedStyleId(event.target.value)}
+                className="mt-1 w-full text-xs p-2.5 border border-gray-200 rounded-xl">
+                <option value="">No saved style</option>
+                {styles.map((style) => <option key={style.id} value={style.id}>{style.name}{style.is_default ? ' (default)' : ''}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="text-xs font-semibold text-gray-700">Add Instructions (Optional)</label>
               <input
                 type="text"
@@ -1246,6 +1565,23 @@ export default function OutreachEngage() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {historyContact && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-gray-200 max-w-lg w-full p-5 shadow-xl space-y-3 max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold text-gray-900">Engagement with {historyContact.full_name || historyContact.profile_url}</h3>
+              <button onClick={() => setHistoryContact(null)} aria-label="Close history"><X className="w-4 h-4" /></button>
+            </div>
+            {historyPosts.length === 0 ? <p className="text-xs text-gray-500">No confirmed engagement on cached posts yet.</p> :
+              historyPosts.map((event, index) => <div key={`${event.post_id}-${event.action}-${index}`} className="border-l-2 border-indigo-200 pl-3 py-2 text-xs text-gray-700">
+                <div className="font-semibold capitalize">{event.action} · {event.at ? postAge(event.at).label : 'Date unavailable'}</div>
+                {event.comment && <p className="mt-1">“{event.comment}”</p>}
+                {event.post_url && <a href={event.post_url} target="_blank" rel="noreferrer" className="text-indigo-600">View post ↗</a>}
+              </div>)}
           </div>
         </div>
       )}

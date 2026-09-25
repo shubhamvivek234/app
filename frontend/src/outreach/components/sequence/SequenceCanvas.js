@@ -59,6 +59,10 @@ const CONDITION_DEFINITIONS = [
   },
 ];
 
+const RUNNER_SUPPORTED_TYPES = new Set([
+  'visit_profile', 'connection_request', 'send_message', 'voice_note', 'like_last_post', 'if_connected',
+]);
+
 const VARIABLE_PILLS = [
   '{{first_name}}',
   '{{last_name}}',
@@ -129,6 +133,17 @@ export function flattenTreeToDAG(tree) {
   return { nodes, edges };
 }
 
+const formatDelay = (days = 0) => {
+  const hours = Math.max(0, Math.round(Number(days) * 24 || 0));
+  if (!hours) return 'No delay';
+  if (hours < 24) return `Wait ${hours} hour${hours === 1 ? '' : 's'}, then`;
+  if (hours % 24 === 0) {
+    const wholeDays = hours / 24;
+    return `Wait ${wholeDays} day${wholeDays === 1 ? '' : 's'}, then`;
+  }
+  return `Wait ${Math.floor(hours / 24)}d ${hours % 24}h, then`;
+};
+
 // Default sequence matching Template 1 "Connect and follow up" (media_1790104824235.png)
 export const DEFAULT_TREE = [
   {
@@ -169,7 +184,7 @@ export const DEFAULT_TREE = [
   },
 ];
 
-export default function SequenceCanvas({ campaignId, onSave }) {
+export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [tree, setTree] = useState(DEFAULT_TREE);
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -225,6 +240,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   const [showTip, setShowTip] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const hasLoaded = useRef(false);
+  const treeRef = useRef(tree);
 
   // Unravler AI Parity: AI Prompt Library & Preview State
   const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
@@ -244,11 +260,12 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/prompts', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setPromptsList(data);
+        setPromptsList(Array.isArray(data) ? data : []);
       }
     } catch (err) {
       console.error('Failed to load prompts:', err);
@@ -257,13 +274,22 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     }
   };
 
+  useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+
   const openPromptLibrary = () => {
     setPromptDrawerOpen(true);
     fetchPrompts();
   };
 
-  const insertPromptToken = (promptName) => {
-    insertVariable(`✨ [${promptName}]`);
+  const copyPromptGuidance = async (promptText) => {
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setToastMessage('Prompt guidance copied. It is not generated automatically in live campaigns.');
+    } catch (_) {
+      setToastMessage('Could not copy prompt guidance. Check browser clipboard permissions.');
+    }
     setPromptDrawerOpen(false);
   };
 
@@ -273,6 +299,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/prompts', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -289,6 +316,9 @@ export default function SequenceCanvas({ campaignId, onSave }) {
         setNewPromptName('');
         setNewPromptText('');
         setShowCreatePrompt(false);
+      } else {
+        const error = await res.json().catch(() => ({}));
+        setToastMessage(error.detail || 'Prompt could not be saved.');
       }
     } catch (err) {
       console.error('Failed to create prompt:', err);
@@ -305,10 +335,12 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       '';
     setPreviewModalOpen(true);
     setPreviewLoading(true);
+    setPreviewData(null);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/prompts/preview', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -318,9 +350,13 @@ export default function SequenceCanvas({ campaignId, onSave }) {
       if (res.ok) {
         const data = await res.json();
         setPreviewData(data);
+      } else {
+        const error = await res.json().catch(() => ({}));
+        setPreviewData({ error: error.detail || 'Preview could not be generated.' });
       }
     } catch (err) {
       console.error('Failed to preview message:', err);
+      setPreviewData({ error: 'Preview could not be generated. Please try again.' });
     } finally {
       setPreviewLoading(false);
     }
@@ -328,22 +364,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
   // Load existing sequence or pre-made template tree
   useEffect(() => {
-    // Check if there is a pending pre-made template tree waiting to be applied
-    const pendingTplStr = localStorage.getItem('pending_template_tree');
-    if (pendingTplStr) {
-      try {
-        const parsed = JSON.parse(pendingTplStr);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setTree(parsed);
-          setSelectedStepId(null);
-          localStorage.removeItem('pending_template_tree');
-          hasLoaded.current = true;
-          return;
-        }
-      } catch (_) {
-        localStorage.removeItem('pending_template_tree');
-      }
-    }
+    hasLoaded.current = false;
 
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
       hasLoaded.current = true;
@@ -372,34 +393,48 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     loadSequence();
   }, [campaignId]);
 
+  const persistSequence = React.useCallback(async (treeToSave = treeRef.current) => {
+    if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') return false;
+    if (!hasLoaded.current) {
+      setToastMessage('Sequence is still loading. Wait a moment, then save again.');
+      return false;
+    }
+    try {
+      const token = localStorage.getItem('token');
+      const { nodes, edges } = flattenTreeToDAG(treeToSave);
+      const res = await fetch('/api/v1/outreach/sequences', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ campaign_id: campaignId, nodes, edges, tree: treeToSave }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        setToastMessage(error.detail || 'Sequence could not be saved. Please try again.');
+        return false;
+      }
+      if (onSave) onSave({ nodes, edges, tree: treeToSave });
+      return true;
+    } catch (err) {
+      console.error('Failed to save sequence:', err);
+      setToastMessage('Sequence could not be saved. Please check your connection and try again.');
+      return false;
+    }
+  }, [campaignId, onSave]);
+
+  useEffect(() => {
+    if (onRegisterSave) onRegisterSave(persistSequence);
+  }, [onRegisterSave, persistSequence]);
+
   // Auto-save sequence debounced when tree changes
   useEffect(() => {
     if (!hasLoaded.current || !campaignId || campaignId === 'new' || campaignId === 'new_campaign') return;
-    const timer = setTimeout(async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const { nodes, edges } = flattenTreeToDAG(tree);
-        await fetch('/api/v1/outreach/sequences', {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: token ? `Bearer ${token}` : '',
-          },
-          body: JSON.stringify({
-            campaign_id: campaignId,
-            nodes,
-            edges,
-            tree,
-          }),
-        });
-        if (onSave) onSave({ nodes, edges, tree });
-      } catch (err) {
-        console.error('Failed to auto-save sequence:', err);
-      }
-    }, 600);
+    const timer = setTimeout(() => persistSequence(tree), 600);
     return () => clearTimeout(timer);
-  }, [tree, campaignId, onSave]);
+  }, [tree, campaignId, persistSequence]);
 
   // Inline header delay editor state (matches media_1790088397090.png)
   const [editingDelayId, setEditingDelayId] = useState(null);
@@ -484,6 +519,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
     // Linear insertion after target stepId
     if (target.type === 'linear') {
+      if (target.stepId === 'start') return [newStep, ...nodes];
       const idx = nodes.findIndex((n) => n.id === target.stepId);
       if (idx !== -1) {
         const copy = [...nodes];
@@ -496,13 +532,15 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     return nodes.map((node) => {
       if (node.id === target.parentStepId && node.branches && target.branchKey) {
         const branch = node.branches[target.branchKey];
+        if (!branch) return node;
+        const steps = branch.steps || [];
         return {
           ...node,
           branches: {
             ...node.branches,
             [target.branchKey]: {
               ...branch,
-              steps: target.index !== undefined ? [...branch.steps.slice(0, target.index), newStep, ...branch.steps.slice(target.index)] : [...branch.steps, newStep],
+              steps: target.index !== undefined ? [...steps.slice(0, target.index), newStep, ...steps.slice(target.index)] : [...steps, newStep],
               endsHere: false,
             },
           },
@@ -532,7 +570,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     const condDef = CONDITION_DEFINITIONS.find((c) => c.type === type);
     const actionDef = ACTION_DEFINITIONS.find((a) => a.type === type);
 
-    const newId = `step_${Date.now().toString().slice(-5)}`;
+    const newId = `step_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
     let newStep = null;
 
     if (isCondition && condDef) {
@@ -599,14 +637,21 @@ export default function SequenceCanvas({ campaignId, onSave }) {
   const handleStartInlineDelayEdit = (step, e) => {
     e.stopPropagation();
     setEditingDelayId(step.id);
-    setTempDelayValue(step.delay_days || 0);
-    setTempDelayUnit('days');
+    const delayHours = (step.delay_days || 0) * 24;
+    if (delayHours > 0 && delayHours < 24) {
+      setTempDelayValue(delayHours);
+      setTempDelayUnit('hours');
+    } else {
+      setTempDelayValue(step.delay_days || 0);
+      setTempDelayUnit('days');
+    }
   };
 
   const handleSaveInlineDelay = (stepId, e) => {
     e.stopPropagation();
-    const val = parseInt(tempDelayValue, 10) || 0;
-    setTree((prev) => updateNode(prev, stepId, { delay_days: val }));
+    const val = Math.max(0, Number(tempDelayValue) || 0);
+    const delayDays = tempDelayUnit === 'hours' ? val / 24 : val;
+    setTree((prev) => updateNode(prev, stepId, { delay_days: delayDays }));
     setEditingDelayId(null);
   };
 
@@ -666,7 +711,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 shadow-2xs transition-colors shrink-0"
         >
           <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-          AI Prompt
+          Prompt guidance
         </button>
         <button
           type="button"
@@ -707,29 +752,9 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     </div>
   );
 
-  const renderConditionRuleSelector = () => (
-    <div className="pt-3 border-t border-gray-100">
-      <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">
-        Execution Condition
-      </label>
-      <select
-        value={selectedStep?.config?.condition_rule || 'never_sent_message'}
-        onChange={(e) =>
-          setTree((prev) =>
-            updateNode(prev, selectedStep.id, {
-              config: { ...selectedStep.config, condition_rule: e.target.value },
-            })
-          )
-        }
-        className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
-      >
-        <option value="never_sent_message">Send only if recipient has never sent a message</option>
-        <option value="always_send">Always send regardless of recipient replies</option>
-        <option value="only_if_connected">Send only if 1st-degree connected</option>
-        <option value="only_open_profile">Send only if open-profile (Free InMail)</option>
-      </select>
-    </div>
-  );
+  // Per-action condition rules were only stored in the builder and never
+  // enforced by the executor. Branch nodes provide the supported conditions.
+  const renderConditionRuleSelector = () => null;
 
 
   // Render a Single Step Card matching Unravler (media_1790088397090.png)
@@ -790,7 +815,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
             <>
               <div className="flex items-center gap-1.5 font-medium">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>{step.delay_days === 0 ? 'No delay' : step.delay_days === 1 ? 'Wait 1 day, then' : `Wait ${step.delay_days} days, then`}</span>
+                <span>{formatDelay(step.delay_days)}</span>
               </div>
               <button
                 type="button"
@@ -1092,9 +1117,15 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
         {/* Action Toast Banner matching media_1790088446398.png */}
         {toastMessage && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs font-semibold text-emerald-800 shadow-xs animate-fade-in">
+          <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl border px-4 py-2 text-xs font-semibold shadow-xs animate-fade-in ${
+            /could not|failed|error/i.test(toastMessage)
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}>
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              {/could not|failed|error/i.test(toastMessage)
+                ? <AlertCircle className="w-4 h-4 text-rose-600" />
+                : <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
               <span>{toastMessage}</span>
             </div>
             <button onClick={() => setToastMessage(null)} className="text-emerald-500 hover:text-emerald-800">
@@ -1180,6 +1211,23 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <Navigation className="w-3.5 h-3.5 text-slate-400 rotate-45" />
               <span>SEQUENCE START</span>
             </div>
+
+            {tree.length === 0 && (
+              <div className="mt-10 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/80 px-10 py-8 text-center shadow-2xs">
+                <p className="text-sm font-semibold text-slate-700">Your sequence is empty</p>
+                <p className="text-xs text-slate-400">Add a step to start building the campaign flow.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaletteTarget({ type: 'linear', stepId: 'start' });
+                    setPaletteOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add first step
+                </button>
+              </div>
+            )}
 
             {/* Root vertical trunk lines and recursive nodes */}
             {tree.map((rootStep, index) => (
@@ -1897,11 +1945,14 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <div className="grid grid-cols-2 gap-2">
                 {ACTION_DEFINITIONS.map((action) => {
                   const Icon = action.icon;
+                  const supported = RUNNER_SUPPORTED_TYPES.has(action.type);
                   return (
                     <button
                       key={action.type}
                       onClick={() => handleAddStepFromPalette(action.type)}
-                      className="flex flex-col items-start p-2.5 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-indigo-50/20 text-left transition-all group"
+                      disabled={!supported}
+                      title={supported ? action.desc : 'This step is not supported by the campaign runner yet.'}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${supported ? 'hover:border-indigo-500 hover:bg-indigo-50/20' : 'opacity-50 cursor-not-allowed'}`}
                     >
                       <div className={`p-2 rounded-lg ${action.color} group-hover:scale-105 transition-transform`}>
                         <Icon className="h-4 w-4" />
@@ -1909,6 +1960,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                       <span className="font-semibold text-gray-900 text-xs mt-2 group-hover:text-indigo-600">
                         {action.label}
                       </span>
+                      {!supported && <span className="text-[10px] text-gray-400 mt-1">Coming soon</span>}
                     </button>
                   );
                 })}
@@ -1923,11 +1975,14 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               <div className="grid grid-cols-2 gap-2">
                 {CONDITION_DEFINITIONS.map((cond) => {
                   const Icon = cond.icon;
+                  const supported = RUNNER_SUPPORTED_TYPES.has(cond.type);
                   return (
                     <button
                       key={cond.type}
                       onClick={() => handleAddStepFromPalette(cond.type)}
-                      className="flex flex-col items-start p-2.5 rounded-xl border border-gray-200 hover:border-amber-500 hover:bg-amber-50/20 text-left transition-all group"
+                      disabled={!supported}
+                      title={supported ? cond.desc : 'This condition is not supported by the campaign runner yet.'}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${supported ? 'hover:border-amber-500 hover:bg-amber-50/20' : 'opacity-50 cursor-not-allowed'}`}
                     >
                       <div className={`p-2 rounded-lg ${cond.color} group-hover:scale-105 transition-transform`}>
                         <Icon className="h-4 w-4" />
@@ -1935,6 +1990,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                       <span className="font-semibold text-gray-900 text-xs mt-2 group-hover:text-amber-700">
                         {cond.label}
                       </span>
+                      {!supported && <span className="text-[10px] text-gray-400 mt-1">Coming soon</span>}
                     </button>
                   );
                 })}
@@ -2067,11 +2123,11 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                       <span className="text-[10px] text-gray-400">By {prompt.author_name || 'Unravler'}</span>
                       <button
                         type="button"
-                        onClick={() => insertPromptToken(prompt.name)}
+                        onClick={() => copyPromptGuidance(prompt.prompt_text)}
                         className="inline-flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-2xs transition-colors"
                       >
                         <Sparkles className="w-3 h-3" />
-                        Insert Token
+                        Copy guidance
                       </button>
                     </div>
                   </div>
@@ -2095,7 +2151,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                 </div>
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">Message Personalization Preview</h3>
-                  <p className="text-[11px] text-gray-400">Dynamic AI evaluation against real lead attributes</p>
+                  <p className="text-[11px] text-gray-400">Illustrative rendering with sample lead fields</p>
                 </div>
               </div>
               <button
@@ -2111,7 +2167,11 @@ export default function SequenceCanvas({ campaignId, onSave }) {
               {previewLoading ? (
                 <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                   <RefreshCw className="h-6 w-6 animate-spin text-indigo-600 mb-2" />
-                  <span className="text-xs">Evaluating dynamic AI tokens & variables...</span>
+                  <span className="text-xs">Rendering sample fields...</span>
+                </div>
+              ) : previewData?.error ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                  {previewData.error}
                 </div>
               ) : previewData ? (
                 <>
@@ -2141,7 +2201,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
                   {/* Evaluated Rendered Message */}
                   <div>
                     <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                      Evaluated Output (What prospect receives)
+                      Preview output (not generated send copy)
                     </label>
                     <div className="p-4 rounded-xl bg-white border border-indigo-200 shadow-xs text-xs text-gray-800 leading-relaxed font-sans whitespace-pre-wrap">
                       {previewData.evaluated_text || 'No copy written for this step yet.'}
@@ -2150,9 +2210,7 @@ export default function SequenceCanvas({ campaignId, onSave }) {
 
                   <div className="p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] text-purple-900 flex items-start gap-2">
                     <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-                    <span>
-                      Variables and AI tokens (<code>✨ [...]</code>) will be uniquely computed per lead upon sequence execution.
-                    </span>
+                    <span>{previewData.notice || 'This is illustrative sample output. Prompt guidance is not generated by live campaigns.'}</span>
                   </div>
                 </>
               ) : null}
@@ -2174,4 +2232,3 @@ export default function SequenceCanvas({ campaignId, onSave }) {
     </div>
   );
 }
-

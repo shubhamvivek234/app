@@ -150,7 +150,7 @@ class SessionAuthenticator:
             raise AuthenticationError("Email and password are required")
 
         # Mock / Sandbox handling
-        if os.getenv("OUTREACH_MOCK_AUTH", "true") == "true" or clean_email.endswith("@example.com") or "mock" in clean_email:
+        if os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in ("true", "1"):
             # If email contains '2fa', simulate 2FA challenge flow
             if "2fa" in clean_email.lower():
                 session_id = f"session_2fa_{uuid.uuid4().hex[:12]}"

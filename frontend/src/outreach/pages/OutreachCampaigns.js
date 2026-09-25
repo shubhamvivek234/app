@@ -428,6 +428,7 @@ export default function OutreachCampaigns({
   const [menuOpenId, setMenuOpenId] = useState(null);
   const [newCampaignModalOpen, setNewCampaignModalOpen] = useState(false);
   const [scratchCampaignName, setScratchCampaignName] = useState('');
+  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
 
   // Optimistically reflect newly saved campaign from wizard with 0ms latency
   useEffect(() => {
@@ -459,6 +460,9 @@ export default function OutreachCampaigns({
           }
           return incoming;
         });
+      } else {
+        const error = await res.json().catch(() => ({}));
+        toast.error(error.detail || 'Could not load campaigns. Please try again.');
       }
     } catch (err) {
       console.error('Failed to fetch campaigns:', err);
@@ -477,9 +481,10 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setTemplatesList(data);
-        }
+        setTemplatesList(Array.isArray(data) ? data : []);
+      } else {
+        const error = await res.json().catch(() => ({}));
+        toast.error(error.detail || 'Could not load sequence templates.');
       }
     } catch (err) {
       console.error('Failed to fetch templates:', err);
@@ -504,6 +509,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/sequences/templates/${templateId}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -519,20 +525,10 @@ export default function OutreachCampaigns({
   };
 
   const handleUseTemplate = async (tpl) => {
-    // 1. Immediately close templates view so user transitions to campaign builder
-    setIsTemplatesOpen(false);
-
     const fullTpl =
       PREBUILT_TEMPLATES.find(
         (p) => p.id === tpl.id || (tpl.id === 'tpl_inmail_engage' && p.id === 'tpl_multitouch_inmail') || p.name === tpl.name
       ) || tpl;
-
-    // 3. Cache template tree locally so SequenceCanvas renders the pre-made campaign immediately
-    if (fullTpl.tree) {
-      try {
-        localStorage.setItem('pending_template_tree', JSON.stringify(fullTpl.tree));
-      } catch (_) {}
-    }
 
     try {
       const token = localStorage.getItem('token');
@@ -551,46 +547,45 @@ export default function OutreachCampaigns({
         }),
       });
 
-      if (res.ok) {
-        const draft = await res.json();
-        if (fullTpl.nodes && fullTpl.edges) {
-          await fetch('/api/v1/outreach/sequences', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: token ? `Bearer ${token}` : '',
-            },
-            body: JSON.stringify({
-              campaign_id: draft.id,
-              nodes: fullTpl.nodes,
-              edges: fullTpl.edges,
-              tree: fullTpl.tree || null,
-            }),
-          }).catch((err) => console.warn('Could not save sequence to backend:', err));
-        }
-
-        toast.success(`Template loaded: “${fullTpl.name}”`);
-        if (onOpenWizard) {
-          onOpenWizard(draft.id, 2, fullTpl.name);
-        } else {
-          setActiveCampaignId(draft.id);
-          setIsWizardOpen(true);
-        }
-        return;
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || 'Could not create a campaign from this template.');
       }
-    } catch (err) {
-      console.error('Failed to use template via auto-draft:', err);
-    }
+      const draft = await res.json();
+      if (!draft?.id || !Array.isArray(fullTpl.nodes) || !Array.isArray(fullTpl.edges)) {
+        throw new Error('This template is missing its sequence data.');
+      }
+      const sequenceRes = await fetch('/api/v1/outreach/sequences', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          campaign_id: draft.id,
+          nodes: fullTpl.nodes,
+          edges: fullTpl.edges,
+          tree: fullTpl.tree || null,
+        }),
+      });
+      if (!sequenceRes.ok) {
+        const error = await sequenceRes.json().catch(() => ({}));
+        throw new Error(error.detail || 'The campaign was created, but its sequence could not be saved.');
+      }
 
-    // Reliable Fallback: Always open wizard on step 2 even if network failed
-    const fallbackId = `camp_${Date.now()}`;
-    toast.success(`Template loaded: “${fullTpl.name}”`);
-    if (onOpenWizard) {
-      onOpenWizard(fallbackId, 2, fullTpl.name);
-    } else {
-      setActiveCampaignId(fallbackId);
-      setIsWizardOpen(true);
+      setIsTemplatesOpen(false);
+      toast.success(`Template loaded: “${fullTpl.name}”`);
+      if (onOpenWizard) onOpenWizard(draft.id, 2, fullTpl.name);
+      else {
+        setActiveCampaignId(draft.id);
+        setIsWizardOpen(true);
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to use template:', err);
+      toast.error(err.message || 'Could not load this template. Please try again.');
+      return false;
     }
   };
 
@@ -600,6 +595,7 @@ export default function OutreachCampaigns({
       ? nameOverride.trim()
       : `test${campaigns.length + 1}`;
 
+    setIsCreatingCampaign(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
@@ -625,20 +621,16 @@ export default function OutreachCampaigns({
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
         }
-        return;
+        return true;
       }
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.detail || 'Could not create campaign. Please try again.');
     } catch (err) {
       console.error('Failed to auto-draft campaign:', err);
-    }
-
-    // Reliable Fallback: Always open campaign wizard immediately
-    const fallbackId = `camp_${Date.now()}`;
-    toast.success(`Campaign started: “${safeName}”`);
-    if (onOpenWizard) {
-      onOpenWizard(fallbackId, 2, safeName);
-    } else {
-      setActiveCampaignId(fallbackId);
-      setIsWizardOpen(true);
+      toast.error(err.message || 'Could not create campaign. Please try again.');
+      return false;
+    } finally {
+      setIsCreatingCampaign(false);
     }
   };
 
@@ -648,6 +640,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/pause`, {
         method: 'POST',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -668,6 +661,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/launch`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -693,6 +687,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/duplicate`, {
         method: 'POST',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -714,6 +709,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -734,6 +730,7 @@ export default function OutreachCampaigns({
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/restore`, {
         method: 'POST',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -1288,14 +1285,14 @@ export default function OutreachCampaigns({
                       className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                     />
                     <button
-                      onClick={() => {
+                      disabled={isCreatingCampaign}
+                      onClick={async () => {
                         const name = scratchCampaignName.trim() || `Campaign #${campaigns.length + 1}`;
-                        setNewCampaignModalOpen(false);
-                        handleCreateNewCampaign(name);
+                        if (await handleCreateNewCampaign(name)) setNewCampaignModalOpen(false);
                       }}
-                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors"
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors disabled:opacity-60"
                     >
-                      Build from scratch
+                      {isCreatingCampaign ? 'Creating…' : 'Build from scratch'}
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>

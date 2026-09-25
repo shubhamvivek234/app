@@ -8,6 +8,7 @@ import io
 import logging
 from typing import Any
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from outreach.models import OutreachLead, LeadExecutionState
 
@@ -37,14 +38,19 @@ def normalize_linkedin_url(raw_url: str) -> str:
     url = raw_url.strip().lower()
     # Strip tracking query params (?miniProfileUrn=..., ?trk=...)
     url = re.sub(r"\?.*$", "", url)
-    # Strip trailing slash
-    url = url.rstrip("/")
     # Ensure proper https prefix
     if url.startswith("http://"):
         url = "https://" + url[7:]
     elif not url.startswith("https://"):
         url = "https://" + url
-    return url
+    parsed = urlparse(url)
+    if parsed.hostname not in {"linkedin.com", "www.linkedin.com"}:
+        return ""
+    path = parsed.path.rstrip("/")
+    parts = path.split("/")
+    if len(parts) < 3 or parts[1] != "in" or not parts[2]:
+        return ""
+    return f"https://www.linkedin.com/in/{parts[2]}"
 
 
 def detect_csv_headers(header_row: list[str]) -> dict[str, str]:
@@ -110,7 +116,7 @@ class LeadImporter:
                 raw_url = row.get("url", "")
 
             cleaned_url = normalize_linkedin_url(raw_url)
-            if not cleaned_url or "linkedin.com" not in cleaned_url:
+            if not cleaned_url:
                 continue
 
             lead_data = {
@@ -149,6 +155,26 @@ class LeadImporter:
         """
         if not leads:
             return {"imported_count": 0, "skipped_count": 0, "duplicates_count": 0}
+
+        campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "is_deleted": {"$ne": True}})
+        active_senders = []
+        if campaign and campaign.get("status") == "active":
+            configured_sender_ids = list(campaign.get("sender_account_ids", []))
+            active_sender_docs = await _fetch_cursor_docs(
+                db.outreach_accounts.find({"id": {"$in": configured_sender_ids}, "status": "active"}),
+                length=100,
+            )
+            active_senders = [account["id"] for account in active_sender_docs if account.get("id")]
+        assigned_offset = 0
+        root_node_id = None
+        if active_senders:
+            assigned_offset = await db.outreach_leads.count_documents({
+                "campaign_id": campaign_id,
+                "assigned_account_id": {"$in": active_senders},
+            })
+            sequence = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+            root_ids = (sequence or {}).get("compiled_dag", {}).get("root_node_ids", [])
+            root_node_id = root_ids[0] if root_ids else None
 
         # 1. Fetch existing leads in this campaign for deduplication
         existing_campaign_leads = await _fetch_cursor_docs(
@@ -207,9 +233,12 @@ class LeadImporter:
                 skipped_count += 1
                 continue
 
+            assigned_account_id = active_senders[(assigned_offset + len(to_insert)) % len(active_senders)] if active_senders else None
             lead_doc = OutreachLead(
                 campaign_id=campaign_id,
                 workspace_id=workspace_id,
+                assigned_account_id=assigned_account_id,
+                current_node_id=root_node_id,
                 linkedin_url=url,
                 first_name=lead.get("first_name", ""),
                 last_name=lead.get("last_name", ""),

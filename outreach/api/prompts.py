@@ -1,7 +1,4 @@
-"""
-Phase 3 & Prosp AI Parity: Reusable AI Prompt Library & Preview Evaluator.
-Powers inline token block injection (✨ [Prompt Title]) and dynamic lead personalization.
-"""
+"""Reusable prompt guidance library and illustrative sequence preview."""
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -28,7 +25,7 @@ class CreateAIPromptRequest(BaseModel):
 
 
 class PromptPreviewRequest(BaseModel):
-    template: str = Field(..., description="Message text with variables {{first_name}} and AI tokens ✨ [Prompt Name]")
+    template: str = Field(..., description="Message text with contact variables and optional prompt guidance tokens")
     lead_id: str | None = None
     custom_lead_data: dict[str, Any] | None = None
 
@@ -188,9 +185,7 @@ async def preview_evaluated_message(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Renders message copy preview with both static variables ({{first_name}})
-    and AI prompts (✨ [Prompt Title]) evaluated against a real or sample lead.
-    Matches Prosp AI sequence preview modal (seq_240s.jpg).
+    Renders contact variables and placeholder prompt tokens against a real or sample lead.
     """
     lead_data: dict[str, Any] = {
         "first_name": "Elena",
@@ -198,22 +193,37 @@ async def preview_evaluated_message(
         "company_name": "CognitiveFlow",
         "job_title": "Founder & CEO",
         "location": "London, United Kingdom",
+        "location_raw": "London, United Kingdom",
+        "industry": "Artificial Intelligence",
         "headline": "Founder & CEO at CognitiveFlow | Building autonomous reasoning systems",
         "recent_post": "AI agents are fundamentally restructuring how outbound SDR workflows operate. Speed and contextual relevance win.",
     }
 
     if req.lead_id:
-        lead_doc = await db.outreach_leads.find_one({"id": req.lead_id})
-        if lead_doc:
-            lead_data = {
-                "first_name": lead_doc.get("first_name", "Lead"),
-                "last_name": lead_doc.get("last_name", ""),
-                "company_name": lead_doc.get("company_name", "Acme"),
-                "job_title": lead_doc.get("job_title", "Growth Leader"),
-                "location": lead_doc.get("location", "Global"),
-                "headline": f"{lead_doc.get('job_title', '')} at {lead_doc.get('company_name', '')}",
-                "recent_post": lead_doc.get("custom_variables", {}).get("recent_post", "Excited to share our recent milestone!"),
-            }
+        user_id = str(current_user.get("user_id") or current_user.get("id") or current_user.get("_id") or "")
+        workspace_id = str(current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or current_user.get("workspace_id") or user_id)
+        lead_doc = await db.outreach_leads.find_one({
+            "id": req.lead_id,
+            "$or": [
+                {"user_id": user_id},
+                {"workspace_id": workspace_id},
+                {"workspace_id": user_id},
+            ],
+        })
+        if not lead_doc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        lead_data = {
+            "first_name": lead_doc.get("first_name", "Lead"),
+            "last_name": lead_doc.get("last_name", ""),
+            "company_name": lead_doc.get("company_name", "Acme"),
+            "job_title": lead_doc.get("job_title", "Growth Leader"),
+            "location": lead_doc.get("location", "Global"),
+            "location_raw": lead_doc.get("location", "Global"),
+            "industry": lead_doc.get("industry") or (lead_doc.get("custom_variables") or {}).get("industry", ""),
+            "headline": lead_doc.get("headline") or f"{lead_doc.get('job_title', '')} at {lead_doc.get('company_name', '')}",
+            "recent_post": (lead_doc.get("custom_variables") or {}).get("recent_post", ""),
+        }
+        lead_data.update(lead_doc.get("custom_variables") or {})
     elif req.custom_lead_data:
         lead_data.update(req.custom_lead_data)
 
@@ -229,30 +239,19 @@ async def preview_evaluated_message(
     rendered_text = rendered_text.replace("{{company_name}}", lead_data["company_name"])
     rendered_text = rendered_text.replace("{{job_title}}", lead_data["job_title"])
 
-    # 2. Evaluate dynamic AI prompt tokens
-    # e.g., ✨ [Saw you're doing X (3-5 words)]
-    evaluations = {
-        "Saw you're doing X (3-5 words)": f"scaling autonomous reasoning at {lead_data['company_name']}",
-        "Website designer personalised first line": f"Loved how clean and intentional the typography on {lead_data['company_name']}'s site is.",
-        "Recent post observation": f"Really resonated with your take on how contextual relevance wins in outbound.",
-        "Company milestone congratulations": f"Huge congrats on the momentum {lead_data['company_name']} has been seeing recently!",
-        "Mutual niche connection": f"Noticed we are both deeply immersed in B2B outbound automation.",
-    }
-
+    # Prompt instructions are not executed by the live runner. Keep previews explicit
+    # instead of inventing AI-generated copy that would not be sent to prospects.
     import re
-    # Match ✨ [Token Name] or [Token Name] or ✨ Token Name
     token_pattern = re.compile(r"✨\s*\[([^\]]+)\]")
-    
-    def replace_token(match):
-        token_name = match.group(1).strip()
-        if token_name in evaluations:
-            return evaluations[token_name]
-        return f"innovating in the {lead_data['company_name']} space"
-
-    rendered_text = token_pattern.sub(replace_token, rendered_text)
+    rendered_text = token_pattern.sub(
+        lambda match: f"[Prompt guidance not generated: {match.group(1).strip()}]",
+        rendered_text,
+    )
 
     return {
         "evaluated_text": rendered_text,
+        "is_illustrative_preview": not bool(req.lead_id),
+        "notice": "Prompt guidance is shown as a placeholder, not AI-generated copy. Replace it with finished message text before launching.",
         "lead_preview": lead_data,
         "sender_preview": {
             "name": current_user.get("name") or "You",

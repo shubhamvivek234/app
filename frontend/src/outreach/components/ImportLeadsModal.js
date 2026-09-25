@@ -71,6 +71,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/leads/finder/preview', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -118,6 +119,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
       const res = await fetch('/api/v1/outreach/leads/finder/enroll', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
@@ -148,6 +150,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       if (sourceType === 'csv') {
         res = await fetch('/api/v1/outreach/leads/import-csv', {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Authorization: token ? `Bearer ${token}` : '',
@@ -162,6 +165,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       } else if (sourceType === 'post') {
         res = await fetch('/api/v1/outreach/leads/import-post-engagers', {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Authorization: token ? `Bearer ${token}` : '',
@@ -179,6 +183,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
         // search, sales_nav, event, group
         res = await fetch('/api/v1/outreach/leads/import-search', {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Authorization: token ? `Bearer ${token}` : '',
@@ -263,12 +268,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
               <p className="text-sm text-gray-500 mb-2">
                 Choose how you'd like to import your prospect list into this campaign:
               </p>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Only verified CSV import is currently available. LinkedIn search, finder, saved-list, event, post, and group integrations are not connected yet.
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                 {/* 1. Lead Finder (Popular) */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('finder'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-600 hover:bg-indigo-50/20 bg-indigo-50/10 transition-all group relative"
+                  className="text-left p-4 rounded-xl border-2 border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group relative"
                 >
                   <div className="absolute top-3 right-3 flex items-center gap-1 bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
                     <Sparkles className="h-3 w-3" />
@@ -287,8 +296,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                 {/* 2. Add from my list */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('list'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group"
+                  className="text-left p-4 rounded-xl border border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group"
                 >
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
@@ -303,8 +313,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                 {/* 3. LinkedIn Search */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('search'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group"
+                  className="text-left p-4 rounded-xl border border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group"
                 >
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
@@ -335,8 +346,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                 {/* 5. LinkedIn Event */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('event'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group"
+                  className="text-left p-4 rounded-xl border border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group"
                 >
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
@@ -351,8 +363,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                 {/* 6. LinkedIn Post Engagers */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('post'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group"
+                  className="text-left p-4 rounded-xl border border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group"
                 >
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-pink-50 text-pink-600 group-hover:bg-pink-600 group-hover:text-white transition-colors">
@@ -367,8 +380,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                 {/* 7. LinkedIn Group */}
                 <button
+                  disabled
                   onClick={() => { setSourceType('group'); setStep(2); }}
-                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group md:col-span-2"
+                  className="text-left p-4 rounded-xl border border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed transition-all group md:col-span-2"
                 >
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-cyan-50 text-cyan-600 group-hover:bg-cyan-600 group-hover:text-white transition-colors">

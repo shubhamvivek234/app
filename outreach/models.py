@@ -57,14 +57,14 @@ class ProxyConfig(BaseModel):
 
 class DailyLimits(BaseModel):
     """Configured daily caps per sender to guarantee account safety."""
-    connection_invites: int = 20
-    messages: int = 20
-    voice_notes: int = 20
-    inmails: int = 20
-    profile_visits: int = 20
-    follows: int = 20
-    post_likes: int = 20
-    comments: int = 20
+    connection_invites: int = Field(default=20, ge=0, le=100)
+    messages: int = Field(default=20, ge=0, le=100)
+    voice_notes: int = Field(default=20, ge=0, le=100)
+    inmails: int = Field(default=20, ge=0, le=100)
+    profile_visits: int = Field(default=20, ge=0, le=100)
+    follows: int = Field(default=20, ge=0, le=100)
+    post_likes: int = Field(default=20, ge=0, le=100)
+    comments: int = Field(default=20, ge=0, le=100)
 
 
 class DailyCounters(BaseModel):
@@ -368,6 +368,11 @@ class EngageList(BaseModel):
     description: str = ""
     contacts_count: int = 0
     pending_posts_count: int = 0
+    campaign_id: str | None = None
+    warmup_hours: int = 24
+    fetch_status: str = "idle"
+    fetch_error: str = ""
+    enrichment_status: str = "idle"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -382,8 +387,11 @@ class EngageContact(BaseModel):
     vanity_name: str = ""
     full_name: str = ""
     headline: str = ""
+    company: str = ""
+    job_title: str = ""
     avatar_url: str = ""
     profile_urn: str = ""
+    enrichment_status: str = "pending"
     last_fetched_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -409,7 +417,11 @@ class EngagePost(BaseModel):
     media_urls: list[str] = Field(default_factory=list)
     status: str = "pending"  # pending, liked, commented, discarded
     user_comment: str = ""
+    liked_at: datetime | None = None
+    liked_by_account_id: str = ""
     commented_at: datetime | None = None
+    commented_by_account_id: str = ""
+    discarded_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -445,4 +457,3 @@ class SwipeFileItem(BaseModel):
     comments_count: int = 0
     is_archived: bool = False
     created_at: datetime = Field(default_factory=utc_now)
-

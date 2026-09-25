@@ -20,6 +20,30 @@ import {
 import { toast } from 'sonner';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const getScheduleSummary = (schedule = {}) => {
+  const days = schedule.days;
+  if (Array.isArray(days) && days.some((day) => day && typeof day === 'object')) {
+    const enabledDays = days.filter((day) => day.enabled);
+    if (!enabledDays.length) return { days: 'No days enabled', hours: 'No active hours' };
+    const names = enabledDays.map((day) => day.day).filter(Boolean);
+    const rangesByDay = enabledDays.map((day) => (day.ranges || []).map((range) => `${range.start}–${range.end}`).join(', '));
+    const hours = rangesByDay.every((ranges) => ranges === rangesByDay[0])
+      ? rangesByDay[0] || 'No active hours'
+      : 'Hours vary by day';
+    return { days: names.join(', ') || 'Selected days', hours };
+  }
+  if (Array.isArray(days)) {
+    const names = days.map((day) => WEEKDAY_NAMES[day]).filter(Boolean);
+    return {
+      days: names.join(', ') || 'No days enabled',
+      hours: `${schedule.start_time || '09:00'}–${schedule.end_time || '17:00'}`,
+    };
+  }
+  return { days: 'Mon–Fri', hours: `${schedule.start_time || '09:00'}–${schedule.end_time || '17:00'}` };
+};
+
 export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const [campaign, setCampaign] = useState(null);
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics' | 'leads' | 'sequence' | 'settings'
@@ -31,6 +55,12 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const [sequence, setSequence] = useState(null);
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const scheduleSummary = getScheduleSummary(campaign?.schedule);
+  const totalLeads = campaign?.leads_count || 0;
+  const contactedLeads = campaign?.leads_contacted || 0;
+  const acceptedLeads = campaign?.acceptances_count || 0;
+  const repliedLeads = campaign?.replies_count || 0;
+  const interestedLeads = campaign?.interested_count || 0;
 
   const fetchCampaign = async () => {
     setLoading(true);
@@ -284,7 +314,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-2xs">
               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                INVITES SENT
+                LEADS CONTACTED
               </p>
               <p className="text-2xl font-bold text-gray-900 mt-1">
                 {campaign.leads_contacted || 0}
@@ -342,27 +372,29 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               <h3 className="text-sm font-bold text-gray-900 mb-5">Funnel</h3>
               <div className="space-y-4">
                 {[
-                  { label: 'Invites sent', value: `${campaign.leads_contacted || 0} · 0%`, pct: 0 },
-                  { label: 'Accepted', value: `${campaign.acceptances_count || 0} · 0%`, pct: 0 },
-                  { label: 'Replied', value: `${campaign.replies_count || 0} · 0%`, pct: 0 },
-                  { label: 'Interested', value: `${campaign.interested_count || 0} · 0%`, pct: 0 },
+                  { label: 'Leads contacted', count: contactedLeads, denominator: totalLeads },
+                  { label: 'Accepted', count: acceptedLeads, denominator: contactedLeads },
+                  { label: 'Replied', count: repliedLeads, denominator: acceptedLeads },
+                  { label: 'Interested', count: interestedLeads, denominator: repliedLeads },
                 ].map((item) => (
                   <div key={item.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-gray-700">{item.label}</span>
-                      <span className="text-gray-400 font-mono text-[11px]">{item.value}</span>
+                      <span className="text-gray-400 font-mono text-[11px]">
+                        {item.count} · {item.denominator ? Math.round((item.count / item.denominator) * 100) : 0}%
+                      </span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
                       <div
                         className="h-full bg-indigo-600 rounded-full transition-all"
-                        style={{ width: `${item.pct}%` }}
+                        style={{ width: `${item.denominator ? Math.min(100, (item.count / item.denominator) * 100) : 0}%` }}
                       />
                     </div>
                   </div>
                 ))}
               </div>
               <p className="text-xs text-gray-400 mt-6 pt-4 border-t border-gray-100">
-                No runner activity yet.
+                {contactedLeads ? 'Funnel rates are based on the previous stage.' : 'No runner activity yet.'}
               </p>
             </div>
 
@@ -406,9 +438,9 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                   Schedule
                 </p>
                 <p className="text-xs font-semibold text-gray-800">
-                  Mon–Fri · 09:00–17:00
+                  {scheduleSummary.days} · {scheduleSummary.hours}
                 </p>
-                <p className="text-[11px] text-gray-400 mt-0.5">UTC</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">{campaign.schedule?.timezone || 'UTC'}</p>
               </div>
             </div>
           </div>
@@ -418,11 +450,24 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             <div className="p-5 border-b border-gray-100">
               <h3 className="text-sm font-bold text-gray-900">Step performance</h3>
             </div>
-            <div className="py-14 px-4 text-center">
-              <p className="text-xs text-gray-400">
-                This campaign has no published flow, so it has no steps to report on.
-              </p>
-            </div>
+            {campaign.sequence?.nodes?.length ? (
+              <div className="divide-y divide-gray-100">
+                {campaign.sequence.nodes.map((node, index) => (
+                  <div key={node.id || `${node.type}-${index}`} className="flex items-center gap-3 px-5 py-3">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-xs font-bold text-indigo-700">{index + 1}</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-gray-800">{node.title || node.type}</p>
+                      <p className="text-[11px] text-gray-400">{node.type?.replaceAll('_', ' ')}</p>
+                    </div>
+                    <span className="ml-auto text-[11px] text-gray-400">No step events yet</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-14 px-4 text-center">
+                <p className="text-xs text-gray-400">This campaign has no saved sequence flow yet.</p>
+              </div>
+            )}
           </div>
 
           {/* Bottom Section 2: Sender performance matching media_1790104472298.png */}
@@ -651,13 +696,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               <span className="md:col-span-3 text-gray-500 font-medium">Schedule</span>
               <div className="md:col-span-9">
                 <p className="font-semibold text-gray-900">
-                  {Array.isArray(campaign.schedule?.days)
-                    ? campaign.schedule.days.filter((d) => d.enabled).map((d) => d.day).join(', ') || 'None'
-                    : 'Mon–Fri'} · {
-                    Array.isArray(campaign.schedule?.days) && campaign.schedule.days.find((d) => d.enabled)?.ranges?.[0]
-                      ? `${campaign.schedule.days.find((d) => d.enabled).ranges[0].start} – ${campaign.schedule.days.find((d) => d.enabled).ranges[0].end}`
-                      : '09:00 AM – 05:00 PM'
-                  }
+                  {scheduleSummary.days} · {scheduleSummary.hours}
                 </p>
                 <p className="text-[11px] text-gray-400 mt-0.5">
                   Sends in {campaign.schedule?.timezone || 'UTC'}.
@@ -672,17 +711,17 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                   { label: 'Connection invites', val: campaign.limits?.connection_invites ?? 20 },
                   { label: 'Messages', val: campaign.limits?.messages ?? 20 },
                   { label: 'Voice notes', val: campaign.limits?.voice_notes ?? 20 },
-                  { label: 'InMails', val: campaign.limits?.inmails ?? 20 },
+                  { label: 'InMails', val: campaign.limits?.inmails ?? 20, supported: false },
                   { label: 'Profile visits', val: campaign.limits?.profile_visits ?? 20 },
-                  { label: 'Follows', val: campaign.limits?.follows ?? 20 },
+                  { label: 'Follows', val: campaign.limits?.follows ?? 20, supported: false },
                   { label: 'Post likes', val: campaign.limits?.post_likes ?? 20 },
-                  { label: 'Comments', val: campaign.limits?.comments ?? 20 },
+                  { label: 'Comments', val: campaign.limits?.comments ?? 20, supported: false },
                 ].map((lim) => (
                   <span
                     key={lim.label}
                     className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[11px] font-medium"
                   >
-                    <span>{lim.label}</span>
+                    <span>{lim.label}{lim.supported === false ? ' (coming soon)' : ''}</span>
                     <strong className="font-bold text-gray-900">{lim.val}</strong>
                   </span>
                 ))}
@@ -691,7 +730,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           </div>
 
           <p className="text-[11px] text-gray-400 pt-4 border-t border-gray-100 leading-normal">
-            Limits apply to every sender separately. Changes in the builder take effect on the next send.
+            Campaign limits apply per sender and cannot exceed that account's own safety cap. Changes take effect on the next send.
           </p>
         </div>
       )}

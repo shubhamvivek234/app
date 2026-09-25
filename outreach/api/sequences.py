@@ -19,6 +19,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sequences", tags=["LinkedIn Outreach Sequences"])
 
 
+def _user_id(current_user: dict) -> str:
+    return str(current_user.get("user_id") or current_user.get("id") or current_user.get("_id") or "")
+
+
+def _workspace_id(current_user: dict) -> str:
+    return str(
+        current_user.get("default_workspace_id")
+        or current_user.get("current_workspace_id")
+        or current_user.get("workspace_id")
+        or _user_id(current_user)
+    )
+
+
+def _campaign_filter(campaign_id: str, current_user: dict) -> dict[str, Any]:
+    user_id = _user_id(current_user)
+    return {
+        "id": campaign_id,
+        "is_deleted": {"$ne": True},
+        "$or": [
+            {"user_id": user_id},
+            {"workspace_id": _workspace_id(current_user)},
+            {"workspace_id": user_id},
+        ],
+    }
+
+
 class ValidateSequenceRequest(BaseModel):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
@@ -147,7 +173,11 @@ async def get_campaign_sequence(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Retrieves the sequence graph for a specific campaign."""
-    seq_doc = await db.outreach_sequences.find_one({"campaign_id": campaign_id})
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    seq_doc = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
     if not seq_doc:
         # Return default template
         templates = DAGCompiler.get_prebuilt_templates()
@@ -172,6 +202,10 @@ async def save_campaign_sequence(
     """
     Validates and saves an outreach sequence graph for a campaign.
     """
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
     try:
         compiled_dag = DAGCompiler.validate_and_compile(req.nodes, req.edges)
     except DAGValidationError as exc:
@@ -179,6 +213,8 @@ async def save_campaign_sequence(
 
     doc: dict[str, Any] = {
         "campaign_id": req.campaign_id,
+        "user_id": _user_id(current_user),
+        "workspace_id": _workspace_id(current_user),
         "nodes": req.nodes,
         "edges": req.edges,
         "compiled_dag": compiled_dag,
@@ -189,9 +225,8 @@ async def save_campaign_sequence(
 
     await db.outreach_sequences.update_one(
         {"campaign_id": req.campaign_id},
-        {"$set": doc},
+        {"$set": {**doc, "is_deleted": False}},
         upsert=True,
     )
 
     return {"status": "success", "message": "Sequence saved and compiled successfully"}
-

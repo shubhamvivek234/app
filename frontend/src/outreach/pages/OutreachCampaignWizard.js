@@ -34,19 +34,76 @@ const TIME_OPTIONS = [
 ];
 
 const TIMEZONE_OPTIONS = [
-  { value: 'UTC', label: 'Coordinated Universal Time (UTC)', detail: 'UTC+00:00 · 6:57 pm' },
-  { value: 'America/New_York', label: 'Eastern Time (US & Canada) (ET)', detail: 'UTC-05:00 · 2:57 pm' },
-  { value: 'America/Chicago', label: 'Central Time (US & Canada) (CT)', detail: 'UTC-06:00 · 1:57 pm' },
-  { value: 'America/Denver', label: 'Mountain Time (US & Canada) (MT)', detail: 'UTC-07:00 · 12:57 pm' },
-  { value: 'America/Los_Angeles', label: 'Pacific Time (US & Canada) (PT)', detail: 'UTC-08:00 · 11:57 am' },
-  { value: 'Europe/London', label: 'Greenwich Mean Time (GMT)', detail: 'UTC+00:00 · 7:57 pm' },
-  { value: 'Europe/Paris', label: 'Central European Time (CET)', detail: 'UTC+01:00 · 8:57 pm' },
-  { value: 'Asia/Kolkata', label: 'India Standard Time (IST)', detail: 'UTC+05:30 · 12:27 am' },
-  { value: 'Asia/Dubai', label: 'Gulf Standard Time (GST)', detail: 'UTC+04:00 · 10:57 pm' },
-  { value: 'Asia/Singapore', label: 'Singapore Standard Time (SGT)', detail: 'UTC+08:00 · 2:57 am' },
-  { value: 'Asia/Tokyo', label: 'Japan Standard Time (JST)', detail: 'UTC+09:00 · 3:57 am' },
-  { value: 'Australia/Sydney', label: 'Australian Eastern Time (AET)', detail: 'UTC+10:00 · 4:57 am' },
+  { value: 'UTC', label: 'Coordinated Universal Time (UTC)' },
+  { value: 'America/New_York', label: 'Eastern Time (US & Canada) (ET)' },
+  { value: 'America/Chicago', label: 'Central Time (US & Canada) (CT)' },
+  { value: 'America/Denver', label: 'Mountain Time (US & Canada) (MT)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (US & Canada) (PT)' },
+  { value: 'Europe/London', label: 'Greenwich Mean Time (GMT)' },
+  { value: 'Europe/Paris', label: 'Central European Time (CET)' },
+  { value: 'Asia/Kolkata', label: 'India Standard Time (IST)' },
+  { value: 'Asia/Dubai', label: 'Gulf Standard Time (GST)' },
+  { value: 'Asia/Singapore', label: 'Singapore Standard Time (SGT)' },
+  { value: 'Asia/Tokyo', label: 'Japan Standard Time (JST)' },
+  { value: 'Australia/Sydney', label: 'Australian Eastern Time (AET)' },
 ];
+
+const WEEK_DAYS = [
+  { day: 'Sunday', key: 'S' }, { day: 'Monday', key: 'M' }, { day: 'Tuesday', key: 'T' },
+  { day: 'Wednesday', key: 'W' }, { day: 'Thursday', key: 'T' }, { day: 'Friday', key: 'F' },
+  { day: 'Saturday', key: 'S' },
+];
+
+const createDefaultSchedule = () => WEEK_DAYS.map((day, index) => ({
+  ...day,
+  enabled: index >= 1 && index <= 5,
+  ranges: [{ start: '09:00 AM', end: '05:00 PM' }],
+}));
+
+const formatTimeLabel = (value) => {
+  if (!value) return '09:00 AM';
+  if (/\s(AM|PM)$/i.test(value)) return value.toUpperCase();
+  const [rawHours, rawMinutes = '00'] = String(value).split(':');
+  const hours = Number(rawHours);
+  if (!Number.isFinite(hours) || hours < 0 || hours > 23) return '09:00 AM';
+  return `${String(hours % 12 || 12).padStart(2, '0')}:${String(rawMinutes).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
+};
+
+const normalizeSchedule = (scheduleData) => {
+  const defaults = createDefaultSchedule();
+  const days = scheduleData?.days;
+  if (Array.isArray(days) && days.some((day) => typeof day === 'object')) {
+    return defaults.map((defaultDay) => {
+      const storedDay = days.find((day) => String(day?.day || '').toLowerCase() === defaultDay.day.toLowerCase());
+      if (!storedDay) return defaultDay;
+      const ranges = Array.isArray(storedDay.ranges) && storedDay.ranges.length
+        ? storedDay.ranges.map((range) => ({ start: formatTimeLabel(range.start), end: formatTimeLabel(range.end) }))
+        : defaultDay.ranges;
+      return { ...defaultDay, enabled: Boolean(storedDay.enabled), ranges };
+    });
+  }
+  if (Array.isArray(days)) {
+    return defaults.map((day, index) => ({ ...day, enabled: days.includes(index === 0 ? 6 : index - 1) }));
+  }
+  if (scheduleData?.start_time || scheduleData?.end_time) {
+    return defaults.map((day, index) => ({
+      ...day,
+      enabled: (scheduleData.days || [0, 1, 2, 3, 4]).includes(index === 0 ? 6 : index - 1),
+      ranges: [{ start: formatTimeLabel(scheduleData.start_time), end: formatTimeLabel(scheduleData.end_time) }],
+    }));
+  }
+  return defaults;
+};
+
+const getTimezoneDetail = (timeZone) => {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone, hour: 'numeric', minute: '2-digit', timeZoneName: 'shortOffset',
+    }).format(new Date());
+  } catch (_) {
+    return timeZone;
+  }
+};
 
 export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 2, initialName = '', onBack, onComplete }) {
   const [activeCampaignId, setActiveCampaignId] = useState(
@@ -66,15 +123,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [enrolledLeads, setEnrolledLeads] = useState([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
 
-  const [schedule, setSchedule] = useState([
-    { day: 'Sunday', key: 'S', enabled: false, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Monday', key: 'M', enabled: true, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Tuesday', key: 'T', enabled: true, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Wednesday', key: 'W', enabled: true, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Thursday', key: 'T', enabled: true, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Friday', key: 'F', enabled: true, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-    { day: 'Saturday', key: 'S', enabled: false, ranges: [{ start: '09:00 AM', end: '05:00 PM' }] },
-  ]);
+  const [schedule, setSchedule] = useState(createDefaultSchedule);
+  const sequenceSaveRef = React.useRef(null);
+  const registerSequenceSave = React.useCallback((saveSequence) => {
+    if (saveSequence) sequenceSaveRef.current = saveSequence;
+  }, []);
 
   const [limits, setLimits] = useState({
     connection_invites: 20,
@@ -266,7 +319,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             if (data.name && !hasUserEditedName.current) {
               setCampaignName(data.name);
             }
-            if (data.schedule?.days) setSchedule(data.schedule.days);
+            if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
             if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
             if (data.limits) setLimits(data.limits);
             if (data.sender_account_ids?.length) setSelectedSenders(data.sender_account_ids);
@@ -325,9 +378,36 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   }, [activeCampaignId]);
 
   const handleLaunch = async () => {
+    if (!campaignName.trim()) {
+      toast.error('Add a campaign name before launching.');
+      return;
+    }
+    if (!selectedSenders.length) {
+      toast.error('Select at least one active LinkedIn sender account.');
+      return;
+    }
+    const hasValidHours = schedule.some((day) => day.enabled && day.ranges?.some((range) => (
+      TIME_OPTIONS.includes(range.start) && TIME_OPTIONS.includes(range.end)
+      && TIME_OPTIONS.indexOf(range.start) < TIME_OPTIONS.indexOf(range.end)
+    )));
+    if (!hasValidHours) {
+      toast.error('Choose at least one valid working-hours range.');
+      return;
+    }
+    if (!leadsCount) {
+      toast.error('Add at least one lead before launching this campaign.');
+      return;
+    }
     setIsLaunching(true);
-    const targetId = activeCampaignId || campaignId;
     try {
+      const savedDraft = await syncDraft(campaignName, 3);
+      const targetId = savedDraft?.id || activeCampaignId || campaignId;
+      if (!savedDraft?.id || targetId === 'new' || targetId === 'new_campaign') {
+        throw new Error('Campaign draft could not be saved. Try again before launching.');
+      }
+      if (sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+        throw new Error('Sequence could not be saved. Please review it and try again.');
+      }
       const token = localStorage.getItem('token');
       const payload = {
         name: campaignName,
@@ -337,7 +417,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         daily_limits: limits,
         status: 'active',
       };
-      await fetch(`/api/v1/outreach/campaigns/${targetId}/launch`, {
+      const res = await fetch(`/api/v1/outreach/campaigns/${targetId}/launch`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -346,6 +426,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || 'Campaign could not be launched.');
+      }
       setReviewModalOpen(false);
       showToast('Campaign successfully launched!');
       setTimeout(() => {
@@ -354,12 +438,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       }, 1000);
     } catch (err) {
       console.error('Launch failed:', err);
-      setReviewModalOpen(false);
-      showToast('Campaign launched successfully!');
-      setTimeout(() => {
-        if (onComplete) onComplete();
-        else if (onBack) onBack();
-      }, 1000);
+      toast.error(err.message || 'Campaign could not be launched.');
     } finally {
       setIsLaunching(false);
     }
@@ -377,9 +456,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         if (res.ok) {
           const data = await res.json();
           setSenders(data);
-          if (data.length > 0 && selectedSenders.length === 0) {
-            setSelectedSenders([data[0].id]);
-          }
+          const activeAccounts = data.filter((account) => account.status === 'active');
+          const activeIds = new Set(activeAccounts.map((account) => account.id));
+          setSelectedSenders((current) => {
+            const stillActive = current.filter((id) => activeIds.has(id));
+            return stillActive.length || !activeAccounts.length ? stillActive : [activeAccounts[0].id];
+          });
         }
       } catch (err) {
         console.error('Failed to fetch senders:', err);
@@ -392,7 +474,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const handleSaveAsTemplate = async () => {
     try {
       const token = localStorage.getItem('token');
-      await syncDraft();
+      const savedDraft = await syncDraft();
+      if (!savedDraft?.id) throw new Error('Save the campaign draft before creating a template.');
+      if (sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+        throw new Error('Save the sequence before creating a template.');
+      }
       let nodes = [];
       let edges = [];
       let tree = null;
@@ -404,26 +490,16 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         });
         if (seqRes.ok) {
           const seqData = await seqRes.json();
+          if (seqData.is_default) {
+            throw new Error('Open the sequence editor and save your sequence before creating a template.');
+          }
           nodes = seqData.nodes || [];
           edges = seqData.edges || [];
           tree = seqData.tree || null;
         }
       }
 
-      if (nodes.length === 0) {
-        const tplsRes = await fetch('/api/v1/outreach/sequences/templates', {
-          credentials: 'include',
-          headers: { Authorization: token ? `Bearer ${token}` : '' },
-        });
-        if (tplsRes.ok) {
-          const tpls = await tplsRes.json();
-          if (tpls && tpls[0]) {
-            nodes = tpls[0].nodes;
-            edges = tpls[0].edges;
-            tree = tpls[0].tree;
-          }
-        }
-      }
+      if (!nodes.length) throw new Error('This campaign does not have a saved sequence yet.');
 
       const res = await fetch('/api/v1/outreach/sequences/templates', {
         method: 'POST',
@@ -444,11 +520,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         showToast(`Saved "${campaignName}" as template!`);
       } else {
         const errData = await res.json().catch(() => ({}));
-        showToast(errData.detail || 'Failed to save template');
+        toast.error(errData.detail || 'Failed to save template');
       }
     } catch (err) {
       console.error('Failed to save template:', err);
-      showToast('Saved as template');
+      toast.error(err.message || 'Failed to save template.');
     }
   };
 
@@ -462,7 +538,15 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           <div className="flex items-center gap-4">
             <button
               onClick={async () => {
-                await syncDraft(campaignName);
+                const saved = await syncDraft(campaignName);
+                if (!saved) {
+                  toast.error('Campaign changes could not be saved. Please try again.');
+                  return;
+                }
+                if (sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+                  toast.error('Sequence could not be saved. Please try again before leaving.');
+                  return;
+                }
                 if (onBack) onBack();
               }}
               title="Back to campaigns"
@@ -507,16 +591,16 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             <button
               onClick={async () => {
                 const saved = await syncDraft(campaignName);
-                const finalSaved = saved || {
-                  id: activeCampaignId || campaignId,
-                  name: campaignName,
-                  status: 'draft',
-                  draft_progress: currentStep === 1 ? 20 : currentStep === 2 ? 60 : 80,
-                  draft_step: currentStep,
-                  updated_at: new Date().toISOString(),
-                };
+                if (!saved) {
+                  toast.error('Campaign changes could not be saved. Please try again.');
+                  return;
+                }
+                if (sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+                  toast.error('Sequence could not be saved. Please try again before closing.');
+                  return;
+                }
                 toast.success('Campaign saved to drafts');
-                if (onBack) onBack(finalSaved);
+                if (onBack) onBack(saved);
               }}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >
@@ -538,9 +622,21 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
             <button
               onClick={async () => {
-                await syncDraft();
-                if (currentStep < 3) setCurrentStep((s) => s + 1);
-                else setReviewModalOpen(true);
+                if (currentStep < 3) {
+                  const nextStep = currentStep + 1;
+                  const saved = await syncDraft(undefined, nextStep);
+                  if (!saved) {
+                    toast.error('Campaign changes could not be saved. Please try again.');
+                    return;
+                  }
+                  if (currentStep === 2 && sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+                    toast.error('Sequence could not be saved. Please review it and try again.');
+                    return;
+                  }
+                  setCurrentStep(nextStep);
+                } else {
+                  setReviewModalOpen(true);
+                }
               }}
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2 text-xs font-semibold text-white shadow-xs transition-colors"
             >
@@ -714,7 +810,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
         {/* Step 2: Visual Canvas (Part 1, Image 4) */}
         {currentStep === 2 && (
-          <SequenceCanvas campaignId={activeCampaignId || campaignId} />
+        <SequenceCanvas campaignId={activeCampaignId || campaignId} onRegisterSave={registerSequenceSave} />
         )}
 
         {/* Step 3: Launch, Multi-Sender Pooling & Safe Defaults (media_1790103490135.png) */}
@@ -724,7 +820,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
               {/* Top Status Pill matching media_1790103490135.png */}
               <div className="flex items-center">
                 <div className="inline-flex items-center px-3 py-1 rounded-full border border-indigo-100 bg-indigo-50/80 text-indigo-700 text-xs font-semibold shadow-2xs">
-                  Trial ends in 4 days
+                  Campaign settings will be enforced when this campaign runs.
                 </div>
               </div>
 
@@ -794,6 +890,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                     <div className="space-y-2.5">
                       {senders.map((s) => {
                         const isChecked = selectedSenders.includes(s.id);
+                        const isActive = s.status === 'active';
                         return (
                           <label
                             key={s.id}
@@ -807,9 +904,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                               <input
                                 type="checkbox"
                                 checked={isChecked}
+                                disabled={!isActive}
                                 onChange={(e) => {
-                                  if (e.target.checked) setSelectedSenders([...selectedSenders, s.id]);
-                                  else setSelectedSenders(selectedSenders.filter((id) => id !== s.id));
+                                  if (e.target.checked) setSelectedSenders((current) => [...new Set([...current, s.id])]);
+                                  else setSelectedSenders((current) => current.filter((id) => id !== s.id));
                                 }}
                                 className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                               />
@@ -820,8 +918,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                                 </span>
                               </div>
                             </div>
-                            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                              Connected
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                              isActive
+                                ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                : 'text-amber-700 bg-amber-50 border-amber-200'
+                            }`}>
+                              {s.status || 'Unavailable'}
                             </span>
                           </label>
                         );
@@ -969,7 +1071,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                       >
                         {TIMEZONE_OPTIONS.map((tz) => (
                           <option key={tz.value} value={tz.value}>
-                            {tz.label} · {tz.detail}
+                            {tz.label} · {getTimezoneDetail(tz.value)}
                           </option>
                         ))}
                       </select>
@@ -988,7 +1090,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   <div>
                     <h3 className="text-sm font-bold text-gray-900">Daily limits, applied per sender</h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Daily action limits applied per sending account. Higher limits can increase account risk.
+                      Daily action limits per sender. The effective cap is the lower of this value and the sender account's own safety limit.
                     </p>
                   </div>
                   <button
@@ -1006,22 +1108,23 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                     { key: 'connection_invites', label: 'Connection invites', def: 20 },
                     { key: 'messages', label: 'Messages', def: 20 },
                     { key: 'voice_notes', label: 'Voice notes', def: 20 },
-                    { key: 'inmails', label: 'InMails', def: 20 },
+                    { key: 'inmails', label: 'InMails', def: 20, supported: false },
                     { key: 'profile_visits', label: 'Profile visits', def: 20 },
-                    { key: 'follows', label: 'Follows', def: 20 },
+                    { key: 'follows', label: 'Follows', def: 20, supported: false },
                     { key: 'post_likes', label: 'Post likes', def: 20 },
-                    { key: 'comments', label: 'Comments', def: 20 },
+                    { key: 'comments', label: 'Comments', def: 20, supported: false },
                   ].map((item) => (
                     <div key={item.key} className="flex items-center justify-between py-2.5">
                       <div>
                         <span className="text-xs font-semibold text-gray-900 block">{item.label}</span>
-                        <span className="text-[11px] text-gray-400">default of {item.def}</span>
+                        <span className="text-[11px] text-gray-400">{item.supported === false ? 'Runner support coming soon' : `default of ${item.def}`}</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
+                          disabled={item.supported === false}
                           onClick={() => handleLimitChange(item.key, -1)}
-                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs"
+                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Minus className="w-3 h-3" />
                         </button>
@@ -1029,6 +1132,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                           type="number"
                           min="0"
                           max="100"
+                          disabled={item.supported === false}
                           value={limits[item.key] ?? item.def}
                           onChange={(e) => {
                             const val = parseInt(e.target.value, 10);
@@ -1037,12 +1141,13 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                               [item.key]: isNaN(val) ? 0 : Math.max(0, Math.min(100, val)),
                             }));
                           }}
-                          className="w-14 h-8 rounded-lg border border-gray-200 bg-white text-center text-xs font-bold text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                          className="w-14 h-8 rounded-lg border border-gray-200 bg-white text-center text-xs font-bold text-gray-900 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
                         />
                         <button
                           type="button"
+                          disabled={item.supported === false}
                           onClick={() => handleLimitChange(item.key, 1)}
-                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs"
+                          className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 font-semibold transition-colors shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
